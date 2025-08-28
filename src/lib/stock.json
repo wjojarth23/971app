@@ -1,0 +1,362 @@
+{
+  "laser-cut": [
+    {
+      "id": "al_1_16_sheet",
+      "material": "Aluminum",
+      "description": "1/16\" Aluminum Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "al_1_8_sheet",
+      "material": "Aluminum", 
+      "description": "1/8\" Aluminum Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "al_1_4_sheet",
+      "material": "Aluminum",
+      "description": "1/4\" Aluminum Sheet", 
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "al_3_8_sheet",
+      "material": "Aluminum",
+      "description": "3/8\" Aluminum Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet", 
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "pc_1_16_sheet",
+      "material": "Polycarbonate",
+      "description": "1/16\" Polycarbonate Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "pc_1_8_sheet", 
+      "material": "Polycarbonate",
+      "description": "1/8\" Polycarbonate Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "pc_1_4_sheet",
+      "material": "Polycarbonate",
+      "description": "1/4\" Polycarbonate Sheet",
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "pc_3_8_sheet",
+      "material": "Polycarbonate", 
+      "description": "3/8\" Polycarbonate Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "srpp_1_16_sheet",
+      "material": "SRPP",
+      "description": "1/16\" SRPP Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "srpp_1_8_sheet",
+      "material": "SRPP",
+      "description": "1/8\" SRPP Sheet", 
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "srpp_1_4_sheet",
+      "material": "SRPP",
+      "description": "1/4\" SRPP Sheet",
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "srpp_3_8_sheet",
+      "material": "SRPP",
+      "description": "3/8\" SRPP Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "wood_1_16_sheet",
+      "material": "Wood",
+      "description": "1/16\" Wood Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "wood_1_8_sheet",
+      "material": "Wood",
+      "description": "1/8\" Wood Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "wood_1_4_sheet",
+      "material": "Wood",
+      "description": "1/4\" Wood Sheet",
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "wood_3_8_sheet",
+      "material": "Wood", 
+      "description": "3/8\" Wood Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {  
+      "id": "birch_1_16_sheet",
+      "material": "Birch",
+      "description": "1/16\" Birch Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "birch_1_8_sheet",
+      "material": "Birch",
+      "description": "1/8\" Birch Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "birch_1_4_sheet",
+      "material": "Birch", 
+      "description": "1/4\" Birch Sheet",
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "birch_3_8_sheet",
+      "material": "Birch",
+      "description": "3/8\" Birch Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "delrin_1_16_sheet", 
+      "material": "Delrin",
+      "description": "1/16\" Delrin Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "delrin_1_8_sheet",
+      "material": "Delrin",
+      "description": "1/8\" Delrin Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "delrin_1_4_sheet",
+      "material": "Delrin",
+      "description": "1/4\" Delrin Sheet",
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    },
+    {
+      "id": "delrin_3_8_sheet",
+      "material": "Delrin",
+      "description": "3/8\" Delrin Sheet", 
+      "thickness": 0.375,
+      "dimensions": "Sheet",
+      "workflow": "laser-cut"
+    }
+  ],
+  "router": [
+    {
+      "id": "al_1x2_1_16_tube",
+      "material": "Aluminum",
+      "description": "1x2\" Aluminum Tube (1/16\" wall)",
+      "outer_width": 1.0,
+      "outer_height": 2.0,
+      "wall_thickness": 0.0625,
+      "dimensions": "Tube",
+      "workflow": "router"
+    },
+    {
+      "id": "al_1x2_1_8_tube",
+      "material": "Aluminum",
+      "description": "1x2\" Aluminum Tube (1/8\" wall)",
+      "outer_width": 1.0,
+      "outer_height": 2.0,
+      "wall_thickness": 0.125,
+      "dimensions": "Tube",
+      "workflow": "router"
+    },
+    {
+      "id": "al_1x1_1_16_tube",
+      "material": "Aluminum",
+      "description": "1x1\" Aluminum Tube (1/16\" wall)",
+      "outer_width": 1.0,
+      "outer_height": 1.0,
+      "wall_thickness": 0.0625,
+      "dimensions": "Tube",
+      "workflow": "router"
+    },
+    {
+      "id": "al_1x1_1_8_tube",
+      "material": "Aluminum", 
+      "description": "1x1\" Aluminum Tube (1/8\" wall)",
+      "outer_width": 1.0,
+      "outer_height": 1.0,
+      "wall_thickness": 0.125,
+      "dimensions": "Tube",
+      "workflow": "router"
+    },
+    {
+      "id": "al_2x2_1_16_tube",
+      "material": "Aluminum",
+      "description": "2x2\" Aluminum Tube (1/16\" wall)",
+      "outer_width": 2.0,
+      "outer_height": 2.0,
+      "wall_thickness": 0.0625,
+      "dimensions": "Tube",
+      "workflow": "router"
+    },
+    {
+      "id": "al_2x2_1_8_tube",
+      "material": "Aluminum",
+      "description": "2x2\" Aluminum Tube (1/8\" wall)",
+      "outer_width": 2.0,
+      "outer_height": 2.0,
+      "wall_thickness": 0.125,
+      "dimensions": "Tube",
+      "workflow": "router"
+    }
+  ],
+  "mill": [
+    {
+      "id": "steel_block",
+      "material": "Steel",
+      "description": "Steel Block Stock",
+      "dimensions": "Block",
+      "workflow": "mill"
+    },
+    {
+      "id": "delrin_block",
+      "material": "Delrin",
+      "description": "Delrin Block Stock", 
+      "dimensions": "Block",
+      "workflow": "mill"
+    },
+    {
+      "id": "aluminum_block",
+      "material": "Aluminum",
+      "description": "Aluminum Block Stock",
+      "dimensions": "Block",
+      "workflow": "mill"
+    }
+  ],
+  "lathe": [
+    {
+      "id": "al_round_under_1",
+      "material": "Aluminum",
+      "description": "Aluminum Round Stock (under 1\")",
+      "diameter_max": 1.0,
+      "dimensions": "Round",
+      "workflow": "lathe"
+    },
+    {
+      "id": "al_round_over_1",
+      "material": "Aluminum", 
+      "description": "Aluminum Round Stock (over 1\")",
+      "diameter_min": 1.0,
+      "dimensions": "Round",
+      "workflow": "lathe"
+    },
+    {
+      "id": "al_3_8_round",
+      "material": "Aluminum",
+      "description": "3/8\" Aluminum Round Stock",
+      "diameter": 0.375,
+      "dimensions": "Round",
+      "workflow": "lathe"
+    },
+    {
+      "id": "thunderhex_3_8",
+      "material": "Aluminum",
+      "description": "3/8\" ThunderHex Stock",
+      "hex_size": 0.375,
+      "length_max": 0.5,
+      "dimensions": "ThunderHex",
+      "workflow": "lathe"
+    },
+    {
+      "id": "thunderhex_1_2",
+      "material": "Aluminum", 
+      "description": "1/2\" ThunderHex Stock",
+      "hex_size": 0.5,
+      "length_max": 0.8,
+      "dimensions": "ThunderHex",
+      "workflow": "lathe"
+    }
+  ],
+  "3d-print": [
+    {
+      "id": "pla_filament",
+      "material": "PLA",
+      "description": "PLA 3D Printing Filament",
+      "dimensions": "Printed",
+      "workflow": "3d-print"
+    },
+    {
+      "id": "abs_filament",
+      "material": "ABS",
+      "description": "ABS 3D Printing Filament",
+      "dimensions": "Printed",
+      "workflow": "3d-print"
+    },
+    {
+      "id": "petg_filament",
+      "material": "PETG",
+      "description": "PETG 3D Printing Filament",
+      "dimensions": "Printed",
+      "workflow": "3d-print"
+    },
+    {
+      "id": "nylon_filament",
+      "material": "Nylon",
+      "description": "Nylon 3D Printing Filament",
+      "dimensions": "Printed",
+      "workflow": "3d-print"
+    },
+    {
+      "id": "onyx_filament",
+      "material": "Onyx",
+      "description": "Onyx 3D Printing Filament",
+      "dimensions": "Printed",
+      "workflow": "3d-print"
+    }
+  ]
+}
