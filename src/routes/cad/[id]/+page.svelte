@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
+  import { hasPermission } from '$lib/permissions.js';
   import { onShapeAPI } from '$lib/onshape.js';  
   import { partClassificationService } from '$lib/bom_classify.js';
   import { detectVendorFromString } from '$lib/vendor_detect.js';
@@ -1081,7 +1082,8 @@
                   </div>
                   {#if item.description}
                     <p class="timeline-description">{item.description}</p>
-                  {/if}                  {#if isSubsystemMember()}
+                  {/if}
+                  {#if isSubsystemMember() && hasPermission(user, 'CREATE_BUILDS')}
                     <button 
                       class="btn btn-primary btn-sm"
                       on:click={() => goto(`/cad/bom?subsystem=${subsystem.id}&version=${item.id}`)}
@@ -1089,6 +1091,8 @@
                       <Settings size={14} />
                       Create Build
                     </button>
+                  {:else if isSubsystemMember()}
+                    <p style="color: #666; font-size: 11px; font-style: italic;">You do not have permission to create builds.</p>
                   {:else}
                     <!-- Show join button if user is loaded but not a member -->
                     {#if user && subsystem}

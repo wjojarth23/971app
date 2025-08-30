@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, getUserUUID, setUserUUID, clearUserUUID, loadUserFromUUID, upsertProfileIfMissing } from '$lib/stores/user.js';
+  import { hasPermission } from '$lib/permissions.js';
   import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
@@ -96,6 +97,12 @@
           <Receipt size={18} />
           Purchasing
   </a>
+        {#if hasPermission(user, 'VIEW_ADMIN_PANEL')}
+        <a href="/admin" class="nav-link" class:active={isActive('/admin')}>
+          <Briefcase size={18} />
+          Admin
+        </a>
+        {/if}
       </nav>
 
       <!-- User Menu - Simplified -->      <div class="user-menu">

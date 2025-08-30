@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
+  import { hasPermission } from '$lib/permissions.js';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon } from 'lucide-svelte';
   import { goto } from '$app/navigation';
 
@@ -185,8 +186,10 @@
         </div>
       </div>
       <div style="margin-top:1rem; display:flex; gap:0.5rem;">
-        <button class="btn btn-secondary" on:click={() => { showAddMiscModal = true; }}>Add Misc Item</button>
-      </div>
+          {#if hasPermission(user, 'PLACE_ORDERS_MISC')}
+            <button class="btn btn-secondary" on:click={() => { showAddMiscModal = true; }}>Add Misc Item</button>
+          {/if}
+        </div>
     </div>
 
     {#if parts.length > 0}
@@ -266,7 +269,11 @@
                       <span class="approver-name">{part.approver ? part.approver.split(' ')[0] : 'Approved'}</span>
                     </div>
                   {:else}
-                    <button class="btn btn-approve btn-sm" on:click={() => approvePart(part)}><span class="approve-text">Approve</span></button>
+                    {#if hasPermission(user, 'APPROVE_PURCHASES')}
+                      <button class="btn btn-approve btn-sm" on:click={() => approvePart(part)}><span class="approve-text">Approve</span></button>
+                    {:else}
+                      <span style="color:#666; font-size:12px;">Needs approval</span>
+                    {/if}
                   {/if}
                 </td>
                 <td class="status">
@@ -274,7 +281,16 @@
                     class="status-select colorful" 
                     value={part.status || 'pending'}
                     data-status={part.status || 'pending'}
-                    on:change={(e) => updatePartStatus(part, 'status', e.target.value)}
+                    on:change={(e) => {
+                      const val = e.target.value;
+                      if ((val === 'ordered' || val === 'delivered') && !hasPermission(user, 'PLACE_ORDERS_MISC')) {
+                        alert('You do not have permission to change order status.');
+                        // revert select visually by reloading parts
+                        loadParts();
+                        return;
+                      }
+                      updatePartStatus(part, 'status', val);
+                    }}
                   >
                     <option value="pending" data-color="#ffc107">Pending</option>
                     <option value="ordered" data-color="#6c5ce7">Ordered</option>

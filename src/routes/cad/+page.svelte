@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
+  import { hasPermission } from '$lib/permissions.js';
   import { onShapeAPI } from '$lib/onshape.js';
   import stockData from '$lib/stock.json';
   import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download } from 'lucide-svelte';
@@ -750,10 +751,12 @@
           <p>Manage robot subsystems with OnShape integration</p>
         </div>
       </div>
+  {#if hasPermission(user, 'CREATE_SUBSYSTEMS')}
   <button class="btn btn-primary btn-sm" on:click={openCreateModal}>
         <Plus size={16} />
         Create Subsystem
       </button>
+  {/if}
     </div>    <div class="subsystems-grid">
       {#each subsystems as subsystem}
         <div 
