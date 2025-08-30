@@ -1,5 +1,6 @@
 <script>  import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
+  import { hasPermission } from '$lib/permissions.js';
   import { userStore, setUserUUID, clearUserUUID, loadUserFromUUID, upsertProfileIfMissing } from '$lib/stores/user.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
   
   let user = null;
@@ -175,7 +176,7 @@
           <Shield size={20} />
           <div>
             <strong>Permissions:</strong> 
-            {#if user.permissions === 'none' || user.role === 'pending'}
+            {#if !hasPermission(user, 'CAN_SEE_ROUTES')}
               <span class="pending-status">Awaiting Admin Approval</span>
             {:else}
               {user.permissions || 'Not assigned'}
@@ -184,7 +185,7 @@
         </div>
       </div>    </div>
 
-    {#if user.role === 'pending' || user.permissions === 'none'}
+    {#if !hasPermission(user, 'CAN_SEE_ROUTES')}
       <div class="pending-notice">
         <AlertCircle size={20} />
         <div>

@@ -107,6 +107,8 @@ CREATE TABLE public.purchasing (
   workflow text DEFAULT 'purchase'::text CHECK (workflow = 'purchase'::text),
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
+  approved boolean NOT NULL DEFAULT false,
+  approver text,
   CONSTRAINT purchasing_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.sheet_cuts (
@@ -122,8 +124,8 @@ CREATE TABLE public.sheet_cuts (
   cut_svg_url character varying NOT NULL DEFAULT ''::character varying,
   cut_areas jsonb NOT NULL DEFAULT '[]'::jsonb,
   CONSTRAINT sheet_cuts_pkey PRIMARY KEY (id),
-  CONSTRAINT sheet_cuts_sheet_id_fkey FOREIGN KEY (sheet_id) REFERENCES public.sheets(id),
-  CONSTRAINT sheet_cuts_cut_by_fkey FOREIGN KEY (cut_by) REFERENCES auth.users(id)
+  CONSTRAINT sheet_cuts_cut_by_fkey FOREIGN KEY (cut_by) REFERENCES auth.users(id),
+  CONSTRAINT sheet_cuts_sheet_id_fkey FOREIGN KEY (sheet_id) REFERENCES public.sheets(id)
 );
 CREATE TABLE public.sheets (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -191,6 +193,7 @@ CREATE TABLE public.user_profiles (
   updated_at timestamp with time zone DEFAULT now(),
   last_attendance_date timestamp with time zone,
   total_attendance_days integer DEFAULT 0,
+  banned boolean DEFAULT false,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );

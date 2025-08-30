@@ -6,6 +6,7 @@
   import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import Toasts from '$lib/Toasts.svelte';
   let user = null;
 
   onMount(async () => {
@@ -81,22 +82,24 @@
           <Home size={18} />
           Home
         </a>
-        <a href="/manufacture" class="nav-link" class:active={isActive('/manufacture')}>
-          <Hammer size={18} />
-          Manufacture
-        </a>
-        <a href="/cad" class="nav-link" class:active={isActive('/cad')}>
-          <Move3d size={18} />
-          CAD
-        </a>
-        <a href="/cad/build" class="nav-link" class:active={isActive('/cad/build')}>
-          <Wrench size={18} />
-          Build
-        </a>
-        <a href="/cad/purchasing" class="nav-link" class:active={isActive('/cad/purchasing')}>
-          <Receipt size={18} />
-          Purchasing
-  </a>
+        {#if hasPermission(user, 'CAN_SEE_ROUTES')}
+          <a href="/manufacture" class="nav-link" class:active={isActive('/manufacture')}>
+            <Hammer size={18} />
+            Manufacture
+          </a>
+          <a href="/cad" class="nav-link" class:active={isActive('/cad')}>
+            <Move3d size={18} />
+            CAD
+          </a>
+          <a href="/cad/build" class="nav-link" class:active={isActive('/cad/build')}>
+            <Wrench size={18} />
+            Build
+          </a>
+          <a href="/cad/purchasing" class="nav-link" class:active={isActive('/cad/purchasing')}>
+            <Receipt size={18} />
+            Purchasing
+          </a>
+        {/if}
         {#if hasPermission(user, 'VIEW_ADMIN_PANEL')}
         <a href="/admin" class="nav-link" class:active={isActive('/admin')}>
           <Briefcase size={18} />
@@ -118,6 +121,8 @@
 <main class="container">
   <slot />
 </main>
+
+<Toasts />
 
 <style>
   :global(html) {
