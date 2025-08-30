@@ -1,8 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';
-  import { get } from 'svelte/store';
+  import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { onShapeAPI } from '$lib/onshape.js';
   import stockData from '$lib/stock.json';
   import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download } from 'lucide-svelte';
@@ -28,14 +27,43 @@
   onMount(async () => {
     console.time('Total CAD page load');
     try {
-      loadingStep = 'Waiting for user profile...';      const waitStart = performance.now();
-      // Wait until userStore is non-null
-      while (!get(userStore)) {
-        await new Promise(r => setTimeout(r, 50));
+      // Hydrate from UUID and handle session
+      loadingStep = 'Hydrating user...';
+      const unsub = userStore.subscribe((v) => { user = v; });
+      
+      // Only fetch if user is not already loaded
+      if (!user) {
+        await loadUserFromUUID(supabase);
       }
-      const waitEnd = performance.now();
-      console.log('Waited for userStore:', (waitEnd - waitStart).toFixed(0), 'ms');
-      user = get(userStore);
+
+      // Add timeout to getSession
+      const sessionTimeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Session fetch timeout')), 5000)
+      );
+      
+      let session = null;
+      try {
+        const sessionPromise = supabase.auth.getSession();
+        const { data } = await Promise.race([sessionPromise, sessionTimeoutPromise]);
+        session = data.session;
+      } catch (error) {
+        console.warn('Session fetch timeout or error:', error.message || error);
+      }
+      
+      if (!session && !user) {
+        loading = false;
+        goto('/');
+        return;
+      }
+      if (session?.user?.id) {
+        setUserUUID(session.user.id);
+        await upsertProfileIfMissing(supabase, {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.user_metadata?.full_name || (session.user.email ? session.user.email.split('@')[0] : '')
+        });
+        await loadUserFromUUID(supabase);
+      }
 
       // Add timeout wrapper for each loading operation
       loadingStep = 'Loading subsystems...';

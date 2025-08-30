@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';
+  import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { Route, MapPin, Navigation, Settings, Play, Pause, RotateCcw } from 'lucide-svelte';
   import { goto } from '$app/navigation';
 
@@ -9,18 +9,27 @@
   let loading = true;
 
   onMount(async () => {
+    // Hydrate from UUID and keep local var in sync
+    const unsub = userStore.subscribe((v) => { user = v; });
+    await loadUserFromUUID(supabase);
+
     // Check authentication
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    if (!session && !user) {
       goto('/');
       return;
     }
+    if (session?.user?.id) {
+      setUserUUID(session.user.id);
+      await upsertProfileIfMissing(supabase, {
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.user_metadata?.full_name || (session.user.email ? session.user.email.split('@')[0] : '')
+      });
+      await loadUserFromUUID(supabase);
+    }
 
-    // Get user profile
-    userStore.subscribe(value => {
-      user = value;
-      loading = false;
-    });
+    loading = false;
   });
 </script>
 

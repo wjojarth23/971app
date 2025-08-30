@@ -1,12 +1,15 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
+  import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
+  import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink } from 'lucide-svelte';
   
   let parts = [];
   let filteredParts = [];
   let loading = true;
+  let user = null;
   let searchTerm = '';
   let filterWorkflow = '';
   let filterStatus = '';
@@ -33,7 +36,29 @@
   ];
 
   onMount(async () => {
+    // Hydrate from UUID and keep local var in sync
+    const unsub = userStore.subscribe((v) => { user = v; });
+    await loadUserFromUUID(supabase);
+
+    // Check authentication
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session && !user) {
+      loading = false;
+      goto('/');
+      return;
+    }
+    if (session?.user?.id) {
+      setUserUUID(session.user.id);
+      await upsertProfileIfMissing(supabase, {
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.user_metadata?.full_name || (session.user.email ? session.user.email.split('@')[0] : '')
+      });
+      await loadUserFromUUID(supabase);
+    }
+
     await loadParts();
+    loading = false;
   });
 
   // Fixed drag and drop handlers for better Vercel compatibility (kept for potential future use)

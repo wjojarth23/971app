@@ -1,6 +1,6 @@
 <script>  import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
+  import { userStore, setUserUUID, clearUserUUID, loadUserFromUUID, upsertProfileIfMissing } from '$lib/stores/user.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
   
   let user = null;
   let loading = true;
@@ -14,39 +14,57 @@
   let authError = '';
   let authSuccess = '';
   onMount(async () => {
-    // Check if user is already logged in
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      await loadUserProfile(session.user);
+    // Keep local var in sync with store
+    const unsub = userStore.subscribe((v) => { user = v; });
+
+    // Hydrate from UUID first (only if not already loaded)
+    if (!user) {
+      await loadUserFromUUID(supabase);
+    }
+
+    // If we have an auth session, persist UUID and ensure profile exists
+    const sessionTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Session fetch timeout')), 5000)
+    );
+    
+    let session = null;
+    try {
+      const sessionPromise = supabase.auth.getSession();
+      const { data } = await Promise.race([sessionPromise, sessionTimeoutPromise]);
+      session = data.session;
+    } catch (error) {
+      console.warn('Session fetch timeout or error:', error.message || error);
+    }
+    
+    if (session?.user?.id) {
+      await handleSignedIn(session.user);
     }
     loading = false;
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        await loadUserProfile(session.user);
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user?.id) {
+        await handleSignedIn(session.user);
       } else if (event === 'SIGNED_OUT') {
-        user = null;
-        userStore.set(null);
+        // Do not force logout if UUID persists; reload from UUID
+        await loadUserFromUUID(supabase);
       }
     });
 
-    return () => subscription?.unsubscribe();
+    return () => { unsub?.(); subscription?.unsubscribe(); };
   });
-  async function loadUserProfile(authUser) {
+
+  async function handleSignedIn(authUser) {
     try {
-      // Use auth user data directly - no database lookup needed
-      user = {
+      setUserUUID(authUser.id);
+      await upsertProfileIfMissing(supabase, {
         id: authUser.id,
         email: authUser.email,
-        full_name: authUser.user_metadata?.name || authUser.email.split('@')[0],
-        role: authUser.user_metadata?.role || 'member',
-        permissions: authUser.user_metadata?.permissions || 'basic'
-      };
-        userStore.set(user);
-      console.log('User set from auth data:', user);
+        name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : '')
+      });
+      await loadUserFromUUID(supabase);
     } catch (error) {
-      console.error('Error loading user profile:', error);
+      console.error('Error handling sign-in:', error);
     }
   }
 
@@ -63,7 +81,10 @@
         });
         
         if (error) throw error;
-          // User will be redirected by the auth state change listener
+        if (data?.user) {
+          await handleSignedIn(data.user);
+        }
+        // User will also be processed by the auth state change listener
       } else {        // Register new user
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
@@ -78,6 +99,9 @@
         
         if (data.user && !data.session) {
           authSuccess = 'Registration successful! Please check your email to confirm your account.';
+        }
+        if (data.session?.user) {
+          await handleSignedIn(data.session.user);
         }
       }
     } catch (error) {
@@ -100,6 +124,9 @@
   }
 
   async function handleLogout() {
+    // Explicit logout clears UUID and in-memory user
+    clearUserUUID();
+    userStore.set(null);
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error logging out:', error);

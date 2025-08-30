@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';
+  import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { onShapeAPI } from '$lib/onshape.js';
   import { goto } from '$app/navigation';
   import { ArrowLeft, Plus, CheckCircle, ShoppingCart, Zap, Package } from 'lucide-svelte';
@@ -37,23 +37,29 @@
   // Feature flag: disable fetching/display of bounding-box dimensions when false
   let enableGetDimensions = false;
   onMount(async () => {
+    // Hydrate from UUID and keep local var in sync
+    const unsub = userStore.subscribe((v) => { user = v; });
+    await loadUserFromUUID(supabase);
     // Check authentication
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    if (!session && !user) {
       goto('/');
       return;
-    }    // Use session user data directly - no database lookup needed
-    user = {
-      id: session.user.id,
-      email: session.user.email,
-      full_name: session.user.user_metadata?.full_name || session.user.email.split('@')[0],
-      role: 'member',
-      permissions: ['basic']
-    };
-    
-    userStore.set(user);
-    console.log('User set from auth data:', user);
-
+    }
+    if (session?.user?.id) {
+      try {
+        setUserUUID(session.user.id);
+        await upsertProfileIfMissing(supabase, {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.user_metadata?.full_name || (session.user.email ? session.user.email.split('@')[0] : '')
+        });
+        await loadUserFromUUID(supabase);
+        user = $page && userStore ? user : user; // keep local var in sync; store subscription may be elsewhere
+      } catch (e) {
+        console.error('Error handling auth session:', e);
+      }
+    }
     await loadData();
   });  async function loadData() {
     if (!subsystemId || !versionId) {
@@ -376,7 +382,7 @@
       // Base insert (Onshape + router meta in file_url JSON)
       const onshapeData = {
         name: item.part_name || item.part_number || "Unnamed Part",
-        requester: user.display_name || user.full_name || user.email,
+        requester: user.full_name || user.email,
         project_id,
         workflow,
         status: 'pending',
@@ -631,7 +637,7 @@
       // Insert into parts table with Onshape API parameters (if available)
       const partInsertData = {
         name: item.part_name || item.part_number || "Unnamed Part",
-        requester: user.display_name || user.full_name || user.email,
+        requester: user.full_name || user.email,
         project_id,
         workflow,
         status: 'pending',
@@ -812,7 +818,7 @@
       // Add to purchasing table
       const purchasingInsertData = {
         name: item.part_name || item.part_number || "Unnamed Part",
-        requester: user.display_name || user.full_name || user.email,
+        requester: user.full_name || user.email,
         project_id: `${subsystem.name}-${version.name}`,
         quantity: item.quantity || 1,
         material: item.material || '',
@@ -880,7 +886,7 @@
 
     const purchasingInsertData = {
       name: purchaseModalItem.part_name || purchaseModalItem.part_number || "Unnamed Part",
-      requester: user.display_name || user.full_name || user.email,
+      requester: user.full_name || user.email,
       project_id: `${subsystem.name}-${version.name}`,
       quantity: purchaseModalItem.quantity || 1,
       material: purchaseModalItem.material || '',
@@ -998,7 +1004,7 @@
           .from('purchasing')
           .insert([{
             name: item.part_name || item.part_number || "Unnamed Part",
-            requester: user.display_name || user.full_name || user.email,
+            requester: user.full_name || user.email,
             project_id: `${subsystem.name}-${version.name}`,
             quantity: item.quantity || 1,
             material: item.material || '',

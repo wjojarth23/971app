@@ -1,63 +1,58 @@
 <script>  import '../app.css';
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';
+  import { userStore, getUserUUID, setUserUUID, clearUserUUID, loadUserFromUUID, upsertProfileIfMissing } from '$lib/stores/user.js';
   import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   let user = null;
 
   onMount(async () => {
-    // Check if user is already logged in
+    // Keep local var in sync with store
+    const unsub = userStore.subscribe((v) => { user = v; });
+
+    // Hydrate from UUID first (no auth required if public read is allowed)
+    if (!user) {
+      await loadUserFromUUID(supabase);
+    }
+
+    // If we have an auth session, persist UUID and ensure profile exists
     const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      await loadUserProfile(session.user);
+    if (session?.user?.id) {
+      await handleSignedIn(session.user);
     }
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        await loadUserProfile(session.user);
+      if (event === 'SIGNED_IN' && session?.user?.id) {
+        await handleSignedIn(session.user);
       } else if (event === 'SIGNED_OUT') {
-        user = null;
-        userStore.set(null);
+        // Do not clear UUID here; allow app to continue if UUID remains
+        await loadUserFromUUID(supabase);
       }
     });
 
-    return () => subscription?.unsubscribe();
-  });  async function loadUserProfile(authUser) {
+    return () => { unsub?.(); subscription?.unsubscribe(); };
+  });
+
+  async function handleSignedIn(authUser) {
     try {
-      // Use auth user data directly - no database lookup needed
-      user = {
+      setUserUUID(authUser.id);
+      await upsertProfileIfMissing(supabase, {
         id: authUser.id,
         email: authUser.email,
-        full_name: authUser.user_metadata?.full_name
-          || (typeof authUser.user_metadata?.display_name === 'string'
-              ? authUser.user_metadata.display_name.split(' ')[0]
-              : authUser.email.split('@')[0]),
-        role: authUser.user_metadata?.role || 'member',
-        permissions: Array.isArray(authUser.user_metadata?.permissions)
-          ? authUser.user_metadata.permissions.map(String)
-          : [String(authUser.user_metadata?.permissions || 'basic')]
-      };      userStore.set(user);
-      console.log('User set from auth data:', user);
-      
-    // Attendance tracking removed
+        name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : '')
+      });
+      await loadUserFromUUID(supabase);
     } catch (error) {
-      console.error('Error loading user profile:', error);
-      // Fallback to basic user info
-      user = {
-        id: authUser.id,
-        email: authUser.email,
-        full_name: authUser.user_metadata?.name || '',
-        role: 'member',
-        permissions: 'basic'
-      };
-      userStore.set(user);
+      console.error('Error handling sign-in:', error);
     }
   }
 
   async function handleLogout() {
+    // Explicit logout clears UUID so user must sign in again
+    clearUserUUID();
+    userStore.set(null);
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error logging out:', error);

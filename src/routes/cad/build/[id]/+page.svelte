@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';
+  import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { goto } from '$app/navigation';
   import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
@@ -23,14 +23,27 @@
   let editStockAssignmentCustom = null;
 
   onMount(async () => {
+    // Hydrate from UUID and keep local var in sync
+    const unsub = userStore.subscribe((v) => { user = v; });
+    await loadUserFromUUID(supabase);
+
+    // Check authentication
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    if (!session && !user) {
       goto('/');
       loading = false;
       return;
     }
+    if (session?.user?.id) {
+      setUserUUID(session.user.id);
+      await upsertProfileIfMissing(supabase, {
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.user_metadata?.full_name || (session.user.email ? session.user.email.split('@')[0] : '')
+      });
+      await loadUserFromUUID(supabase);
+    }
 
-    userStore.subscribe((value) => { user = value; });
     await loadBuildDetails();
     loading = false;
   });

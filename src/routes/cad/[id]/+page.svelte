@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { userStore } from '$lib/stores/user.js';
+  import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { onShapeAPI } from '$lib/onshape.js';  
   import { partClassificationService } from '$lib/bom_classify.js';
   import { detectVendorFromString } from '$lib/vendor_detect.js';
@@ -26,28 +26,29 @@
   let addedPartsSet = new Set();  onMount(async () => {
     try {
       loadingStep = 'Checking authentication...';
+      // Hydrate from UUID first and keep local var in sync
+      const unsub = userStore.subscribe((v) => { user = v; });
+      await loadUserFromUUID(supabase);
+
       // Check authentication
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      if (!session && !user) {
         goto('/');
         return;
       }
 
-      // Use session user data directly - no need for database lookup
-      const userData = {
-        id: session.user.id,
-        email: session.user.email,
-        full_name: session.user.user_metadata?.full_name || session.user.email,
-        role: 'member', // Default role for convenience
-        permissions: ['basic']
-      };
-      
-      userStore.set(userData);
-
-      // Subscribe to user store updates
-      userStore.subscribe(value => {
-        user = value;
-      });
+      // Persist UUID and hydrate profile from user_profiles
+      try {
+        setUserUUID(session.user.id);
+        await upsertProfileIfMissing(supabase, {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.user_metadata?.full_name || session.user.email
+        });
+        await loadUserFromUUID(supabase);
+      } catch (e) {
+        console.error('Error handling sign-in:', e);
+      }
 
       loadingStep = 'Loading subsystem data...';
       await loadSubsystem();
@@ -917,7 +918,7 @@
         .from('parts')
         .insert([{
           name: item.part_name || item.part_number || "Unnamed Part",
-          requester: user.display_name || user.full_name || user.email,
+          requester: user.full_name || user.email,
           project_id,
           workflow,
           status: 'pending',
