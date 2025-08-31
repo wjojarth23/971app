@@ -74,14 +74,21 @@
 
   async function loadParts() {
     try {
-      // Use the new view that includes Onshape parameters and download URLs
+      // Query the parts table directly
       const { data, error } = await supabase
-        .from('parts_with_download_urls')
+        .from('parts')
         .select('*')
         .order('created_at', { ascending: false });
       
       if (error) throw error;
-      parts = data || [];
+      
+      // Transform the data to include source_type for compatibility
+      const transformedData = data.map(part => ({
+        ...part,
+        source_type: part.is_onshape_part ? 'onshape_api' : 'file_upload'
+      }));
+      
+      parts = transformedData || [];
     } catch (error) {
       console.error('Error loading parts:', error);
       alert('Error loading parts. Please try again.');
@@ -428,9 +435,9 @@
 
   async function exportToCSV() {
     try {
-      // Fetch all parts data from the view
+      // Fetch all parts data from the parts table
       const { data, error } = await supabase
-        .from('parts_with_download_urls')
+        .from('parts')
         .select('*')
         .order('created_at', { ascending: false });
       

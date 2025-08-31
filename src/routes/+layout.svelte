@@ -25,12 +25,16 @@
     }
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session?.user?.id) {
-        await handleSignedIn(session.user);
+        setTimeout(() => {
+          handleSignedIn(session.user).catch((e) => console.error('handleSignedIn error:', e));
+        }, 0);
       } else if (event === 'SIGNED_OUT') {
         // Do not clear UUID here; allow app to continue if UUID remains
-        await loadUserFromUUID(supabase);
+        setTimeout(() => {
+          loadUserFromUUID(supabase).catch((e) => console.error('loadUserFromUUID error:', e));
+        }, 0);
       }
     });
 

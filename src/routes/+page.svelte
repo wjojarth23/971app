@@ -53,12 +53,16 @@
   // Don't load lists here; wait for reactive watcher to run when `user` is set
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user?.id) {
-        await handleSignedIn(session.user);
+        setTimeout(() => {
+          handleSignedIn(session.user).catch((e) => console.error('handleSignedIn error:', e));
+        }, 0);
       } else if (event === 'SIGNED_OUT') {
         // Do not force logout if UUID persists; reload from UUID
-        await loadUserFromUUID(supabase);
+        setTimeout(() => {
+          loadUserFromUUID(supabase).catch((e) => console.error('loadUserFromUUID error:', e));
+        }, 0);
       }
     });
 
