@@ -22,6 +22,7 @@
   let miscPrice = '';
   let miscQuantity = 1;
   let miscProjectText = '';
+  let miscNotes = '';
   // Edit modal state
   let showEditModal = false;
   let editPart = null;
@@ -32,7 +33,10 @@
   let editPrice = '';
   let editQuantity = 1;
   let editKittingBin = '';
+  let editNotes = '';
   let saving = false;
+  let showNotesModal = false;
+  let notesModalPart = null;
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -84,6 +88,7 @@
     editPrice = part.price !== null && part.price !== undefined ? String(part.price) : '';
     editQuantity = part.quantity || 1;
     editKittingBin = part.kitting_bin || '';
+  editNotes = part.notes || '';
     showEditModal = true;
   }
 
@@ -98,9 +103,11 @@
         vendor: editVendor || null,
         project_id: editProjectId || '',
         url: editUrl || null,
-        price: editPrice === '' ? null : Number(editPrice),
+  price: editPrice === '' ? null : Number(editPrice),
         quantity: editQuantity ? Number(editQuantity) : 1,
         kitting_bin: editKittingBin || null
+  ,
+  notes: editNotes && editNotes.trim() !== '' ? editNotes.trim() : null
       };
       const { error } = await supabase.from('purchasing').update(updates).eq('id', editPart.id);
       if (error) throw error;
@@ -158,6 +165,8 @@
         requester: requesterName || 'Unknown',
         approved: false,
         status: 'pending'
+  ,
+  notes: miscNotes && miscNotes.trim() !== '' ? miscNotes.trim() : null
       };
 
       const { error } = await supabase.from('purchasing').insert([payload]);
@@ -169,6 +178,7 @@
       miscPrice = '';
       miscQuantity = 1;
       miscProjectText = '';
+  miscNotes = '';
       await loadParts();
     } catch (err) {
       console.error('Failed to add misc item', err);
@@ -292,6 +302,11 @@
                 <td class="part-name">
                   <div class="name-cell">
                     {part.name}
+                    {#if part.notes}
+                      <button class="notes-badge" title="View notes" on:click={() => { notesModalPart = part; showNotesModal = true; }}>
+                        !
+                      </button>
+                    {/if}
                   </div>
                 </td>
                 <td class="material">
@@ -474,6 +489,10 @@
           <label for="edit-kit">Kitting Bin</label>
           <input id="edit-kit" type="text" bind:value={editKittingBin} />
         </div>
+        <div class="form-row">
+          <label for="edit-notes">Notes</label>
+          <textarea id="edit-notes" rows="4" bind:value={editNotes} placeholder="Order notes, vendor info, etc."></textarea>
+        </div>
         <div class="modal-actions">
           <button class="btn" on:click={() => { showEditModal = false; editPart = null; }}>Cancel</button>
           <button class="btn btn-danger" on:click={deleteEditPart}>Delete</button>
@@ -488,8 +507,8 @@
       <div class="modal">
         <h3>Add Misc Purchasing Item (not linked to a build)</h3>
         <div class="form-row">
-          <label for="misc-project">Project ID / Short Text</label>
-          <input id="misc-project" type="text" bind:value={miscProjectText} placeholder="Project id or short description" />
+          <label for="misc-project">Item name</label>
+          <input id="misc-project" type="text" bind:value={miscProjectText} placeholder="Robot parts" />
         </div>
         <div class="form-row">
           <label for="misc-qty">Quantity</label>
@@ -503,9 +522,34 @@
           <label for="misc-url">Link (optional)</label>
           <input id="misc-url" type="text" bind:value={miscUrl} placeholder="https://..." />
         </div>
+        <div class="form-row">
+          <label for="misc-notes">Notes (optional)</label>
+          <textarea id="misc-notes" rows="4" bind:value={miscNotes} placeholder="Order notes, vendor info, etc."></textarea>
+        </div>
         <div class="modal-actions">
           <button class="btn" on:click={() => { showAddMiscModal = false; }}>Cancel</button>
           <button class="btn btn-primary" on:click={addMiscItem}>Add Item</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showNotesModal}
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h3>Notes</h3>
+        <div class="form-row">
+          <div style="white-space:pre-wrap; max-height:300px; overflow:auto;">{notesModalPart ? notesModalPart.notes || '' : ''}</div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" on:click={() => { showNotesModal = false; notesModalPart = null; }}>Close</button>
+          {#if hasPermission(user, 'PLACE_ORDERS_MISC')}
+            <button class="btn btn-primary" on:click={() => {
+              // open edit modal pre-loaded with this part
+              showNotesModal = false;
+              openEditModal(notesModalPart);
+            }}>Edit</button>
+          {/if}
         </div>
       </div>
     </div>
@@ -733,6 +777,7 @@
   .modal .form-row { margin: 0.5rem 0; display:flex; flex-direction:column; }
   .modal .form-row label { font-size: 0.9rem; margin-bottom: 0.25rem; }
   .modal input[type="text"], .modal input[type="number"] { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; }
+  .modal textarea { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; resize: vertical; }
   .modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.75rem; }
 
   .empty-state {
@@ -760,6 +805,28 @@
 
   .edit-cell { text-align: center; }
   .edit-cell .btn { padding: 0.325rem 0.45rem; height: 32px; border-radius: 4px; min-width: 36px; display:inline-flex; align-items:center; justify-content:center; }
+
+  .notes-badge {
+    /* Paler red background with red outline to match danger button styling */
+    background: #ffe6e6; /* pale red */
+    color: #7a0b0b; /* darker red text for contrast */
+    border: 1px solid #ffb3b3; /* red outline */
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 0.5rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+    font-size: 12px;
+  }
+
+.notes-badge:hover {
+  background: #ffd6d6; /* slightly darker on hover */
+}
 
   .btn-danger { background: #ffe6e6; color: #7a0b0b; border: 1px solid #ffb3b3; cursor: pointer; }
   .btn-danger:hover { background: #ffd6d6; }
