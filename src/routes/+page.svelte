@@ -5,6 +5,14 @@
   
   let user = null;
   let loading = true;
+  // New state for user-specific lists
+  let subsystems = [];
+  let subsystemsLoading = false;
+  let builds = [];
+  let buildsLoading = false;
+  let purchases = [];
+  let purchasesLoading = false;
+  let listsLoaded = false;
   let authMode = 'login'; // 'login' or 'register'  
   let formData = {
     email: '',
@@ -42,6 +50,8 @@
     }
     loading = false;
 
+  // Don't load lists here; wait for reactive watcher to run when `user` is set
+
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user?.id) {
@@ -67,6 +77,93 @@
     } catch (error) {
       console.error('Error handling sign-in:', error);
     }
+  }
+
+  async function loadUserLists() {
+    try {
+      subsystemsLoading = true;
+      buildsLoading = true;
+      purchasesLoading = true;
+
+      // Load subsystems where the user is a member
+      try {
+        const { data: subs, error: subErr } = await supabase
+          .from('subsystem_members')
+          .select('subsystems(*)')
+          .eq('user_id', user.id);
+        if (!subErr && Array.isArray(subs)) {
+          subsystems = subs.map(r => r.subsystems).filter(Boolean);
+        } else {
+          subsystems = [];
+        }
+      } catch (e) {
+        console.error('Failed loading subsystems:', e);
+        subsystems = [];
+      } finally {
+        subsystemsLoading = false;
+      }
+
+      // Load builds tied to those subsystems (limit to recent 20)
+      try {
+        const subsystemIds = subsystems.map(s => s.id).filter(Boolean);
+        if (subsystemIds.length > 0) {
+          const { data: bdata, error: bErr } = await supabase
+            .from('builds')
+            .select(`*, subsystems(name)`)
+            .in('subsystem_id', subsystemIds)
+            .order('created_at', { ascending: false })
+            .limit(20);
+          if (!bErr) builds = bdata || [];
+          else builds = [];
+        } else {
+          builds = [];
+        }
+      } catch (e) {
+        console.error('Failed loading builds:', e);
+        builds = [];
+      } finally {
+        buildsLoading = false;
+      }
+
+      // Load purchases requested by this user (try both full_name and email)
+      try {
+        const results = [];
+        if (user.full_name) {
+          const r = await supabase.from('purchasing').select('*').eq('requester', user.full_name);
+          if (r && Array.isArray(r.data)) results.push(...r.data);
+        }
+        if (user.email) {
+          const r1 = await supabase.from('purchasing').select('*').eq('requester', user.email);
+          if (r1 && Array.isArray(r1.data)) results.push(...r1.data);
+          const r2 = await supabase.from('purchasing').select('*').ilike('requester', `%${user.email}%`);
+          if (r2 && Array.isArray(r2.data)) results.push(...r2.data);
+        }
+        if (user.id) {
+          const r = await supabase.from('purchasing').select('*').eq('requester', user.id);
+          if (r && Array.isArray(r.data)) results.push(...r.data);
+        }
+
+        // Merge unique by id
+        const merged = {};
+        for (const r of results) {
+          if (r && r.id) merged[r.id] = r;
+        }
+        purchases = Object.values(merged).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      } catch (e) {
+        console.error('Failed loading purchases:', e);
+        purchases = [];
+      } finally {
+        purchasesLoading = false;
+      }
+    } catch (err) {
+      console.error('Error in loadUserLists:', err);
+    }
+  }
+
+  // Reactive one-time loader: when user becomes available, load lists once
+  $: if (user && !listsLoaded) {
+    listsLoaded = true;
+    loadUserLists();
   }
 
   async function handleAuth() {
@@ -149,41 +246,9 @@
   <div class="dashboard-container">
     <div class="user-welcome">
       <h2>Welcome back, {user.full_name || user.email}!</h2>
-      <div class="user-info">
-        <div class="info-card">
-          <User size={20} />
-          <div>
-            <strong>Name:</strong> {user.full_name || 'Not set'}
-          </div>
-        </div>
-        <div class="info-card">
-          <Mail size={20} />
-          <div>
-            <strong>Email:</strong> {user.email}
-          </div>
-        </div>        <div class="info-card">
-          <Shield size={20} />
-          <div>
-            <strong>Role:</strong> 
-            {#if user.role === 'pending'}
-              <span class="pending-status">Pending Assignment</span>
-            {:else}
-              {user.role || 'Not assigned'}
-            {/if}
-          </div>
-        </div>
-        <div class="info-card">
-          <Shield size={20} />
-          <div>
-            <strong>Permissions:</strong> 
-            {#if !hasPermission(user, 'CAN_SEE_ROUTES')}
-              <span class="pending-status">Awaiting Admin Approval</span>
-            {:else}
-              {user.permissions || 'Not assigned'}
-            {/if}
-          </div>
-        </div>
-      </div>    </div>
+      <!-- Simplified header: we no longer show individual info boxes here -->
+      <p class="muted">Quick access to your CAD subsystems, builds, and purchases.</p>
+    </div>
 
     {#if !hasPermission(user, 'CAN_SEE_ROUTES')}
       <div class="pending-notice">
@@ -197,16 +262,83 @@
       <div class="dashboard-actions">
         <h3>Quick Actions</h3>
         <div class="action-grid">
-          <a href="/manufacture" class="action-card">
-            <Briefcase size={24} />
-            <h4>Manufacturing</h4>
-            <p>Access manufacturing workflows and tasks</p>
-          </a>
           <a href="/cad" class="action-card">
             <User size={24} />
             <h4>CAD Design</h4>
             <p>Work with CAD files and designs</p>
           </a>
+          <a href="/cad/build" class="action-card">
+            <Briefcase size={24} />
+            <h4>Builds</h4>
+            <p>View builds you are involved with</p>
+          </a>
+        </div>
+
+        <!-- User-specific lists: subsystems, builds, and purchases -->
+        <div class="user-lists">
+          <h4>Your Subsystems</h4>
+          {#if subsystemsLoading}
+            <div class="loading-spinner small"></div>
+          {:else if subsystems.length === 0}
+            <p class="muted">You are not a member of any subsystems yet.</p>
+          {:else}
+            <div class="card-grid">
+              {#each subsystems as s}
+                <a class="subsystem-card" href={`/cad/${s.id}`}>
+                  <h5>{s.name}</h5>
+                  <p class="muted">{s.description || 'No description'}</p>
+                </a>
+              {/each}
+            </div>
+          {/if}
+
+          <h4 style="margin-top:1rem">Your Builds</h4>
+          {#if buildsLoading}
+            <div class="loading-spinner small"></div>
+          {:else if builds.length === 0}
+            <p class="muted">No builds found for your subsystems.</p>
+          {:else}
+            <div class="card-grid">
+              {#each builds as b}
+                <a class="build-card" href={`/cad/build/${b.id}`}>
+                  <h5>{b.release_name || b.name || `Build ${b.id}`}</h5>
+                  <p class="muted">{b.subsystems?.name || 'Project'}</p>
+                </a>
+              {/each}
+            </div>
+          {/if}
+
+          <h4 style="margin-top:1rem">Your Purchase Requests</h4>
+          {#if purchasesLoading}
+            <div class="loading-spinner small"></div>
+          {:else if purchases.length === 0}
+            <p class="muted">You haven't requested any purchases yet.</p>
+          {:else}
+            <div class="table-container">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Quantity</th>
+                    <th>Price</th>
+                    <th>Status</th>
+                    <th>Project</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each purchases as p}
+                    <tr>
+                      <td>{p.name}</td>
+                      <td>{p.quantity || 1}</td>
+                      <td>{p.price !== null && p.price !== undefined ? `$${p.price.toFixed(2)}` : '—'}</td>
+                      <td>{p.status || 'pending'}</td>
+                      <td>{p.project_id || '-'}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
         </div>
       </div>
     {/if}
@@ -546,14 +678,6 @@
     padding: 0 1rem;
   }
 
-  .dashboard-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
 
   .user-welcome {
     background: var(--primary);
@@ -569,30 +693,7 @@
     font-size: 1.5rem;
   }
 
-  .user-info {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 1rem;
-  }
-
-  .info-card {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem;
-    background: var(--background);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-  }
-  .info-card div {
-    font-size: 0.9rem;
-  }
-
-  .pending-status {
-    color: #f59e0b;
-    font-weight: 500;
-    font-style: italic;
-  }
+  /* streamlined dashboard styles - user-specific cards below */
 
   .pending-notice {
     display: flex;
@@ -664,25 +765,51 @@
     line-height: 1.4;
   }
 
+  /* Card grid for subsystems and builds */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 0.5rem;
+  }
+
+  .subsystem-card,
+  .build-card {
+    display: block;
+    padding: 1rem;
+    background: var(--primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    color: inherit;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+
+  .subsystem-card:hover,
+  .build-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    border-color: var(--accent);
+  }
+
+  .subsystem-card h5,
+  .build-card h5 { margin: 0 0 0.25rem 0; color: var(--secondary); }
+  .subsystem-card p,
+  .build-card p { margin: 0; color: #666; font-size: 0.9rem; }
+
   @media (max-width: 768px) {
     .dashboard-container {
       margin: 1rem;
       padding: 0;
     }
 
-    .dashboard-header {
-      flex-direction: column;
-      gap: 1rem;
-      align-items: stretch;
-    }
 
     .user-welcome {
       padding: 1.5rem;
     }
 
-    .user-info {
-      grid-template-columns: 1fr;
-    }
+  /* responsive adjustments kept for action grid and user-welcome */
 
     .action-grid {
       grid-template-columns: 1fr;

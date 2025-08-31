@@ -403,9 +403,11 @@
                   </div>
                 </td>
                 <td class="edit-cell">
-                  <button class="btn btn-secondary btn-sm" title="Edit item" on:click={() => openEditModal(part)}>
-                    <Edit size={14} />
-                  </button>
+                  {#if (part.status || 'pending') === 'pending' && hasPermission(user, 'PLACE_ORDERS_MISC')}
+                    <button class="btn btn-secondary btn-sm" title="Edit item" on:click={() => openEditModal(part)}>
+                      <Edit size={14} />
+                    </button>
+                  {/if}
                 </td>
               </tr>
             {/each}
@@ -543,7 +545,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn" on:click={() => { showNotesModal = false; notesModalPart = null; }}>Close</button>
-          {#if hasPermission(user, 'PLACE_ORDERS_MISC')}
+          {#if hasPermission(user, 'PLACE_ORDERS_MISC') && (notesModalPart?.status || 'pending') === 'pending'}
             <button class="btn btn-primary" on:click={() => {
               // open edit modal pre-loaded with this part
               showNotesModal = false;
