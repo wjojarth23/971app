@@ -4,6 +4,7 @@
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { hasPermission } from '$lib/permissions.js';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon } from 'lucide-svelte';
+  import { toastActions } from '$lib/toast.js';
   import { goto } from '$app/navigation';
 
   let user = null;
@@ -21,6 +22,17 @@
   let miscPrice = '';
   let miscQuantity = 1;
   let miscProjectText = '';
+  // Edit modal state
+  let showEditModal = false;
+  let editPart = null;
+  let editName = '';
+  let editVendor = '';
+  let editProjectId = '';
+  let editUrl = '';
+  let editPrice = '';
+  let editQuantity = 1;
+  let editKittingBin = '';
+  let saving = false;
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -63,6 +75,70 @@
     }
   }
 
+  function openEditModal(part) {
+    editPart = part;
+    editName = part.name || '';
+    editVendor = part.vendor || '';
+    editProjectId = part.project_id || '';
+    editUrl = part.url || '';
+    editPrice = part.price !== null && part.price !== undefined ? String(part.price) : '';
+    editQuantity = part.quantity || 1;
+    editKittingBin = part.kitting_bin || '';
+    showEditModal = true;
+  }
+
+  async function saveEdit() {
+    if (!user) { alert('You must be signed in to edit items'); return; }
+  console.log('saveEdit called for', editPart && editPart.id);
+  toastActions.show('Saving...');
+  saving = true;
+    try {
+      const updates = {
+        name: editName,
+        vendor: editVendor || null,
+        project_id: editProjectId || '',
+        url: editUrl || null,
+        price: editPrice === '' ? null : Number(editPrice),
+        quantity: editQuantity ? Number(editQuantity) : 1,
+        kitting_bin: editKittingBin || null
+      };
+      const { error } = await supabase.from('purchasing').update(updates).eq('id', editPart.id);
+      if (error) throw error;
+      showEditModal = false;
+      editPart = null;
+      await loadParts();
+      toastActions.show('Item saved');
+    } catch (err) {
+      console.error('Failed to save edits', err);
+  const msg = 'Failed to save edits: ' + (err.message || String(err));
+  alert(msg);
+  toastActions.show(msg);
+    }
+    saving = false;
+  }
+
+  async function deleteEditPart() {
+    if (!user) { alert('You must be signed in to delete items'); return; }
+    if (!editPart) return;
+    try {
+      const { data, error } = await supabase.from('purchasing').delete().eq('id', editPart.id);
+      if (error) {
+        console.error('Failed to delete item', error);
+        alert('Failed to delete item: ' + (error.message || JSON.stringify(error)));
+        return;
+      }
+      showEditModal = false;
+      editPart = null;
+  await loadParts();
+  toastActions.show('Item deleted');
+    } catch (err) {
+      console.error('Failed to delete item', err);
+  const msg = 'Failed to delete item: ' + (err.message || String(err));
+  alert(msg);
+  toastActions.show(msg);
+    }
+  }
+
   async function addMiscItem() {
     if (!user) {
       alert('You must be signed in to add items');
@@ -73,15 +149,15 @@
       const requesterName = user.full_name || user.email || null;
       const payload = {
         // Minimal required fields for a misc purchasing item
+        // project_id is NOT NULL in the DB schema, use an empty string when none provided
         name: miscProjectText && miscProjectText.trim() !== '' ? miscProjectText.trim() : 'Misc Item',
-        project_id: miscProjectText && miscProjectText.trim() !== '' ? miscProjectText.trim() : null,
+        project_id: miscProjectText && miscProjectText.trim() !== '' ? miscProjectText.trim() : '',
         url: miscUrl && miscUrl.trim() !== '' ? miscUrl.trim() : null,
         price: miscPrice === '' ? null : Number(miscPrice),
         quantity: miscQuantity ? Number(miscQuantity) : 1,
-        requester: requesterName,
+        requester: requesterName || 'Unknown',
         approved: false,
-        status: 'pending',
-        build_id: null
+        status: 'pending'
       };
 
       const { error } = await supabase.from('purchasing').insert([payload]);
@@ -207,6 +283,7 @@
               <th>Approved</th>
               <th>Status</th>
               <th>Kit</th>
+              <th>Edit</th>
             </tr>
           </thead>
           <tbody>
@@ -310,6 +387,11 @@
                     />
                   </div>
                 </td>
+                <td class="edit-cell">
+                  <button class="btn btn-secondary btn-sm" title="Edit item" on:click={() => openEditModal(part)}>
+                    <Edit size={14} />
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -355,6 +437,47 @@
               alert('Failed to save');
             }
           }}>Save</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showEditModal}
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h3>Edit Purchasing Item</h3>
+        <div class="form-row">
+          <label for="edit-name">Name</label>
+          <input id="edit-name" type="text" bind:value={editName} />
+        </div>
+        <div class="form-row">
+          <label for="edit-vendor">Vendor</label>
+          <input id="edit-vendor" type="text" bind:value={editVendor} />
+        </div>
+        <div class="form-row">
+          <label for="edit-project">Project ID</label>
+          <input id="edit-project" type="text" bind:value={editProjectId} />
+        </div>
+        <div class="form-row">
+          <label for="edit-qty">Quantity</label>
+          <input id="edit-qty" type="number" min="1" bind:value={editQuantity} />
+        </div>
+        <div class="form-row">
+          <label for="edit-price">Unit Price</label>
+          <input id="edit-price" type="number" min="0" step="0.01" bind:value={editPrice} />
+        </div>
+        <div class="form-row">
+          <label for="edit-url">Link</label>
+          <input id="edit-url" type="text" bind:value={editUrl} />
+        </div>
+        <div class="form-row">
+          <label for="edit-kit">Kitting Bin</label>
+          <input id="edit-kit" type="text" bind:value={editKittingBin} />
+        </div>
+        <div class="modal-actions">
+          <button class="btn" on:click={() => { showEditModal = false; editPart = null; }}>Cancel</button>
+          <button class="btn btn-danger" on:click={deleteEditPart}>Delete</button>
+          <button class="btn btn-primary" on:click={saveEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -634,6 +757,12 @@
     margin: 0.25rem 0;
     color: #999;
   }
+
+  .edit-cell { text-align: center; }
+  .edit-cell .btn { padding: 0.325rem 0.45rem; height: 32px; border-radius: 4px; min-width: 36px; display:inline-flex; align-items:center; justify-content:center; }
+
+  .btn-danger { background: #ffe6e6; color: #7a0b0b; border: 1px solid #ffb3b3; cursor: pointer; }
+  .btn-danger:hover { background: #ffd6d6; }
 
   .error-container {
     display: flex;
