@@ -1,9 +1,14 @@
 <script>  import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { hasPermission } from '$lib/permissions.js';
-  import { userStore, setUserUUID, clearUserUUID, loadUserFromUUID, upsertProfileIfMissing } from '$lib/stores/user.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
+  import { initAuth, userStore, signOut } from '$lib/stores/auth.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
   
   let user = null;
+
+  function can(perm) {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    return Array.isArray(user.permissions) && user.permissions.includes(perm);
+  }
   let loading = true;
   // New state for user-specific lists
   let subsystems = [];
@@ -22,66 +27,14 @@
   let authLoading = false;
   let authError = '';
   let authSuccess = '';
-  onMount(async () => {
-    // Keep local var in sync with store
+
+  onMount(() => {
     const unsub = userStore.subscribe((v) => { user = v; });
-
-    // Hydrate from UUID first (only if not already loaded)
-    if (!user) {
-      await loadUserFromUUID(supabase);
-    }
-
-    // If we have an auth session, persist UUID and ensure profile exists
-    const sessionTimeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Session fetch timeout')), 5000)
-    );
-    
-    let session = null;
-    try {
-      const sessionPromise = supabase.auth.getSession();
-      const { data } = await Promise.race([sessionPromise, sessionTimeoutPromise]);
-      session = data.session;
-    } catch (error) {
-      console.warn('Session fetch timeout or error:', error.message || error);
-    }
-    
-    if (session?.user?.id) {
-      await handleSignedIn(session.user);
-    }
+    const uninit = initAuth();
+    // UI shouldn't block on auth; keep simple
     loading = false;
-
-  // Don't load lists here; wait for reactive watcher to run when `user` is set
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user?.id) {
-        setTimeout(() => {
-          handleSignedIn(session.user).catch((e) => console.error('handleSignedIn error:', e));
-        }, 0);
-      } else if (event === 'SIGNED_OUT') {
-        // Do not force logout if UUID persists; reload from UUID
-        setTimeout(() => {
-          loadUserFromUUID(supabase).catch((e) => console.error('loadUserFromUUID error:', e));
-        }, 0);
-      }
-    });
-
-    return () => { unsub?.(); subscription?.unsubscribe(); };
+    return () => { unsub?.(); uninit?.(); };
   });
-
-  async function handleSignedIn(authUser) {
-    try {
-      setUserUUID(authUser.id);
-      await upsertProfileIfMissing(supabase, {
-        id: authUser.id,
-        email: authUser.email,
-        name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : '')
-      });
-      await loadUserFromUUID(supabase);
-    } catch (error) {
-      console.error('Error handling sign-in:', error);
-    }
-  }
 
   async function loadUserLists() {
     try {
@@ -183,10 +136,7 @@
         });
         
         if (error) throw error;
-        if (data?.user) {
-          await handleSignedIn(data.user);
-        }
-        // User will also be processed by the auth state change listener
+        // auth state change will update stores
       } else {        // Register new user
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
@@ -197,21 +147,21 @@
             }
           }
         });
-          if (error) throw error;
+        if (error) throw error;
         
         if (data.user && !data.session) {
           authSuccess = 'Registration successful! Please check your email to confirm your account.';
         }
-        if (data.session?.user) {
-          await handleSignedIn(data.session.user);
-        }
+        // If session exists, auth listener will populate stores
       }
     } catch (error) {
       authError = error.message;
     } finally {
       authLoading = false;
     }
-  }  function resetForm() {
+  }
+
+  function resetForm() {
     formData = {
       email: '',
       password: '',
@@ -226,13 +176,7 @@
   }
 
   async function handleLogout() {
-    // Explicit logout clears UUID and in-memory user
-    clearUserUUID();
-    userStore.set(null);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      console.error('Error logging out:', error);
-    }
+    await signOut();
   }
 </script>
 
@@ -254,7 +198,7 @@
       <p class="muted">Quick access to your CAD subsystems, builds, and purchases.</p>
     </div>
 
-    {#if !hasPermission(user, 'CAN_SEE_ROUTES')}
+    {#if !can('CAN_SEE_ROUTES')}
       <div class="pending-notice">
         <AlertCircle size={20} />
         <div>

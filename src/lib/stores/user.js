@@ -1,137 +1,158 @@
-import { writable } from 'svelte/store';
+/**
+ * DEPRECATED: Compatibility shim for old user store APIs.
+ * New code should import from `$lib/stores/auth.js`:
+ *   import { user, userProfile as userStore, initAuth, signOut } from '$lib/stores/auth.js';
+ *
+ * This shim keeps existing routes working while drastically simplifying auth:
+ * - No localStorage UUID
+ * - Uses Supabase auth session directly
+ * - Fetches user_profiles for app-level profile (role/permissions)
+ *
+ * IMPORTANT: Do not await Supabase calls inside auth callbacks.
+ * This file is only used from components (onMount etc.), so awaits are safe here.
+ */
 
-export const userStore = writable(null);
+import { userProfile as userStore } from '$lib/stores/auth.js';
 
-// Only persist the UUID locally. All other user data must be fetched on demand.
+// Back-compat named export used across the app
+export { userStore };
+
+// Legacy no-op localStorage helpers (UUID persisted logic removed)
 const LS_KEY = 'user_uuid';
-
 export function getUserUUID() {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    return localStorage.getItem(LS_KEY);
-  } catch {
-    return null;
-  }
+  // legacy always returns null (UUID persistence removed)
+  return null;
 }
-
-export function setUserUUID(uuid) {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    if (uuid) localStorage.setItem(LS_KEY, uuid);
-  } catch {
-    // ignore storage errors
-  }
+export function setUserUUID(_uuid) {
+  // no-op: we no longer persist UUID
 }
-
 export function clearUserUUID() {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.removeItem(LS_KEY);
-  } catch {
-    // ignore storage errors
-  }
+  // no-op: we no longer persist UUID
 }
 
-// Normalize a DB row into the app's in-memory user object
+/**
+ * Normalize/guard permissions to a string array
+ * @param {unknown} arr
+ * @returns {string[]}
+ */
+function normalizePermissions(arr) {
+  if (!arr) return [];
+  if (Array.isArray(arr)) return arr.map(String);
+  return [String(arr)];
+}
+
+/**
+ * Map DB row to the UI profile shape
+ */
 function normalizeProfile(row) {
   if (!row) return null;
-  const permissions =
-    Array.isArray(row.permissions)
-      ? row.permissions.map(String)
-      : row.permissions
-      ? [String(row.permissions)]
-      : [];
-
   return {
     id: row.id,
     email: row.email || '',
-    full_name: row.full_name || row.display_name || '',
+    full_name: row.full_name || '',
     role: row.role || 'member',
-    permissions: permissions.length ? permissions : ['basic']
+    permissions: normalizePermissions(row.permissions),
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+    banned: !!row.banned
   };
 }
 
-// Fetch the user's profile by UUID from user_profiles
+/**
+ * Fetch a user_profiles row by UUID.
+ * Safe to use from components; do NOT call from inside Supabase auth callbacks with await.
+ */
 export async function fetchUserProfileByUUID(supabase, uuid) {
-  if (!supabase || !uuid) return null;
-  
-  // Add timeout to prevent hanging
-  const timeoutPromise = new Promise((_, reject) => 
-    setTimeout(() => reject(new Error('Profile fetch timeout')), 10000)
-  );
-  
-  try {
-    const queryPromise = supabase
-      .from('user_profiles')
-      .select('id, email, full_name, role, permissions')
-      .eq('id', uuid)
-      .single();
-    
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-    
-    if (error) {
-      console.warn('fetchUserProfileByUUID error:', error.message || error);
-      return null;
-    }
-    return normalizeProfile(data);
-  } catch (error) {
-    console.warn('fetchUserProfileByUUID timeout or error:', error.message || error);
-    return null;
-  }
-}
-
-// Initialize or refresh the in-memory user from localStorage UUID
-export async function loadUserFromUUID(supabase) {
-  const uuid = getUserUUID();
-  if (!uuid) {
+  if (!supabase || !uuid) {
     userStore.set(null);
     return null;
   }
-  const profile = await fetchUserProfileByUUID(supabase, uuid);
-  userStore.set(profile);
-  return profile;
+  try {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, email, full_name, role, permissions, created_at, updated_at, banned')
+      .eq('id', uuid)
+      .single();
+
+    if (error) {
+      console.warn('fetchUserProfileByUUID error:', error.message || error);
+      userStore.set(null);
+      return null;
+    }
+    const prof = normalizeProfile(data);
+    userStore.set(prof);
+    return prof;
+  } catch (e) {
+    console.warn('fetchUserProfileByUUID exception:', e?.message || e);
+    userStore.set(null);
+    return null;
+  }
 }
 
-// Ensure a minimal user_profiles row exists for a given auth user (by id)
-export async function upsertProfileIfMissing(supabase, { id, email, name }) {
-  if (!supabase || !id) return null;
-  
-  // Add timeout to prevent hanging
-  const timeoutPromise = new Promise((_, reject) => 
-    setTimeout(() => reject(new Error('Profile upsert timeout')), 10000)
-  );
-  
+/**
+ * Hydrate userStore from the current Supabase session (ignores legacy UUID).
+ * If a session exists, fetches user_profiles row; otherwise sets null.
+ */
+export async function loadUserFromUUID(supabase) {
+  if (!supabase) {
+    userStore.set(null);
+    return null;
+  }
   try {
-    // Check if profile exists
-    const checkPromise = supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('id', id)
-      .single();
-    
-    const { data, error } = await Promise.race([checkPromise, timeoutPromise]);
-    
-    // If not found (PostgREST 406 on .single() is typically code 'PGRST116')
-    if (!data) {
-      const insertTimeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile insert timeout')), 10000)
-      );
-      
-      const insert = {
-        id,
-        email: email || null,
-        full_name: name || (email ? email.split('@')[0] : null)
-      };
-      const insertPromise = supabase.from('user_profiles').insert([insert]);
-      await Promise.race([insertPromise, insertTimeoutPromise]);
-    } else if (error && error.code !== 'PGRST116') {
-      // Log other unexpected errors
-      console.warn('profile check error:', error.message || error);
+    const { data, error } = await supabase.auth.getSession();
+    if (error) console.warn('getSession error:', error.message || error);
+    const authUser = data?.session?.user ?? null;
+    if (!authUser?.id) {
+      userStore.set(null);
+      return null;
+    }
+    return await fetchUserProfileByUUID(supabase, authUser.id);
+  } catch (e) {
+    console.warn('loadUserFromUUID exception:', e?.message || e);
+    userStore.set(null);
+    return null;
+  }
+}
+
+/**
+ * Ensure a minimal user_profiles row exists for the given user (by id),
+ * then fetch and set the profile into userStore.
+ */
+export async function upsertProfileIfMissing(supabase, { id, email, name }) {
+  if (!supabase) return null;
+
+  try {
+    let userId = id;
+    if (!userId) {
+      const { data } = await supabase.auth.getSession();
+      userId = data?.session?.user?.id;
+    }
+    if (!userId) {
+      userStore.set(null);
+      return null;
     }
 
-    return await fetchUserProfileByUUID(supabase, id);
-  } catch (error) {
-    console.warn('upsertProfileIfMissing timeout or error:', error.message || error);
+    // Minimal insert; upsert avoids conflicts if it already exists
+    const insert = {
+      id: userId,
+      email: email ?? null,
+      full_name:
+        name ??
+        (email ? String(email).split('@')[0] : null)
+    };
+
+    const { error: upsertError } = await supabase
+      .from('user_profiles')
+      .upsert(insert, { onConflict: 'id' });
+
+    if (upsertError) {
+      console.warn('upsertProfileIfMissing warning:', upsertError.message || upsertError);
+      // proceed to fetch anyway
+    }
+
+    return await fetchUserProfileByUUID(supabase, userId);
+  } catch (e) {
+    console.warn('upsertProfileIfMissing exception:', e?.message || e);
     return null;
   }
 }

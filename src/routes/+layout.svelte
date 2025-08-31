@@ -1,68 +1,27 @@
 <script>  import '../app.css';
   import { onMount } from 'svelte';
-  import { supabase } from '$lib/supabase.js';
-  import { userStore, getUserUUID, setUserUUID, clearUserUUID, loadUserFromUUID, upsertProfileIfMissing } from '$lib/stores/user.js';
-  import { hasPermission } from '$lib/permissions.js';
+  import { initAuth, userStore, signOut } from '$lib/stores/auth.js';
   import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
   let user = null;
 
-  onMount(async () => {
-    // Keep local var in sync with store
-    const unsub = userStore.subscribe((v) => { user = v; });
-
-    // Hydrate from UUID first (no auth required if public read is allowed)
-    if (!user) {
-      await loadUserFromUUID(supabase);
-    }
-
-    // If we have an auth session, persist UUID and ensure profile exists
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.id) {
-      await handleSignedIn(session.user);
-    }
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session?.user?.id) {
-        setTimeout(() => {
-          handleSignedIn(session.user).catch((e) => console.error('handleSignedIn error:', e));
-        }, 0);
-      } else if (event === 'SIGNED_OUT') {
-        // Do not clear UUID here; allow app to continue if UUID remains
-        setTimeout(() => {
-          loadUserFromUUID(supabase).catch((e) => console.error('loadUserFromUUID error:', e));
-        }, 0);
-      }
-    });
-
-    return () => { unsub?.(); subscription?.unsubscribe(); };
-  });
-
-  async function handleSignedIn(authUser) {
-    try {
-      setUserUUID(authUser.id);
-      await upsertProfileIfMissing(supabase, {
-        id: authUser.id,
-        email: authUser.email,
-        name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : '')
-      });
-      await loadUserFromUUID(supabase);
-    } catch (error) {
-      console.error('Error handling sign-in:', error);
-    }
+  function can(perm) {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    return Array.isArray(user.permissions) && user.permissions.includes(perm);
   }
 
+  onMount(() => {
+    const unsub = userStore.subscribe((v) => { user = v; });
+    const uninit = initAuth();
+    return () => { unsub?.(); uninit?.(); };
+  });
+
+
   async function handleLogout() {
-    // Explicit logout clears UUID so user must sign in again
-    clearUserUUID();
-    userStore.set(null);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      console.error('Error logging out:', error);
-    }
+    await signOut();
     goto('/');
   }
 
@@ -86,7 +45,7 @@
           <Home size={18} />
           Home
         </a>
-        {#if hasPermission(user, 'CAN_SEE_ROUTES')}
+        {#if can('CAN_SEE_ROUTES')}
           <a href="/manufacture" class="nav-link" class:active={isActive('/manufacture')}>
             <Hammer size={18} />
             Manufacture
@@ -104,7 +63,7 @@
             Purchasing
           </a>
         {/if}
-        {#if hasPermission(user, 'VIEW_ADMIN_PANEL')}
+        {#if can('VIEW_ADMIN_PANEL')}
         <a href="/admin" class="nav-link" class:active={isActive('/admin')}>
           <Briefcase size={18} />
           Admin
