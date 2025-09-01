@@ -162,7 +162,8 @@
         url: miscUrl && miscUrl.trim() !== '' ? miscUrl.trim() : null,
         price: miscPrice === '' ? null : Number(miscPrice),
         quantity: miscQuantity ? Number(miscQuantity) : 1,
-        requester: requesterName || 'Unknown',
+  requester: requesterName || 'Unknown',
+  purchaser: user.id,
         approved: false,
         status: 'pending'
   ,

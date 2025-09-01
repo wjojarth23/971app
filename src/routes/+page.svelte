@@ -82,9 +82,17 @@
         buildsLoading = false;
       }
 
-      // Load purchases requested by this user (try both full_name and email)
+      // Load purchases associated with this user.
+      // Prefer the `purchaser` UUID column (new), fall back to legacy `requester` text matches.
       try {
         const results = [];
+        // Primary: rows explicitly linked to the user's UUID
+        if (user.id) {
+          const r = await supabase.from('purchasing').select('*').eq('purchaser', user.id);
+          if (r && Array.isArray(r.data)) results.push(...r.data);
+        }
+
+        // Legacy compatibility: include rows where requester matches full name, email, or contains the email
         if (user.full_name) {
           const r = await supabase.from('purchasing').select('*').eq('requester', user.full_name);
           if (r && Array.isArray(r.data)) results.push(...r.data);
@@ -95,12 +103,14 @@
           const r2 = await supabase.from('purchasing').select('*').ilike('requester', `%${user.email}%`);
           if (r2 && Array.isArray(r2.data)) results.push(...r2.data);
         }
+
+        // Some older rows may have stored the UUID string in requester; include those too
         if (user.id) {
-          const r = await supabase.from('purchasing').select('*').eq('requester', user.id);
-          if (r && Array.isArray(r.data)) results.push(...r.data);
+          const r3 = await supabase.from('purchasing').select('*').eq('requester', user.id);
+          if (r3 && Array.isArray(r3.data)) results.push(...r3.data);
         }
 
-        // Merge unique by id
+        // Merge unique by id and sort by created_at desc
         const merged = {};
         for (const r of results) {
           if (r && r.id) merged[r.id] = r;

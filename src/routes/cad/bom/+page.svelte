@@ -826,7 +826,8 @@
   vendor: detection?.vendor || item.vendor || null,
   url: buildVendorSearchUrl(detection) || null,
         price: null,
-        workflow: 'purchase'
+  workflow: 'purchase',
+  purchaser: user.id
       };
 
       const { data: purchasingData, error: purchasingError } = await supabase
@@ -894,7 +895,8 @@
       vendor: purchaseModalItem.vendor || null,
       url: url,
       price: priceVal,
-      workflow: 'purchase'
+  workflow: 'purchase',
+  purchaser: user.id
     };
 
     const { data: purchasingData, error: purchasingError } = await supabase
@@ -1009,6 +1011,7 @@
             quantity: item.quantity || 1,
             material: item.material || '',
             status: 'pending'
+            ,purchaser: user.id
           }])
           .select();
 
