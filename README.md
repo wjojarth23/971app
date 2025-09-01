@@ -5,22 +5,10 @@ A comprehensive manufacturing management system built with SvelteKit, featuring 
 ## Features
 
 - **OnShape Integration**: Connect CAD documents and analyze assemblies
-- **AI-Powered BOM Classification**: Uses ChatGPT-4-mini to intelligently classify parts as COTS or manufactured
 - **Manufacturing Process Assignment**: Automatically assigns appropriate manufacturing processes (mill, laser-cut, 3D-print, etc.)
 - **Stock Management**: Track and assign stock materials to parts
 - **Build Management**: Create and manage manufacturing builds
 - **User Authentication**: Secure user management with Supabase
-
-## New: ChatGPT Integration
-
-The system now includes ChatGPT-4-mini integration for intelligent part classification:
-
-- **Intelligent Classification**: AI determines if parts are COTS or manufactured
-- **Process Assignment**: Recommends manufacturing processes based on materials and geometry
-- **Confidence Levels**: Shows AI confidence in decisions
-- **Fallback Logic**: Automatic fallback to rule-based classification if AI is unavailable
-
-See [CHATGPT_INTEGRATION.md](./CHATGPT_INTEGRATION.md) for detailed setup instructions.
 
 ## Setup
 
@@ -29,7 +17,6 @@ See [CHATGPT_INTEGRATION.md](./CHATGPT_INTEGRATION.md) for detailed setup instru
 - Node.js 18+
 - Supabase account
 - OnShape developer account
-- OpenAI API key (for ChatGPT integration)
 
 ### Installation
 
@@ -46,9 +33,6 @@ See [CHATGPT_INTEGRATION.md](./CHATGPT_INTEGRATION.md) for detailed setup instru
    
    Edit `.env` with your credentials:
    ```env
-   # OpenAI API Key for ChatGPT integration
-   OPENAI_API_KEY=sk-your-openai-key-here
-   
    # OnShape API Configuration
    PUBLIC_ONSHAPE_ACCESS_KEY=your_onshape_access_key
    PUBLIC_ONSHAPE_SECRET_KEY=your_onshape_secret_key
@@ -76,13 +60,6 @@ npm run dev
 npm run dev -- --open
 ```
 
-## Testing ChatGPT Integration
-
-Test the ChatGPT API connection:
-
-```bash
-node test-chatgpt.js
-```
 
 ## Building
 
@@ -111,7 +88,6 @@ npm run preview
 
 ## Documentation
 
-- [ChatGPT Integration Guide](./CHATGPT_INTEGRATION.md) - Detailed setup and usage
 - [Supabase Setup](./SUPABASE_SETUP.md) - Database configuration
 
 ## Deployment
