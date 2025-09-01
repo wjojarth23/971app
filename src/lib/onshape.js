@@ -367,7 +367,9 @@ class OnShapeAPI {
                             console.log(`Found material "${material}" from header "${propName}"`);
                         }
                     }
-                }                // Get part ID and Part Studio element ID from item source
+                }
+
+                // Get part ID and Part Studio element ID from item source
                 let partStudioElementId = '';
                 if (item.itemSource && item.itemSource.partId) {
                     partId = item.itemSource.partId;
@@ -391,51 +393,15 @@ class OnShapeAPI {
                     material, 
                     vendor 
                 });
-                
-                // Get bounding box information if available
+
+                // Bounding box fetch disabled globally per requirements - never call bounding box APIs
                 let boundingBox = null;
                 let boundingBoxX = null;
                 let boundingBoxY = null;
                 let boundingBoxZ = null;
-                  if (partId && partId !== '' && item.itemSource?.elementId && resolvedWorkspaceId) {
-                    try {
-                        // Get the document ID from the BOM source
-                        const documentId = bom.bomSource?.document?.id || bom.documentId;
-                        
-                        if (!documentId) {
-                            console.warn(`No document ID available for bounding box lookup for "${partName}"`);
-                        } else {
-                            // Try to get bounding box, but don't let failures block the analysis
-                            const bbox = await this.getPartBoundingBox(
-                                documentId,
-                                'w', // workspace
-                                resolvedWorkspaceId,
-                                item.itemSource.elementId, // Use the part's specific element ID
-                                partId
-                            );
-                            
-                            if (bbox && bbox.highX !== undefined && bbox.lowX !== undefined) {
-                                boundingBoxX = Math.abs(bbox.highX - bbox.lowX); // Keep in meters for now
-                                boundingBoxY = Math.abs(bbox.highY - bbox.lowY);
-                                boundingBoxZ = Math.abs(bbox.highZ - bbox.lowZ);
-                                boundingBox = `${(boundingBoxX * 1000).toFixed(1)}x${(boundingBoxY * 1000).toFixed(1)}x${(boundingBoxZ * 1000).toFixed(1)}mm`;
-                                
-                                console.log(`Successfully got bounding box for ${partName}:`, boundingBox);
-                            }
-                        }
-                    } catch (bboxError) {
-                        console.warn(`Could not fetch bounding box for "${partName}" (${partNumber}):`, bboxError.message);
-                        console.warn('Bounding box error details:', bboxError);
-                        // Continue without bounding box - this is not critical for classification
-                    }
-                } else {
-                    const missingFields = [];
-                    if (!partId) missingFields.push('partId');
-                    if (!item.itemSource?.elementId) missingFields.push('elementId');
-                    if (!resolvedWorkspaceId) missingFields.push('workspaceId');
-                    
-                    console.log(`Skipping bounding box for "${partName}" - missing: ${missingFields.join(', ')}`);
-                }                // Add to data for AI analysis
+                console.log('Bounding box fetch disabled; skipping bounding box lookup for all parts');
+                
+                // Add to data for AI analysis
                 bomDataForAI.push({
                     name: partName,
                     description: description,

@@ -380,17 +380,9 @@ export async function GET({ url }) {
                 const indented = url.searchParams.get('indented') || 'false';
                 apiPath = `/api/v11/assemblies/d/${documentId}/${wvm}/${wvmid}/e/${elementId}/bom?indented=${indented}`;
                 break;
-            case 'part-bounding-box':
-                if (!elementId) {
-                    return json({ error: 'Missing elementId for bounding box request' }, { status: 400 });
-                }
-                const partWvm = url.searchParams.get('wvm') || 'w';
-                const partWvmId = url.searchParams.get('wvmId') || workspaceId;
-                const partId = url.searchParams.get('partId');
-                if (!partId) {
-                    return json({ error: 'Missing partId for bounding box request' }, { status: 400 });
-                }
-                apiPath = `/api/v11/parts/d/${documentId}/${partWvm}/${partWvmId}/e/${elementId}/partid/${partId}/boundingboxes`;
+      case 'part-bounding-box':
+        // Bounding box requests are disabled by policy. Do not contact OnShape for bounding boxes.
+        return json({ error: 'Bounding box requests are disabled by server policy' }, { status: 403 });
                 break;
             case 'download-stl':
                 if (!elementId) {

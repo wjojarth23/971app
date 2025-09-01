@@ -61,53 +61,25 @@ class PartClassificationService {
             
             // Only classify as manufactured if part number begins with capital "P"
             if (!isCOTS && partNumber.startsWith('P')) {
-                // Get dimensions for classification
-                const boundingBoxX = item.bounding_box_x || 0;
-                const boundingBoxY = item.bounding_box_y || 0;
-                const boundingBoxZ = item.bounding_box_z || 0;
-                
-                // Convert dimensions to inches if they're in meters
-                let dimX = boundingBoxX > 1 ? boundingBoxX / 1000 * 39.3701 : boundingBoxX * 39.3701;
-                let dimY = boundingBoxY > 1 ? boundingBoxY / 1000 * 39.3701 : boundingBoxY * 39.3701;
-                let dimZ = boundingBoxZ > 1 ? boundingBoxZ / 1000 * 39.3701 : boundingBoxZ * 39.3701;
-                
-                // Sort dimensions to get min/max
-                const dimensions = [dimX, dimY, dimZ].sort((a, b) => a - b);
-                const minDim = dimensions[0];
-                const maxDim = dimensions[2];                // Immediate assignment for 3D printing materials
-                if (material.includes('nylon') || material.includes('pla') || 
-                    material.includes('abs') || material.includes('petg') || 
-                    material.includes('onyx')) {
+                // Per new rules: never use bounding boxes for classification.
+                // Apply deterministic rules based on name and material.
+
+                // Normalize checking strings
+                const nameContains = (s) => name.includes(s);
+                const materialContains = (s) => material.includes(s);
+
+                // 3D printing materials (immediate assignment)
+                if (materialContains('nylon') || materialContains('pla') || materialContains('abs') || materialContains('petg') || materialContains('onyx')) {
                     manufacturingProcess = '3d-print';
-                }else {
-                    // Classify by geometry using heuristics
-                    const isSheet = this.isSheetGeometry(dimensions, material);
-                    const isShaft = this.isShaftGeometry(dimensions);
-                    const isCubic = this.isCubicGeometry(dimensions);
-                    
-                    console.log(`Part "${name}" geometry analysis: sheet=${isSheet}, shaft=${isShaft}, cubic=${isCubic}, dims=[${dimensions[0].toFixed(2)}, ${dimensions[1].toFixed(2)}, ${dimensions[2].toFixed(2)}]`);
-                    
-                    if (isSheet) {
-                        // Sheet goods classification
-                        if (material.includes('acrylic') || material.includes('poly') || 
-                            material.includes('wood') || material.includes('birch')) {
-                            manufacturingProcess = 'laser-cut';
-                        } else {
-                            manufacturingProcess = 'router';
-                        }
-                    } else if (isShaft) {
-                        manufacturingProcess = 'lathe';
-                    } else if (isCubic) {
-                        manufacturingProcess = 'mill';
-                    } else {
-                        // Default classification based on material
-                        if (material.includes('acrylic') || material.includes('poly') || 
-                            material.includes('wood') || material.includes('birch')) {
-                            manufacturingProcess = 'laser-cut';
-                        } else {
-                            manufacturingProcess = 'mill';
-                        }
-                    }
+                } else if (nameContains('shaft') || nameContains('standoff')) {
+                    // Everything named shaft or standoff => lathe
+                    manufacturingProcess = 'lathe';
+                } else if (materialContains('birch') || materialContains('polycarbonate') || nameContains('plate') || nameContains('tube')) {
+                    // Birch or Polycarbonate auto router, name contains plate or tube => router
+                    manufacturingProcess = 'router';
+                } else {
+                    // Default to mill for anything else
+                    manufacturingProcess = 'mill';
                 }
             } else if (!isCOTS) {
                 // Not COTS but doesn't start with "P" - cannot be manufactured

@@ -195,6 +195,70 @@
   ],
   "router": [
     {
+      "id": "al_1_16_sheet",
+      "material": "Aluminum",
+      "description": "1/16\" Aluminum Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
+      "id": "al_1_8_sheet",
+      "material": "Aluminum", 
+      "description": "1/8\" Aluminum Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
+      "id": "al_1_4_sheet",
+      "material": "Aluminum",
+      "description": "1/4\" Aluminum Sheet", 
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
+      "id": "al_3_8_sheet",
+      "material": "Aluminum",
+      "description": "3/8\" Aluminum Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet", 
+      "workflow": "router"
+    },
+    {
+      "id": "pc_1_16_sheet",
+      "material": "Polycarbonate",
+      "description": "1/16\" Polycarbonate Sheet",
+      "thickness": 0.0625,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
+      "id": "pc_1_8_sheet", 
+      "material": "Polycarbonate",
+      "description": "1/8\" Polycarbonate Sheet",
+      "thickness": 0.125,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
+      "id": "pc_1_4_sheet",
+      "material": "Polycarbonate",
+      "description": "1/4\" Polycarbonate Sheet",
+      "thickness": 0.25,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
+      "id": "pc_3_8_sheet",
+      "material": "Polycarbonate", 
+      "description": "3/8\" Polycarbonate Sheet",
+      "thickness": 0.375,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
       "id": "al_1x2_1_16_tube",
       "material": "Aluminum",
       "description": "1x2\" Aluminum Tube (1/16\" wall)",
