@@ -9,6 +9,8 @@
   let workflow = '';
   let quantity = 1;
   let material = '';
+  let stockAssignment = '';
+  let customStock = '';
   let uploadedFile = null;
   let isSubmitting = false;
 
@@ -41,6 +43,8 @@
   $: selectedWorkflow = workflows.find(w => w.id === workflow);
   $: requiredFileType = selectedWorkflow?.fileType || '';
   $: availableMaterials = workflow ? materialOptions[workflow] || [] : [];
+  import stockData from '$lib/stock.json';
+  $: stockOptions = workflow ? (stockData[workflow] || []).map(s => s.description) : [];
 
   function handleFileUpload(event) {
     const file = event.target.files[0];
@@ -83,8 +87,9 @@
   }
 
   async function handleSubmit() {
-    if (!partName || !requesterName || !projectId || !workflow || !material || !uploadedFile || !quantity || quantity < 1) {
-      alert('Please fill in all fields, select a material, upload a file, and specify a valid quantity.');
+    const effectiveStock = stockAssignment === '__other__' ? customStock.trim() : stockAssignment;
+    if (!partName || !requesterName || !projectId || !workflow || !material || !uploadedFile || !quantity || quantity < 1 || !effectiveStock) {
+      alert('Please fill in all fields, select a stock, select a material, upload a file, and specify a valid quantity.');
       return;
     }
 
@@ -122,6 +127,7 @@
             workflow: workflow,
             quantity: quantity,
             material: material,
+            stock_assignment: effectiveStock,
             file_name: fileName,
             file_url: fileName,
             status: 'pending'
@@ -140,7 +146,9 @@
       projectId = '';
       workflow = '';
       quantity = 1;
-      material = '';
+  material = '';
+  stockAssignment = '';
+  customStock = '';
       uploadedFile = null;
       
       // Navigate to parts list
@@ -240,6 +248,29 @@
         </div>
       </div>
 
+      <!-- Stock Selection -->
+      {#if stockOptions.length > 0}
+        <div class="form-section">
+          <h2>Stock Selection</h2>
+          <div class="form-group">
+            <label for="stock">Stock</label>
+            <select id="stock" bind:value={stockAssignment} required>
+              <option value="">Select stock</option>
+              {#each stockOptions as s}
+                <option value={s}>{s}</option>
+              {/each}
+              <option value="__other__">Other...</option>
+            </select>
+          </div>
+          {#if stockAssignment === '__other__'}
+            <div class="form-group">
+              <label for="customStock">Custom Stock</label>
+              <input id="customStock" type="text" bind:value={customStock} placeholder="Type custom stock" required />
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <!-- Material Selection -->
       {#if availableMaterials.length > 0}
         <div class="form-section">
@@ -337,9 +368,7 @@
     margin-bottom: 1rem;
   }
 
-  .manufacturing-form {
-    /* Remove extra padding since form-container has it */
-  }
+  /* .manufacturing-form wrapper uses container padding; no extra rules needed */
 
   .form-section {
     margin-bottom: 2rem;

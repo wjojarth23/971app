@@ -6,13 +6,16 @@
   import { goto } from '$app/navigation';
   import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
+  import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
 
   let user = null;
   let loading = true;
   let build = null;
   let buildId = $page.params.id;
-  let otherItems = [];
-  // Edit modal state for build items
+  let bomSnapshot = [];
+  let processingAdd = false;
+
+  // Edit modal state for build items (top table)
   let showEditModal = false;
   let editTarget = null;
   let editWorkflow = '';
@@ -21,6 +24,12 @@
   let editStockAssignment = '';
   let editStockChoice = '';
   let editStockAssignmentCustom = null;
+
+  // Purchase modal (when auto-detect fails)
+  let showPurchaseModal = false;
+  let purchaseModalItem = null;
+  let purchaseModalUrl = '';
+  let purchaseModalPrice = '';
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -70,13 +79,21 @@
       if (error) throw error;
       build = data;
 
-      const { data: otherData, error: otherErr } = await supabase
+      // Load saved BOM snapshot (manufactured + COTS items)
+      const { data: bomData, error: bomErr } = await supabase
         .from('build_bom')
         .select('*')
         .eq('build_id', buildId)
-        .eq('part_type', 'other')
+        .in('part_type', ['COTS', 'manufactured'])
         .order('created_at', { ascending: true });
-      if (!otherErr) otherItems = otherData || [];
+      if (!bomErr) {
+        bomSnapshot = (bomData || []).map(it => ({
+          ...it,
+          _stock_choice: it.stock_assignment_custom ? '__other__' : '',
+        }));
+      } else {
+        bomSnapshot = [];
+      }
 
       if (build.part_ids && build.part_ids.length > 0) {
         const { data: partsData, error: partsError } = await supabase
@@ -103,103 +120,6 @@
     }
   }
 
-  async function promoteOtherToManufacturing(item) {
-    try {
-      const workflow = item.workflow || 'mill';
-      const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
-
-      const { data: parts, error: partsErr } = await supabase
-        .from('parts')
-        .insert([{
-          name: item.part_name || 'Unnamed Part',
-          requester: user?.full_name || user?.email,
-          project_id,
-          workflow,
-          status: 'pending',
-          quantity: item.quantity || 1,
-          material: item.material || ''
-        }])
-        .select();
-      if (partsErr) throw partsErr;
-      const part = parts?.[0];
-
-      if (part?.id) {
-        const current = build.part_ids || [];
-        const newPartIds = current.includes(part.id) ? current : [...current, part.id];
-        const { error: updErr } = await supabase
-          .from('builds')
-          .update({ part_ids: newPartIds })
-          .eq('id', buildId);
-        if (updErr) throw updErr;
-      }
-
-      const { error: bomUpdErr } = await supabase
-        .from('build_bom')
-        .update({ part_type: 'manufactured', added_to_parts_list: true })
-        .eq('id', item.id);
-      if (bomUpdErr) throw bomUpdErr;
-
-      await loadBuildDetails();
-    } catch (e) {
-      console.error('Promote to manufacturing failed:', e);
-      alert('Failed to add to manufacturing');
-    }
-  }
-
-  async function promoteOtherToPurchasing(item) {
-    try {
-      const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
-      const { data: pur, error: purErr } = await supabase
-        .from('purchasing')
-        .insert([{
-          name: item.part_name || 'Unnamed Item',
-          requester: user?.full_name || user?.email,
-          project_id,
-          quantity: item.quantity || 1,
-          material: item.material || '',
-          status: 'pending'
-        }])
-        .select();
-      if (purErr) throw purErr;
-      const p = pur?.[0];
-
-      if (p?.id) {
-        const current = build.part_ids || [];
-        const newPartIds = current.includes(p.id) ? current : [...current, p.id];
-        const { error: updErr } = await supabase
-          .from('builds')
-          .update({ part_ids: newPartIds })
-          .eq('id', buildId);
-        if (updErr) throw updErr;
-      }
-
-      const { error: bomUpdErr } = await supabase
-        .from('build_bom')
-        .update({ part_type: 'COTS', added_to_purchasing: true })
-        .eq('id', item.id);
-      if (bomUpdErr) throw bomUpdErr;
-
-      await loadBuildDetails();
-    } catch (e) {
-      console.error('Promote to purchasing failed:', e);
-      alert('Failed to add to purchasing');
-    }
-  }
-
-  async function removeOtherItem(itemId) {
-    try {
-      const { error } = await supabase
-        .from('build_bom')
-        .delete()
-        .eq('id', itemId);
-      if (error) throw error;
-      await loadBuildDetails();
-    } catch (e) {
-      console.error('Remove other item failed:', e);
-      alert('Failed to remove item');
-    }
-  }
-
   async function markAsAssembled() {
     try {
       const { error } = await supabase
@@ -223,70 +143,28 @@
     return stockData[workflow] || [];
   }
 
-  function updateOtherPartType(index, newType) {
-    if (!otherItems[index]) return;
-    otherItems[index].part_type = newType;
-    if (newType === 'COTS') {
-      otherItems[index].workflow = 'purchase';
-    } else {
-      otherItems[index].workflow = otherItems[index].workflow && otherItems[index].workflow !== 'purchase' ? otherItems[index].workflow : 'mill';
-    }
-    otherItems = [...otherItems];
-  }
-
-  // Helpers for stock selection on 'other' items
-  function updateOtherStockChoice(index, choice) {
-    const item = otherItems[index];
-    if (!item) return;
-    item._stock_choice = choice;
-    if (choice && choice !== '__other__') {
-      item.stock_assignment = choice;
-      item.stock_assignment_custom = null;
-    } else if (choice === '__other__') {
-      item.stock_assignment = '';
-      item.stock_assignment_custom = '';
-    } else {
-      item.stock_assignment = '';
-      item.stock_assignment_custom = null;
-    }
-    otherItems = [...otherItems];
-  }
-
-  function updateOtherCustomStock(index, value) {
-    const item = otherItems[index];
-    if (!item) return;
-    item.stock_assignment_custom = value;
-    item.stock_assignment = value;
-    item._stock_choice = '__other__';
-    otherItems = [...otherItems];
-  }
-
-  function updateOtherWorkflow(index, newWorkflow) {
-    if (!otherItems[index]) return;
-    otherItems[index].workflow = newWorkflow;
-    otherItems = [...otherItems];
-  }
-
-  function getOtherDisplayType(item) {
-    if (item.part_type === 'COTS' || item.part_type === 'manufactured') return item.part_type;
-    if (item.workflow === 'purchase') return 'COTS';
-    if (item.workflow) return 'manufactured';
-    return 'manufactured';
-  }
-
-  function handleOtherAddClick(item) {
-    const isCots = getOtherDisplayType(item) === 'COTS';
-    if (isCots) {
-      promoteOtherToPurchasing(item);
-    } else {
-      promoteOtherToManufacturing(item);
-    }
-  }
-
   function getBuildProgress() {
-    if (!build) return { percent: 0, manufactured: 0, total: 0, status: 'No parts' };
+    if (!build) return { 
+      percent: 0, 
+      manufactured: 0, 
+      total: 0, 
+      status: 'No parts',
+      mfgPercent: 0,
+      purPercent: 0,
+      mfgCount: { complete: 0, total: 0 },
+      purCount: { complete: 0, total: 0 }
+    };
     const allParts = [...(build.parts || []), ...(build.purchasing || [])];
-    if (allParts.length === 0) return { percent: 0, manufactured: 0, total: 0, status: 'No parts' };
+    if (allParts.length === 0) return { 
+      percent: 0, 
+      manufactured: 0, 
+      total: 0, 
+      status: 'No parts',
+      mfgPercent: 0,
+      purPercent: 0,
+      mfgCount: { complete: 0, total: 0 },
+      purCount: { complete: 0, total: 0 }
+    };
     const manufactured = allParts.filter(item => item.status === 'complete' || item.status === 'delivered').length;
     const inProgress = allParts.filter(item => item.status === 'in-progress' || item.status === 'cammed' || item.status === 'ordered').length;
     let status = 'Requested';
@@ -320,14 +198,16 @@
       default: return '🔧';
     }
   }
+
+  // Build Components edit modal
   function openEditModal(part) {
     editTarget = part;
     editWorkflow = part.workflow || '';
     editMaterial = part.material || '';
     editQuantity = part.quantity || 1;
-  editStockAssignment = part.stock_assignment || '';
-  editStockChoice = part._stock_choice || (part.stock_assignment_custom ? '__other__' : '') || '';
-  editStockAssignmentCustom = part.stock_assignment_custom ?? null;
+    editStockAssignment = part.stock_assignment || '';
+    editStockChoice = part._stock_choice || (part.stock_assignment_custom ? '__other__' : '') || '';
+    editStockAssignmentCustom = part.stock_assignment_custom ?? null;
     showEditModal = true;
   }
 
@@ -404,6 +284,285 @@
     } catch (e) {
       console.error('Remove from build failed:', e);
       alert('Failed to remove from build');
+    }
+  }
+
+  // Full BOM (bottom table) - editing helpers
+  function finalStockFromRow(item) {
+    return item._stock_choice === '__other__'
+      ? (item.stock_assignment_custom || item.stock_assignment || null)
+      : (item._stock_choice || item.stock_assignment || null);
+  }
+
+  async function persistBomUpdate(itemId, patch) {
+    try {
+      const { error } = await supabase.from('build_bom').update(patch).eq('id', itemId);
+      if (error) throw error;
+    } catch (e) {
+      console.error('Failed to persist BOM update:', e);
+      alert('Failed to update BOM row: ' + (e?.message || e));
+    }
+  }
+
+  function updateBomType(index, newType) {
+    const item = bomSnapshot[index];
+    if (!item) return;
+    item.part_type = newType;
+    if (newType === 'COTS') {
+      item.workflow = 'purchase';
+    } else {
+      item.workflow = item.workflow && item.workflow !== 'purchase' ? item.workflow : 'mill';
+    }
+    bomSnapshot = [...bomSnapshot];
+    persistBomUpdate(item.id, { part_type: item.part_type, workflow: item.workflow });
+  }
+
+  function updateBomWorkflow(index, newWorkflow) {
+    const item = bomSnapshot[index];
+    if (!item || item.part_type === 'COTS') return;
+    item.workflow = newWorkflow;
+    bomSnapshot = [...bomSnapshot];
+    persistBomUpdate(item.id, { workflow: item.workflow });
+  }
+
+  function updateBomStockChoice(index, choice) {
+    const item = bomSnapshot[index];
+    if (!item || item.part_type === 'COTS') return;
+    item._stock_choice = choice;
+    if (choice && choice !== '__other__') {
+      item.stock_assignment = choice;
+      item.stock_assignment_custom = null;
+    } else if (choice === '__other__') {
+      item.stock_assignment = '';
+      item.stock_assignment_custom = '';
+    } else {
+      item.stock_assignment = '';
+      item.stock_assignment_custom = null;
+    }
+    bomSnapshot = [...bomSnapshot];
+    const finalStock = finalStockFromRow(item);
+    persistBomUpdate(item.id, { stock_assignment: finalStock, stock_assignment_custom: item._stock_choice === '__other__' ? (item.stock_assignment_custom || '') : null });
+  }
+
+  function updateBomCustomStock(index, value) {
+    const item = bomSnapshot[index];
+    if (!item || item.part_type === 'COTS') return;
+    item.stock_assignment_custom = value;
+    item.stock_assignment = value;
+    item._stock_choice = '__other__';
+    bomSnapshot = [...bomSnapshot];
+    persistBomUpdate(item.id, { stock_assignment: value, stock_assignment_custom: value });
+  }
+
+  // Full BOM - Add action
+  async function addFromFullBOM(item) {
+    if (!item) return;
+    if (processingAdd) return;
+    processingAdd = true;
+    try {
+      const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+
+      if (item.part_type === 'COTS' || item.workflow === 'purchase') {
+        // Attempt vendor detection
+        const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
+        
+        const vendor = detection?.vendor || item.vendor || null;
+        const rawUrl = buildVendorSearchUrl(detection);
+        
+        // Check if we have a valid, useful URL (not null and not ending with '=' which indicates no search term)
+        const hasValidUrl = rawUrl && rawUrl.trim() !== '' && !rawUrl.endsWith('=');
+        
+        // Require a valid URL before inserting into purchasing; prompt when URL cannot be determined
+        if (!hasValidUrl) {
+          purchaseModalItem = { ...item, _buildId: buildId };
+          purchaseModalUrl = '';
+          purchaseModalPrice = '';
+          showPurchaseModal = true;
+          processingAdd = false;
+          return;
+        }
+        
+        // Insert into purchasing with validated URL
+        const purchasingInsertData = {
+          name: item.part_name || item.part_number || 'Unnamed Item',
+          requester: user?.full_name || user?.email,
+          project_id,
+          quantity: item.quantity || 1,
+          material: item.material || '',
+          status: 'pending',
+          vendor: vendor || null,
+          url: rawUrl || null,
+          price: null,
+          workflow: 'purchase'
+        };
+        const { data: pur, error: purErr } = await supabase
+          .from('purchasing')
+          .insert([purchasingInsertData])
+          .select();
+        if (purErr) throw purErr;
+        const p = pur?.[0];
+
+        if (p?.id) {
+          const current = build.part_ids || [];
+          const newPartIds = current.includes(p.id) ? current : [...current, p.id];
+          const { error: updErr } = await supabase
+            .from('builds')
+            .update({ part_ids: newPartIds })
+            .eq('id', buildId);
+          if (updErr) throw updErr;
+        }
+
+        const { error: bomUpdErr } = await supabase
+          .from('build_bom')
+          .update({ added_to_purchasing: true })
+          .eq('id', item.id);
+        if (bomUpdErr) throw bomUpdErr;
+      } else {
+        // Insert into parts (manufactured)
+        const wf = item.workflow || 'mill';
+        const file_format =
+          wf === '3d-print' ? 'stl' :
+          (wf === 'laser-cut' || wf === 'lathe' || wf === 'mill' || wf === 'router') ? 'step' : 'step';
+
+        const baseInsert = {
+          name: item.part_name || item.part_number || 'Unnamed Part',
+          requester: user?.full_name || user?.email,
+          project_id,
+          workflow: wf,
+          status: 'pending',
+          quantity: item.quantity || 1,
+          material: item.material || '',
+          file_name: '',
+          file_url: ''
+        };
+
+        const stock_assignment_value = finalStockFromRow(item);
+
+        let partRow = null;
+        let primaryError = null;
+        try {
+          const withOnshape = {
+            ...baseInsert,
+            stock_assignment: stock_assignment_value || null,
+            onshape_document_id: item.onshape_document_id || build?.subsystems?.onshape_document_id || null,
+            onshape_wvm: item.onshape_wvm || 'v',
+            onshape_wvmid: item.onshape_wvmid || build?.release_id || null,
+            onshape_element_id: item.onshape_element_id || build?.subsystems?.onshape_element_id || null,
+            onshape_part_id: item.onshape_part_id || null,
+            file_format,
+            is_onshape_part: !!(item.onshape_document_id || item.onshape_part_id)
+          };
+          const { data, error } = await supabase.from('parts').insert([withOnshape]).select();
+          if (error) primaryError = error;
+          else partRow = data?.[0] || null;
+        } catch (e) {
+          primaryError = e;
+        }
+
+        if (!partRow) {
+          if (primaryError && String(primaryError.message || primaryError).includes('stock_assignment') && String(primaryError.message || primaryError).includes('does not exist')) {
+            // Retry without stock_assignment
+            const withOnshapeNoStock = {
+              ...baseInsert,
+              onshape_document_id: item.onshape_document_id || build?.subsystems?.onshape_document_id || null,
+              onshape_wvm: item.onshape_wvm || 'v',
+              onshape_wvmid: item.onshape_wvmid || build?.release_id || null,
+              onshape_element_id: item.onshape_element_id || build?.subsystems?.onshape_element_id || null,
+              onshape_part_id: item.onshape_part_id || null,
+              file_format,
+              is_onshape_part: !!(item.onshape_document_id || item.onshape_part_id)
+            };
+            const { data, error } = await supabase.from('parts').insert([withOnshapeNoStock]).select();
+            if (error) throw error;
+            partRow = data?.[0] || null;
+          } else {
+            // fallback to basic insert
+            const { data, error } = await supabase.from('parts').insert([baseInsert]).select();
+            if (error) throw error;
+            partRow = data?.[0] || null;
+          }
+        }
+
+        if (partRow?.id) {
+          const current = build.part_ids || [];
+          const newPartIds = current.includes(partRow.id) ? current : [...current, partRow.id];
+          const { error: updErr } = await supabase
+            .from('builds')
+            .update({ part_ids: newPartIds })
+            .eq('id', buildId);
+          if (updErr) throw updErr;
+        }
+
+        const { error: bomUpdErr } = await supabase
+          .from('build_bom')
+          .update({ added_to_parts_list: true })
+          .eq('id', item.id);
+        if (bomUpdErr) throw bomUpdErr;
+      }
+
+      await loadBuildDetails();
+    } catch (e) {
+      console.error('Add from Full BOM failed:', e);
+      alert('Failed to add item to build: ' + (e?.message || e));
+    } finally {
+      processingAdd = false;
+    }
+  }
+
+  async function confirmAddToPurchasingFromModal() {
+    if (!purchaseModalItem) return;
+    showPurchaseModal = false;
+    
+    const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+    
+    try {
+      // Insert into purchasing with user-provided URL and price
+      const purchasingInsertData = {
+        name: purchaseModalItem.part_name || purchaseModalItem.part_number || 'Unnamed Item',
+        requester: user?.full_name || user?.email,
+        project_id,
+        quantity: purchaseModalItem.quantity || 1,
+        material: purchaseModalItem.material || '',
+        status: 'pending',
+        vendor: purchaseModalItem.vendor || null,
+        url: purchaseModalUrl && purchaseModalUrl.trim() !== '' ? purchaseModalUrl.trim() : null,
+        price: purchaseModalPrice && purchaseModalPrice !== '' ? Number(purchaseModalPrice) : null,
+        workflow: 'purchase'
+      };
+      
+      const { data: pur, error: purErr } = await supabase
+        .from('purchasing')
+        .insert([purchasingInsertData])
+        .select();
+      if (purErr) throw purErr;
+      
+      const p = pur?.[0];
+      if (p?.id) {
+        const current = build.part_ids || [];
+        const newPartIds = current.includes(p.id) ? current : [...current, p.id];
+        const { error: updErr } = await supabase
+          .from('builds')
+          .update({ part_ids: newPartIds })
+          .eq('id', buildId);
+        if (updErr) throw updErr;
+      }
+
+      const { error: bomUpdErr } = await supabase
+        .from('build_bom')
+        .update({ added_to_purchasing: true })
+        .eq('id', purchaseModalItem.id);
+      if (bomUpdErr) throw bomUpdErr;
+
+      await loadBuildDetails();
+      alert('Added to purchasing successfully!');
+      
+    } catch (e) {
+      console.error('Failed to add from purchase modal:', e);
+      alert('Failed to add to purchasing: ' + (e?.message || e));
+    } finally {
+      purchaseModalItem = null;
+      purchaseModalUrl = '';
+      purchaseModalPrice = '';
     }
   }
 </script>
@@ -500,6 +659,7 @@
       </div>
     </div>
 
+    <!-- Build Components on top -->
     <div class="bom-section">
       <div class="parts-header">
         <h2>Build Components</h2>
@@ -605,61 +765,64 @@
       {/if}
     </div>
 
-    {#if otherItems && otherItems.length > 0}
-      <div class="bom-section">
-        <div class="parts-header">
-          <h2>Other Items</h2>
-          <div class="legend">
-            <span class="legend-item"><span class="dot other"></span>Other</span>
-          </div>
+    <!-- Full BOM below -->
+    <div class="bom-section">
+      <div class="parts-header">
+        <h2>Full BOM</h2>
+        <div class="legend">
+          <span class="legend-item"><span class="dot manufactured"></span>Manufactured</span>
+          <span class="legend-item"><span class="dot cots"></span>COTS</span>
         </div>
+      </div>
+      {#if bomSnapshot && bomSnapshot.length > 0}
         <div class="bom-table-container">
           <table class="bom-table">
             <thead>
               <tr>
-                <th>Part Name</th>
-                <th>Qty</th>
+                <th>Part</th>
                 <th>Type</th>
                 <th>Workflow</th>
+                <th>Qty</th>
                 <th>Material</th>
-                <th>Dimensions</th>
-                <th>Stock Assignment</th>
+                <th>Stock</th>
+                <th>Added?</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {#each otherItems as item, i}
-                <tr class="table-row">
-                  <td>
-                    <div class="part-name">
-                      {item.part_name}
-                      {#if item.part_number}
-                        <div class="part-description">{item.part_number}</div>
-                      {/if}
+              {#each bomSnapshot as item, i}
+                <tr class="row {i % 2 === 0 ? 'even' : 'odd'}">
+                  <td class="part-name">
+                    <div class="name-cell">
+                      <div class="avatar">
+                        <Package size={14} />
+                      </div>
+                      <div class="name-wrap">
+                        <div class="name">{item.part_name || 'Unnamed Part'}</div>
+                        {#if item.part_number}
+                          <div class="part-number">{item.part_number}</div>
+                        {/if}
+                      </div>
                     </div>
                   </td>
-                  <td>{item.quantity || 1}</td>
                   <td>
-                    {#if true}
-                      {@const displayType = getOtherDisplayType(item)}
-                      <select
-                        class="type-dropdown {displayType === 'COTS' ? 'type-cots' : 'type-manufactured'}"
-                        value={displayType}
-                        on:change={(e) => updateOtherPartType(i, e.target.value)}
-                      >
-                        <option value="COTS">COTS</option>
-                        <option value="manufactured">Manufactured</option>
-                      </select>
-                    {/if}
+                    <select
+                      class="type-dropdown {item.part_type === 'COTS' ? 'type-cots' : 'type-manufactured'}"
+                      value={item.part_type}
+                      on:change={(e) => updateBomType(i, e.target.value)}
+                    >
+                      <option value="COTS">COTS</option>
+                      <option value="manufactured">Manufactured</option>
+                    </select>
                   </td>
                   <td>
-                    {#if (getOtherDisplayType(item) === 'COTS')}
+                    {#if item.part_type === 'COTS'}
                       <span class="workflow-badge workflow-purchase">Purchase</span>
                     {:else}
                       <select
                         class="workflow-dropdown workflow-{item.workflow || 'mill'}"
                         value={item.workflow || 'mill'}
-                        on:change={(e) => updateOtherWorkflow(i, e.target.value)}
+                        on:change={(e) => updateBomWorkflow(i, e.target.value)}
                       >
                         <option value="3d-print">3D Print</option>
                         <option value="laser-cut">Laser Cut</option>
@@ -669,39 +832,48 @@
                       </select>
                     {/if}
                   </td>
-                  <td>{item.material || '-'}</td>
-                  <td>
-                    {#if item.bounding_box_x && item.bounding_box_y && item.bounding_box_z}
-                      <div class="bounding-box">
-                        {(item.bounding_box_x * 1000).toFixed(1)} × {(item.bounding_box_y * 1000).toFixed(1)} × {(item.bounding_box_z * 1000).toFixed(1)} mm
-                      </div>
-                    {:else}
-                      <span class="no-data">No dimensions</span>
-                    {/if}
-                  </td>
-                  <td>
-                    {#if (getOtherDisplayType(item) !== 'COTS')}
-                      <div class="stock-select">
-                        <select on:change={(e) => updateOtherStockChoice(i, e.target.value)} value={item._stock_choice || item.stock_assignment}>
-                          <option value="">Select Stock</option>
-                          {#each getStocksForWorkflow(item.workflow || 'mill') as stock}
-                            <option value={stock.description}>{stock.description}</option>
-                          {/each}
-                          <option value="__other__">Other...</option>
-                        </select>
-
-                        {#if (item._stock_choice === '__other__' || (!item._stock_choice && item.stock_assignment_custom !== null))}
-                          <input type="text" class="form-input" placeholder="Type custom stock" bind:value={item.stock_assignment_custom} on:input={(e) => updateOtherCustomStock(i, e.target.value)} />
-                        {/if}
-                      </div>
+                  <td class="quantity">{item.quantity || 1}</td>
+                  <td class="material">{item.material || '-'}</td>
+                  <td class="material">
+                    {#if item.part_type !== 'COTS'}
+                      <select on:change={(e) => updateBomStockChoice(i, e.target.value)} value={item._stock_choice || item.stock_assignment || ''}>
+                        <option value="">Select Stock</option>
+                        {#each getStocksForWorkflow(item.workflow || 'mill') as stock}
+                          <option value={stock.description}>{stock.description}</option>
+                        {/each}
+                        <option value="__other__">Other...</option>
+                      </select>
+                      {#if item._stock_choice === '__other__'}
+                        <div style="margin-top:0.35rem;">
+                          <input class="form-input" type="text" placeholder="Type custom stock" value={item.stock_assignment_custom || ''} on:input={(e) => updateBomCustomStock(i, e.target.value)} />
+                        </div>
+                      {/if}
                     {:else}
                       <span class="no-stock">-</span>
                     {/if}
                   </td>
                   <td>
-                    <button class="btn btn-sm btn-yellow add-btn" on:click={() => handleOtherAddClick(item)}>
-                      <Plus size={14} />
-                      Add
+                    {#if item.added_to_parts_list || item.added_to_purchasing}
+                      <span class="chip chip-neutral">
+                        <CheckCircle size={12} /> Added
+                      </span>
+                    {:else}
+                      <span class="chip chip-neutral">Pending</span>
+                    {/if}
+                  </td>
+                  <td>
+                    <button
+                      class="btn btn-sm btn-yellow add-btn"
+                      on:click={() => addFromFullBOM(item)}
+                      disabled={(item.added_to_parts_list || item.added_to_purchasing) || processingAdd}
+                    >
+                      {#if item.added_to_parts_list || item.added_to_purchasing}
+                        <CheckCircle size={14} />
+                        Added
+                      {:else}
+                        <Plus size={14} />
+                        Add
+                      {/if}
                     </button>
                   </td>
                 </tr>
@@ -709,8 +881,14 @@
             </tbody>
           </table>
         </div>
-      </div>
-    {/if}
+      {:else}
+        <div class="empty-state">
+          <Package size={48} />
+          <h3>No Full BOM Items</h3>
+          <p>The BOM snapshot for this build does not contain items yet.</p>
+        </div>
+      {/if}
+    </div>
   {:else}
     <div class="error-container">
       <h2>Build Not Found</h2>
@@ -762,7 +940,6 @@
     </div>
     <div class="modal-row">
       <label>Material</label>
-      <!-- Material is read-only in the modal; only stock/workflow should be editable -->
       <input class="form-input" type="text" bind:value={editMaterial} readonly title="Material is read-only" />
     </div>
     <div class="modal-row">
@@ -774,6 +951,32 @@
       <div style="flex:1"></div>
       <button class="btn" on:click={() => { showEditModal = false; editTarget = null; }}>Cancel</button>
       <button class="btn btn-yellow" on:click={saveEdit}>Save</button>
+    </div>
+  </div>
+{/if}
+
+<!-- Purchase Link/Price Modal (when auto-detect fails) -->
+{#if showPurchaseModal}
+  <div class="modal-overlay" role="button" tabindex="0" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { showPurchaseModal = false; purchaseModalItem = null; } }}>
+  <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }} style="max-width:560px;">
+      <div class="modal-header">
+        <h3>Provide vendor link and unit price</h3>
+        <button class="close-btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>×</button>
+      </div>
+      <div class="modal-content">
+        <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
+        <div style="display:flex; flex-direction:column; gap:0.5rem;">
+          <label for="purchase-url">Vendor URL:</label>
+          <input id="purchase-url" class="form-input" type="url" placeholder="https://..." bind:value={purchaseModalUrl} />
+          
+          <label for="purchase-price">Unit Price (optional):</label>
+          <input id="purchase-price" class="form-input" type="number" step="0.01" min="0" placeholder="0.00" bind:value={purchaseModalPrice} />
+        </div>
+        <div class="modal-actions">
+          <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
+          <button class="btn btn-primary" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
+        </div>
+      </div>
     </div>
   </div>
 {/if}
@@ -897,9 +1100,6 @@
   .bom-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
   .bom-table th, .bom-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
   .bom-table th { background: var(--background); font-weight: 600; color: var(--text); }
-  /* Ensure rows in the main BOM table use the same white background as the other table
-     The parts table below uses .table-row; rows in the build table use class="row" so
-     target both class patterns here. */
   .bom-table .table-row,
   .bom-table tbody tr.row,
   .bom-table tbody tr.row.even,
@@ -907,10 +1107,6 @@
     background: #fff;
   }
   .bom-table tr:hover { background: #f8f9fa; }
-
-  /* Remove double-thick bottom border: the container (.bom-table-container) already has
-     a 1px border, so hide the bottom border on the table's last row to avoid two adjacent
-     borders appearing thicker. */
   .bom-table tbody tr:last-child td {
     border-bottom: none;
   }
@@ -936,7 +1132,6 @@
   .workflow-dropdown.workflow-router { background: #fce4ec; color: #c2185b; border-color: #f8bbd9; }
   select { padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.8125rem; background: white; cursor: pointer; height: 32px; }
   /* Edit button should match the COTS chip height and corner radius */
-  /* Stronger selector to override global .btn rules so default state is visible */
   button.btn.btn-sm.chip-edit,
   .actions > .chip-edit {
     display: inline-flex !important;
@@ -947,9 +1142,9 @@
     border-radius: 4px !important;
     font-size: 0.8125rem !important;
     font-weight: 500 !important;
-    border: 1px solid #d1d5db !important; /* visible subtle border */
-    background: #f3f4f6 !important; /* light grey */
-    color: #374151 !important; /* darker text for contrast */
+    border: 1px solid #d1d5db !important;
+    background: #f3f4f6 !important;
+    color: #374151 !important;
     cursor: pointer !important;
     transition: background 120ms ease, transform 80ms ease, box-shadow 120ms ease !important;
     box-shadow: none !important;
@@ -963,5 +1158,123 @@
   .actions > .chip-edit:focus {
     outline: 3px solid rgba(37,99,235,0.12) !important;
     box-shadow: 0 0 0 3px rgba(37,99,235,0.08) !important;
+  }
+
+  /* Purchase Modal Styles */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: white;
+    border-radius: 8px;
+    padding: 0;
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    color: var(--text);
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--secondary);
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+
+  .close-btn:hover {
+    background: var(--background);
+    color: var(--text);
+  }
+
+  .modal-content {
+    padding: 1.5rem;
+  }
+
+  .modal-content p {
+    margin: 0 0 1rem 0;
+    color: var(--text);
+  }
+
+  .form-input {
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.875rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+  }
+
+  .btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .btn:hover {
+    background: var(--background);
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+  }
+
+  .btn-primary:hover {
+    background: #2563eb;
+    border-color: #2563eb;
   }
 </style>

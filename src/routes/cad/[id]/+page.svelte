@@ -6,9 +6,9 @@
   import { hasPermission } from '$lib/permissions.js';
   import { onShapeAPI } from '$lib/onshape.js';  
   import { partClassificationService } from '$lib/bom_classify.js';
-  import { detectVendorFromString } from '$lib/vendor_detect.js';
+  import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy, CheckCircle } from 'lucide-svelte';
+  import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
 
   let subsystemId = $page.params.id;
@@ -21,6 +21,11 @@
   let buildBOM = [];
   let stockTypes = [];
   let loadingBOM = false;
+  // Purchase modal (when auto-detect fails)
+  let showPurchaseModal = false;
+  let purchaseModalItem = null;
+  let purchaseModalUrl = '';
+  let purchaseModalPrice = '';
   let loadingBuild = false;  let loadingStep = 'Initializing...';
   
   // Track which parts have been added to the parts table
@@ -679,6 +684,54 @@
     alert(`Would add ${cotsItems.length} COTS items to purchasing`);
   }
 
+  async function confirmAddToPurchasingFromModal() {
+    if (!purchaseModalItem) return;
+    showPurchaseModal = false;
+    try {
+      const buildId = purchaseModalItem._buildId || null;
+      const queued = {
+        name: purchaseModalItem.part_name || purchaseModalItem.part_number || 'Unnamed Part',
+        requester: user.full_name || user.email,
+        project_id: `${subsystem.name}-${selectedVersion.name}`,
+        quantity: purchaseModalItem.quantity || 1,
+        material: purchaseModalItem.material || '',
+        status: 'pending',
+        vendor: null,
+        url: purchaseModalUrl && purchaseModalUrl.trim() !== '' ? purchaseModalUrl.trim() : null,
+        price: purchaseModalPrice && purchaseModalPrice !== '' ? Number(purchaseModalPrice) : null,
+        workflow: 'purchase',
+        purchaser: user.id
+      };
+      const { data, error } = await supabase.from('purchasing').insert([queued]).select();
+      if (error) throw error;
+
+      // insert into build_bom
+      const { error: bomError } = await supabase.from('build_bom').insert([{
+        build_id: buildId,
+        part_name: queued.name,
+        part_number: purchaseModalItem.part_number || null,
+        quantity: queued.quantity,
+        part_type: 'COTS',
+        material: queued.material || null,
+        workflow: 'purchase',
+        stock_assignment: null,
+        added_to_purchasing: true,
+        status: 'pending'
+      }]);
+      if (bomError) throw bomError;
+
+      addedPartsSet = new Set([...addedPartsSet, purchaseModalItem.part_number || purchaseModalItem.part_name]);
+      purchaseModalItem = null;
+      purchaseModalUrl = '';
+      purchaseModalPrice = '';
+      alert('Added to purchasing');
+    } catch (e) {
+      console.error('Failed to add from purchase modal:', e);
+      alert('Failed to add to purchasing: ' + (e?.message || e));
+    }
+  }
+
+
   async function manufactureIteration() {
     // Check for duplicate parts from previous builds of same subsystem
     try {
@@ -882,10 +935,106 @@
 
     loadingBuild = true;
     try {
-      // Only add manufactured parts (skip COTS)
+      // Handle COTS (purchase) items: attempt auto-detect, otherwise prompt modal
       if (item.part_type === 'COTS') {
-        alert('COTS items are not added to manufacturing queue. Use "Add All COTS to Purchasing" instead.');
-        return;
+        try {
+          const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
+
+          // Ensure a build exists (create or find)
+          let buildId = null;
+          const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}`;
+          const { data: existingBuild, error: buildQueryError } = await supabase
+            .from('builds')
+            .select('id')
+            .eq('build_hash', buildHash)
+            .single();
+
+          if (buildQueryError && buildQueryError.code !== 'PGRST116') {
+            throw buildQueryError;
+          }
+          if (existingBuild) {
+            buildId = existingBuild.id;
+          } else {
+            const { data: newBuild, error: buildError } = await supabase
+              .from('builds')
+              .insert([{
+                subsystem_id: subsystem.id,
+                release_id: selectedVersion.id,
+                release_name: selectedVersion.name,
+                build_hash: buildHash,
+                status: 'pending',
+                created_by: user.id
+              }])
+              .select()
+              .single();
+            if (buildError) throw buildError;
+            buildId = newBuild.id;
+          }
+
+          const vendor = detection?.vendor || item.vendor || null;
+          const rawUrl = buildVendorSearchUrl(detection);
+          
+          // Check if we have a valid, useful URL (not null and not ending with '=' which indicates no search term)
+          const hasValidUrl = rawUrl && rawUrl.trim() !== '' && !rawUrl.endsWith('=');
+
+          // Require a valid URL before inserting into purchasing; prompt when URL cannot be determined
+          if (!hasValidUrl) {
+            purchaseModalItem = { ...item, _buildId: buildId };
+            purchaseModalUrl = '';
+            purchaseModalPrice = '';
+            showPurchaseModal = true;
+            loadingBuild = false;
+            return;
+          }
+
+          // Insert into purchasing
+          const purchasingInsertData = {
+            name: item.part_name || item.part_number || 'Unnamed Part',
+            requester: user.full_name || user.email,
+            project_id: `${subsystem.name}-${selectedVersion.name}`,
+            quantity: item.quantity || 1,
+            material: item.material || '',
+            status: 'pending',
+            vendor: vendor || null,
+            url: rawUrl || null,
+            price: null,
+            workflow: 'purchase',
+            purchaser: user.id
+          };
+          const { data: purchasingData, error: purchasingError } = await supabase.from('purchasing').insert([purchasingInsertData]).select();
+          if (purchasingError) throw purchasingError;
+
+          // Insert into build_bom
+          const { error: bomError } = await supabase.from('build_bom').insert([{
+            build_id: buildId,
+            part_name: item.part_name,
+            part_number: item.part_number || null,
+            quantity: item.quantity || 1,
+            part_type: 'COTS',
+            material: item.material || null,
+            stock_assignment: item.stock_assignment || null,
+            workflow: 'purchase',
+            bounding_box_x: item.bounding_box_x || null,
+            bounding_box_y: item.bounding_box_y || null,
+            bounding_box_z: item.bounding_box_z || null,
+            onshape_part_id: item.onshape_part_id || null,
+            part_id: null,
+            status: 'pending',
+            added_to_purchasing: true
+          }]);
+          if (bomError) throw bomError;
+
+          // Mark as added in UI
+          addedPartsSet = new Set([...addedPartsSet, item.part_number || item.part_name || `${item.part_name}_${Date.now()}`]);
+          loadingBuild = false;
+          alert('COTS item added to Purchasing');
+          return;
+        } catch (err) {
+          console.error('Error adding COTS item to purchasing:', err);
+          alert('Failed to add COTS item: ' + (err?.message || err));
+          loadingBuild = false;
+          return;
+        }
       }
 
       // Determine file_url for different workflows
@@ -933,6 +1082,8 @@
       if (partsError) throw partsError;
 
       console.log('Part added to manufacturing queue:', partData);
+
+  const createdPart = Array.isArray(partData) ? partData[0] : partData;
 
       // Create or find existing build for this version
       let buildId = null;
@@ -984,6 +1135,7 @@
           bounding_box_y: item.bounding_box_y,
           bounding_box_z: item.bounding_box_z,
           onshape_part_id: partId,
+          part_id: createdPart?.id || null,
           file_url: file_url, // Add file URL to build_bom for tracking
           status: 'pending',
           added_to_parts_list: true
@@ -994,6 +1146,31 @@
       // Mark as added in UI
       const partKey = item.part_number || item.part_name || `${item.part_name}_${Date.now()}`;
       addedPartsSet = new Set([...addedPartsSet, partKey]);
+
+      // Append created part id to builds.part_ids so build views load it
+      if (createdPart && createdPart.id) {
+        try {
+          const { data: buildRow, error: updErr } = await supabase
+            .from('builds')
+            .select('part_ids')
+            .eq('id', buildId)
+            .single();
+
+          if (updErr && updErr.code !== 'PGRST116') throw updErr;
+
+          const currentIds = buildRow?.part_ids || [];
+          const newIds = currentIds.includes(createdPart.id) ? currentIds : [...currentIds, createdPart.id];
+          if (!currentIds.includes(createdPart.id)) {
+            const { error: appendErr } = await supabase
+              .from('builds')
+              .update({ part_ids: newIds })
+              .eq('id', buildId);
+            if (appendErr) console.warn('Failed to append part id to build.part_ids', appendErr.message || appendErr);
+          }
+        } catch (e) {
+          console.warn('Error updating build.part_ids:', e?.message || e);
+        }
+      }
 
       // Force reactivity update
       buildBOM = [...buildBOM];
@@ -1248,15 +1425,9 @@
                         <button
                           class="btn btn-sm btn-add-part"
                           on:click={() => addSingleToBuild(item)}
-                          disabled={addedPartsSet.has(item.part_number || item.part_name)}
                         >
-                          {#if addedPartsSet.has(item.part_number || item.part_name)}
-                            <CheckCircle size={14} />
-                            Added
-                          {:else}
-                            <Plus size={14} />
-                            Add
-                          {/if}                        </button>
+                          <Plus size={14} />
+                          Add                        </button>
                       </td>
                       <td>
                         {#if item.onshape_part_id && item.part_type === 'manufactured'}
@@ -1291,6 +1462,30 @@
 
             <!-- Removed modal-actions and Create Build button as per requirements -->
           {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+  <!-- Purchase Link/Price Modal (queue-only) -->
+  {#if showPurchaseModal}
+    <div class="modal-overlay" role="button" tabindex="0" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { showPurchaseModal = false; purchaseModalItem = null; } }}>
+      <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }} style="max-width:560px;">
+        <div class="modal-header">
+          <h3>Provide vendor link and unit price</h3>
+          <button class="close-btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>×</button>
+        </div>
+        <div class="modal-content">
+          <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
+          <div style="display:flex; flex-direction:column; gap:0.5rem;">
+            <label for="purchase-url">Vendor link</label>
+            <input id="purchase-url" class="form-input" type="text" bind:value={purchaseModalUrl} placeholder="https://..." />
+            <label for="purchase-price">Unit price</label>
+            <input id="purchase-price" class="form-input" type="number" min="0" step="0.01" bind:value={purchaseModalPrice} />
+          </div>
+          <div class="modal-actions">
+            <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
+            <button class="btn btn-yellow" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1874,5 +2069,86 @@
     color: #9e9e9e;
     border: 1px solid #e0e0e0;
     cursor: not-allowed;
+  }
+
+  /* Modal Styles */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--surface);
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: auto;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    color: var(--text);
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--secondary);
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+
+  .close-btn:hover {
+    background: var(--background);
+    color: var(--text);
+  }
+
+  .modal-content {
+    padding: 1rem;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .form-input {
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--background);
+    color: var(--text);
+  }
+
+  .form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
   }
 </style>

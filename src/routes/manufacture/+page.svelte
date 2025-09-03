@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
+  import { page } from '$app/stores';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
@@ -601,6 +602,12 @@
   </div>
 </div>
 
+<!-- Manufacture Sub-Tabs -->
+<div class="subtabs">
+  <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>All</a>
+  <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
+</div>
+
 <div class="card">
   <div class="filters">
     <div class="form-group">
@@ -661,7 +668,7 @@
           <th>Workflow</th>
           <th class="mono">Project ID</th>
           <th>Qty</th>
-          <th>Material</th>
+          <th>Stock</th>
           <th class="source-col">Source</th>
           <th>Status</th>
           <th>Bin</th>
@@ -680,7 +687,7 @@
             </td>
             <td class="mono">{part.project_id}</td>
             <td>{part.quantity || 1}</td>
-            <td class="text-muted">{part.material || '-'}</td>
+            <td class="text-muted">{part.stock_assignment || part.material || '-'}</td>
             <td class="source-col">
               {#if part.source_type === 'onshape_api'}
                 <div class="source-cell">
@@ -1018,6 +1025,26 @@
     grid-template-columns: 2fr 1fr 1fr;
     gap: 1rem;
     margin-bottom: 0.25rem;
+  }
+
+  /* Sub tabs */
+  .subtabs {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 0 1rem 0;
+  }
+  .subtabs a {
+    text-decoration: none;
+    padding: 0.5rem 0.85rem;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .subtabs a.active {
+    background: var(--accent);
+    color: var(--secondary);
   }
 
   /* --- BOM-style Table Styling --- */
