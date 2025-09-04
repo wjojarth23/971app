@@ -32,9 +32,10 @@
     { value: 'cammed', label: 'Cammed' },
     { value: 'machined', label: 'Machined' },
     { value: 'inspected', label: 'Inspected' },
-    { value: 'deburred', label: 'Deburred' },
     { value: 'complete', label: 'Complete' }
   ];
+
+  import ROUTER_FLOW from '$lib/router_flow.json';
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -295,30 +296,7 @@
       console.warn('updateRouterMeta exception:', e?.message || e);
     }
   }
-  // Router step helpers
-  async function advanceRouterStep(part, bin) {
-    const meta = getRouterMeta(part);
-    const next = meta && meta.needs_countersink ? 'needs_countersink' : 'needs_deburring';
-    await updateBin(part.id, bin);
-    await updateRouterMeta(part, { step: next });
-  }
-  async function finishCountersink(part, bin) {
-    await updateBin(part.id, bin);
-    await updateRouterMeta(part, { step: 'needs_deburring' });
-  }
-  async function advanceAfterDeburring(part, bin) {
-    const meta = getRouterMeta(part);
-    if (meta && meta.needs_bends) {
-      await updateBin(part.id, bin);
-      await updateRouterMeta(part, { step: 'needs_bends' });
-    } else {
-      // No bends; end of workflow: kit/finish
-      await completePart(part.id, 'kitting-bin', bin);
-    }
-  }
-  async function finishBendsAndKit(part, bin) {
-    await completePart(part.id, 'kitting-bin', bin);
-  }
+  // Router flow helpers (new) - definitions moved earlier in file for JSON-based flow
 
   // Open the subsystem page or linked Onshape document for parts that require drawings
   async function openSubsystemDocument(part) {
@@ -396,17 +374,14 @@
   }
 
   function getStatusDisplay(part) {
-    // Router: reflect sub-steps using router_meta
+    // Router: reflect sub-steps using router_meta; prefer sub-step label if present
     if (part.workflow === 'router') {
       const meta = getRouterMeta(part);
+      if (meta?.step && ROUTER_FLOW.labels[meta.step]) {
+        return ROUTER_FLOW.labels[meta.step];
+      }
       if (part.status === 'cammed') {
-        if (meta?.travis_progged) {
-          if (meta?.step === 'needs_countersink') return 'Needs Countersink';
-          if (meta?.step === 'needs_deburring') return 'Needs Deburring';
-          if (meta?.step === 'needs_bends') return 'Needs Bends';
-          return 'Travis Progged';
-        }
-        return 'Cammed';
+        return meta?.travis_progged ? 'TProged' : 'Cammed';
       }
     }
 
@@ -428,7 +403,7 @@
 
   function getStatusBadgeClass(status) {
     if (status === 'in-progress') return 'status-progress';
-    if (status === 'machined' || status === 'inspected' || status === 'deburred') return 'status-progress';
+    if (status === 'machined' || status === 'inspected') return 'status-progress';
     if (status === 'cammed') return 'status-cammed';
     if (status === 'complete') return 'status-complete';
     return 'status-pending';
@@ -729,6 +704,16 @@
             <td>{formatDate(part.created_at)}</td>
             <td>
               {#if part.status === 'pending'}
+                {#if part.workflow === 'router'}
+                <button
+                  class="btn btn-secondary btn-sm"
+                  on:click={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); }}
+                  title="Start"
+                >
+                  <Clock size={14} />
+                  Start
+                </button>
+                {:else}
                 <button
                   class="btn btn-secondary btn-sm"
                   on:click={() => updatePartStatus(part.id, 'in-progress')}
@@ -737,19 +722,22 @@
                   <Clock size={14} />
                   Start
                 </button>
+                {/if}
 
               {:else if part.status === 'in-progress'}
                 {#if part.workflow === 'router'}
-                  <!-- Router: first step is just a 'Cammed' button -->
+                  <!-- Router: CAMed appears when in CAMing sub-step -->
+                  {#if getRouterMeta(part).step === 'cam_ing'}
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={() => updatePartStatus(part.id, 'cammed')}
-                      title="Mark as Cammed"
+                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'layout' }); }}
+                      title="CAMed"
                     >
-                      Cammed
+                      CAMed
                     </button>
                   </div>
+                  {/if}
                 {:else if part.workflow === '3d-print' || part.workflow === 'laser-cut'}
                   <!-- 3D prints and Laser cut: field + Kit (completes) -->
                   <div class="actions-col">
@@ -871,134 +859,48 @@
                 </div>
 
               {:else if part.workflow === 'router' && part.status === 'cammed'}
-                <!-- Router after Cammed -->
-                {#if !getRouterMeta(part).travis_progged}
-                  <!-- Show 'Travis Progged' button -->
+                <!-- Router after Cammed per new flow: layout -> TProged -> queued -> Cut -> inspection -> Bin/Kit -->
+                {#if getRouterMeta(part).step === 'layout'}
                   <div class="actions-col">
-                    <button
-                      class="btn btn-secondary btn-sm"
-                      on:click={() => updateRouterMeta(part, { travis_progged: true })}
-                      title="Mark Travis Progged"
-                    >
-                      Travis Progged
-                    </button>
+                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
+                  </div>
+                {:else if getRouterMeta(part).step === 'queued'}
+                  <div class="actions-col">
+                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'inspection' })}>Cut</button>
+                  </div>
+                {:else if getRouterMeta(part).step === 'inspection'}
+                  <div class="actions-col">
+                    <div class="kitting-inline">
+                      <input
+                        type="text"
+                        placeholder="Bin ID"
+                        class="form-input kitting-input"
+                        on:keydown={(e) => {
+                          if (e.key === 'Enter' && e.target.value.trim()) {
+                            completePart(part.id, 'kitting-bin', e.target.value.trim());
+                          }
+                        }}
+                      />
+                      <button
+                        class="btn btn-secondary btn-sm btn-nowrap"
+                        on:click={(e) => {
+                          const input = e.target.previousElementSibling;
+                          if (input && input.value.trim()) {
+                            completePart(part.id, 'kitting-bin', input.value.trim());
+                          }
+                        }}
+                        title="Kit and Finish"
+                      >
+                        <Package size={14} />
+                        Kit
+                      </button>
+                    </div>
                   </div>
                 {:else}
-                  <!-- Travis progged: branch on step and flags -->
-                  {#if !getRouterMeta(part).step}
-                    <!-- Initial Next Step based on countersink flag -->
-                    <div class="actions-col">
-                      <div class="kitting-inline">
-                        <input
-                          type="text"
-                          placeholder="Bin ID"
-                          class="form-input kitting-input"
-                          on:keydown={async (e) => {
-                            if (e.key === 'Enter') {
-                              const bin = e.target.value.trim();
-                              await advanceRouterStep(part, bin);
-                            }
-                          }}
-                        />
-                        <button
-                          class="btn btn-secondary btn-sm btn-nowrap"
-                          on:click={async (e) => {
-                            const input = e.target.previousElementSibling;
-                            const bin = input && input.value.trim();
-                            await advanceRouterStep(part, bin || '');
-                          }}
-                          title="Next Step"
-                        >
-                          Next step
-                        </button>
-                      </div>
-                    </div>
-                  {:else if getRouterMeta(part).step === 'needs_countersink'}
-                    <!-- Countersink stage: finish countersink -->
-                    <div class="actions-col">
-                      <div class="kitting-inline">
-                        <input
-                          type="text"
-                          placeholder="Bin ID"
-                          class="form-input kitting-input"
-                          on:keydown={async (e) => {
-                            if (e.key === 'Enter') {
-                              const bin = e.target.value.trim();
-                              await finishCountersink(part, bin);
-                            }
-                          }}
-                        />
-                        <button
-                          class="btn btn-secondary btn-sm btn-nowrap"
-                          on:click={async (e) => {
-                            const input = e.target.previousElementSibling;
-                            const bin = input && input.value.trim();
-                            await finishCountersink(part, bin || '');
-                          }}
-                          title="Finish Countersink"
-                        >
-                          Finish Countersink
-                        </button>
-                      </div>
-                    </div>
-                  {:else if getRouterMeta(part).step === 'needs_deburring'}
-                    <!-- Deburring stage: next step (maybe bends or finish) -->
-                    <div class="actions-col">
-                      <div class="kitting-inline">
-                        <input
-                          type="text"
-                          placeholder="Bin ID"
-                          class="form-input kitting-input"
-                          on:keydown={async (e) => {
-                            if (e.key === 'Enter') {
-                              const bin = e.target.value.trim();
-                              await advanceAfterDeburring(part, bin);
-                            }
-                          }}
-                        />
-                        <button
-                          class="btn btn-secondary btn-sm btn-nowrap"
-                          on:click={async (e) => {
-                            const input = e.target.previousElementSibling;
-                            const bin = input && input.value.trim();
-                            await advanceAfterDeburring(part, bin || '');
-                          }}
-                          title="Next Step"
-                        >
-                          Next step
-                        </button>
-                      </div>
-                    </div>
-                  {:else if getRouterMeta(part).step === 'needs_bends'}
-                    <!-- Bends stage: Kit and finish -->
-                    <div class="actions-col">
-                      <div class="kitting-inline">
-                        <input
-                          type="text"
-                          placeholder="Kitting Bin"
-                          class="form-input kitting-input"
-                          on:keydown={async (e) => {
-                            if (e.key === 'Enter' && e.target.value.trim()) {
-                              await finishBendsAndKit(part, e.target.value.trim());
-                            }
-                          }}
-                        />
-                        <button
-                          class="btn btn-secondary btn-sm btn-nowrap"
-                          on:click={async (e) => {
-                            const input = e.target.previousElementSibling;
-                            if (input && input.value.trim()) {
-                              await finishBendsAndKit(part, input.value.trim());
-                            }
-                          }}
-                          title="Kit and Finish"
-                        >
-                          <Package size={14} />
-                          Kit
-                        </button>
-                      </div>
-                    </div>
-                  {/if}
+                  <!-- Fallback: if no step set, begin at Layout -->
+                  <div class="actions-col">
+                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'layout' })}>Start Layout</button>
+                  </div>
                 {/if}
 
               {/if}

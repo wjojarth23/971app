@@ -682,7 +682,6 @@
                   <th>Material</th>
                   <th>Status</th>
                   <th>Kitting</th>
-                  <th>Added</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -715,20 +714,33 @@
                     <td class="quantity">{part.quantity || 1}</td>
                     <td class="material">{part.material || '-'}</td>
                     <td>
-                      <span class="chip {part.status ? `chip-status-${part.status}` : 'chip-neutral'}">
-                        {#if part.status === 'pending'}
-                          <Clock size={12} />
-                        {:else if part.status === 'in-progress' || part.status === 'cammed'}
-                          <Wrench size={12} />
-                        {:else if part.status === 'ordered'}
-                          <Package size={12} />
-                        {:else if part.status === 'delivered' || part.status === 'complete' || part.status === 'manufactured'}
-                          <CheckCircle size={12} />
-                        {:else}
-                          <Clock size={12} />
-                        {/if}
-                        <span>{part.status || 'unknown'}</span>
-                      </span>
+                      {#if part.workflow === 'router' && part.status === 'pending'}
+                        <button
+                          class="btn btn-secondary btn-sm"
+                          on:click={async () => {
+                            await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+                            await loadBuildDetails();
+                          }}
+                          title="Mark as CAMed"
+                        >
+                          CAMed
+                        </button>
+                      {:else}
+                        <span class="chip {part.status ? `chip-status-${part.status}` : 'chip-neutral'}">
+                          {#if part.status === 'pending'}
+                            <Clock size={12} />
+                          {:else if part.status === 'in-progress' || part.status === 'cammed'}
+                            <Wrench size={12} />
+                          {:else if part.status === 'ordered'}
+                            <Package size={12} />
+                          {:else if part.status === 'delivered' || part.status === 'complete' || part.status === 'manufactured'}
+                            <CheckCircle size={12} />
+                          {:else}
+                            <Clock size={12} />
+                          {/if}
+                          <span>{part.status || 'unknown'}</span>
+                        </span>
+                      {/if}
                     </td>
                     <td class="kitting">
                       {#if part.kitting_bin}
@@ -740,7 +752,6 @@
                         <span class="no-kitting">Not assigned</span>
                       {/if}
                     </td>
-                    <td class="date">{new Date(part.created_at).toLocaleDateString()}</td>
                     <td class="actions">
                       <button class="btn btn-sm chip-edit" on:click={() => openEditModal(part)}>Edit</button>
                     </td>
@@ -785,7 +796,6 @@
                 <th>Qty</th>
                 <th>Material</th>
                 <th>Stock</th>
-                <th>Added?</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -850,15 +860,6 @@
                       {/if}
                     {:else}
                       <span class="no-stock">-</span>
-                    {/if}
-                  </td>
-                  <td>
-                    {#if item.added_to_parts_list || item.added_to_purchasing}
-                      <span class="chip chip-neutral">
-                        <CheckCircle size={12} /> Added
-                      </span>
-                    {:else}
-                      <span class="chip chip-neutral">Pending</span>
                     {/if}
                   </td>
                   <td>
@@ -957,26 +958,20 @@
 
 <!-- Purchase Link/Price Modal (when auto-detect fails) -->
 {#if showPurchaseModal}
-  <div class="modal-overlay" role="button" tabindex="0" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { showPurchaseModal = false; purchaseModalItem = null; } }}>
-  <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }} style="max-width:560px;">
-      <div class="modal-header">
-        <h3>Provide vendor link and unit price</h3>
-        <button class="close-btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>×</button>
-      </div>
-      <div class="modal-content">
-        <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
-        <div style="display:flex; flex-direction:column; gap:0.5rem;">
-          <label for="purchase-url">Vendor URL:</label>
-          <input id="purchase-url" class="form-input" type="url" placeholder="https://..." bind:value={purchaseModalUrl} />
-          
-          <label for="purchase-price">Unit Price (optional):</label>
-          <input id="purchase-price" class="form-input" type="number" step="0.01" min="0" placeholder="0.00" bind:value={purchaseModalPrice} />
-        </div>
-        <div class="modal-actions">
-          <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
-          <button class="btn btn-primary" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
-        </div>
-      </div>
+  <div class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}></div>
+  <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }}>
+    <h3>Provide vendor link and unit price</h3>
+    <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
+    <div style="display:flex; flex-direction:column; gap:0.5rem;">
+      <label for="purchase-url">Vendor URL:</label>
+      <input id="purchase-url" class="form-input" type="url" placeholder="https://..." bind:value={purchaseModalUrl} />
+
+      <label for="purchase-price">Unit Price (optional):</label>
+      <input id="purchase-price" class="form-input" type="number" step="0.01" min="0" placeholder="0.00" bind:value={purchaseModalPrice} />
+    </div>
+    <div class="modal-actions">
+      <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
+      <button class="btn btn-yellow" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
     </div>
   </div>
 {/if}
@@ -1160,121 +1155,5 @@
     box-shadow: 0 0 0 3px rgba(37,99,235,0.08) !important;
   }
 
-  /* Purchase Modal Styles */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: white;
-    border-radius: 8px;
-    padding: 0;
-    max-width: 500px;
-    width: 90%;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    color: var(--text);
-    font-size: 1.25rem;
-    font-weight: 600;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: var(--secondary);
-    padding: 0;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-  }
-
-  .close-btn:hover {
-    background: var(--background);
-    color: var(--text);
-  }
-
-  .modal-content {
-    padding: 1.5rem;
-  }
-
-  .modal-content p {
-    margin: 0 0 1rem 0;
-    color: var(--text);
-  }
-
-  .form-input {
-    padding: 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: 0.875rem;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .form-input:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    margin-top: 1.5rem;
-  }
-
-  .btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: white;
-    color: var(--text);
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 500;
-    transition: all 0.2s;
-  }
-
-  .btn:hover {
-    background: var(--background);
-  }
-
-  .btn-primary {
-    background: var(--primary);
-    color: white;
-    border-color: var(--primary);
-  }
-
-  .btn-primary:hover {
-    background: #2563eb;
-    border-color: #2563eb;
-  }
+  
 </style>

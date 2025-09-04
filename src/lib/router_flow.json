@@ -1,0 +1,11 @@
+{
+  "sequence": ["cam_ing", "layout", "queued", "inspection", "complete"],
+  "labels": {
+    "cam_ing": "CAMing",
+    "layout": "Layout",
+    "queued": "Queued",
+    "inspection": "Inspection",
+    "complete": "Complete",
+    "travis_progged": "TProged"
+  }
+}

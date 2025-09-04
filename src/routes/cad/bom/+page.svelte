@@ -257,30 +257,9 @@
     buildBOM = [...buildBOM];
   }
 
-  // Drawing modal state for LATHE/MILL parts (queue-only)
-  let showDrawingModal = false;
-  let drawingUrlInput = '';
-  let pendingManufacturedItem = null;
+  // Removed drawing modal state for lathe/mill parts (no longer requiring drawing URL)
 
-  // Router flags modal (queue-only)
-  let showRouterModal = false;
-  let routerNeedsCountersink = false;
-  let routerHasBends = false;
-  let pendingRouterItem = null;
 
-  function cancelRouterModal() {
-    showRouterModal = false;
-    pendingRouterItem = null;
-    routerNeedsCountersink = false;
-    routerHasBends = false;
-  }
-  async function confirmRouterModal() {
-    const item = pendingRouterItem;
-    showRouterModal = false;
-    pendingRouterItem = null;
-    if (!item) return;
-    queueManufacturedItem(item, { routerFlags: { needs_countersink: !!routerNeedsCountersink, needs_bends: !!routerHasBends } });
-  }
 
   // Portal helper (modals)
   function portal(node) {
@@ -295,63 +274,7 @@
     };
   }
 
-  function parseElementIdFromOnshapeUrl(url) {
-    try {
-      if (!url) return null;
-      const match = url.match(/\/e\/([a-f0-9]{24})/i);
-      return match ? match[1] : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function promptForDrawingUrl(item) {
-    pendingManufacturedItem = item;
-    drawingUrlInput = '';
-    setTimeout(() => {
-      showDrawingModal = true;
-      setTimeout(async () => {
-        const md = document.getElementById('drawing-modal');
-        if (!md) {
-          const url = window.prompt('Paste Onshape Drawing tab URL (must contain /e/{elementId}):', '');
-          if (url && url.trim()) {
-            const eid = parseElementIdFromOnshapeUrl(url.trim());
-            if (!eid) {
-              alert('Invalid Onshape drawing URL. Please paste a Drawing tab URL containing /e/{elementId}.');
-              return;
-            }
-            const itemRef = pendingManufacturedItem;
-            pendingManufacturedItem = null;
-            showDrawingModal = false;
-            queueManufacturedItem(itemRef, { drawingEID: eid });
-          } else {
-            pendingManufacturedItem = null;
-            showDrawingModal = false;
-          }
-        }
-      }, 50);
-    }, 0);
-  }
-  function cancelDrawingModal() {
-    showDrawingModal = false;
-    drawingUrlInput = '';
-    pendingManufacturedItem = null;
-  }
-  async function confirmDrawingModal() {
-    if (!drawingUrlInput?.trim()) {
-      alert('Please enter a drawing URL.');
-      return;
-    }
-    const eid = parseElementIdFromOnshapeUrl(drawingUrlInput.trim());
-    if (!eid) {
-      alert('Invalid Onshape drawing URL. Please paste a Drawing tab URL containing /e/{elementId}.');
-      return;
-    }
-    showDrawingModal = false;
-    const item = pendingManufacturedItem;
-    pendingManufacturedItem = null;
-    queueManufacturedItem(item, { drawingEID: eid });
-  }
+  // Removed drawing URL parsing/prompt functions
 
   // Purchase modal (queue-only, when vendor detection not possible)
   let showPurchaseModal = false;
@@ -371,12 +294,10 @@
     }
     const wf = String(item.workflow || item.manufacturing_process || '').trim().toLowerCase();
     if (wf === 'lathe' || wf === 'mill') {
-      promptForDrawingUrl(item);
+      // Directly add without drawing prompt
+      queueManufacturedItem(item);
     } else if (wf === 'router') {
-      pendingRouterItem = item;
-      routerNeedsCountersink = false;
-      routerHasBends = false;
-      setTimeout(() => { showRouterModal = true; }, 0);
+      queueManufacturedItem(item);
     } else {
       queueManufacturedItem(item);
     }
@@ -1076,26 +997,28 @@ if (bomRows.length) {
       </div>
       <div class="other-form">
         <div class="row">
-          <label>Name</label>
-          <input class="form-input" type="text" bind:value={otherDraft.part_name} placeholder="Custom item name" />
+          <label for="other-name">Name</label>
+          <input id="other-name" class="form-input" type="text" bind:value={otherDraft.part_name} placeholder="Custom item name" />
         </div>
         <div class="row">
-          <label>Qty</label>
-          <input class="form-input" type="number" min="1" step="1" bind:value={otherDraft.quantity} />
+          <label for="other-qty">Qty</label>
+          <input id="other-qty" class="form-input" type="number" min="1" step="1" bind:value={otherDraft.quantity} />
         </div>
         <div class="row">
-          <label>Type</label>
-          <select class="form-input" bind:value={otherDraft.type}>
+          <label for="other-type">Type</label>
+          <select id="other-type" class="form-input" bind:value={otherDraft.type}>
             <option value="manufactured">Manufactured</option>
             <option value="COTS">COTS</option>
           </select>
         </div>
         <div class="row">
-          <label>Workflow</label>
+          {#if otherDraft.type !== 'COTS'}
+            <label for="other-workflow">Workflow</label>
+          {/if}
           {#if otherDraft.type === 'COTS'}
             <span class="workflow-badge workflow-purchase">Purchase</span>
           {:else}
-            <select class="workflow-dropdown workflow-{otherDraft.workflow || 'mill'}" bind:value={otherDraft.workflow}>
+            <select id="other-workflow" class="workflow-dropdown workflow-{otherDraft.workflow || 'mill'}" bind:value={otherDraft.workflow}>
               <option value="3d-print">3D Print</option>
               <option value="laser-cut">Laser Cut</option>
               <option value="lathe">Lathe</option>
@@ -1105,25 +1028,28 @@ if (bomRows.length) {
           {/if}
         </div>
         <div class="row">
-          <label>Material</label>
-          <input class="form-input" type="text" bind:value={otherDraft.material} placeholder="e.g., Aluminum" />
+          <label for="other-material">Material</label>
+          <input id="other-material" class="form-input" type="text" bind:value={otherDraft.material} placeholder="e.g., Aluminum" />
         </div>
         <div class="row">
-          <label>Dimensions</label>
+          <label for="other-dim-x">Dimensions</label>
           <div class="dims">
-            <input class="form-input" type="number" step="0.001" placeholder="X (m)" bind:value={otherDraft.bounding_box_x} />
-            <input class="form-input" type="number" step="0.001" placeholder="Y (m)" bind:value={otherDraft.bounding_box_y} />
-            <input class="form-input" type="number" step="0.001" placeholder="Z (m)" bind:value={otherDraft.bounding_box_z} />
+            <input id="other-dim-x" class="form-input" type="number" step="0.001" placeholder="X (m)" bind:value={otherDraft.bounding_box_x} />
+            <input id="other-dim-y" class="form-input" type="number" step="0.001" placeholder="Y (m)" bind:value={otherDraft.bounding_box_y} />
+            <input id="other-dim-z" class="form-input" type="number" step="0.001" placeholder="Z (m)" bind:value={otherDraft.bounding_box_z} />
           </div>
         </div>
         <div class="row">
-          <label>Stock</label>
+          {#if otherDraft.type !== 'COTS'}
+            <label for="other-stock">Stock</label>
+          {/if}
           {#if otherDraft.type === 'COTS'}
             <span class="no-stock">-</span>
           {:else}
             <div class="stock-select hybrid-select" style="width:100%;">
               {#if otherDraft._stock_choice === '__other__'}
                 <input
+                  id="other-stock"
                   type="text"
                   class="form-input hybrid-input"
                   placeholder="Type custom stock"
@@ -1131,7 +1057,7 @@ if (bomRows.length) {
                 />
                 <button class="chevron-btn" title="Show dropdown" on:click={() => updateOtherDraftStockChoice('')}>▾</button>
               {:else}
-                <select on:change={(e) => updateOtherDraftStockChoice(e.target.value)} value={otherDraft._stock_choice || otherDraft.stock_assignment}>
+                <select id="other-stock" on:change={(e) => updateOtherDraftStockChoice(e.target.value)} value={otherDraft._stock_choice || otherDraft.stock_assignment}>
                   <option value="">Select Stock</option>
                   {#each getStocksForWorkflow(otherDraft.workflow || 'mill') as stock}
                     <option value={stock.description}>{stock.description}</option>
@@ -1196,63 +1122,21 @@ if (bomRows.length) {
   {/if}
 </div>
 
-<!-- Drawing URL Modal -->
-{#if showDrawingModal}
-  <div use:portal id="drawing-modal-backdrop" class="modal-backdrop" role="presentation" tabindex="-1" on:click|stopPropagation></div>
-  <div use:portal id="drawing-modal" class="modal" on:click|stopPropagation>
-    <h3>Attach Drawing URL</h3>
-    <p>Lathe and Mill parts require an Onshape Drawing. Paste the Drawing tab URL below.</p>
-    <input
-      type="url"
-      class="form-input"
-      placeholder="https://cad.onshape.com/documents/.../e/{elementId}"
-      bind:value={drawingUrlInput}
-    />
-    <div class="modal-actions">
-      <button class="btn" on:click={cancelDrawingModal}>Cancel</button>
-      <button class="btn btn-yellow" on:click={confirmDrawingModal}>Attach & Add</button>
-    </div>
-  </div>
-{/if}
-
-<!-- Router Flags Modal -->
-{#if showRouterModal}
-  <div use:portal id="router-modal-backdrop" class="modal-backdrop" role="presentation" tabindex="-1" on:click|stopPropagation></div>
-  <div use:portal id="router-modal" class="modal" on:click|stopPropagation>
-    <h3>Router Part Options</h3>
-    <p>Set additional processing steps for this router part.</p>
-    <div class="modal-row" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin:0.5rem 0;">
-      <label style="font-weight:500; display:flex; align-items:center; gap:0.5rem;">
-        <input type="checkbox" bind:checked={routerNeedsCountersink} />
-        Needs countersinks?
-      </label>
-    </div>
-    <div class="modal-row" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin:0.5rem 0;">
-      <label style="font-weight:500; display:flex; align-items:center; gap:0.5rem;">
-        <input type="checkbox" bind:checked={routerHasBends} />
-        Has bends?
-      </label>
-    </div>
-    <div class="modal-actions">
-      <button class="btn" on:click={cancelRouterModal}>Cancel</button>
-      <button class="btn btn-yellow" on:click={confirmRouterModal}>Confirm & Add</button>
-    </div>
-  </div>
-{/if}
+<!-- Drawing URL Modal removed -->
 
 <!-- Purchase Link/Price Modal (queue-only) -->
 {#if showPurchaseModal}
   <div use:portal id="purchase-modal-backdrop" class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}></div>
-  <div use:portal id="purchase-modal" class="modal" on:click|stopPropagation>
+  <div use:portal id="purchase-modal" class="modal" role="dialog" tabindex="-1" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }}>
     <h3>Provide vendor link and unit price</h3>
     <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
     <div class="modal-row">
-      <label>Vendor link</label>
-      <input class="form-input" type="text" bind:value={purchaseModalUrl} placeholder="https://..." />
+      <label for="vendor-link">Vendor link</label>
+      <input id="vendor-link" class="form-input" type="text" bind:value={purchaseModalUrl} placeholder="https://..." />
     </div>
     <div class="modal-row">
-      <label>Unit price</label>
-      <input class="form-input" type="number" min="0" step="0.01" bind:value={purchaseModalPrice} />
+      <label for="unit-price">Unit price</label>
+      <input id="unit-price" class="form-input" type="number" min="0" step="0.01" bind:value={purchaseModalPrice} />
     </div>
     <div class="modal-actions">
       <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>

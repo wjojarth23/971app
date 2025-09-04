@@ -204,4 +204,8 @@
 
   /* Slightly narrow email column for better layout */
   .admin-table td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Subnav to reach Gantt subroute */
+  .subnav { margin: 0.5rem 0 1rem; }
+  .subnav .btn { font-size: 0.9rem; }
 </style>
