@@ -49,7 +49,7 @@
         await upsertProfileIfMissing(supabase, {
           id: session.user.id,
           email: session.user.email,
-          name: session.user.user_metadata?.full_name || session.user.email
+          name: session.user.user_metadata?.name || session.user.user_metadata?.full_name || null
         });
         await loadUserFromUUID(supabase);
       } catch (e) {

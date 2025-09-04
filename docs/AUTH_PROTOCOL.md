@@ -19,7 +19,7 @@ Helpers (from `src/lib/stores/user.js`):
 - `clearUserUUID(): void` — removes UUID from localStorage
 - `fetchUserProfileByUUID(supabase, uuid)` — fetch `user_profiles` row and normalize fields
 - `loadUserFromUUID(supabase)` — hydrates `userStore` from UUID, or null if missing/invalid
-- `upsertProfileIfMissing(supabase, { id, email, name })` — ensures a minimal `user_profiles` row exists
+- `upsertProfileIfMissing(...)` (deprecated/no-op) — no longer creates or updates rows; only fetches if present.
 
 In-memory store:
 - `userStore: writable(null | { id, email, full_name, role, permissions[] })`
@@ -32,9 +32,9 @@ In-memory store:
   2. Call `loadUserFromUUID(supabase)` to hydrate from any existing UUID in localStorage (works even without an active Supabase session if RLS allows public reads).
   3. Check `supabase.auth.getSession()`:
      - If there is a session, call `handleSignedIn(authUser)`:
-       - `setUserUUID(authUser.id)`
-       - `upsertProfileIfMissing(...)`
-       - `loadUserFromUUID(supabase)` to refresh the `userStore` from DB
+  - `setUserUUID(authUser.id)`
+  - (Optional) `upsertProfileIfMissing(...)` to fetch existing profile (does not create)
+  - `loadUserFromUUID(supabase)` to refresh the `userStore` from DB
   4. Register `supabase.auth.onAuthStateChange`:
      - On `SIGNED_IN`: same as above (`handleSignedIn`)
      - On `SIGNED_OUT`: DO NOT clear UUID automatically; call `loadUserFromUUID(supabase)` so the app continues to function if UUID remains. For explicit user-initiated logout, call `clearUserUUID()`.
@@ -57,7 +57,7 @@ For routes requiring a user:
 1. Subscribe to `userStore`, or call `loadUserFromUUID(supabase)` at mount to ensure the store is hydrated.
 2. Retrieve the current Supabase session:
    - If no session and no `userStore` user, redirect to login.
-   - If there is a session, call `setUserUUID(session.user.id)`, `upsertProfileIfMissing(...)`, then `loadUserFromUUID(supabase)`.
+  - If there is a session, call `setUserUUID(session.user.id)` then `loadUserFromUUID(supabase)`.
 3. Use the `userStore` data (fetched from `user_profiles`) for UI and authorization checks.
 4. For membership checks (e.g., subsystem membership), fetch from route-specific tables like `subsystem_members`.
 
@@ -74,12 +74,8 @@ onMount(async () => {
   }
   if (session?.user?.id) {
     setUserUUID(session.user.id);
-    await upsertProfileIfMissing(supabase, {
-      id: session.user.id,
-      email: session.user.email,
-      name: session.user.user_metadata?.full_name || (session.user.email ? session.user.email.split('@')[0] : '')
-    });
-    await loadUserFromUUID(supabase);
+  // Deprecated upsert removed; just hydrate directly
+  await loadUserFromUUID(supabase);
   }
 });
 ```
@@ -125,7 +121,7 @@ onMount(async () => {
 When updating any remaining pages:
 - Replace any direct session-to-user-object local persistence with:
   1. Subscribe to `userStore` (or call `loadUserFromUUID` first).
-  2. If session exists: `setUserUUID(session.user.id)` → `upsertProfileIfMissing` → `loadUserFromUUID`.
+  2. If session exists: `setUserUUID(session.user.id)` → `loadUserFromUUID`.
   3. Use `userStore` in components to derive `user.id`, `full_name`, `role`, `permissions`.
 
 Do not serialize or cache roles/permissions locally. Always fetch from DB via UUID.
@@ -133,5 +129,5 @@ Do not serialize or cache roles/permissions locally. Always fetch from DB via UU
 ## Edge Cases
 
 - No UUID in localStorage: `loadUserFromUUID` yields null; route should redirect to login unless the route permits anonymous access.
-- Stale UUID (no profile row): `upsertProfileIfMissing` ensures minimal profile row exists after sign-in; routes should hydrate after that.
+- Stale UUID (no profile row): client no longer creates rows; ensure the row is provisioned server-side if required.
 - Session expired: if `user_uuid` persists, `loadUserFromUUID` can still render profile app-side if your RLS allows it; otherwise the route should prompt login.

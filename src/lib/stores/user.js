@@ -114,45 +114,17 @@ export async function loadUserFromUUID(supabase) {
   }
 }
 
-/**
- * Ensure a minimal user_profiles row exists for the given user (by id),
- * then fetch and set the profile into userStore.
- */
-export async function upsertProfileIfMissing(supabase, { id, email, name }) {
+// Deprecated helper retained for backward compatibility. No longer mutates DB.
+// Simply fetches existing profile (if any) by UUID; does not create or update.
+export async function upsertProfileIfMissing(supabase, { id } = {}) {
   if (!supabase) return null;
-
   try {
-    let userId = id;
-    if (!userId) {
-      const { data } = await supabase.auth.getSession();
-      userId = data?.session?.user?.id;
-    }
-    if (!userId) {
-      userStore.set(null);
-      return null;
-    }
-
-    // Minimal insert; upsert avoids conflicts if it already exists
-    const insert = {
-      id: userId,
-      email: email ?? null,
-      full_name:
-        name ??
-        (email ? String(email).split('@')[0] : null)
-    };
-
-    const { error: upsertError } = await supabase
-      .from('user_profiles')
-      .upsert(insert, { onConflict: 'id' });
-
-    if (upsertError) {
-      console.warn('upsertProfileIfMissing warning:', upsertError.message || upsertError);
-      // proceed to fetch anyway
-    }
-
+    const { data } = await supabase.auth.getSession();
+    const userId = id || data?.session?.user?.id;
+    if (!userId) return null;
     return await fetchUserProfileByUUID(supabase, userId);
   } catch (e) {
-    console.warn('upsertProfileIfMissing exception:', e?.message || e);
+    console.warn('upsertProfileIfMissing (no-op) exception:', e?.message || e);
     return null;
   }
 }
