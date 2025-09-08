@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { supabase } from '$lib/supabase.js';
 import { payoutForWinningShares, prices as lmsrPrices } from '$lib/lmsr.js';
-import { TBA_API_KEY, CEMO, cemo } from '$env/static/private';
+import { TBA_API_KEY, CEMO } from '$env/static/private';
 
 // Helpers
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
