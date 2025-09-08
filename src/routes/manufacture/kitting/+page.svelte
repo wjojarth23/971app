@@ -9,6 +9,10 @@
   let newBinName = '';
   let newBinId = '';
   let creating = false;
+   let editingBin = null; // { bin_id, name }
+   let editName = '';
+   let editId = '';
+   let savingEdit = false;
 
   async function loadBins() {
     const { data, error } = await supabase.from('kitting_bins').select('bin_id, name').order('name', { ascending: true });
@@ -58,6 +62,74 @@
     const b = bins.find(x => x.bin_id === id);
     return b ? `${b.name} (${b.bin_id})` : id;
   }
+
+   function openEdit(b) {
+     editingBin = b;
+     editName = b.name || '';
+     editId = b.bin_id || '';
+   }
+
+   function closeEdit() {
+     editingBin = null;
+     editName = '';
+     editId = '';
+     savingEdit = false;
+   }
+
+   async function saveEdit() {
+     if (!editingBin) return;
+     const oldId = editingBin.bin_id;
+     const newId = (editId || '').trim();
+     const newName = (editName || '').trim();
+     if (!newId || !newName) { alert('Both Bin ID and name are required'); return; }
+     savingEdit = true;
+     try {
+       if (newId !== oldId) {
+         // Ensure no conflict
+         const { data: exists, error: e1 } = await supabase.from('kitting_bins').select('bin_id').eq('bin_id', newId).limit(1).maybeSingle();
+         if (e1) throw e1;
+         if (exists) { alert('Bin ID already exists'); savingEdit = false; return; }
+         // Insert new bin
+         const { error: insErr } = await supabase.from('kitting_bins').insert({ bin_id: newId, name: newName });
+         if (insErr) throw insErr;
+         // Update any parts referencing old bin id -> new id
+         const { error: updPartsErr } = await supabase.from('parts').update({ kitting_bin: newId, updated_at: new Date().toISOString() }).eq('kitting_bin', oldId);
+         if (updPartsErr) throw updPartsErr;
+         // Delete old bin
+         const { error: delErr } = await supabase.from('kitting_bins').delete().eq('bin_id', oldId);
+         if (delErr) throw delErr;
+       } else {
+         // Just update name
+         const { error } = await supabase.from('kitting_bins').update({ name: newName }).eq('bin_id', oldId);
+         if (error) throw error;
+       }
+       await loadBins();
+       await loadParts();
+       closeEdit();
+     } catch (e) {
+       alert('Failed to save bin: ' + (e?.message || e));
+       savingEdit = false;
+     }
+   }
+
+   async function deleteBin() {
+     if (!editingBin) return;
+     if (!confirm(`Delete bin "${editingBin.name} (${editingBin.bin_id})"? This will clear kitting bin on any parts that reference it.`)) return;
+     savingEdit = true;
+     try {
+       // Clear parts
+       const { error: updPartsErr } = await supabase.from('parts').update({ kitting_bin: null, updated_at: new Date().toISOString() }).eq('kitting_bin', editingBin.bin_id);
+       if (updPartsErr) throw updPartsErr;
+       const { error: delErr } = await supabase.from('kitting_bins').delete().eq('bin_id', editingBin.bin_id);
+       if (delErr) throw delErr;
+       await loadBins();
+       await loadParts();
+       closeEdit();
+     } catch (e) {
+       alert('Failed to delete bin: ' + (e?.message || e));
+       savingEdit = false;
+     }
+   }
 </script>
 
 <svelte:head><title>Kitting</title></svelte:head>
@@ -96,8 +168,8 @@
           <tr><td colspan="2" class="text-muted">No bins yet. Create one above.</td></tr>
         {/if}
         {#each bins as b}
-          <tr>
-            <td class="mono">{b.name} <span class="text-muted">({b.bin_id})</span></td>
+            <tr on:click={() => openEdit(b)} style="cursor: pointer;">
+              <td class="mono">{b.name} <span class="text-muted">({b.bin_id})</span></td>
             <td>
               {#if (partsByBin[b.bin_id] || []).length === 0}
                 <span class="text-muted">No parts</span>
@@ -136,3 +208,29 @@
   .subtabs a { text-decoration: none; padding: 0.5rem 0.85rem; background: var(--background); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; color: var(--text); }
   .subtabs a.active { background: var(--accent); color: var(--secondary); }
 </style>
+
+{#if editingBin}
+  <div class="modal-backdrop" role="button" tabindex="0" aria-label="Close dialog" on:click={closeEdit} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar' || e.key === 'Escape') closeEdit(); }}>
+  <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') closeEdit(); }}>
+      <h3>Edit Bin</h3>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <label>Bin Name
+          <input class="form-input" bind:value={editName} />
+        </label>
+        <label>Bin ID
+          <input class="form-input mono" bind:value={editId} />
+        </label>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+        <button class="btn btn-primary" on:click={saveEdit} disabled={savingEdit}>Save</button>
+        <button class="btn" on:click={closeEdit} disabled={savingEdit}>Cancel</button>
+        <button class="btn btn-danger" on:click={deleteBin} disabled={savingEdit}>Delete</button>
+      </div>
+    </div>
+  </div>
+  <style>
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:60; }
+    .modal { background:var(--surface); padding:1rem; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.3); width:360px; max-width:calc(100% - 32px); }
+    .btn-danger { background:#ef4444; color:white; border:none; padding:0.4rem 0.6rem; border-radius:4px; }
+  </style>
+{/if}

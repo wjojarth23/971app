@@ -969,7 +969,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
                       <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
                         <option value="">Select bin…</option>
                         {#each bins as b}
-                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                          <option value={b.bin_id}>{b.bin_id}</option>
                         {/each}
                       </select>
                       <button
@@ -990,7 +990,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
                       <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
                         <option value="">Select bin…</option>
                         {#each bins as b}
-                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                          <option value={b.bin_id}>{b.bin_id}</option>
                         {/each}
                       </select>
                       <button
@@ -1011,7 +1011,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
                       <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
                         <option value="">Select bin…</option>
                         {#each bins as b}
-                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                          <option value={b.bin_id}>{b.bin_id}</option>
                         {/each}
                       </select>
                       <button
@@ -1045,7 +1045,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
                       <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
                         <option value="">Select bin…</option>
                         {#each bins as b}
-                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                          <option value={b.bin_id}>{b.bin_id}</option>
                         {/each}
                       </select>
                       <button
