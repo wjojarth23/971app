@@ -1,38 +1,6 @@
 {
   "laser-cut": [
     {
-      "id": "al_1_16_sheet",
-      "material": "Aluminum",
-      "description": "1/16\" Aluminum Sheet",
-      "thickness": 0.0625,
-      "dimensions": "Sheet",
-      "workflow": "laser-cut"
-    },
-    {
-      "id": "al_1_8_sheet",
-      "material": "Aluminum", 
-      "description": "1/8\" Aluminum Sheet",
-      "thickness": 0.125,
-      "dimensions": "Sheet",
-      "workflow": "laser-cut"
-    },
-    {
-      "id": "al_1_4_sheet",
-      "material": "Aluminum",
-      "description": "1/4\" Aluminum Sheet", 
-      "thickness": 0.25,
-      "dimensions": "Sheet",
-      "workflow": "laser-cut"
-    },
-    {
-      "id": "al_3_8_sheet",
-      "material": "Aluminum",
-      "description": "3/8\" Aluminum Sheet",
-      "thickness": 0.375,
-      "dimensions": "Sheet", 
-      "workflow": "laser-cut"
-    },
-    {
       "id": "pc_1_16_sheet",
       "material": "Polycarbonate",
       "description": "1/16\" Polycarbonate Sheet",
@@ -203,6 +171,14 @@
       "workflow": "router"
     },
     {
+      "id": "al_3_16_sheet",
+      "material": "Aluminum",
+      "description": "3/16\" Aluminum Sheet",
+      "thickness": 0.1875,
+      "dimensions": "Sheet",
+      "workflow": "router"
+    },
+    {
       "id": "al_1_8_sheet",
       "material": "Aluminum", 
       "description": "1/8\" Aluminum Sheet",
@@ -266,6 +242,7 @@
       "outer_height": 2.0,
       "wall_thickness": 0.0625,
       "dimensions": "Tube",
+      "isTube": true,
       "workflow": "router"
     },
     {
@@ -276,6 +253,7 @@
       "outer_height": 2.0,
       "wall_thickness": 0.125,
       "dimensions": "Tube",
+      "isTube": true,
       "workflow": "router"
     },
     {
@@ -286,6 +264,7 @@
       "outer_height": 1.0,
       "wall_thickness": 0.0625,
       "dimensions": "Tube",
+      "isTube": true,
       "workflow": "router"
     },
     {
@@ -296,6 +275,7 @@
       "outer_height": 1.0,
       "wall_thickness": 0.125,
       "dimensions": "Tube",
+      "isTube": true,
       "workflow": "router"
     },
     {
@@ -306,6 +286,7 @@
       "outer_height": 2.0,
       "wall_thickness": 0.0625,
       "dimensions": "Tube",
+      "isTube": true,
       "workflow": "router"
     },
     {
@@ -316,6 +297,7 @@
       "outer_height": 2.0,
       "wall_thickness": 0.125,
       "dimensions": "Tube",
+      "isTube": true,
       "workflow": "router"
     }
   ],

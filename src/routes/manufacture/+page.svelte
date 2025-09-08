@@ -5,7 +5,7 @@
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
-  import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink } from 'lucide-svelte';
+import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X } from 'lucide-svelte';
   
   let parts = [];
   let filteredParts = [];
@@ -16,6 +16,9 @@
   let filterStatus = '';
   let toastMessage = '';
   let showToast = false;
+  // Kitting bins
+  let bins = [];
+  let selectedBinMap = {}; // per-part selected bin_id
   
   const workflows = [
     { value: 'laser-cut', label: 'Laser Cut', icon: Zap },
@@ -29,13 +32,22 @@
   const statuses = [
     { value: 'pending', label: 'Pending' },
     { value: 'in-progress', label: 'In Progress' },
-    { value: 'cammed', label: 'Cammed' },
-    { value: 'machined', label: 'Machined' },
-    { value: 'inspected', label: 'Inspected' },
+  { value: 'cammed', label: 'Cammed' },
+  { value: 'cam_review', label: 'Needs CAM Review' },
+  { value: 'machined', label: 'Machined' },
     { value: 'complete', label: 'Complete' }
   ];
 
-  import ROUTER_FLOW from '$lib/router_flow.json';
+import ROUTER_FLOW from '$lib/router_flow.json';
+
+  import stockData from '$lib/stock.json';
+  let showEditModal = false;
+  let editPart = null;
+  let editStatus = '';
+  let editWorkflow = '';
+  let editStock = '';
+  let editCustomStock = '';
+  $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -59,7 +71,8 @@
       await loadUserFromUUID(supabase);
     }
 
-    await loadParts();
+  await loadParts();
+  await loadBins();
     loading = false;
   });
 
@@ -91,6 +104,10 @@
       }));
       
       parts = transformedData || [];
+      // Prefill selected bin dropdowns from current values
+      for (const p of parts) {
+        if (p.kitting_bin) selectedBinMap[p.id] = p.kitting_bin;
+      }
     } catch (error) {
       console.error('Error loading parts:', error);
       alert('Error loading parts. Please try again.');
@@ -229,6 +246,21 @@
     }
   }
 
+  // Load available kitting bins from Supabase
+  async function loadBins() {
+    try {
+      const { data, error } = await supabase
+        .from('kitting_bins')
+        .select('bin_id, name')
+        .order('name', { ascending: true });
+      if (error) throw error;
+      bins = data || [];
+    } catch (err) {
+      console.warn('Error loading kitting bins (does table exist?):', err?.message || err);
+      bins = [];
+    }
+  }
+
   async function completePart(partId, deliveryMethod, kittingBin = '') {
     try {
       const updateData = {
@@ -296,6 +328,72 @@
       console.warn('updateRouterMeta exception:', e?.message || e);
     }
   }
+  // Additional file meta helpers for router STEP/DXF handling
+  function getFileMeta(part) {
+    try {
+      return JSON.parse(part.file_url || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  async function ensureInProgress(part) {
+    try {
+      if (part?.status === 'pending') {
+        await updatePartStatus(part.id, 'in-progress');
+      }
+    } catch {}
+  }
+
+  async function downloadStepFromOnshape(part) {
+    await ensureInProgress(part);
+    const params = new URLSearchParams({
+      action: 'translate-part',
+      documentId: part.onshape_document_id,
+      elementId: part.onshape_element_id,
+      partId: part.onshape_part_id,
+      wvm: part.onshape_wvm,
+      wvmId: part.onshape_wvmid,
+      format: 'STEP'
+    });
+    const response = await fetch(`/api/onshape?${params}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+    const blob = await response.blob();
+    const fileName = `${(part.name || 'part').replace(/[^a-zA-Z0-9]/g, '_')}.step`;
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click();
+    window.URL.revokeObjectURL(url); document.body.removeChild(a);
+  }
+
+  async function downloadDXFFromOnshape(part) {
+    await ensureInProgress(part);
+    const params = new URLSearchParams({
+      action: 'convert-to-dxf',
+      documentId: part.onshape_document_id,
+      elementId: part.onshape_element_id,
+      partId: part.onshape_part_id,
+      wvm: part.onshape_wvm,
+      wvmId: part.onshape_wvmid
+    });
+    const response = await fetch(`/api/onshape?${params}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+    const blob = await response.blob();
+    const fileName = `${(part.name || 'part').replace(/[^a-zA-Z0-9]/g, '_')}.dxf`;
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click();
+    window.URL.revokeObjectURL(url); document.body.removeChild(a);
+  }
+
   // Router flow helpers (new) - definitions moved earlier in file for JSON-based flow
 
   // Open the subsystem page or linked Onshape document for parts that require drawings
@@ -385,10 +483,7 @@
       }
     }
 
-    // Lathe/Mill: map "machined" to human-readable "Needs Inspection"
-    if ((part.workflow === 'lathe' || part.workflow === 'mill') && part.status === 'machined') {
-      return 'Needs Inspection';
-    }
+  // Lathe/Mill: no inspection stage; show raw status
 
     if (part.status === 'complete') {
       if (part.kitting_bin) {
@@ -488,7 +583,98 @@
     }
   }
 
+  // Edit modal handlers
+  function openEditModal(part) {
+    editPart = part;
+    editStatus = part.status || 'pending';
+    editWorkflow = part.workflow || '';
+    editStock = part.stock_assignment || '';
+    editCustomStock = '';
+    showEditModal = true;
+  }
+
+  // Row click handler: open edit modal when user clicks the row body
+  // but ignore clicks that originated on interactive elements (buttons, inputs, links)
+  function onRowClick(e, part) {
+    try {
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return;
+    } catch (err) {
+      // defensive: if DOM not available, just return
+      return;
+    }
+    openEditModal(part);
+  }
+
+  function onRowKeyDown(e, part) {
+    // Only act on Enter or Space
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    try {
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return;
+    } catch (err) {
+      return;
+    }
+    // Prevent page from scrolling on Space
+    e.preventDefault();
+    openEditModal(part);
+  }
+
+  function closeEditModal() {
+    showEditModal = false;
+    editPart = null;
+  }
+
+  async function saveEdits() {
+    if (!editPart) return;
+    const effectiveStock = editStock === '__other__' ? (editCustomStock || '').trim() : editStock;
+    // If the user selected the CAM review pseudo-status, store underlying 'cammed'
+    // as the actual status and set router_meta.step = 'cam_review' separately.
+    const update = {
+      status: editStatus === 'cam_review' ? 'cammed' : editStatus,
+      workflow: editWorkflow,
+      updated_at: new Date().toISOString()
+    };
+    if (effectiveStock) update.stock_assignment = effectiveStock;
+    try {
+      const { error } = await supabase
+        .from('parts')
+        .update(update)
+        .eq('id', editPart.id);
+      if (error) throw error;
+      // If the pseudo-status was selected, ensure router_meta step is set
+      if (editStatus === 'cam_review') {
+        try { await updateRouterMeta(editPart, { step: 'cam_review' }); } catch (e) { console.warn('updateRouterMeta failed:', e); }
+      }
+      await loadParts();
+      showToastMessage('Part updated');
+    } catch (e) {
+      console.error('saveEdits error:', e);
+      alert('Failed to update part: ' + (e.message || e));
+    } finally {
+      closeEditModal();
+    }
+  }
+
+  async function deleteCurrentPart() {
+    if (!editPart) return;
+    if (!confirm('Delete this part permanently?')) return;
+    try {
+      const { error } = await supabase
+        .from('parts')
+        .delete()
+        .eq('id', editPart.id);
+      if (error) throw error;
+      await loadParts();
+      showToastMessage('Part deleted');
+    } catch (e) {
+      console.error('deleteCurrentPart error:', e);
+      alert('Failed to delete part: ' + (e.message || e));
+    } finally {
+      closeEditModal();
+    }
+  }
+
   // Reactive statement that filters parts when search term, filters, or parts array changes
+  // ToDo tab: hide completed parts
   $: filteredParts = parts.filter(part => {
     const matchesSearch = !searchTerm || 
       part.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -497,8 +683,9 @@
     
     const matchesWorkflow = !filterWorkflow || part.workflow === filterWorkflow;
     const matchesStatus = !filterStatus || part.status === filterStatus;
+    const notCompleted = part.status !== 'complete';
     
-    return matchesSearch && matchesWorkflow && matchesStatus;
+    return matchesSearch && matchesWorkflow && matchesStatus && notCompleted;
   });
 
   // Toast notification functions
@@ -562,7 +749,7 @@
 <div class="page-header">
   <h1>Parts List</h1>
   <div class="page-actions">
-    <a href="/create" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
+    <a href="/manufacture/create" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
       <Upload size={16} />
       Create New Part
     </a>
@@ -579,8 +766,10 @@
 
 <!-- Manufacture Sub-Tabs -->
 <div class="subtabs">
-  <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>All</a>
+  <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
+  <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
+  <a href="/manufacture/kitting" class:active={$page.url.pathname === '/manufacture/kitting'}>Kitting</a>
 </div>
 
 <div class="card">
@@ -646,14 +835,19 @@
           <th>Stock</th>
           <th class="source-col">Source</th>
           <th>Status</th>
-          <th>Bin</th>
           <th>Created</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {#each filteredParts as part (part.id)}
-          <tr>
+          <tr
+            on:click={(e) => onRowClick(e, part)}
+            on:keydown={(e) => onRowKeyDown(e, part)}
+            role="button"
+            tabindex="0"
+            style="cursor: pointer;"
+          >
             <td class="name-col"><strong>{part.name}</strong></td>
             <td>
               <div class="workflow-badge workflow-{part.workflow || 'mill'}">
@@ -666,26 +860,55 @@
             <td class="source-col">
               {#if part.source_type === 'onshape_api'}
                 <div class="source-cell">
-                  <span class="source-tag">
-                    {#if part.workflow === 'laser-cut'}
-                      SVG
-                    {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
-                      PDF
-                    {:else}
-                      {part.file_format === 'stl' ? 'STL' : 'STEP'}
-                    {/if}
-                  </span>
-                  {#if part.workflow === 'lathe' || part.workflow === 'mill'}
-                    <!-- For drawings, show open-document action instead of downloading a PDF -->
+                  {#if part.workflow === 'laser-cut'}
+                    <span class="source-tag">SVG</span>
+                    <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
+                      <Download size={16} />
+                    </button>
+                  {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
+                    <span class="source-tag">PDF</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Open document" title="Open document" on:click={() => openSubsystemDocument(part)}>
                       <ExternalLink size={16} />
                     </button>
+                  {:else if part.workflow === 'router'}
+                    <span class="source-tag">STEP</span>
+                    <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadStepFromOnshape(part)}>
+                      <Download size={16} />
+                    </button>
+                    <span class="source-tag">DXF</span>
+                    <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadDXFFromOnshape(part)}>
+                      <Download size={16} />
+                    </button>
                   {:else}
+                    <span class="source-tag">{part.file_format === 'stl' ? 'STL' : 'STEP'}</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
                       <Download size={16} />
                     </button>
                   {/if}
                 </div>
+              {:else if part.workflow === 'router'}
+                {#await Promise.resolve((() => { try { return JSON.parse(part.file_url || '{}') } catch { return {} } })()) then meta}
+                  <div class="source-cell">
+                    {#if meta.step_file}
+                      <span class="source-tag">STEP</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadFromStorage(meta.step_file, part.id)}>
+                        <Download size={16} />
+                      </button>
+                    {/if}
+                    {#if meta.dxf_file}
+                      <span class="source-tag">DXF</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadFromStorage(meta.dxf_file, part.id)}>
+                        <Download size={16} />
+                      </button>
+                    {/if}
+                    {#if !meta.step_file && !meta.dxf_file}
+                      <span class="file-label">{part.file_name}</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFromStorage(part.file_name, part.id)}>
+                        <Download size={16} />
+                      </button>
+                    {/if}
+                  </div>
+                {/await}
               {:else if part.file_name}
                 <div class="source-cell">
                   <span class="file-label">{part.file_name}</span>
@@ -700,9 +923,10 @@
             <td>
               <span class="status-badge {getStatusBadgeClass(part.status)} status-table status-fade">{getStatusDisplay(part)}</span>
             </td>
-            <td class="mono">{part.kitting_bin || '-'}</td>
             <td>{formatDate(part.created_at)}</td>
             <td>
+              <div class="row-actions">
+              </div>
               {#if part.status === 'pending'}
                 {#if part.workflow === 'router'}
                 <button
@@ -731,7 +955,7 @@
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'layout' }); }}
+                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
                       title="CAMed"
                     >
                       CAMed
@@ -739,27 +963,19 @@
                   </div>
                   {/if}
                 {:else if part.workflow === '3d-print' || part.workflow === 'laser-cut'}
-                  <!-- 3D prints and Laser cut: field + Kit (completes) -->
+                  <!-- 3D prints and Laser cut: dropdown + Kit (completes) -->
                   <div class="actions-col">
                     <div class="kitting-inline">
-                      <input
-                        type="text"
-                        placeholder="Bin ID"
-                        class="form-input kitting-input"
-                        on:keydown={(e) => {
-                          if (e.key === 'Enter' && e.target.value.trim()) {
-                            completePart(part.id, 'kitting-bin', e.target.value.trim());
-                          }
-                        }}
-                      />
+                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
+                        <option value="">Select bin…</option>
+                        {#each bins as b}
+                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                        {/each}
+                      </select>
                       <button
                         class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={(e) => {
-                          const input = e.target.previousElementSibling;
-                          if (input && input.value.trim()) {
-                            completePart(part.id, 'kitting-bin', input.value.trim());
-                          }
-                        }}
+                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
+                        disabled={!selectedBinMap[part.id]}
                         title="Kit and Finish"
                       >
                         <Package size={14} />
@@ -768,57 +984,40 @@
                     </div>
                   </div>
                 {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
-                  <!-- Mill/Lathe: field + Inspection (saves bin, sets to 'machined' = needs inspection) -->
+                  <!-- Mill/Lathe: dropdown + Kit (finish workflow directly) -->
                   <div class="actions-col">
                     <div class="kitting-inline">
-                      <input
-                        type="text"
-                        placeholder="Inspection Bin"
-                        class="form-input kitting-input"
-                        on:keydown={async (e) => {
-                          if (e.key === 'Enter') {
-                            const bin = e.target.value.trim();
-                            await updateBin(part.id, bin);
-                            await updatePartStatus(part.id, 'machined');
-                          }
-                        }}
-                      />
+                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
+                        <option value="">Select bin…</option>
+                        {#each bins as b}
+                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                        {/each}
+                      </select>
                       <button
                         class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={async (e) => {
-                          const input = e.target.previousElementSibling;
-                          const bin = input && input.value.trim();
-                          await updateBin(part.id, bin || '');
-                          await updatePartStatus(part.id, 'machined');
-                        }}
-                        title="Send to Inspection"
+                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
+                        disabled={!selectedBinMap[part.id]}
+                        title="Kit and Finish"
                       >
-                        Inspection
+                        <Package size={14} />
+                        Kit
                       </button>
                     </div>
                   </div>
                 {:else}
-                  <!-- Fallback: field + Kit -->
+                  <!-- Fallback: dropdown + Kit -->
                   <div class="actions-col">
                     <div class="kitting-inline">
-                      <input
-                        type="text"
-                        placeholder="Bin ID"
-                        class="form-input kitting-input"
-                        on:keydown={(e) => {
-                          if (e.key === 'Enter' && e.target.value.trim()) {
-                            completePart(part.id, 'kitting-bin', e.target.value.trim());
-                          }
-                        }}
-                      />
+                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
+                        <option value="">Select bin…</option>
+                        {#each bins as b}
+                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                        {/each}
+                      </select>
                       <button
                         class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={(e) => {
-                          const input = e.target.previousElementSibling;
-                          if (input && input.value.trim()) {
-                            completePart(part.id, 'kitting-bin', input.value.trim());
-                          }
-                        }}
+                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
+                        disabled={!selectedBinMap[part.id]}
                         title="Kit and Finish"
                       >
                         <Package size={14} />
@@ -828,67 +1027,31 @@
                   </div>
                 {/if}
 
-              {:else if (part.workflow === 'lathe' || part.workflow === 'mill') && part.status === 'machined'}
-                <!-- Mill/Lathe when Needs Inspection: field + Kit (finish workflow) -->
-                <div class="actions-col">
-                  <div class="kitting-inline">
-                    <input
-                      type="text"
-                      placeholder="Kitting Bin"
-                      class="form-input kitting-input"
-                      on:keydown={(e) => {
-                        if (e.key === 'Enter' && e.target.value.trim()) {
-                          completePart(part.id, 'kitting-bin', e.target.value.trim());
-                        }
-                      }}
-                    />
-                    <button
-                      class="btn btn-secondary btn-sm btn-nowrap"
-                      on:click={(e) => {
-                        const input = e.target.previousElementSibling;
-                        if (input && input.value.trim()) {
-                          completePart(part.id, 'kitting-bin', input.value.trim());
-                        }
-                      }}
-                      title="Kit and Finish"
-                    >
-                      <Package size={14} />
-                      Kit
-                    </button>
-                  </div>
-                </div>
+              
 
               {:else if part.workflow === 'router' && part.status === 'cammed'}
-                <!-- Router after Cammed per new flow: layout -> TProged -> queued -> Cut -> inspection -> Bin/Kit -->
+                <!-- Router after Cammed per new flow: layout -> TProged -> queued -> Cut -> Bin/Kit -->
                 {#if getRouterMeta(part).step === 'layout'}
                   <div class="actions-col">
                     <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
                   </div>
-                {:else if getRouterMeta(part).step === 'queued'}
+        {:else if getRouterMeta(part).step === 'queued'}
                   <div class="actions-col">
-                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'inspection' })}>Cut</button>
+          <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'cut' })}>Cut</button>
                   </div>
-                {:else if getRouterMeta(part).step === 'inspection'}
+        {:else if getRouterMeta(part).step === 'cut'}
                   <div class="actions-col">
                     <div class="kitting-inline">
-                      <input
-                        type="text"
-                        placeholder="Bin ID"
-                        class="form-input kitting-input"
-                        on:keydown={(e) => {
-                          if (e.key === 'Enter' && e.target.value.trim()) {
-                            completePart(part.id, 'kitting-bin', e.target.value.trim());
-                          }
-                        }}
-                      />
+                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
+                        <option value="">Select bin…</option>
+                        {#each bins as b}
+                          <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                        {/each}
+                      </select>
                       <button
                         class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={(e) => {
-                          const input = e.target.previousElementSibling;
-                          if (input && input.value.trim()) {
-                            completePart(part.id, 'kitting-bin', input.value.trim());
-                          }
-                        }}
+                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
+                        disabled={!selectedBinMap[part.id]}
                         title="Kit and Finish"
                       >
                         <Package size={14} />
@@ -909,6 +1072,66 @@
         {/each}
       </tbody>
     </table>
+  </div>
+{/if}
+
+<!-- Edit Part Modal -->
+{#if showEditModal}
+  <div
+    class="modal-backdrop"
+    on:click|self={closeEditModal}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeEditModal(); } }}
+  >
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Edit Part{editPart ? `: ${editPart.name}` : ''}</h3>
+        <button class="btn btn-icon" aria-label="Close" on:click={closeEditModal}><X size={16} /></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="edit-status">Status</label>
+          <select id="edit-status" class="form-select" bind:value={editStatus}>
+            {#each statuses as status}
+              <option value={status.value}>{status.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="edit-workflow">Workflow</label>
+          <select id="edit-workflow" class="form-select" bind:value={editWorkflow}>
+            {#each workflows as w}
+              <option value={w.value}>{w.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="edit-stock">Stock</label>
+          <select id="edit-stock" class="form-select" bind:value={editStock}>
+            <option value="">—</option>
+            {#each editStockOptions as s}
+              <option value={s}>{s}</option>
+            {/each}
+            <option value="__other__">Custom...</option>
+          </select>
+        </div>
+        {#if editStock === '__other__'}
+        <div class="form-group">
+          <input class="form-input" type="text" placeholder="Custom stock" bind:value={editCustomStock} />
+        </div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" on:click={deleteCurrentPart}>
+          <Trash2 size={16} />
+          Delete
+        </button>
+        <div class="spacer"></div>
+        <button class="btn" on:click={closeEditModal}>Cancel</button>
+        <button class="btn btn-primary" on:click={saveEdits}>Save</button>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -1249,10 +1472,19 @@
     .table tbody td:nth-child(5) {
       display: none;
     }
-    /* Hide Created column on small screens (now 9th after adding Bin) */
-    .table thead th:nth-child(9),
-    .table tbody td:nth-child(9) {
+    /* Hide Created column on small screens (8th) */
+    .table thead th:nth-child(8),
+    .table tbody td:nth-child(8) {
       display: none;
     }
   }
+  /* Edit modal styles */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display:flex; align-items: center; justify-content: center; z-index: 1000; }
+  .modal { background: var(--primary); border: 1px solid var(--border); border-radius: 8px; width: min(520px, 95vw); max-height: 90vh; overflow: auto; box-shadow: var(--shadow-md); }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+  .modal-body { padding: 1rem; display: grid; gap: 0.75rem; }
+  .modal-footer { padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--border); }
+  .modal .btn-danger { background: #dc2626; color: #fff; }
+  .modal .btn-danger:hover { background: #b91c1c; }
+  .row-actions { margin-bottom: 0.25rem; }
 </style>

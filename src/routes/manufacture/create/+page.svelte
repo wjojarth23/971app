@@ -12,7 +12,23 @@
   let stockAssignment = '';
   let customStock = '';
   let uploadedFile = null;
+  let uploadedStepFile = null;
+  let uploadedDXFFile = null;
   let isSubmitting = false;
+
+  // Router: if selected stock is tube, DXF not required
+  $: stockIsTube = (() => {
+    if (workflow === 'router' && stockAssignment && stockAssignment !== '__other__') {
+      const s = (stockOptions || []).find(s => s.description === stockAssignment);
+      return Boolean(s && s.isTube);
+    }
+    return false;
+  })();
+
+  // For non-router: need one file. For router: need STEP and DXF unless tube (DXF optional)
+  $: hasRequiredFiles = workflow === 'router'
+    ? (!!uploadedStepFile && (stockIsTube ? true : !!uploadedDXFFile))
+    : !!uploadedFile;
 
   const workflows = [
     { id: 'laser-cut', name: 'Laser Cut', fileType: 'svg', icon: Zap, color: 'workflow-laser' },
@@ -22,29 +38,22 @@
     { id: '3d-print', name: '3D Print', fileType: 'stl', icon: Upload, color: 'workflow-3d-print' }
   ];
 
-  const materialOptions = {
-    'lathe': ['1/2" Thunderhex', '3/8" Thunderhex'],
-    'mill': ['Aluminum', 'Steel', 'Delrin'],
-    'router': [
-      '1/8" Polycarbonate', '1/4" Polycarbonate', '3/8" Polycarbonate',
-      '1/8" SSRP', '1/4" SSRP', '3/8" SSRP',
-      '1/8" Plywood', '1/4" Plywood', '3/8" Plywood',
-      '1/16" Aluminum', '1/8" Aluminum', '1/4" Aluminum', '3/8" Aluminum',
-      '1x2 1/16" Tube', '1x1 1/16" Tube', '1x2 1/8" Tube', '1x1 1/8" Tube'
-    ],
-    '3d-print': ['PLA', 'ABS', 'PETG', 'PETG-CF'],
-    'laser-cut': [
-      '1/8" Polycarbonate', '1/4" Polycarbonate', '3/8" Polycarbonate',
-      '1/8" SSRP', '1/4" SSRP', '3/8" SSRP',
-      '1/8" Plywood', '1/4" Plywood', '3/8" Plywood'
-    ]
-  };
-
   $: selectedWorkflow = workflows.find(w => w.id === workflow);
   $: requiredFileType = selectedWorkflow?.fileType || '';
-  $: availableMaterials = workflow ? materialOptions[workflow] || [] : [];
   import stockData from '$lib/stock.json';
-  $: stockOptions = workflow ? (stockData[workflow] || []).map(s => s.description) : [];
+  $: stockOptions = workflow ? (stockData[workflow] || []) : [];
+
+  // Set material based on selected stock
+  $: if (stockAssignment && stockAssignment !== '__other__') {
+    const selectedStock = stockOptions.find(s => s.description === stockAssignment);
+    if (selectedStock) {
+      material = selectedStock.material;
+    }
+  } else if (stockAssignment === '__other__' && customStock.trim()) {
+    material = customStock.trim(); // For custom stock, use the custom stock name as material
+  } else {
+    material = '';
+  }
 
   function handleFileUpload(event) {
     const file = event.target.files[0];
@@ -86,80 +95,167 @@
     }
   }
 
-  async function handleSubmit() {
+  // Router-specific STEP + DXF handlers
+  function handleStepUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['step', 'stp'].includes(ext)) {
+        alert('Please upload a STEP (.step or .stp) file.');
+        event.target.value = '';
+        return;
+      }
+      uploadedStepFile = file;
+    }
+  }
+  function handleDXFUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext !== 'dxf') {
+        alert('Please upload a DXF (.dxf) file.');
+        event.target.value = '';
+        return;
+      }
+      uploadedDXFFile = file;
+    }
+  }
+  function sanitizeName(n) { return (n || 'part').replace(/[^a-zA-Z0-9]/g, '_'); }
+
+  async function handleSubmitGeneric() {
     const effectiveStock = stockAssignment === '__other__' ? customStock.trim() : stockAssignment;
-    if (!partName || !requesterName || !projectId || !workflow || !material || !uploadedFile || !quantity || quantity < 1 || !effectiveStock) {
-      alert('Please fill in all fields, select a stock, select a material, upload a file, and specify a valid quantity.');
+    if (!partName || !requesterName || !projectId || !workflow || !uploadedFile || !quantity || quantity < 1 || !effectiveStock) {
+      alert('Please fill in all fields, select a stock, upload a file, and specify a valid quantity.');
       return;
     }
 
     isSubmitting = true;
-    
     try {
-      // Upload file to Supabase Storage
       const fileExt = uploadedFile.name.split('.').pop();
-      const fileName = `${Date.now()}_${partName.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExt}`;
-      
-      console.log('Attempting to upload file:', fileName);
-      console.log('File size:', uploadedFile.size);
-      console.log('File type:', uploadedFile.type);
-      
+      const fileName = `${Date.now()}_${sanitizeName(partName)}.${fileExt}`;
+
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('manufacturing-files')
-        .upload(fileName, uploadedFile, {
-          cacheControl: '3600',
-          upsert: false
-        });
+        .upload(fileName, uploadedFile, { cacheControl: '3600', upsert: false });
+      if (uploadError) throw uploadError;
 
-      if (uploadError) {
-        console.error('Upload error details:', uploadError);
-        throw uploadError;
-      }
-
-      console.log('File upload successful:', uploadData);      // Insert part record into database
-      const { data: partData, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from('parts')
-        .insert([
-          {
-            name: partName,
-            requester: requesterName,
-            project_id: projectId,
-            workflow: workflow,
-            quantity: quantity,
-            material: material,
-            stock_assignment: effectiveStock,
-            file_name: fileName,
-            file_url: fileName,
-            status: 'pending'
-          }
-        ])
-        .select();
+        .insert([{
+          name: partName,
+          requester: requesterName,
+          project_id: projectId,
+          workflow: workflow,
+          quantity: quantity,
+          material: material,
+          stock_assignment: effectiveStock,
+          file_name: fileName,
+          file_url: fileName,
+          status: 'pending'
+        }]);
+      if (insertError) throw insertError;
 
-      if (insertError) {
-        console.error('Database insert error:', insertError);
-        throw insertError;
-      }      console.log('Part record created successfully:', partData);
-      
-      // Reset form
+      // Reset
       partName = '';
       requesterName = '';
       projectId = '';
       workflow = '';
       quantity = 1;
-  material = '';
-  stockAssignment = '';
-  customStock = '';
+      stockAssignment = '';
+      customStock = '';
+      material = '';
       uploadedFile = null;
-      
-      // Navigate to parts list
-      goto('/');
-      
+
+      goto('/manufacture');
     } catch (error) {
       console.error('Submission error:', error);
       alert(`Error submitting part: ${error.message}`);
     } finally {
       isSubmitting = false;
     }
+  }
+
+  async function handleSubmitRouter() {
+    const effectiveStock = stockAssignment === '__other__' ? customStock.trim() : stockAssignment;
+    if (!partName || !requesterName || !projectId || !workflow || !quantity || quantity < 1 || !effectiveStock) {
+      alert('Please fill in all fields and specify a valid quantity.');
+      return;
+    }
+    if (!uploadedStepFile) {
+      alert('Router parts require a STEP file.');
+      return;
+    }
+    if (!stockIsTube && !uploadedDXFFile) {
+      alert('DXF file is required for non-tube router stock.');
+      return;
+    }
+
+    isSubmitting = true;
+    try {
+      const base = `${Date.now()}_${sanitizeName(partName)}`;
+      // STEP
+      const stepExt = uploadedStepFile.name.split('.').pop();
+      const stepName = `${base}.${stepExt}`;
+      const { error: stepErr } = await supabase.storage
+        .from('manufacturing-files')
+        .upload(stepName, uploadedStepFile, { cacheControl: '3600', upsert: false });
+      if (stepErr) throw stepErr;
+
+      // DXF (optional for tube)
+      let dxfName = null;
+      if (uploadedDXFFile) {
+        const dxfExt = uploadedDXFFile.name.split('.').pop();
+        dxfName = `${base}.${dxfExt}`;
+        const { error: dxfErr } = await supabase.storage
+          .from('manufacturing-files')
+          .upload(dxfName, uploadedDXFFile, { cacheControl: '3600', upsert: false });
+        if (dxfErr) throw dxfErr;
+      }
+
+      const fileMeta = { step_file: stepName, dxf_file: dxfName };
+      const { error: insertError } = await supabase
+        .from('parts')
+        .insert([{
+          name: partName,
+          requester: requesterName,
+          project_id: projectId,
+          workflow: workflow,
+          quantity: quantity,
+          material: material,
+          stock_assignment: effectiveStock,
+          file_name: stepName, // keep for backward compat
+          file_url: JSON.stringify(fileMeta),
+          status: 'pending'
+        }]);
+      if (insertError) throw insertError;
+
+      // Reset
+      partName = '';
+      requesterName = '';
+      projectId = '';
+      workflow = '';
+      quantity = 1;
+      stockAssignment = '';
+      customStock = '';
+      material = '';
+      uploadedStepFile = null;
+      uploadedDXFFile = null;
+      uploadedFile = null;
+
+      goto('/manufacture');
+    } catch (error) {
+      console.error('Submission error:', error);
+      alert(`Error submitting part: ${error.message}`);
+    } finally {
+      isSubmitting = false;
+    }
+  }
+
+  async function handleSubmit() {
+    if (workflow === 'router') {
+      return await handleSubmitRouter();
+    }
+    return await handleSubmitGeneric();
   }
 </script>
 
@@ -236,7 +332,7 @@
                 type="radio" 
                 bind:group={workflow} 
                 value={workflowOption.id}
-                on:change={() => {material = ''; uploadedFile = null;}}
+                on:change={() => {stockAssignment = ''; customStock = ''; material = ''; uploadedFile = null;}}
               />
               <div class="workflow-content">
                 <svelte:component this={workflowOption.icon} size={24} />
@@ -257,7 +353,7 @@
             <select id="stock" bind:value={stockAssignment} required>
               <option value="">Select stock</option>
               {#each stockOptions as s}
-                <option value={s}>{s}</option>
+                <option value={s.description}>{s.description}</option>
               {/each}
               <option value="__other__">Other...</option>
             </select>
@@ -271,60 +367,118 @@
         </div>
       {/if}
 
-      <!-- Material Selection -->
-      {#if availableMaterials.length > 0}
-        <div class="form-section">
-          <h2>Material Selection</h2>
-          <div class="form-group">
-            <label for="material">Material</label>
-            <select id="material" bind:value={material} required>
-              <option value="">Select material</option>
-              {#each availableMaterials as materialOption}
-                <option value={materialOption}>{materialOption}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-      {/if}
+
 
       <!-- File Upload -->
       {#if workflow}
         <div class="form-section">
           <h2>File Upload</h2>
-          <div class="upload-container">
-            <div 
-              class="file-drop-zone {uploadedFile ? 'has-file' : ''}"
-              role="button"
-              tabindex="0"
-              on:dragover={handleDragOver}
-              on:dragleave={handleDragLeave}
-              on:drop={handleDrop}
-              on:click={() => document.getElementById('file-input').click()}
-              on:keydown={(e) => e.key === 'Enter' && document.getElementById('file-input').click()}
-            >
-              <input 
-                id="file-input"
-                type="file" 
-                accept=".{requiredFileType}"
-                on:change={handleFileUpload}
-                style="display: none;"
-              />
-              
-              {#if uploadedFile}
-                <div class="uploaded-file">
-                  <FileText size={48} />
-                  <span class="file-name">{uploadedFile.name}</span>
-                  <span class="file-size">{(uploadedFile.size / 1024 / 1024).toFixed(2)} MB</span>
-                </div>
-              {:else}
-                <div class="upload-prompt">
-                  <Upload size={48} />
-                  <span class="upload-text">Drop your {requiredFileType.toUpperCase()} file here or click to browse</span>
-                  <span class="upload-subtext">Required file type: .{requiredFileType}</span>
-                </div>
-              {/if}
+          {#if workflow === 'router'}
+            <div class="upload-container">
+              <div 
+                class="file-drop-zone {uploadedStepFile ? 'has-file' : ''}"
+                role="button"
+                tabindex="0"
+                on:dragover={handleDragOver}
+                on:dragleave={handleDragLeave}
+                on:drop={handleDropStep}
+                on:click={() => document.getElementById('step-input').click()}
+                on:keydown={(e) => e.key === 'Enter' && document.getElementById('step-input').click()}
+              >
+                <input 
+                  id="step-input"
+                  type="file" 
+                  accept=".step,.stp"
+                  on:change={handleStepUpload}
+                  style="display: none;"
+                />
+                
+                {#if uploadedStepFile}
+                  <div class="uploaded-file">
+                    <FileText size={48} />
+                    <span class="file-name">{uploadedStepFile.name}</span>
+                    <span class="file-size">{(uploadedStepFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                {:else}
+                  <div class="upload-prompt">
+                    <Upload size={48} />
+                    <span class="upload-text">Drop STEP (.step/.stp) here or click to browse</span>
+                    <span class="upload-subtext">Required</span>
+                  </div>
+                {/if}
+              </div>
             </div>
-          </div>
+
+            <div class="upload-container" style="margin-top: 0.75rem;">
+              <div 
+                class="file-drop-zone {uploadedDXFFile ? 'has-file' : ''}"
+                role="button"
+                tabindex="0"
+                on:dragover={handleDragOver}
+                on:dragleave={handleDragLeave}
+                on:drop={handleDropDXF}
+                on:click={() => document.getElementById('dxf-input').click()}
+                on:keydown={(e) => e.key === 'Enter' && document.getElementById('dxf-input').click()}
+              >
+                <input 
+                  id="dxf-input"
+                  type="file" 
+                  accept=".dxf"
+                  on:change={handleDXFUpload}
+                  style="display: none;"
+                />
+                
+                {#if uploadedDXFFile}
+                  <div class="uploaded-file">
+                    <FileText size={48} />
+                    <span class="file-name">{uploadedDXFFile.name}</span>
+                    <span class="file-size">{(uploadedDXFFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                {:else}
+                  <div class="upload-prompt">
+                    <Upload size={48} />
+                    <span class="upload-text">Drop DXF (.dxf) here or click to browse</span>
+                    <span class="upload-subtext">{stockIsTube ? 'Optional for tube stock' : 'Required'}</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <div class="upload-container">
+              <div 
+                class="file-drop-zone {uploadedFile ? 'has-file' : ''}"
+                role="button"
+                tabindex="0"
+                on:dragover={handleDragOver}
+                on:dragleave={handleDragLeave}
+                on:drop={handleDrop}
+                on:click={() => document.getElementById('file-input').click()}
+                on:keydown={(e) => e.key === 'Enter' && document.getElementById('file-input').click()}
+              >
+                <input 
+                  id="file-input"
+                  type="file" 
+                  accept=".{requiredFileType}"
+                  on:change={handleFileUpload}
+                  style="display: none;"
+                />
+                
+                {#if uploadedFile}
+                  <div class="uploaded-file">
+                    <FileText size={48} />
+                    <span class="file-name">{uploadedFile.name}</span>
+                    <span class="file-size">{(uploadedFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                {:else}
+                  <div class="upload-prompt">
+                    <Upload size={48} />
+                    <span class="upload-text">Drop your {requiredFileType.toUpperCase()} file here or click to browse</span>
+                    <span class="upload-subtext">Required file type: .{requiredFileType}</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -333,7 +487,7 @@
         <button 
           type="submit" 
           class="submit-btn" 
-          disabled={isSubmitting || !partName || !requesterName || !projectId || !workflow || !material || !uploadedFile || !quantity || quantity < 1}
+          disabled={isSubmitting || !partName || !requesterName || !projectId || !workflow || !hasRequiredFiles || !quantity || quantity < 1}
         >
           {#if isSubmitting}
             Submitting...

@@ -197,3 +197,11 @@ CREATE TABLE public.user_profiles (
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
+
+-- Kitting bins lookup table (name + ID)
+-- Note: Create this in your Supabase project if not present.
+CREATE TABLE public.kitting_bins (
+  bin_id text PRIMARY KEY,
+  name text NOT NULL,
+  created_at timestamp with time zone DEFAULT now()
+);

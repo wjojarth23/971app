@@ -8,7 +8,7 @@
     if (!g || !g.parts || g.parts.length === 0) return false;
     return g.parts.every(p => {
       const m = parseMeta(p);
-      return Boolean(m?.router_meta && m.router_meta.step === 'inspection');
+      return Boolean(m?.router_meta && m.router_meta.step === 'cut');
     });
   }
 
@@ -59,7 +59,7 @@
       .eq('id', part.id);
   }
 
-  // Group-level actions: set all parts in group to TProged or Cut (Inspection)
+  // Group-level actions: set all parts in group to TProged or Cut
   async function applyGroupAction(groupId, action) {
     const group = groupMap[groupId];
     if (!group) return;
@@ -72,9 +72,9 @@
         await updateRouterMeta(p, { travis_progged: true, step: 'queued' });
       }
     } else if (action === 'cut') {
-      // Move to inspection (after cut)
+      // Move to cut
       for (const p of group.parts) {
-        await updateRouterMeta(p, { step: 'inspection' });
+        await updateRouterMeta(p, { step: 'cut' });
       }
     }
     await loadParts();
@@ -101,6 +101,10 @@
         if (meta?.travis_progged) return true;
         return false;
       });
+      // Prefill selected bin dropdowns from existing values
+      for (const p of parts) {
+        if (p.kitting_bin) selectedBinMap[p.id] = p.kitting_bin;
+      }
     }
     // Try to load groups from dedicated tables
     if (useDedicatedTables) {
@@ -245,6 +249,51 @@
       const blob = await resp.blob();
       const ext = part.file_format === 'stl' ? 'stl' : 'step';
       const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.${ext}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) { throw e; }
+  }
+
+  async function downloadStepFromOnshape(part) {
+    try {
+      if (part?.status === 'pending') {
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+      }
+      const params = new URLSearchParams({
+        action: 'translate-part',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'v',
+        wvmId: part.onshape_wvmid,
+        format: 'STEP'
+      });
+      const resp = await fetch(`/api/onshape?${params}`);
+      if (!resp.ok) throw new Error('Onshape STEP download failed');
+      const blob = await resp.blob();
+      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.step`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) { throw e; }
+  }
+
+  async function downloadDXFFromOnshape(part) {
+    try {
+      if (part?.status === 'pending') {
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+      }
+      const params = new URLSearchParams({
+        action: 'convert-to-dxf',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'v',
+        wvmId: part.onshape_wvmid
+      });
+      const resp = await fetch(`/api/onshape?${params}`);
+      if (!resp.ok) throw new Error('Onshape DXF download failed');
+      const blob = await resp.blob();
+      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.dxf`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
     } catch (e) { throw e; }
@@ -399,8 +448,10 @@
   </div>
 </div>
 <div class="subtabs">
-  <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>All</a>
+  <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
+  <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
+  <a href="/manufacture/kitting" class:active={$page.url.pathname === '/manufacture/kitting'}>Kitting</a>
 </div>
 
 {#if loading}
@@ -447,15 +498,31 @@
                   <td>
                     {#if p.source_type === 'onshape_api' || p.is_onshape_part}
                       <div class="source-cell">
-                        <span class="source-tag">{p.file_format === 'stl' ? 'STL' : 'STEP'}</span>
-                        <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFile(p)}><Download size={14} /></button>
+                        <span class="source-tag">STEP</span>
+                        <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(p)}><Download size={14} /></button>
+                        <span class="source-tag">DXF</span>
+                        <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(p)}><Download size={14} /></button>
                       </div>
-                    {:else if p.file_name}
-                      <div class="source-cell">
-                        <span class="file-label">{p.file_name}</span>
-                        <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFile(p)}><Download size={14} /></button>
-                      </div>
-                    {:else}-{/if}
+                    {:else}
+                      {#await Promise.resolve(parseMeta(p)) then meta}
+                        <div class="source-cell">
+                          {#if meta.step_file}
+                            <span class="source-tag">STEP</span>
+                            <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
+                          {/if}
+                          {#if meta.dxf_file}
+                            <span class="source-tag">DXF</span>
+                            <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadFromStorage(meta.dxf_file)}><Download size={14} /></button>
+                          {/if}
+                          {#if !meta.step_file && !meta.dxf_file}
+                            {#if p.file_name}
+                              <span class="file-label">{p.file_name}</span>
+                              <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(p.file_name)}><Download size={14} /></button>
+                            {:else}-{/if}
+                          {/if}
+                        </div>
+                      {/await}
+                    {/if}
                   </td>
                   <td>
                     {#key p.id}
@@ -463,26 +530,22 @@
                         {#if p.status === 'pending'}
                           <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
                         {:else if p.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                          <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'layout' }); await loadParts(); }}>CAMed</button>
-                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'layout'}
+                          <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
+                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
                           <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { travis_progged: true, step: 'queued' })}>TProged</button>
                         {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                          <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { step: 'inspection' })}>Cut</button>
-                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'inspection'}
+                          <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { step: 'cut' })}>Cut</button>
+                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
                           <div class="kitting-inline">
-                            <input type="text" placeholder="Bin ID" class="form-input kitting-input"
-                              on:keydown={async (e) => { if (e.key === 'Enter' && e.target.value.trim()) {
-                                await supabase.from('parts').update({ kitting_bin: e.target.value.trim(), updated_at: new Date().toISOString(), status: 'complete' }).eq('id', p.id);
-                                await loadParts();
-                              }}} />
+                            <select class="form-select kitting-input" bind:value={selectedBinMap[p.id]}>
+                              <option value="">Select bin…</option>
+                              {#each bins as b}
+                                <option value={b.bin_id}>{b.name} ({b.bin_id})</option>
+                              {/each}
+                            </select>
                             <button class="btn btn-secondary btn-sm btn-nowrap"
-                              on:click={async (e) => {
-                                const input = e.target.previousElementSibling;
-                                if (input && input.value.trim()) {
-                                  await supabase.from('parts').update({ kitting_bin: input.value.trim(), updated_at: new Date().toISOString(), status: 'complete' }).eq('id', p.id);
-                                  await loadParts();
-                                }
-                              }}>
+                              on:click={async () => { const v = (selectedBinMap[p.id] || '').trim(); if (v) { await supabase.from('parts').update({ kitting_bin: v, updated_at: new Date().toISOString(), status: 'complete' }).eq('id', p.id); await loadParts(); } }}
+                              disabled={!selectedBinMap[p.id]}>
                               <Package size={14} />
                               Kit
                             </button>
@@ -525,15 +588,31 @@
               <td>
                 {#if part.source_type === 'onshape_api' || part.is_onshape_part}
                   <div class="source-cell">
-                    <span class="source-tag">{part.file_format === 'stl' ? 'STL' : 'STEP'}</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFile(part)}><Download size={14} /></button>
+                    <span class="source-tag">STEP</span>
+                    <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(part)}><Download size={14} /></button>
+                    <span class="source-tag">DXF</span>
+                    <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(part)}><Download size={14} /></button>
                   </div>
-                {:else if part.file_name}
-                  <div class="source-cell">
-                    <span class="file-label">{part.file_name}</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFile(part)}><Download size={14} /></button>
-                  </div>
-                {:else}-{/if}
+                {:else}
+                  {#await Promise.resolve(parseMeta(part)) then meta}
+                    <div class="source-cell">
+                      {#if meta.step_file}
+                        <span class="source-tag">STEP</span>
+                        <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
+                      {/if}
+                      {#if meta.dxf_file}
+                        <span class="source-tag">DXF</span>
+                        <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadFromStorage(meta.dxf_file)}><Download size={14} /></button>
+                      {/if}
+                      {#if !meta.step_file && !meta.dxf_file}
+                        {#if part.file_name}
+                          <span class="file-label">{part.file_name}</span>
+                          <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(part.file_name)}><Download size={14} /></button>
+                        {:else}-{/if}
+                      {/if}
+                    </div>
+                  {/await}
+                {/if}
               </td>
               <td>
                 {#key part.id}
@@ -541,12 +620,12 @@
                     {#if part.status === 'pending'}
                       <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
                     {:else if part.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                      <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'layout' }); await loadParts(); }}>CAMed</button>
-                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'layout'}
+                      <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
+                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
                       <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
                     {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                      <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'inspection' })}>Cut</button>
-                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'inspection'}
+                      <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'cut' })}>Cut</button>
+                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
                       <div class="kitting-inline">
                         <input type="text" placeholder="Bin ID" class="form-input kitting-input"
                           on:keydown={async (e) => { if (e.key === 'Enter' && e.target.value.trim()) {
@@ -605,7 +684,6 @@
   .bom-table tbody tr:hover { background:#f6f7f9; }
   .bom-table tbody tr:last-child td { border-bottom:none; }
   .part-name { font-weight:600; color: var(--text); }
-  .status-select { padding:0.375rem 0.5rem; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:white; }
   .source-cell { display:flex; align-items:center; gap:0.35rem; }
   .source-tag { display:inline-block; padding:0.25rem 0.5rem; background:#f3f4f6; border:1px solid var(--border); border-radius:4px; font-size:0.65rem; font-weight:500; }
   .file-label { max-width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.65rem; }

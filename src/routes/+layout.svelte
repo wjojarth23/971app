@@ -1,11 +1,14 @@
 <script>  import '../app.css';
   import { onMount } from 'svelte';
   import { initAuth, userStore, signOut } from '$lib/stores/auth.js';
-  import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase } from 'lucide-svelte';
+  import { predictSettings } from '$lib/stores/predict.js';
+  import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
   let user = null;
+  let predictTabVisible = false;
+  let predictInfoLoaded = false;
 
   function can(perm) {
     if (!user) return false;
@@ -16,7 +19,20 @@
   onMount(() => {
     const unsub = userStore.subscribe((v) => { user = v; });
     const uninit = initAuth();
-    return () => { unsub?.(); uninit?.(); };
+    // Load Predict tab visibility from server settings
+    fetch('/api/predict?action=info')
+      .then((r) => r.json())
+      .then((d) => { 
+        predictSettings.set({ 
+          tab_visible: !!d?.data?.tab_visible, 
+          demo: !!d?.data?.demo, 
+          competitions: d?.data?.competitions || [] 
+        });
+        predictInfoLoaded = true;
+      })
+      .catch(() => { predictInfoLoaded = true; });
+    const unsubPredict = predictSettings.subscribe((s) => { predictTabVisible = s.tab_visible; });
+    return () => { unsub?.(); uninit?.(); unsubPredict?.(); };
   });
 
 
@@ -62,6 +78,12 @@
             <Receipt size={18} />
             Purchasing
           </a>
+          {#if (false)}
+            <a href="/predict" class="nav-link" class:active={isActive('/predict')}>
+              <Coins size={18} />
+              Predict
+            </a>
+          {/if}
         {/if}
         {#if can('VIEW_ADMIN_PANEL')}
         <a href="/admin" class="nav-link" class:active={isActive('/admin')}>

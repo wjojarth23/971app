@@ -211,6 +211,23 @@
     showEditModal = true;
   }
 
+  // Row interaction helpers (like manufacture route)
+  function onRowClick(e, part) {
+    try {
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a') || e.target.closest('select')) return;
+    } catch {}
+    openEditModal(part);
+  }
+
+  function onRowKeyDown(e, part) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    try {
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a') || e.target.closest('select')) return;
+    } catch {}
+    e.preventDefault();
+    openEditModal(part);
+  }
+
   async function saveEdit() {
     if (!editTarget) {
       showEditModal = false;
@@ -682,12 +699,18 @@
                   <th>Material</th>
                   <th>Status</th>
                   <th>Kitting</th>
-                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {#each allParts as part, i}
-                  <tr class="row {i % 2 === 0 ? 'even' : 'odd'}">
+                  <tr
+                    class="row {i % 2 === 0 ? 'even' : 'odd'}"
+                    on:click={(e) => onRowClick(e, part)}
+                    on:keydown={(e) => onRowKeyDown(e, part)}
+                    role="button"
+                    tabindex="0"
+                    style="cursor: pointer;"
+                  >
                     <td class="part-name">
                       <div class="name-cell">
                         <div class="avatar">
@@ -751,9 +774,6 @@
                       {:else}
                         <span class="no-kitting">Not assigned</span>
                       {/if}
-                    </td>
-                    <td class="actions">
-                      <button class="btn btn-sm chip-edit" on:click={() => openEditModal(part)}>Edit</button>
                     </td>
                   </tr>
                 {/each}
@@ -904,14 +924,21 @@
 
 {#if showEditModal}
   <div class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showEditModal = false; editTarget = null; }}></div>
-  <div class="modal" on:click|stopPropagation>
+  <div
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    tabindex="0"
+    on:click|stopPropagation
+    on:keydown={(e) => { if (e.key === 'Escape') { showEditModal = false; editTarget = null; } }}
+  >
     <h3>Edit Build Item</h3>
     <div class="modal-row">
-      <label>Workflow</label>
+      <label for="edit-workflow">Workflow</label>
       {#if editTarget?.workflow === 'purchase'}
-        <span class="workflow-badge workflow-purchase">Purchase</span>
+        <input id="edit-workflow" class="form-input" type="text" value="Purchase" readonly disabled />
       {:else}
-        <select class="workflow-dropdown workflow-{editWorkflow || 'mill'}" bind:value={editWorkflow}>
+        <select id="edit-workflow" class="workflow-dropdown workflow-{editWorkflow || 'mill'}" bind:value={editWorkflow}>
           <option value="3d-print">3D Print</option>
           <option value="laser-cut">Laser Cut</option>
           <option value="lathe">Lathe</option>
@@ -921,12 +948,12 @@
       {/if}
     </div>
     <div class="modal-row">
-      <label>Stock</label>
+      <label for="edit-stock">Stock</label>
       {#if editTarget?.workflow === 'purchase'}
-        <span class="no-stock">-</span>
+        <input id="edit-stock" class="form-input" type="text" value="-" readonly disabled />
       {:else}
         <div style="display:flex;flex-direction:column;gap:0.5rem;">
-          <select on:change={(e) => editStockChoice = e.target.value} value={editStockChoice || editStockAssignment}>
+          <select id="edit-stock" on:change={(e) => editStockChoice = e.target.value} value={editStockChoice || editStockAssignment}>
             <option value="">Select Stock</option>
             {#each getStocksForWorkflow(editWorkflow || 'mill') as stock}
               <option value={stock.description}>{stock.description}</option>
@@ -934,18 +961,18 @@
             <option value="__other__">Other...</option>
           </select>
           {#if (editStockChoice === '__other__' || (!editStockChoice && typeof editStockAssignmentCustom !== 'undefined' && editStockAssignmentCustom !== null))}
-            <input class="form-input" type="text" placeholder="Type custom stock" bind:value={editStockAssignmentCustom} />
+            <input id="edit-stock-custom" class="form-input" type="text" placeholder="Type custom stock" bind:value={editStockAssignmentCustom} />
           {/if}
         </div>
       {/if}
     </div>
     <div class="modal-row">
-      <label>Material</label>
-      <input class="form-input" type="text" bind:value={editMaterial} readonly title="Material is read-only" />
+      <label for="edit-material">Material</label>
+      <input id="edit-material" class="form-input" type="text" bind:value={editMaterial} readonly title="Material is read-only" />
     </div>
     <div class="modal-row">
-      <label>Quantity</label>
-      <input class="form-input" type="number" min="1" step="1" bind:value={editQuantity} />
+      <label for="edit-quantity">Quantity</label>
+      <input id="edit-quantity" class="form-input" type="number" min="1" step="1" bind:value={editQuantity} />
     </div>
     <div class="modal-actions">
       <button class="btn btn-outline-danger" on:click={() => { removeBuildAssociation(editTarget.id); showEditModal = false; editTarget = null; }}>Delete</button>
@@ -1060,14 +1087,7 @@
   .dot.manufactured { background: #e3f2fd; border: 1px solid #90caf9; }
   .dot.cots { background: #fff8e1; border: 1px solid #ffcc02; }
   .dot.other { background: #f3f4f6; border: 1px solid #e5e7eb; }
-  .parts-section h2 { margin: 0 0 0.75rem 0; color: var(--text); font-size: 1.25rem; }
-  .parts-table-bleed { margin: 0 -1rem -1rem -1rem; border-top: 1px solid var(--border); overflow-x: auto; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
-  .parts-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.9rem; }
-  .parts-table thead th { position: sticky; top: 0; background: #fbfbfc; z-index: 1; text-align: left; padding: 0.675rem 0.9rem; border-bottom: 1px solid var(--border); color: #34495e; font-weight: 600; }
-  .parts-table tbody td { padding: 0.675rem 0.9rem; border-bottom: 1px solid var(--border); }
-  .parts-table tbody tr.even { background: #fff; }
-  .parts-table tbody tr.odd { background: #fcfcfd; }
-  .parts-table tbody tr:hover { background: #f6f7f9; }
+  /* removed unused .parts-table styles */
   .part-name { font-weight: 500; }
   .name-cell { display: flex; align-items: center; gap: 0.65rem; }
   .avatar { width: 26px; height: 26px; border-radius: 6px; background: #f3f4f6; display: inline-flex; align-items: center; justify-content: center; color: #6b7280; border: 1px solid #e5e7eb; }
@@ -1126,34 +1146,7 @@
   .workflow-dropdown.workflow-mill { background: #e8f5e8; color: #388e3c; border-color: #a5d6a7; }
   .workflow-dropdown.workflow-router { background: #fce4ec; color: #c2185b; border-color: #f8bbd9; }
   select { padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.8125rem; background: white; cursor: pointer; height: 32px; }
-  /* Edit button should match the COTS chip height and corner radius */
-  button.btn.btn-sm.chip-edit,
-  .actions > .chip-edit {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 0.35rem !important;
-    padding: 0.375rem 0.75rem !important;
-    height: 32px !important;
-    border-radius: 4px !important;
-    font-size: 0.8125rem !important;
-    font-weight: 500 !important;
-    border: 1px solid #d1d5db !important;
-    background: #f3f4f6 !important;
-    color: #374151 !important;
-    cursor: pointer !important;
-    transition: background 120ms ease, transform 80ms ease, box-shadow 120ms ease !important;
-    box-shadow: none !important;
-  }
-  button.btn.btn-sm.chip-edit:hover,
-  .actions > .chip-edit:hover {
-    background: #e6e7e9 !important;
-    transform: translateY(-1px) !important;
-  }
-  button.btn.btn-sm.chip-edit:focus,
-  .actions > .chip-edit:focus {
-    outline: 3px solid rgba(37,99,235,0.12) !important;
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.08) !important;
-  }
+  /* removed unused .chip-edit styles */
 
   
 </style>

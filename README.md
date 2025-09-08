@@ -37,16 +37,26 @@ A comprehensive manufacturing management system built with SvelteKit, featuring 
    PUBLIC_ONSHAPE_ACCESS_KEY=your_onshape_access_key
    PUBLIC_ONSHAPE_SECRET_KEY=your_onshape_secret_key
    PUBLIC_ONSHAPE_BASE_URL=https://cad.onshape.com
-   
+    
    # Supabase Configuration
    PUBLIC_SUPABASE_URL=your_supabase_url
    PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+   # The Blue Alliance (server-side only; required for live match/odds)
+   TBA_API_KEY=your_tba_api_key
+
+   # Betting Demo Mode (server-side only)
+   # When true, include finished matches in "upcoming" so you can test past events.
+   # Accepted truthy values: "true", "1", "yes", "y"
+   # Uses CEMO (preferred). Lowercase "cemo" is also supported.
+   CEMO=false
    ```
 
 4. Set up the database (run in Supabase SQL Editor, in this order):
    - `migration_add_build_system.sql`
    - `migration_add_other_category.sql`
    - `migration_add_drawing_support.sql`
+   - `supabase_betting.sql` (adds betting tables: user_balances, betting_markets, betting_bets)
    See BUILD_SYSTEM_SETUP.md for details. Do not run `migration_fix_builds.sql` (deprecated).
 
 ## Developing

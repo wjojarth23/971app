@@ -92,6 +92,26 @@
     showEditModal = true;
   }
 
+  // Row interaction: open edit modal on row click (when permitted)
+  function canEdit(part) {
+    return (part.status || 'pending') === 'pending' && hasPermission(user, 'PLACE_ORDERS_MISC');
+  }
+  function onRowClick(e, part) {
+    // Avoid triggering when clicking on controls/links
+    try {
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a') || e.target.closest('select') || e.target.closest('textarea')) return;
+    } catch {}
+    if (canEdit(part)) openEditModal(part);
+  }
+  function onRowKeyDown(e, part) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    try {
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a') || e.target.closest('select') || e.target.closest('textarea')) return;
+    } catch {}
+    e.preventDefault();
+    if (canEdit(part)) openEditModal(part);
+  }
+
   async function saveEdit() {
     if (!user) { alert('You must be signed in to edit items'); return; }
   console.log('saveEdit called for', editPart && editPart.id);
@@ -294,12 +314,17 @@
               <th>Approved</th>
               <th>Status</th>
               <th>Kit</th>
-              <th>Edit</th>
             </tr>
           </thead>
           <tbody>
             {#each parts as part}
-              <tr>
+              <tr
+                on:click={(e) => onRowClick(e, part)}
+                on:keydown={(e) => onRowKeyDown(e, part)}
+                role={canEdit(part) ? 'button' : undefined}
+                tabindex={canEdit(part) ? '0' : undefined}
+                style={canEdit(part) ? 'cursor: pointer;' : ''}
+              >
                 <td class="part-name">
                   <div class="name-cell">
                     {part.name}
@@ -402,13 +427,6 @@
                       on:blur={(e) => updateKittingLocationFor(part, e.target.value.trim())}
                     />
                   </div>
-                </td>
-                <td class="edit-cell">
-                  {#if (part.status || 'pending') === 'pending' && hasPermission(user, 'PLACE_ORDERS_MISC')}
-                    <button class="btn btn-secondary btn-sm" title="Edit item" on:click={() => openEditModal(part)}>
-                      <Edit size={14} />
-                    </button>
-                  {/if}
                 </td>
               </tr>
             {/each}
@@ -806,8 +824,7 @@
     color: #999;
   }
 
-  .edit-cell { text-align: center; }
-  .edit-cell .btn { padding: 0.325rem 0.45rem; height: 32px; border-radius: 4px; min-width: 36px; display:inline-flex; align-items:center; justify-content:center; }
+  /* removed unused .edit-cell styles */
 
   .notes-badge {
     /* Paler red background with red outline to match danger button styling */
