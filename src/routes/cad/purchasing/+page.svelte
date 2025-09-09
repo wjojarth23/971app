@@ -21,7 +21,11 @@
   let miscUrl = '';
   let miscPrice = '';
   let miscQuantity = 1;
+  // Item name (separate from project)
   let miscProjectText = '';
+  // Project selection/linking to a build
+  let buildOptions = []; // { id, label }
+  let miscProject = ''; // typed or selected project label/id to store in project_id
   let miscNotes = '';
   // Edit modal state
   let showEditModal = false;
@@ -59,7 +63,7 @@
       await loadUserFromUUID(supabase);
     }
 
-    await loadParts();
+  await Promise.all([loadParts(), loadBuildOptions()]);
     loading = false;
   });
 
@@ -76,6 +80,27 @@
     } catch (error) {
       console.error('Error loading parts:', error);
       alert('Failed to load parts');
+    }
+  }
+
+  // Load builds to offer as Project options
+  async function loadBuildOptions() {
+    try {
+      const { data, error } = await supabase
+        .from('builds')
+        .select(`id, release_name, subsystems(name)`) // denormalized project label
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const seen = new Set();
+      buildOptions = (data || []).map(b => {
+        const label = `${b.subsystems?.name || 'Project'}-${b.release_name || ''}`;
+        return { id: b.id, label };
+      })
+      // ensure unique labels while keeping first occurrence
+      .filter(opt => (seen.has(opt.label) ? false : (seen.add(opt.label), true)));
+    } catch (e) {
+      console.warn('Failed to load builds for project options', e?.message || e);
+      buildOptions = [];
     }
   }
 
@@ -174,11 +199,16 @@
 
     try {
       const requesterName = user.full_name || user.email || null;
+  // Resolve project_id from the typed input. Use the typed text as the stored project id.
+  // If the typed label matches a known build, remember that for optional linking to build.part_ids.
+  const typed = (miscProject && miscProject.trim()) || '';
+  const matchedBuild = typed ? buildOptions.find(b => b.label === typed) : null;
+  const projectIdToUse = typed;
       const payload = {
         // Minimal required fields for a misc purchasing item
         // project_id is NOT NULL in the DB schema, use an empty string when none provided
         name: miscProjectText && miscProjectText.trim() !== '' ? miscProjectText.trim() : 'Misc Item',
-        project_id: miscProjectText && miscProjectText.trim() !== '' ? miscProjectText.trim() : '',
+        project_id: projectIdToUse,
         url: miscUrl && miscUrl.trim() !== '' ? miscUrl.trim() : null,
         price: miscPrice === '' ? null : Number(miscPrice),
         quantity: miscQuantity ? Number(miscQuantity) : 1,
@@ -190,8 +220,31 @@
   notes: miscNotes && miscNotes.trim() !== '' ? miscNotes.trim() : null
       };
 
-      const { error } = await supabase.from('purchasing').insert([payload]);
+      const { data: inserted, error } = await supabase.from('purchasing').insert([payload]).select();
       if (error) throw error;
+
+      // If linked to a build, associate it so it appears in Build Components
+  const newItem = inserted?.[0];
+  if (newItem && matchedBuild && matchedBuild.id) {
+        try {
+          const { data: bData, error: bErr } = await supabase
+            .from('builds')
+            .select('id, part_ids')
+    .eq('id', matchedBuild.id)
+            .single();
+          if (!bErr && bData) {
+            const current = Array.isArray(bData.part_ids) ? bData.part_ids : [];
+            const newIds = current.includes(newItem.id) ? current : [...current, newItem.id];
+              const { error: updErr } = await supabase
+              .from('builds')
+              .update({ part_ids: newIds })
+              .eq('id', matchedBuild.id);
+            if (updErr) console.warn('Failed to link misc item to build:', updErr?.message || updErr);
+          }
+        } catch (linkErr) {
+          console.warn('Error linking misc item to build:', linkErr?.message || linkErr);
+        }
+      }
 
       // Reset modal state and reload parts
       showAddMiscModal = false;
@@ -199,6 +252,7 @@
       miscPrice = '';
       miscQuantity = 1;
       miscProjectText = '';
+  miscProject = '';
   miscNotes = '';
       await loadParts();
     } catch (err) {
@@ -532,6 +586,24 @@
           <input id="misc-project" type="text" bind:value={miscProjectText} placeholder="Robot parts" />
         </div>
         <div class="form-row">
+          <label for="misc-build">Project ID</label>
+          <select id="misc-build" bind:value={miscProject} class="combo-input">
+            <option value="">Select project…</option>
+            {#each buildOptions as b}
+              <option value={b.label}>{b.label}</option>
+            {/each}
+            <option value="Mechanical Supply">Mechanical Supply</option>
+            <option value="Mechanical Consumable">Mechanical Consumable</option>
+            <option value="Lab Consumable">Lab Consumable</option>
+            <option value="Lab Supply">Lab Supply</option>
+            <option value="Software Consumable">Software Consumable</option>
+            <option value="Software Supply">Software Supply</option>
+            <option value="Competition">Competition</option>
+            <option value="Outreach + Fundraising">Outreach + Fundraising</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-row">
           <label for="misc-qty">Quantity</label>
           <input id="misc-qty" type="number" min="1" bind:value={miscQuantity} />
         </div>
@@ -798,6 +870,7 @@
   .modal .form-row { margin: 0.5rem 0; display:flex; flex-direction:column; }
   .modal .form-row label { font-size: 0.9rem; margin-bottom: 0.25rem; }
   .modal input[type="text"], .modal input[type="number"] { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; }
+  .modal .combo-input { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; }
   .modal textarea { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; resize: vertical; }
   .modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.75rem; }
 

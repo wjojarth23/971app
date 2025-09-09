@@ -14,6 +14,7 @@ import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText,
   let searchTerm = '';
   let filterWorkflow = '';
   let filterStatus = '';
+  let filterProject = '';
   let toastMessage = '';
   let showToast = false;
   // Kitting bins
@@ -48,6 +49,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
   let editStock = '';
   let editCustomStock = '';
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
+  $: projectIds = Array.from(new Set(parts.filter(p => p.status !== 'complete' && p.project_id).map(p => p.project_id))).sort();
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -527,7 +529,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
         'Project ID',
         'Workflow',
         'Quantity',
-        'Material',
+  'Stock',
         'Status',
         'Source Type',
         'File Name',
@@ -550,7 +552,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
           `"${(part.project_id || '').replace(/"/g, '""')}"`,
           part.workflow || '',
           part.quantity || 1,
-          `"${(part.material || '').replace(/"/g, '""')}"`,
+          `"${(part.stock_assignment || '').replace(/"/g, '""')}"`,
           part.status || '',
           part.source_type || '',
           `"${(part.file_name || '').replace(/"/g, '""')}"`,
@@ -683,9 +685,10 @@ import ROUTER_FLOW from '$lib/router_flow.json';
     
     const matchesWorkflow = !filterWorkflow || part.workflow === filterWorkflow;
     const matchesStatus = !filterStatus || part.status === filterStatus;
+    const matchesProject = !filterProject || part.project_id === filterProject;
     const notCompleted = part.status !== 'complete';
     
-    return matchesSearch && matchesWorkflow && matchesStatus && notCompleted;
+    return matchesSearch && matchesWorkflow && matchesStatus && matchesProject && notCompleted;
   });
 
   // Toast notification functions
@@ -812,6 +815,19 @@ import ROUTER_FLOW from '$lib/router_flow.json';
         {/each}
       </select>
     </div>
+    
+    <div class="form-group">
+      <label class="form-label">
+        <Filter size={16} />
+        Project
+      </label>
+      <select class="form-select" bind:value={filterProject}>
+        <option value="">All Projects</option>
+        {#each projectIds as pid}
+          <option value={pid}>{pid}</option>
+        {/each}
+      </select>
+    </div>
   </div>
 </div>
 
@@ -856,7 +872,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
             </td>
             <td class="mono">{part.project_id}</td>
             <td>{part.quantity || 1}</td>
-            <td class="text-muted">{part.stock_assignment || part.material || '-'}</td>
+            <td class="text-muted">{part.stock_assignment || '-'}</td>
             <td class="source-col">
               {#if part.source_type === 'onshape_api'}
                 <div class="source-cell">
@@ -1147,7 +1163,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
 
   .filters {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
     gap: 1rem;
     margin-bottom: 0.25rem;
   }
@@ -1467,7 +1483,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
       min-width: 70px;
       max-width: 100px;
     }
-    /* Hide Material column on small screens (5th) */
+  /* Hide Stock column on small screens (5th) */
     .table thead th:nth-child(5),
     .table tbody td:nth-child(5) {
       display: none;

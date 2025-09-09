@@ -19,6 +19,7 @@
   let showEditModal = false;
   let editTarget = null;
   let editWorkflow = '';
+  let editType = ''; // 'COTS' or 'manufactured'
   let editMaterial = '';
   let editQuantity = 1;
   let editStockAssignment = '';
@@ -208,6 +209,7 @@
     editStockAssignment = part.stock_assignment || '';
     editStockChoice = part._stock_choice || (part.stock_assignment_custom ? '__other__' : '') || '';
     editStockAssignmentCustom = part.stock_assignment_custom ?? null;
+    editType = part.workflow === 'purchase' ? 'COTS' : 'manufactured';
     showEditModal = true;
   }
 
@@ -234,7 +236,74 @@
       return;
     }
     try {
-      if (editTarget.workflow === 'purchase') {
+      const wasCOTS = editTarget?.workflow === 'purchase';
+      const wantsCOTS = editType === 'COTS';
+      if (wasCOTS !== wantsCOTS) {
+        const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+        if (wantsCOTS) {
+          const purchasingInsertData = {
+            name: editTarget.name || editTarget.part_name || 'Unnamed Item',
+            requester: user?.full_name || user?.email,
+            project_id,
+            quantity: editQuantity || editTarget.quantity || 1,
+            material: editMaterial || editTarget.material || '',
+            status: 'pending',
+            vendor: editTarget.vendor || null,
+            url: null,
+            price: null,
+            workflow: 'purchase'
+          };
+          const { data: pur, error: purErr } = await supabase.from('purchasing').insert([purchasingInsertData]).select();
+          if (purErr) throw purErr;
+          const newId = pur?.[0]?.id;
+          if (newId) {
+            const current = build?.part_ids || [];
+            const newIds = current.map((id) => id === editTarget.id ? newId : id);
+            const { error: updErr } = await supabase.from('builds').update({ part_ids: newIds }).eq('id', buildId);
+            if (updErr) throw updErr;
+          }
+        } else {
+          const wf = editWorkflow && editWorkflow !== 'purchase' ? editWorkflow : 'mill';
+          const baseInsert = {
+            name: editTarget.name || editTarget.part_name || 'Unnamed Part',
+            requester: user?.full_name || user?.email,
+            project_id,
+            workflow: wf,
+            status: 'pending',
+            quantity: editQuantity || editTarget.quantity || 1,
+            material: editMaterial || editTarget.material || '',
+            file_name: '',
+            file_url: ''
+          };
+          const finalStock = (editStockChoice === '__other__') ? (editStockAssignmentCustom || editStockAssignment || null) : (editStockChoice || editStockAssignment || null);
+          let partRow = null;
+          let primaryError = null;
+          try {
+            const { data, error } = await supabase.from('parts').insert([{ ...baseInsert, stock_assignment: finalStock || null }]).select();
+            if (error) primaryError = error; else partRow = data?.[0] || null;
+          } catch (e) { primaryError = e; }
+          if (!partRow) {
+            if (primaryError && String(primaryError.message || primaryError).includes('stock_assignment') && String(primaryError.message || primaryError).includes('does not exist')) {
+              const { data, error } = await supabase.from('parts').insert([baseInsert]).select();
+              if (error) throw error;
+              partRow = data?.[0] || null;
+            } else if (primaryError) {
+              throw primaryError;
+            }
+          }
+          if (partRow?.id) {
+            const current = build?.part_ids || [];
+            const newIds = current.map((id) => id === editTarget.id ? partRow.id : id);
+            const { error: updErr } = await supabase.from('builds').update({ part_ids: newIds }).eq('id', buildId);
+            if (updErr) throw updErr;
+          }
+        }
+        await loadBuildDetails();
+        showEditModal = false;
+        editTarget = null;
+        return;
+      }
+      if (editType === 'COTS') {
         const { error } = await supabase
           .from('purchasing')
           .update({
@@ -696,7 +765,6 @@
                   <th>Type</th>
                   <th>Workflow</th>
                   <th>Qty</th>
-                  <th>Material</th>
                   <th>Status</th>
                   <th>Kitting</th>
                 </tr>
@@ -735,7 +803,6 @@
                       </span>
                     </td>
                     <td class="quantity">{part.quantity || 1}</td>
-                    <td class="material">{part.material || '-'}</td>
                     <td>
                       {#if part.workflow === 'router' && part.status === 'pending'}
                         <button
@@ -814,7 +881,6 @@
                 <th>Type</th>
                 <th>Workflow</th>
                 <th>Qty</th>
-                <th>Material</th>
                 <th>Stock</th>
                 <th>Action</th>
               </tr>
@@ -863,7 +929,6 @@
                     {/if}
                   </td>
                   <td class="quantity">{item.quantity || 1}</td>
-                  <td class="material">{item.material || '-'}</td>
                   <td class="material">
                     {#if item.part_type !== 'COTS'}
                       <select on:change={(e) => updateBomStockChoice(i, e.target.value)} value={item._stock_choice || item.stock_assignment || ''}>
@@ -934,8 +999,15 @@
   >
     <h3>Edit Build Item</h3>
     <div class="modal-row">
+      <label for="edit-type">Type</label>
+      <select id="edit-type" bind:value={editType} on:change={() => { if (editType === 'COTS') editWorkflow = 'purchase'; else if (!editWorkflow || editWorkflow === 'purchase') editWorkflow = 'mill'; }}>
+        <option value="manufactured">Manufactured</option>
+        <option value="COTS">COTS</option>
+      </select>
+    </div>
+    <div class="modal-row">
       <label for="edit-workflow">Workflow</label>
-      {#if editTarget?.workflow === 'purchase'}
+      {#if editType === 'COTS'}
         <input id="edit-workflow" class="form-input" type="text" value="Purchase" readonly disabled />
       {:else}
         <select id="edit-workflow" class="workflow-dropdown workflow-{editWorkflow || 'mill'}" bind:value={editWorkflow}>
@@ -949,7 +1021,7 @@
     </div>
     <div class="modal-row">
       <label for="edit-stock">Stock</label>
-      {#if editTarget?.workflow === 'purchase'}
+      {#if editType === 'COTS'}
         <input id="edit-stock" class="form-input" type="text" value="-" readonly disabled />
       {:else}
         <div style="display:flex;flex-direction:column;gap:0.5rem;">

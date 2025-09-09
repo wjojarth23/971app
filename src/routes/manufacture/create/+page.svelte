@@ -8,7 +8,6 @@
   let projectId = '';
   let workflow = '';
   let quantity = 1;
-  let material = '';
   let stockAssignment = '';
   let customStock = '';
   let uploadedFile = null;
@@ -43,17 +42,7 @@
   import stockData from '$lib/stock.json';
   $: stockOptions = workflow ? (stockData[workflow] || []) : [];
 
-  // Set material based on selected stock
-  $: if (stockAssignment && stockAssignment !== '__other__') {
-    const selectedStock = stockOptions.find(s => s.description === stockAssignment);
-    if (selectedStock) {
-      material = selectedStock.material;
-    }
-  } else if (stockAssignment === '__other__' && customStock.trim()) {
-    material = customStock.trim(); // For custom stock, use the custom stock name as material
-  } else {
-    material = '';
-  }
+  // No material field: parts list only tracks stock_assignment.
 
   function handleFileUpload(event) {
     const file = event.target.files[0];
@@ -120,6 +109,35 @@
       uploadedDXFFile = file;
     }
   }
+  // Handle drag-and-drop for STEP and DXF zones
+  function handleDropStep(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('active');
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['step', 'stp'].includes(ext)) {
+        alert('Please drop a STEP (.step or .stp) file.');
+        return;
+      }
+      uploadedStepFile = file;
+    }
+  }
+  function handleDropDXF(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('active');
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext !== 'dxf') {
+        alert('Please drop a DXF (.dxf) file.');
+        return;
+      }
+      uploadedDXFFile = file;
+    }
+  }
   function sanitizeName(n) { return (n || 'part').replace(/[^a-zA-Z0-9]/g, '_'); }
 
   async function handleSubmitGeneric() {
@@ -139,7 +157,7 @@
         .upload(fileName, uploadedFile, { cacheControl: '3600', upsert: false });
       if (uploadError) throw uploadError;
 
-      const { error: insertError } = await supabase
+  const { error: insertError } = await supabase
         .from('parts')
         .insert([{
           name: partName,
@@ -147,7 +165,6 @@
           project_id: projectId,
           workflow: workflow,
           quantity: quantity,
-          material: material,
           stock_assignment: effectiveStock,
           file_name: fileName,
           file_url: fileName,
@@ -161,9 +178,8 @@
       projectId = '';
       workflow = '';
       quantity = 1;
-      stockAssignment = '';
-      customStock = '';
-      material = '';
+  stockAssignment = '';
+  customStock = '';
       uploadedFile = null;
 
       goto('/manufacture');
@@ -213,7 +229,7 @@
       }
 
       const fileMeta = { step_file: stepName, dxf_file: dxfName };
-      const { error: insertError } = await supabase
+  const { error: insertError } = await supabase
         .from('parts')
         .insert([{
           name: partName,
@@ -221,7 +237,6 @@
           project_id: projectId,
           workflow: workflow,
           quantity: quantity,
-          material: material,
           stock_assignment: effectiveStock,
           file_name: stepName, // keep for backward compat
           file_url: JSON.stringify(fileMeta),
@@ -235,9 +250,8 @@
       projectId = '';
       workflow = '';
       quantity = 1;
-      stockAssignment = '';
-      customStock = '';
-      material = '';
+  stockAssignment = '';
+  customStock = '';
       uploadedStepFile = null;
       uploadedDXFFile = null;
       uploadedFile = null;
@@ -332,7 +346,7 @@
                 type="radio" 
                 bind:group={workflow} 
                 value={workflowOption.id}
-                on:change={() => {stockAssignment = ''; customStock = ''; material = ''; uploadedFile = null;}}
+                on:change={() => { stockAssignment = ''; customStock = ''; uploadedFile = null; uploadedStepFile = null; uploadedDXFFile = null; }}
               />
               <div class="workflow-content">
                 <svelte:component this={workflowOption.icon} size={24} />

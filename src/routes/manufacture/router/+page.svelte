@@ -168,7 +168,7 @@
 
   // Reactive list of parts not in any group
   $: ungroupedParts = parts.filter((p) => !groupedIdSet.has(p.id));
-  function getStock(part) { return part.stock_assignment || part.material || ''; }
+  function getStock(part) { return part.stock_assignment || ''; }
   function makeGroupName(part) {
     const base = (getStock(part).split(' ')[0] || 'Group').replace(/[^A-Za-z0-9]/g,'');
     const rand = Math.floor(10 + Math.random()*90); // 2 digits

@@ -1344,7 +1344,6 @@
                     <th>Part Number</th>
                     <th>Qty</th>
                     <th>Type</th>
-                    <th>Material</th>
                     <th>Workflow</th>
                     <th>Bounding Box</th>
                     <th>Stock Assignment</th>
@@ -1393,7 +1392,7 @@
                           </select>
                         {/if}
                       </td>
-                      <td>{item.material || '-'}</td><td>
+                      <td>
                         {#if item.bounding_box_x && item.bounding_box_y && item.bounding_box_z}
                           <div class="bounding-box">
                             {(item.bounding_box_x * 1000).toFixed(1)} × {(item.bounding_box_y * 1000).toFixed(1)} × {(item.bounding_box_z * 1000).toFixed(1)} mm

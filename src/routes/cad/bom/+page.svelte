@@ -877,7 +877,6 @@ if (bomRows.length) {
               <th>Qty</th>
               <th>Type</th>
               <th>Workflow</th>
-              <th>Material</th>
               <th>Dimensions</th>
               <th>Stock Assignment</th>
               <th>Action</th>
@@ -922,7 +921,6 @@ if (bomRows.length) {
                     </select>
                   {/if}
                 </td>
-                <td>{item.material || '-'}</td>
                 <td>
                   {#if enableGetDimensions}
                     {#if item.bounding_box_x && item.bounding_box_y && item.bounding_box_z}
@@ -1085,7 +1083,6 @@ if (bomRows.length) {
                 <th>Qty</th>
                 <th>Type</th>
                 <th>Workflow</th>
-                <th>Material</th>
                 <th>Dimensions</th>
                 <th>Stock</th>
                 <th>Action</th>
@@ -1098,7 +1095,6 @@ if (bomRows.length) {
                   <td>{it.quantity}</td>
                   <td>{it.display_type}</td>
                   <td>{it.workflow || '-'}</td>
-                  <td>{it.material || '-'}</td>
                   <td>
                     {#if it.bounding_box_x && it.bounding_box_y && it.bounding_box_z}
                       <div class="bounding-box">

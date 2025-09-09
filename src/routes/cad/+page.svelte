@@ -1070,7 +1070,6 @@
                   <th>Part Number</th>
                   <th>Qty</th>
                   <th>Type</th>
-                  <th>Material</th>
                   <th>Stock</th>
                   <th>Status</th>
                   <th>Actions</th>
@@ -1087,7 +1086,6 @@
                         {item.part_type}
                       </span>
                     </td>
-                    <td>{item.material || '-'}</td>
                     <td>{item.stock_assignment || '-'}</td>
                     <td>
                       <span class="status-badge status-{item.status}">
