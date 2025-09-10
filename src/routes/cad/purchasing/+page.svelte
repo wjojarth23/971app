@@ -10,6 +10,31 @@
   let user = null;
   let loading = true;
   let parts = [];
+  // Filters
+  let vendorFilter = '';
+  let projectFilter = '';
+  let statusFilter = '';
+
+  // Derived options and filtered view
+  $: vendorOptions = Array.from(new Set(parts.map(p => (p.vendor || '').toString()).filter(v => v && v !== '') ))
+    .map(v => v);
+  $: projectOptions = Array.from(new Set(parts.map(p => (p.project_id || '').toString()).filter(v => v && v !== '')))
+    .map(v => v);
+  $: filteredParts = parts.filter(p => {
+    if (vendorFilter && vendorFilter !== '') {
+      const pv = (p.vendor || '').toString().toLowerCase();
+      if (pv !== vendorFilter.toString().toLowerCase()) return false;
+    }
+    if (projectFilter && projectFilter !== '') {
+      const pp = (p.project_id || '').toString();
+      if (pp !== projectFilter.toString()) return false;
+    }
+    if (statusFilter && statusFilter !== '') {
+      const ps = (p.status || 'pending').toString().toLowerCase();
+      if (ps !== statusFilter.toString().toLowerCase()) return false;
+    }
+    return true;
+  });
   let showKittingModal = false;
   let selectedPart = null;
   let showLinkModal = false;
@@ -263,9 +288,16 @@
 
   async function updatePartStatus(part, statusField, newStatus) {
     try {
+      // If reverting an approved item back to pending, clear approved flag and approver
+      let updates = { [statusField]: newStatus };
+      if ((part.status || '').toString().toLowerCase() === 'approved' && (newStatus || '').toString().toLowerCase() === 'pending') {
+        updates.approved = false;
+        updates.approver = null;
+      }
+
       const { error } = await supabase
         .from('purchasing')
-        .update({ [statusField]: newStatus })
+        .update(updates)
         .eq('id', part.id);
 
       if (error) throw error;
@@ -309,9 +341,9 @@
     try {
       const approverName = user.full_name || user.email || null;
       const { error } = await supabase
-        .from('purchasing')
-        .update({ approved: true, approver: approverName })
-        .eq('id', part.id);
+  .from('purchasing')
+  .update({ approved: true, approver: approverName, status: 'approved' })
+  .eq('id', part.id);
 
       if (error) throw error;
       await loadParts();
@@ -353,7 +385,43 @@
         </div>
     </div>
 
-    {#if parts.length > 0}
+    <div class="card">
+      <div class="filters">
+        <div class="form-group">
+          <label class="form-label">Vendor</label>
+          <select class="form-select" bind:value={vendorFilter}>
+            <option value="">All vendors</option>
+            {#each vendorOptions as v}
+              <option value={v}>{v}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Project</label>
+          <select class="form-select" bind:value={projectFilter}>
+            <option value="">All projects</option>
+            {#each projectOptions as p}
+              <option value={p}>{p}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Status</label>
+          <select class="form-select" bind:value={statusFilter}>
+            <option value="">Any</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="ordered">Ordered</option>
+            <option value="delivered">Delivered</option>
+            <option value="kitted">Kitted</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    {#if filteredParts.length > 0}
       <div class="table-container">
         <table class="table">
           <thead>
@@ -371,7 +439,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each parts as part}
+            {#each filteredParts as part}
               <tr
                 on:click={(e) => onRowClick(e, part)}
                 on:keydown={(e) => onRowKeyDown(e, part)}
@@ -449,22 +517,36 @@
                   {/if}
                 </td>
                 <td class="status">
-                  <select 
-                    class="status-select colorful" 
-                    value={part.status || 'pending'}
+                  <!-- Show an 'Approved' disabled placeholder when the part is approved or in a state after approval
+                       (so the green approved badge is visible). Use the actual status value when possible so the select
+                       doesn't show a blank value. -->
+                  <select
+                    class="status-select colorful"
+                    value={(() => {
+                      const s = (part.status || '').toString().toLowerCase();
+                      const selectable = ['pending','ordered','delivered','kitted'];
+                      const approvedLevel = ['approved','ordered','delivered','kitted'];
+                      if (selectable.includes(s)) return s;
+                      if (approvedLevel.includes(s)) return '__approved__';
+                      return 'pending';
+                    })()}
                     data-status={part.status || 'pending'}
                     on:change={(e) => {
                       const val = e.target.value;
+                      if (val === '__approved__') return; // placeholder only
                       if ((val === 'ordered' || val === 'delivered') && !hasPermission(user, 'PLACE_ORDERS_MISC')) {
                         alert('You do not have permission to change order status.');
-                        // revert select visually by reloading parts
                         loadParts();
                         return;
                       }
                       updatePartStatus(part, 'status', val);
                     }}
                   >
+                    
                     <option value="pending" data-color="#ffc107">Pending</option>
+                    {#if ['approved','ordered','delivered','kitted'].includes((part.status || '').toString().toLowerCase())}
+                      <option value="__approved__" data-color="#4caf50">Approved</option>
+                    {/if}
                     <option value="ordered" data-color="#6c5ce7">Ordered</option>
                     <option value="delivered" data-color="#27ae60">Delivered</option>
                     <option value="kitted" data-color="#2ecc71">Kitted</option>
@@ -827,6 +909,11 @@
     color: #006064;
     border-color: #80deea;
   }
+  .status-select.colorful[data-status="approved"] {
+    background: #e8fef1;
+    color: #1b5e20;
+    border-color: #a7e9b6;
+  }
 
   /* Colorful dropdown options and selected background */
   .status-select.colorful option[value="pending"] { background: #fff3cd; }
@@ -855,6 +942,19 @@
     justify-content: center;
     z-index: 60;
   }
+
+  /* Match manufacture filters layout: inline grid of controls */
+  .filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+    align-items: end;
+  }
+
+  .form-group { display:flex; flex-direction:column; }
+  .form-label { font-size:0.9rem; margin-bottom:0.25rem; color:#333; }
+  .form-select { padding:0.45rem; border:1px solid var(--border); border-radius:4px; height:36px; }
 
   .modal {
     background: var(--primary);
