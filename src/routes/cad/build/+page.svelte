@@ -400,7 +400,6 @@
                         </div>
                         <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
                           <div class="cost-badge">Cost: ${ (build.totalPurchasingCost || 0).toFixed(2) }</div>
-                          <div class="drag-hint">Drag onto another build to group</div>
                         </div>
                       </div>
 

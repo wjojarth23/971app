@@ -21,6 +21,18 @@
   $: projectOptions = Array.from(new Set(parts.map(p => (p.project_id || '').toString()).filter(v => v && v !== '')))
     .map(v => v);
   $: filteredParts = parts.filter(p => {
+    // Hide rejected items unless the current user is the rejector or the requester/purchaser.
+    // Compare robustly by normalizing text and also allow purchaser UUID match when available.
+    if ((p.status || '').toString().toLowerCase() === 'rejected') {
+      const currentUserName = (user?.full_name || user?.email || '').toString().toLowerCase().trim();
+      const approverName = (p.approver || '').toString().toLowerCase().trim();
+      const requesterName = (p.requester || '').toString().toLowerCase().trim();
+      const isRejector = currentUserName && approverName && currentUserName === approverName;
+      const isRequesterByName = currentUserName && requesterName && currentUserName === requesterName;
+      const isRequesterById = !!(user?.id && p.purchaser && user.id === p.purchaser);
+      if (!isRejector && !isRequesterByName && !isRequesterById) return false;
+    }
+    
     if (vendorFilter && vendorFilter !== '') {
       const pv = (p.vendor || '').toString().toLowerCase();
       if (pv !== vendorFilter.toString().toLowerCase()) return false;
@@ -289,9 +301,13 @@
   async function updatePartStatus(part, statusField, newStatus) {
     try {
       // If reverting an approved item back to pending, clear approved flag and approver
+      // If reverting a rejected item back to pending, clear approver (used as rejector)
       let updates = { [statusField]: newStatus };
       if ((part.status || '').toString().toLowerCase() === 'approved' && (newStatus || '').toString().toLowerCase() === 'pending') {
         updates.approved = false;
+        updates.approver = null;
+      }
+      if ((part.status || '').toString().toLowerCase() === 'rejected' && (newStatus || '').toString().toLowerCase() === 'pending') {
         updates.approver = null;
       }
 
@@ -350,6 +366,45 @@
     } catch (err) {
       console.error('Failed to approve part', err);
       alert('Failed to approve part');
+    }
+  }
+
+  async function rejectPart(part) {
+    if (!user) {
+      alert('You must be signed in to reject items');
+      return;
+    }
+    try {
+      const rejectorName = user.full_name || user.email || null;
+      const { error } = await supabase
+  .from('purchasing')
+  .update({ approved: false, approver: rejectorName, status: 'rejected' })
+  .eq('id', part.id);
+
+      if (error) throw error;
+      await loadParts();
+    } catch (err) {
+      console.error('Failed to reject part', err);
+      alert('Failed to reject part');
+    }
+  }
+
+  async function unrejectPart(part) {
+    if (!user) {
+      alert('You must be signed in to unreject items');
+      return;
+    }
+    try {
+      const { error } = await supabase
+  .from('purchasing')
+  .update({ approved: false, approver: null, status: 'pending' })
+  .eq('id', part.id);
+
+      if (error) throw error;
+      await loadParts();
+    } catch (err) {
+      console.error('Failed to unreject part', err);
+      alert('Failed to unreject part');
     }
   }
 
@@ -412,6 +467,7 @@
           <select class="form-select" bind:value={statusFilter}>
             <option value="">Any</option>
             <option value="pending">Pending</option>
+            <option value="rejected">Rejected</option>
             <option value="approved">Approved</option>
             <option value="ordered">Ordered</option>
             <option value="delivered">Delivered</option>
@@ -508,9 +564,18 @@
                     <div class="approved-info">
                       <span class="approver-name">{part.approver ? part.approver.split(' ')[0] : 'Approved'}</span>
                     </div>
+                  {:else if (part.status || '').toString().toLowerCase() === 'rejected'}
+                    <button class="btn btn-rejected btn-sm" on:click={() => unrejectPart(part)} title="Click to unreject">
+                      <span class="rejected-text">Rejected</span>
+                    </button>
                   {:else}
                     {#if hasPermission(user, 'APPROVE_PURCHASES')}
-                      <button class="btn btn-approve btn-sm" on:click={() => approvePart(part)}><span class="approve-text">Approve</span></button>
+                      <button class="btn btn-approve btn-sm" 
+                        on:click={() => approvePart(part)}
+                        on:contextmenu={(e) => { e.preventDefault(); rejectPart(part); }}
+                        title="Left click to approve, Right click to reject">
+                        <span class="approve-text">Approve</span>
+                      </button>
                     {:else}
                       <span style="color:#666; font-size:12px;">Needs approval</span>
                     {/if}
@@ -524,7 +589,7 @@
                     class="status-select colorful"
                     value={(() => {
                       const s = (part.status || '').toString().toLowerCase();
-                      const selectable = ['pending','ordered','delivered','kitted'];
+                      const selectable = ['pending','rejected','ordered','delivered','kitted'];
                       const approvedLevel = ['approved','ordered','delivered','kitted'];
                       if (selectable.includes(s)) return s;
                       if (approvedLevel.includes(s)) return '__approved__';
@@ -544,6 +609,7 @@
                   >
                     
                     <option value="pending" data-color="#ffc107">Pending</option>
+                    <option value="rejected" data-color="#e74c3c">Rejected</option>
                     {#if ['approved','ordered','delivered','kitted'].includes((part.status || '').toString().toLowerCase())}
                       <option value="__approved__" data-color="#4caf50">Approved</option>
                     {/if}
@@ -883,6 +949,23 @@
   /* Make only the button text (not icons) non-bold */
   .btn-approve .approve-text { font-weight: 400; }
 
+  /* Rejected button: same sizing as approve but red */
+  .btn-rejected {
+    background: #ffecec; /* light red */
+    color: #7a0f0f; /* dark red text */
+    border: 1px solid #f5a5a5; /* red border */
+    padding: 0.375rem 0.6rem;
+    height: 32px;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .btn-rejected:hover { background: #ffdede; }
+  .btn-rejected .rejected-text { font-weight: 400; text-transform: lowercase; }
+
   /* Selected value background by data-status */
   .status-select.colorful[data-status="pending"] {
     background: #fff3cd;
@@ -914,9 +997,15 @@
     color: #1b5e20;
     border-color: #a7e9b6;
   }
+  .status-select.colorful[data-status="rejected"] {
+    background: #ffebee;
+    color: #c62828;
+    border-color: #ef9a9a;
+  }
 
   /* Colorful dropdown options and selected background */
   .status-select.colorful option[value="pending"] { background: #fff3cd; }
+  .status-select.colorful option[value="rejected"] { background: #ffebee; }
   .status-select.colorful option[value="ordered"] { background: #ede7f6; }
   .status-select.colorful option[value="delivered"] { background: #e8f5e9; }
   .status-select.colorful option[value="kitted"] { background: #e0f7fa; }

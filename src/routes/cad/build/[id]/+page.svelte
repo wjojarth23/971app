@@ -719,26 +719,6 @@
                 <span>Assembled: {new Date(build.assembled_at).toLocaleDateString()}</span>
               {/if}
             </div>
-            {#if build.project_id}
-              <div class="project-banner">
-                <strong>Project: {build.project_id}</strong>
-                <span class="project-cost">Total Cost: ${ (projectTotalCost || 0).toFixed(2) }</span>
-              </div>
-              {#if projectBuilds && projectBuilds.length > 0}
-                <div class="project-builds">
-                  {#each projectBuilds as pb}
-                    {@const pProg = getBuildProgress(pb)}
-                    <div class="project-build-row">
-                      <div class="project-build-name">{pb.subsystems?.name} · {pb.release_name}</div>
-                      <div class="project-build-progress">
-                        <div class="progress-bar small"><div class="progress-fill" style="width: {pProg.percent}%"></div></div>
-                        <div class="project-build-cost">${ (pb.totalPurchasingCost || 0).toFixed(2) }</div>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-            {/if}
           </div>
         </div>
         <div class="header-right">

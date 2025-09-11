@@ -1,14 +1,44 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
-CREATE TABLE public.allowed_external_ips (
+CREATE TABLE public.betting_bets (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  ip_address inet NOT NULL UNIQUE,
-  location_name character varying NOT NULL,
-  description text,
-  created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT allowed_external_ips_pkey PRIMARY KEY (id)
+  market_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  outcome text NOT NULL CHECK (outcome = ANY (ARRAY['red'::text, 'blue'::text])),
+  amount numeric NOT NULL CHECK (amount > 0::numeric),
+  shares numeric NOT NULL CHECK (shares >= 0::numeric),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT betting_bets_pkey PRIMARY KEY (id),
+  CONSTRAINT betting_bets_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT betting_bets_market_id_fkey FOREIGN KEY (market_id) REFERENCES public.betting_markets(id)
+);
+CREATE TABLE public.betting_market_ticks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  market_id uuid NOT NULL,
+  q_red numeric NOT NULL DEFAULT 0,
+  q_blue numeric NOT NULL DEFAULT 0,
+  price_red numeric NOT NULL DEFAULT 0,
+  price_blue numeric NOT NULL DEFAULT 0,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT betting_market_ticks_pkey PRIMARY KEY (id),
+  CONSTRAINT betting_market_ticks_market_id_fkey FOREIGN KEY (market_id) REFERENCES public.betting_markets(id)
+);
+CREATE TABLE public.betting_markets (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  match_key text NOT NULL UNIQUE,
+  event_key text,
+  red_team_keys ARRAY NOT NULL DEFAULT '{}'::text[],
+  blue_team_keys ARRAY NOT NULL DEFAULT '{}'::text[],
+  b numeric NOT NULL DEFAULT 50,
+  q_red numeric NOT NULL DEFAULT 0,
+  q_blue numeric NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'open'::text CHECK (status = ANY (ARRAY['open'::text, 'settled'::text, 'cancelled'::text])),
+  start_time bigint,
+  winning_outcome text CHECK (winning_outcome = ANY (ARRAY['red'::text, 'blue'::text])),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT betting_markets_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.build_bom (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -51,10 +81,44 @@ CREATE TABLE public.builds (
   assembled_at timestamp with time zone,
   assembled_by uuid,
   part_ids ARRAY DEFAULT '{}'::integer[],
+  project_id text,
   CONSTRAINT builds_pkey PRIMARY KEY (id),
-  CONSTRAINT builds_assembled_by_fkey FOREIGN KEY (assembled_by) REFERENCES auth.users(id),
+  CONSTRAINT builds_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id),
   CONSTRAINT builds_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id),
-  CONSTRAINT builds_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id)
+  CONSTRAINT builds_assembled_by_fkey FOREIGN KEY (assembled_by) REFERENCES auth.users(id)
+);
+CREATE TABLE public.gantt_links (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  project_key text NOT NULL CHECK (char_length(project_key) > 0),
+  source_id uuid NOT NULL,
+  target_id uuid NOT NULL,
+  type text NOT NULL DEFAULT 'e2e'::text,
+  created_by uuid NOT NULL DEFAULT auth.uid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT gantt_links_pkey PRIMARY KEY (id),
+  CONSTRAINT gantt_links_target_id_fkey FOREIGN KEY (target_id) REFERENCES public.gantt_tasks(id),
+  CONSTRAINT gantt_links_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.gantt_tasks(id)
+);
+CREATE TABLE public.gantt_tasks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  project_key text NOT NULL CHECK (char_length(project_key) > 0),
+  text text NOT NULL DEFAULT ''::text,
+  start_date timestamp with time zone NOT NULL,
+  end_date timestamp with time zone NOT NULL,
+  progress numeric NOT NULL DEFAULT 0,
+  type text NOT NULL DEFAULT 'task'::text CHECK (type = ANY (ARRAY['task'::text, 'summary'::text, 'milestone'::text])),
+  parent_id uuid,
+  created_by uuid NOT NULL DEFAULT auth.uid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT gantt_tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT gantt_tasks_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.gantt_tasks(id)
+);
+CREATE TABLE public.kitting_bins (
+  bin_id text NOT NULL,
+  name text NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT kitting_bins_pkey PRIMARY KEY (bin_id)
 );
 CREATE TABLE public.parts (
   id bigint NOT NULL DEFAULT nextval('parts_id_seq'::regclass),
@@ -80,14 +144,21 @@ CREATE TABLE public.parts (
   onshape_part_id character varying,
   file_format character varying CHECK (file_format::text = ANY (ARRAY['stl'::character varying::text, 'parasolid'::character varying::text, 'step'::character varying::text, 'iges'::character varying::text])),
   is_onshape_part boolean DEFAULT false,
-  sheet_id uuid,
   cut_date timestamp with time zone,
   layout_x numeric,
   layout_y numeric,
   layout_rotation numeric DEFAULT 0,
   onshape_drawing_element_id character varying,
-  CONSTRAINT parts_pkey PRIMARY KEY (id),
-  CONSTRAINT parts_sheet_id_fkey FOREIGN KEY (sheet_id) REFERENCES public.sheets(id)
+  stock_assignment text,
+  CONSTRAINT parts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.predict_settings (
+  id text NOT NULL DEFAULT 'global'::text,
+  demo boolean NOT NULL DEFAULT false,
+  competitions ARRAY NOT NULL DEFAULT '{}'::text[],
+  tab_visible boolean NOT NULL DEFAULT false,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT predict_settings_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.purchasing (
   id bigint NOT NULL DEFAULT nextval('purchasing_id_seq'::regclass),
@@ -96,7 +167,8 @@ CREATE TABLE public.purchasing (
   project_id text NOT NULL,
   quantity integer NOT NULL DEFAULT 1,
   material text DEFAULT ''::text,
-  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'ordered'::text, 'delivered'::text, 'kitted'::text])),
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'ordered'::text, 'delivered'::text, 'kitted'::text, 'rejected'::text])),
+
   vendor text,
   url text,
   price numeric,
@@ -109,44 +181,24 @@ CREATE TABLE public.purchasing (
   updated_at timestamp with time zone DEFAULT now(),
   approved boolean NOT NULL DEFAULT false,
   approver text,
-  CONSTRAINT purchasing_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.sheet_cuts (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  sheet_id uuid NOT NULL,
-  part_ids ARRAY NOT NULL,
-  cut_svg text NOT NULL,
-  layout_data jsonb,
-  cut_date timestamp with time zone DEFAULT now(),
-  cut_by uuid,
-  area_used numeric NOT NULL DEFAULT 0,
   notes text,
-  cut_svg_url character varying NOT NULL DEFAULT ''::character varying,
-  cut_areas jsonb NOT NULL DEFAULT '[]'::jsonb,
-  CONSTRAINT sheet_cuts_pkey PRIMARY KEY (id),
-  CONSTRAINT sheet_cuts_cut_by_fkey FOREIGN KEY (cut_by) REFERENCES auth.users(id),
-  CONSTRAINT sheet_cuts_sheet_id_fkey FOREIGN KEY (sheet_id) REFERENCES public.sheets(id)
+  purchaser uuid,
+  CONSTRAINT purchasing_pkey PRIMARY KEY (id),
+  CONSTRAINT purchasing_purchaser_fkey FOREIGN KEY (purchaser) REFERENCES auth.users(id)
 );
-CREATE TABLE public.sheets (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  stock_type_id character varying NOT NULL,
-  stock_description character varying NOT NULL,
-  material character varying NOT NULL,
-  thickness numeric NOT NULL,
-  width numeric NOT NULL DEFAULT 24,
-  height numeric NOT NULL DEFAULT 48,
-  total_area numeric DEFAULT (width * height),
-  cut_svg text DEFAULT ''::text,
-  remaining_area numeric NOT NULL DEFAULT (24 * 48),
-  workflow character varying NOT NULL DEFAULT 'laser-cut'::character varying,
-  status character varying NOT NULL DEFAULT 'available'::character varying CHECK (status::text = ANY (ARRAY['available'::text, 'in-use'::text, 'exhausted'::text, 'damaged'::text])),
-  location character varying,
-  notes text,
+CREATE TABLE public.router_group_parts (
+  group_id uuid NOT NULL,
+  part_id bigint NOT NULL,
   created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now(),
-  cut_svg_url character varying,
-  cut_areas jsonb DEFAULT '[]'::jsonb,
-  CONSTRAINT sheets_pkey PRIMARY KEY (id)
+  CONSTRAINT router_group_parts_pkey PRIMARY KEY (group_id, part_id),
+  CONSTRAINT router_group_parts_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id),
+  CONSTRAINT router_group_parts_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.router_groups(id)
+);
+CREATE TABLE public.router_groups (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL DEFAULT ''::text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT router_groups_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.subsystem_members (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -154,8 +206,8 @@ CREATE TABLE public.subsystem_members (
   user_id uuid,
   joined_at timestamp with time zone DEFAULT now(),
   CONSTRAINT subsystem_members_pkey PRIMARY KEY (id),
-  CONSTRAINT subsystem_members_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id),
-  CONSTRAINT subsystem_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+  CONSTRAINT subsystem_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT subsystem_members_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id)
 );
 CREATE TABLE public.subsystems (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -171,17 +223,12 @@ CREATE TABLE public.subsystems (
   CONSTRAINT subsystems_pkey PRIMARY KEY (id),
   CONSTRAINT subsystems_lead_user_id_fkey FOREIGN KEY (lead_user_id) REFERENCES auth.users(id)
 );
-CREATE TABLE public.user_attendance_logs (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
+CREATE TABLE public.user_balances (
   user_id uuid NOT NULL,
-  external_ip inet NOT NULL,
-  location_name character varying,
-  login_time timestamp with time zone DEFAULT now(),
-  session_duration_minutes integer,
-  created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT user_attendance_logs_pkey PRIMARY KEY (id),
-  CONSTRAINT user_attendance_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT user_attendance_logs_external_ip_fkey FOREIGN KEY (external_ip) REFERENCES public.allowed_external_ips(ip_address)
+  balance numeric NOT NULL DEFAULT 100,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT user_balances_pkey PRIMARY KEY (user_id),
+  CONSTRAINT user_balances_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.user_profiles (
   id uuid NOT NULL,
@@ -191,17 +238,7 @@ CREATE TABLE public.user_profiles (
   permissions ARRAY,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
-  last_attendance_date timestamp with time zone,
-  total_attendance_days integer DEFAULT 0,
   banned boolean DEFAULT false,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
-);
-
--- Kitting bins lookup table (name + ID)
--- Note: Create this in your Supabase project if not present.
-CREATE TABLE public.kitting_bins (
-  bin_id text PRIMARY KEY,
-  name text NOT NULL,
-  created_at timestamp with time zone DEFAULT now()
 );
