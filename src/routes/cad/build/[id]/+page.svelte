@@ -14,6 +14,8 @@
   let buildId = $page.params.id;
   let bomSnapshot = [];
   let processingAdd = false;
+  let projectBuilds = [];
+  let projectTotalCost = 0;
 
   // Edit modal state for build items (top table)
   let showEditModal = false;
@@ -111,6 +113,32 @@
       } else {
         build.parts = [];
         build.purchasing = [];
+      }
+
+      // Compute purchasing cost for this build
+      try {
+        build.totalPurchasingCost = (build.purchasing || []).reduce((sum, p) => {
+          const unit = (p.final_price ?? p.price) || 0;
+          const qty = p.quantity || 1;
+          return sum + (Number(unit) * Number(qty));
+        }, 0);
+      } catch (e) { build.totalPurchasingCost = 0; }
+
+      // If build has a project_id, load sibling builds in the same project to show project container
+      if (build.project_id) {
+        try {
+          const { data: siblings, error: sibErr } = await supabase.from('builds').select('*, subsystems(name)').eq('project_id', build.project_id).order('created_at', { ascending: false });
+          if (!sibErr) {
+            projectBuilds = siblings || [];
+            projectTotalCost = projectBuilds.reduce((s, b) => s + (b.totalPurchasingCost || 0), 0);
+          }
+        } catch (e) {
+          projectBuilds = [];
+          projectTotalCost = 0;
+        }
+      } else {
+        projectBuilds = [];
+        projectTotalCost = 0;
       }
     } catch (error) {
       console.error('Error loading build details:', error);
@@ -691,6 +719,26 @@
                 <span>Assembled: {new Date(build.assembled_at).toLocaleDateString()}</span>
               {/if}
             </div>
+            {#if build.project_id}
+              <div class="project-banner">
+                <strong>Project: {build.project_id}</strong>
+                <span class="project-cost">Total Cost: ${ (projectTotalCost || 0).toFixed(2) }</span>
+              </div>
+              {#if projectBuilds && projectBuilds.length > 0}
+                <div class="project-builds">
+                  {#each projectBuilds as pb}
+                    {@const pProg = getBuildProgress(pb)}
+                    <div class="project-build-row">
+                      <div class="project-build-name">{pb.subsystems?.name} · {pb.release_name}</div>
+                      <div class="project-build-progress">
+                        <div class="progress-bar small"><div class="progress-fill" style="width: {pProg.percent}%"></div></div>
+                        <div class="project-build-cost">${ (pb.totalPurchasingCost || 0).toFixed(2) }</div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
           </div>
         </div>
         <div class="header-right">
@@ -1134,6 +1182,13 @@
   .header-info h1 { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.5rem 0; color: var(--text); font-size: 1.6rem; font-weight: 600; }
   .build-hash { margin: 0.25rem 0; color: var(--secondary); font-family: monospace; font-size: 0.9rem; }
   .build-meta { display: flex; gap: 1rem; margin-top: 0.25rem; font-size: 0.85rem; color: var(--secondary); }
+  .project-banner { margin-top:0.5rem; background:#f8fafc; padding:0.5rem; border-radius:6px; display:flex; align-items:center; gap:1rem; }
+  .project-cost { color:#333; font-weight:600; }
+  .project-builds { margin-top:0.5rem; display:flex; flex-direction:column; gap:0.25rem; }
+  .project-build-row { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
+  .project-build-progress { display:flex; align-items:center; gap:0.5rem; }
+  .progress-bar.small { width:160px; height:8px; background:#eef2f7; border-radius:999px; overflow:hidden; }
+  .project-build-cost { font-family: ui-monospace, monospace; font-size:0.9rem; color:#444; }
   .status-section { margin-bottom: 1rem; }
   .status-card { background: white; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
   .status-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }

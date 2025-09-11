@@ -11,9 +11,86 @@
   let buildStats = {
     total: 0,
     pending: 0,
+    manufacturing: 0,
     ready_to_assemble: 0,
     assembled: 0
   };
+  // UI state for project grouping
+  let projectOpen = {};
+  let groupedBuilds = {};
+  let editingProjectName = {};
+  let tempProjectName = {};
+
+  // Drag-and-drop handlers
+  function onDragStart(e, build) {
+    try {
+      e.dataTransfer.setData('text/plain', String(build.id));
+      e.dataTransfer.setData('application/json', JSON.stringify({ sourcePid: build.project_id || '__NO_PROJECT__' }));
+      e.dataTransfer.effectAllowed = 'move';
+    } catch (err) { }
+  }
+
+  async function dropOnBuild(e, targetBuild) {
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if (!draggedId || draggedId === String(targetBuild.id)) return;
+    // Always form a new project container for the two builds
+    const newPid = `Project-${Math.floor(Math.random()*90000)+10000}`;
+    try {
+      const { error } = await supabase.from('builds').update({ project_id: newPid }).in('id', [draggedId, targetBuild.id]);
+      if (error) throw error;
+      await loadBuilds();
+      projectOpen = { ...projectOpen, [newPid]: true };
+      editingProjectName = { ...editingProjectName, [newPid]: true };
+      tempProjectName = { ...tempProjectName, [newPid]: newPid };
+    } catch (err) {
+      console.error('Failed creating project container:', err);
+      alert('Failed to create project container: ' + (err?.message || err));
+    }
+  }
+
+  async function dropOnProject(e, pid) {
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if (!draggedId) return;
+    try {
+      const { error } = await supabase.from('builds').update({ project_id: pid }).eq('id', draggedId);
+      if (error) throw error;
+      await loadBuilds();
+      projectOpen = { ...projectOpen, [pid]: true };
+    } catch (err) {
+      console.error('Failed assigning build to project:', err);
+      alert('Failed to assign build to project: ' + (err?.message || err));
+    }
+  }
+
+  function allowDrop(e) { e.preventDefault(); }
+
+  // Inline project name editing
+  function startEditProjectName(pid) {
+    if (pid === '__NO_PROJECT__') return; // don't edit unassigned
+    editingProjectName = { ...editingProjectName, [pid]: true };
+    tempProjectName = { ...tempProjectName, [pid]: pid };
+    projectOpen = { ...projectOpen, [pid]: true };
+  }
+
+  async function saveProjectName(oldPid) {
+    const newName = (tempProjectName[oldPid] || '').trim();
+    if (!newName || newName === oldPid) {
+      editingProjectName = { ...editingProjectName, [oldPid]: false };
+      return;
+    }
+    try {
+      const { error } = await supabase.from('builds').update({ project_id: newName }).eq('project_id', oldPid);
+      if (error) throw error;
+      await loadBuilds();
+    } catch (err) {
+      console.error('Failed renaming project:', err);
+      alert('Failed renaming project: ' + (err?.message || err));
+    }
+  }
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -77,51 +154,64 @@
           build.parts = [];
           build.purchasing = [];
         }
+        // Compute a simple purchasing cost for the build (price or final_price * qty)
+        try {
+          build.totalPurchasingCost = (build.purchasing || []).reduce((sum, p) => {
+            const unit = (p.final_price ?? p.price) || 0;
+            const qty = p.quantity || 1;
+            return sum + (Number(unit) * Number(qty));
+          }, 0);
+        } catch (e) { build.totalPurchasingCost = 0; }
       }
       
       // Calculate stats and update build statuses
       buildStats = {
         total: builds.length,
         pending: 0,
+        manufacturing: 0,
         ready_to_assemble: 0,
         assembled: 0
       };
 
-      // Update build statuses based on part completion
+      // Recalculate and normalize build statuses based on current part states
       for (const build of builds) {
         if (build.status !== 'assembled') {
           const allParts = [...(build.parts || []), ...(build.purchasing || [])];
-          if (allParts.length > 0) {
-            // Check if all parts are completed
-            const allPartsComplete = allParts.every(part => 
-              part.status === 'complete' || part.status === 'delivered'
-            );
-            
-            // Update build status if needed
-            if (allPartsComplete && build.status === 'pending') {
-              // Update build to ready_to_assemble
-              await supabase
-                .from('builds')
-                .update({ status: 'ready_to_assemble' })
-                .eq('id', build.id);
-              build.status = 'ready_to_assemble';
-            } else if (!allPartsComplete && allParts.some(part => part.status !== 'pending')) {
-              // Update build to manufacturing if any parts are in progress
-              await supabase
-                .from('builds')
-                .update({ status: 'manufacturing' })
-                .eq('id', build.id);
-              build.status = 'manufacturing';
-            }
+          const hasParts = allParts.length > 0;
+          const allComplete = hasParts && allParts.every(p => p.status === 'complete' || p.status === 'delivered');
+          const anyStarted = hasParts && allParts.some(p => ['in-progress','cammed','ordered','delivered','complete','manufactured'].includes(p.status));
+          let newStatus = 'pending';
+            if (allComplete) newStatus = 'ready_to_assemble';
+            else if (anyStarted) newStatus = 'manufacturing';
+          if (newStatus !== build.status) {
+            const { error: updErr } = await supabase.from('builds').update({ status: newStatus }).eq('id', build.id);
+            if (!updErr) build.status = newStatus;
           }
         }
-        
-        // Count for stats
         if (build.status === 'pending') buildStats.pending++;
-        else if (build.status === 'ready_to_assemble' || build.status === 'manufacturing') buildStats.ready_to_assemble++;
+        else if (build.status === 'manufacturing') buildStats.manufacturing++;
+        else if (build.status === 'ready_to_assemble') buildStats.ready_to_assemble++;
         else if (build.status === 'assembled') buildStats.assembled++;
       }
-      
+      // Build grouping by project_id for UI
+      groupedBuilds = {};
+      for (const b of builds) {
+        const pid = b.project_id || '__NO_PROJECT__';
+        if (!groupedBuilds[pid]) groupedBuilds[pid] = [];
+        groupedBuilds[pid].push(b);
+      }
+      // Initialize UI state for each project container after grouping
+      for (const pid of Object.keys(groupedBuilds)) {
+        // default all project containers to open so cards are visible
+        if (projectOpen[pid] === undefined) projectOpen[pid] = true;
+        if (editingProjectName[pid] === undefined) editingProjectName[pid] = false;
+        if (tempProjectName[pid] === undefined) tempProjectName[pid] = pid;
+      }
+      // reassign shallow copies so Svelte notices changes to nested objects
+      projectOpen = { ...projectOpen };
+      editingProjectName = { ...editingProjectName };
+      tempProjectName = { ...tempProjectName };
+
     } catch (error) {
       console.error('Error loading builds:', error);
     }
@@ -214,6 +304,13 @@
       <div class="stat-card">
         <Wrench size={24} />
         <div class="stat-info">
+          <h3>{buildStats.manufacturing}</h3>
+          <p>Manufacturing</p>
+        </div>
+      </div>
+      <div class="stat-card">
+        <CheckCircle size={24} />
+        <div class="stat-info">
           <h3>{buildStats.ready_to_assemble}</h3>
           <p>Ready to Assemble</p>
         </div>
@@ -227,83 +324,113 @@
       </div>
     </div>
 
-    <!-- Active Builds -->
+    <!-- Active Builds grouped by Project -->
     <div class="build-sections">
       <section class="section">
         <h2>All Builds</h2>
         {#if builds.length > 0}
-          <div class="builds-grid">
-            {#each builds as build}
-              {@const progress = getBuildProgress(build)}
-              <div class="build-card status-{build.status}"
-                   on:click={() => goto(`/cad/build/${build.id}`)}
-                   on:keydown={(e) => e.key === 'Enter' && goto(`/cad/build/${build.id}`)}
-                   role="button"
-                   tabindex="0">
-                <div class="build-header">
-                  <div class="icon-wrap"><Package size={18} /></div>
-                  <div class="build-info">
-                    <h3>{build.subsystems?.name || 'Unknown'} · {build.release_name}</h3>
-                    <p>Build #{build.build_hash?.split('_')[1] || 'N/A'}</p>
-                  </div>
-                  <span class="status-badge status-{build.status}">
-                    {#if build.status === 'pending'}
-                      <Clock size={14} /> Pending
-                    {:else if build.status === 'manufacturing'}
-                      <Wrench size={14} /> in progress
-                    {:else if build.status === 'ready_to_assemble'}
-                      <CheckCircle size={14} /> Ready
-                    {:else if build.status === 'assembled'}
-                      <CheckCircle size={14} /> Assembled
-                    {/if}
-                  </span>
+          {#each Object.keys(groupedBuilds) as pid}
+            {@const human = pid === '__NO_PROJECT__' ? 'Unassigned' : pid}
+            {@const projectBuilds = groupedBuilds[pid]}
+            {@const projectTotalCost = projectBuilds.reduce((s,b) => s + (b.totalPurchasingCost || 0), 0)}
+            <div class="project-container" role="group" on:drop={(e) => dropOnProject(e, pid)} on:dragover={allowDrop} on:dragenter={allowDrop}>
+              <div class="project-header" on:click={() => { if (pid !== '__NO_PROJECT__') projectOpen = { ...projectOpen, [pid]: !projectOpen[pid] }; }} on:keydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && pid !== '__NO_PROJECT__') { projectOpen = { ...projectOpen, [pid]: !projectOpen[pid] }; } }} role="button" tabindex="0">
+                <div>
+                  <strong class="project-name">{human}</strong>
+                  <div class="project-meta">{projectBuilds.length} builds • Total cost: ${projectTotalCost.toFixed(2)}</div>
                 </div>
-
-                <div class="progress-bar">
-                  <div class="progress-fill" style="width: {progress.percent}%"></div>
-                </div>
-
-                <div class="build-details">
-                  <div class="meta">
-                    <span>{progress.manufactured}/{progress.total} parts</span>
-                    <span>•</span>
-                    <span>{progress.percent}%</span>
-                    <span>•</span>
-                    <span>Created {new Date(build.created_at).toLocaleDateString()}</span>
-                    {#if build.assembled_at}
-                      <span>•</span>
-                      <span>Assembled {new Date(build.assembled_at).toLocaleDateString()}</span>
-                    {/if}
-                  </div>
-                </div>
-
-                <div class="build-actions">
-                  <a href="/cad/build/{build.id}" class="btn btn-primary btn-sm">
-                    <ExternalLink size={14} />
-                    View Details
-                  </a>
-                  
-                  {#if build.subsystems?.onshape_url}
-                    <a href={build.subsystems.onshape_url} target="_blank" class="btn btn-secondary btn-sm">
-                      <ExternalLink size={14} />
-                      View CAD
-                    </a>
-                  {/if}
-                  
-                  <!-- BUILD FINISHED BUTTON LOGIC -->
-                  {#if build.status !== 'assembled'}
-                    {@const progress = getBuildProgress(build)}
-                    {#if progress.status === 'Ready'}
-                      <button class="btn btn-success btn-sm" on:click|stopPropagation={() => markAsAssembled(build.id)}>
-                        <CheckCircle size={14} />
-                        Build Finished
-                      </button>
+                <div class="project-actions">
+                  {#if pid === '__NO_PROJECT__'}
+                    <span class="muted">Unassigned</span>
+                  {:else}
+                    {#if editingProjectName[pid]}
+                      <input class="form-input" bind:value={tempProjectName[pid]} on:keydown={(e) => { if (e.key === 'Enter') saveProjectName(pid); }} />
+                      <button class="btn btn-sm" on:click={() => saveProjectName(pid)}>Save</button>
+                      <button class="btn btn-sm" on:click={() => { editingProjectName[pid] = false; }}>Cancel</button>
+                    {:else}
+                      <button class="btn btn-sm" on:click|stopPropagation={() => startEditProjectName(pid)}>Rename</button>
                     {/if}
                   {/if}
                 </div>
               </div>
-            {/each}
-          </div>
+              {#if projectOpen[pid]}
+                    <div class="builds-grid">
+                  {#each projectBuilds as build}
+                    {@const progress = getBuildProgress(build)}
+        <div class="build-card status-{build.status}"
+          draggable="true"
+          on:dragstart|stopPropagation={(e) => onDragStart(e, build)}
+          on:drop|stopPropagation={(e) => dropOnBuild(e, build)}
+          on:dragover|stopPropagation={allowDrop}
+          on:dragenter|stopPropagation={allowDrop}
+          on:click={() => goto(`/cad/build/${build.id}`)}
+          on:keydown={(e) => e.key === 'Enter' && goto(`/cad/build/${build.id}`)}
+          role="button"
+          tabindex="0">
+                      <div class="build-header">
+                        <div class="icon-wrap"><Package size={18} /></div>
+                        <div class="build-info">
+                          <h3>{build.subsystems?.name || 'Unknown'} · {build.release_name}</h3>
+                          <p>Build #{build.build_hash?.split('_')[1] || 'N/A'}</p>
+                        </div>
+                        <span class="status-badge status-{build.status}">
+                          {#if build.status === 'pending'}
+                            <Clock size={14} /> Pending
+                          {:else if build.status === 'manufacturing'}
+                            <Wrench size={14} /> in progress
+                          {:else if build.status === 'ready_to_assemble'}
+                            <CheckCircle size={14} /> Ready
+                          {:else if build.status === 'assembled'}
+                            <CheckCircle size={14} /> Assembled
+                          {/if}
+                        </span>
+                      </div>
+
+                      <div class="progress-bar">
+                        <div class="progress-fill" style="width: {progress.percent}%"></div>
+                      </div>
+
+                      <div class="build-details">
+                        <div class="meta">
+                          <span>{progress.manufactured}/{progress.total} parts</span>
+                          <span>•</span>
+                          <span>{progress.percent}%</span>
+                          <span>•</span>
+                          <span>Created {new Date(build.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
+                          <div class="cost-badge">Cost: ${ (build.totalPurchasingCost || 0).toFixed(2) }</div>
+                          <div class="drag-hint">Drag onto another build to group</div>
+                        </div>
+                      </div>
+
+                      <div class="build-actions">
+                        <a href="/cad/build/{build.id}" class="btn btn-primary btn-sm">
+                          <ExternalLink size={14} />
+                          View Details
+                        </a>
+                        {#if build.subsystems?.onshape_url}
+                          <a href={build.subsystems.onshape_url} target="_blank" class="btn btn-secondary btn-sm">
+                            <ExternalLink size={14} />
+                            View CAD
+                          </a>
+                        {/if}
+                        {#if build.status !== 'assembled'}
+                          {@const progress = getBuildProgress(build)}
+                          {#if progress.status === 'Ready'}
+                            <button class="btn btn-success btn-sm" on:click|stopPropagation={() => markAsAssembled(build.id)}>
+                              <CheckCircle size={14} />
+                              Build Finished
+                            </button>
+                          {/if}
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
       {:else}        <div class="empty-state">
           <Package size={48} />
           <h3>No Builds Yet</h3>
@@ -441,6 +568,13 @@
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 1rem;
   }
+  .project-container { border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem; margin-bottom: 1rem; background: #fff; }
+  .project-header { display:flex; align-items:center; justify-content:space-between; padding:0.5rem; cursor:pointer; }
+  .project-name { font-size:1rem; }
+  .project-meta { color:#666; font-size:0.9rem; }
+  .project-builds { padding:0.5rem 0.25rem; }
+  .cost-badge { background:#f3f4f6; padding:0.25rem 0.5rem; border-radius:6px; font-weight:600; }
+  .assign-project .form-input { width:140px; }
   .build-card { background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 12px; padding: 0.9rem; transition: box-shadow 0.2s ease, transform 0.15s ease; cursor: pointer; }
 
   .build-card:hover {
