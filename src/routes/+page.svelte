@@ -158,7 +158,27 @@
           }
         });
         if (error) throw error;
-        
+        // Notify approvers once when the user registers. This is triggered once per page session.
+        try {
+          if (!window.__notifiedUserRegistration) window.__notifiedUserRegistration = new Set();
+          const newUserId = data?.user?.id || data?.user?.user?.id || null;
+          const newUserName = formData.name || formData.email || newUserId;
+          if (newUserId && !window.__notifiedUserRegistration.has(newUserId)) {
+            window.__notifiedUserRegistration.add(newUserId);
+            const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
+            fetch(`${BOT_BASE_URL}/notify/user_registration`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ id: newUserId, name: newUserName })
+            }).then((r) => {
+              if (!r.ok) console.warn('User registration notify failed', r.status);
+            }).catch((e) => console.warn('User registration notify error', e));
+          }
+
+        } catch (e) {
+          console.warn('Failed to notify user registration to bot:', e);
+        }
+
         if (data.user && !data.session) {
           authSuccess = 'Registration successful! Please check your email to confirm your account.';
         }

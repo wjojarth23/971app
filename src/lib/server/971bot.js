@@ -45,6 +45,10 @@ export const APPROVER_SYNC_TTL = 60; // seconds
 // Temporary in-memory map from `${channel}:${ts}` -> purchaseId to avoid needing
 // conversation history scopes in development. Not reliable in serverless/prod.
 export const messageToPurchaseMap = new Map();
+// Short-lived dedupe cache to avoid posting the same purchase repeatedly.
+// Keyed by a string like `${requester}:${itemName}:${projectId}` -> {ts, channel, expires}
+export const recentPostDedupe = new Map();
+const DEDUPE_TTL_MS = 10 * 1000; // 10 seconds
 
 export async function listApproversFromDb() {
   const supa = getSupabase();
@@ -104,8 +108,18 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
     console.warn('No approver DM channel available; skipping Slack post');
     return false;
   }
+  // Deduplicate very recent identical posts to avoid spamming approvers if callers retry.
+  const dedupeKey = `${requester}:${itemName}:${projectId}`;
+  const now = Date.now();
+  const existing = recentPostDedupe.get(dedupeKey);
+  if (existing && existing.expires > now) {
+    // Return the original post response-like object so callers see a consistent result.
+    console.log('Skipping duplicate purchase post (dedupe)', dedupeKey);
+    return { ok: true, ts: existing.ts, channel: existing.channel, deduped: true };
+  }
+
   // Do not include purchase id in message text (avoid leaking IDs in chat)
-  // Mapping from message ts -> purchaseId is still stored in-memory and persisted by caller.
+  // Mapping from message ts -> purchaseId is still stored in-memory and persisted below when purchaseId provided.
   const text = `${requester} needs ${itemName} for ${projectId}`;
   try {
     const client = getSlackClient();
@@ -116,9 +130,25 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
     if (resp && resp.ok && resp.ts && purchaseId) {
       try {
         messageToPurchaseMap.set(`${channel}:${resp.ts}`, Number(purchaseId));
+        // Persist the slack channel/ts to the purchasing row so the reaction handler can find it.
+        try {
+          const supa = getSupabase();
+          await supa.from('purchasing').update({ slack_channel: resp.channel, slack_ts: resp.ts }).eq('id', purchaseId);
+        } catch (dbErr) {
+          // Non-fatal; we still keep the in-memory map as a fallback
+          console.warn('Failed to persist slack channel/ts to purchasing row:', dbErr);
+        }
       } catch (e) {
         console.warn('Failed to store message->purchase mapping:', e);
       }
+    }
+    // Record the dedupe entry for a short period to avoid repeat postings
+    try {
+      recentPostDedupe.set(dedupeKey, { ts: resp?.ts, channel: resp?.channel, expires: Date.now() + DEDUPE_TTL_MS });
+      // Schedule removal
+      setTimeout(() => recentPostDedupe.delete(dedupeKey), DEDUPE_TTL_MS + 1000);
+    } catch (e) {
+      // ignore
     }
     // Return the full response so callers can persist ts/channel if desired
     return resp;

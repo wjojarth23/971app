@@ -7,6 +7,9 @@ import {
   messageToPurchaseMap
 } from '$lib/server/971bot';
 
+// Avoid approving the same purchase repeatedly when multiple reactions are added.
+const recentlyApprovedPurchases = new Set();
+
 export async function POST({ request }) {
   const rawBody = await request.text();
   const headers = Object.fromEntries(request.headers.entries());
@@ -80,8 +83,17 @@ export async function POST({ request }) {
 
               if (mapped) {
                   if (reaction !== 'x') {
-                    console.log('Approving purchase from mapping', mapped, 'based on reaction', reaction, 'by', approverName);
-                    await approvePurchaseInDb(mapped, approverName);
+                    if (recentlyApprovedPurchases.has(mapped)) {
+                      console.log('Purchase already approved recently, skipping duplicate approve for', mapped);
+                    } else {
+                      console.log('Approving purchase from mapping', mapped, 'based on reaction', reaction, 'by', approverName);
+                      const ok = await approvePurchaseInDb(mapped, approverName);
+                      if (ok) {
+                        recentlyApprovedPurchases.add(mapped);
+                        // remove from cache after a short window so future legitimate approvals still work
+                        setTimeout(() => recentlyApprovedPurchases.delete(mapped), 30 * 1000);
+                      }
+                    }
                   }
                 } else {
                 // Fallback: fetch the message if the app has conversation history scopes
