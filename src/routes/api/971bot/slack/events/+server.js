@@ -35,6 +35,8 @@ export async function POST({ request }) {
       const item = event.item || {};
       const channel = item.channel;
       const ts = item.ts;
+      // The user who reacted is available on the event as `user`
+      const reactingUser = event.user || null;
 
       try {
         const approverChannel = await ensureApproverDmChannel();
@@ -62,12 +64,26 @@ export async function POST({ request }) {
                 }
               }
 
-              if (mapped) {
-                if (reaction !== 'x') {
-                  console.log('Approving purchase from mapping', mapped, 'based on reaction', reaction);
-                  await approvePurchaseInDb(mapped);
+              // Resolve a friendly approver name from the reacting user's Slack profile when possible
+              let approverName = 'Slack Approver';
+              try {
+                if (reactingUser) {
+                  const client = getSlackClient();
+                  const info = await client.users.info({ user: reactingUser });
+                  if (info && info.ok && info.user) {
+                    approverName = info.user.profile?.display_name || info.user.profile?.real_name || info.user.name || approverName;
+                  }
                 }
-              } else {
+              } catch (e) {
+                console.warn('Failed to lookup reacting user info:', e?.data || e?.message || e);
+              }
+
+              if (mapped) {
+                  if (reaction !== 'x') {
+                    console.log('Approving purchase from mapping', mapped, 'based on reaction', reaction, 'by', approverName);
+                    await approvePurchaseInDb(mapped, approverName);
+                  }
+                } else {
                 // Fallback: fetch the message if the app has conversation history scopes
                 const client = getSlackClient();
                 const msgResp = await client.conversations.history({ channel, latest: ts, inclusive: true, limit: 1 });
@@ -79,8 +95,8 @@ export async function POST({ request }) {
                   if (m) {
                     const purchaseId = Number(m[1]);
                     if (reaction !== 'x') {
-                      console.log('Approving purchase', purchaseId, 'based on reaction', reaction);
-                      await approvePurchaseInDb(purchaseId);
+                      console.log('Approving purchase', purchaseId, 'based on reaction', reaction, 'by', approverName);
+                      await approvePurchaseInDb(purchaseId, approverName);
                     }
                   }
                 }

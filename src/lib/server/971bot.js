@@ -104,9 +104,9 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
     console.warn('No approver DM channel available; skipping Slack post');
     return false;
   }
-  // Include purchase id in message text so reaction handler can map reactions to purchases
-  const idPart = purchaseId ? ` (purchase_id:${purchaseId})` : '';
-  const text = `${requester} needs ${itemName} for ${projectId}${idPart}`;
+  // Do not include purchase id in message text (avoid leaking IDs in chat)
+  // Mapping from message ts -> purchaseId is still stored in-memory and persisted by caller.
+  const text = `${requester} needs ${itemName} for ${projectId}`;
   try {
     const client = getSlackClient();
     const resp = await client.chat.postMessage({ channel, text });
