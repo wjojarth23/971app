@@ -42,6 +42,10 @@ export let approverDmChannelId = null;
 export let lastApproverSync = 0;
 export const APPROVER_SYNC_TTL = 60; // seconds
 
+// Temporary in-memory map from `${channel}:${ts}` -> purchaseId to avoid needing
+// conversation history scopes in development. Not reliable in serverless/prod.
+export const messageToPurchaseMap = new Map();
+
 export async function listApproversFromDb() {
   const supa = getSupabase();
   try {
@@ -108,6 +112,14 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
     const resp = await client.chat.postMessage({ channel, text });
     // Log message and response for debugging
     console.log('Posted purchase message to Slack', { channel, text, ok: resp?.ok, ts: resp?.ts, message: resp?.message });
+    // If we posted successfully and have a purchaseId, record the mapping in memory
+    if (resp && resp.ok && resp.ts && purchaseId) {
+      try {
+        messageToPurchaseMap.set(`${channel}:${resp.ts}`, Number(purchaseId));
+      } catch (e) {
+        console.warn('Failed to store message->purchase mapping:', e);
+      }
+    }
     return resp.ok;
   } catch (e) {
     console.error('Slack error posting purchase request:', e?.data || e?.message || e);

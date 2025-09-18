@@ -1,5 +1,11 @@
 import { json } from '@sveltejs/kit';
-import { verifySlackSignature, approvePurchaseInDb, getSlackClient, ensureApproverDmChannel } from '$lib/server/971bot';
+import {
+  verifySlackSignature,
+  approvePurchaseInDb,
+  getSlackClient,
+  ensureApproverDmChannel,
+  messageToPurchaseMap
+} from '$lib/server/971bot';
 
 export async function POST({ request }) {
   const rawBody = await request.text();
@@ -7,7 +13,8 @@ export async function POST({ request }) {
   if (!verifySlackSignature(rawBody, headers)) {
     return new Response('Invalid Slack signature', { status: 401 });
   }
-  let payload;
+
+  let payload = {};
   try {
     payload = JSON.parse(rawBody || '{}');
   } catch (e) {
@@ -22,18 +29,29 @@ export async function POST({ request }) {
     const event = payload.event || {};
     const event_type = event.type;
     console.log('Slack event callback received', { event_type, event });
+
     if (event_type === 'reaction_added') {
       const reaction = event.reaction;
       const item = event.item || {};
       const channel = item.channel;
+      const ts = item.ts;
+
       try {
-        // Ensure our approver channel is up-to-date
         const approverChannel = await ensureApproverDmChannel();
-  console.log('Approver channel (cached):', approverChannel, 'event channel:', channel);
-  if (channel && channel === approverChannel) {
-          const ts = item.ts;
-          if (ts) {
-            try {
+        console.log('Approver channel (cached):', approverChannel, 'event channel:', channel);
+
+        if (channel && channel === approverChannel && ts) {
+          // First check in-memory map (temporary workaround)
+          try {
+            const mapKey = `${channel}:${ts}`;
+            const mapped = messageToPurchaseMap.get(mapKey);
+            if (mapped) {
+              if (reaction !== 'x') {
+                console.log('Approving purchase from in-memory map', mapped, 'based on reaction', reaction);
+                await approvePurchaseInDb(mapped);
+              }
+            } else {
+              // Fallback: fetch the message if the app has conversation history scopes
               const client = getSlackClient();
               const msgResp = await client.conversations.history({ channel, latest: ts, inclusive: true, limit: 1 });
               console.log('Fetched message from Slack for ts', ts, msgResp?.ok, msgResp?.messages?.length || 0);
@@ -49,15 +67,16 @@ export async function POST({ request }) {
                   }
                 }
               }
-            } catch (e) {
-              console.error('Failed to fetch message for reaction processing:', e);
             }
+          } catch (e) {
+            console.error('Failed to fetch message for reaction processing:', e);
           }
         }
       } catch (e) {
         console.error('Failed to process reaction:', e);
       }
     }
+
     return json({ ok: true });
   }
 
