@@ -772,7 +772,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
   <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
   <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
-  <a href="/manufacture/kitting" class:active={$page.url.pathname === '/manufacture/kitting'}>Kitting</a>
+  <a href="/manufacture/bins" class:active={$page.url.pathname === '/manufacture/bins'}>Bins</a>
 </div>
 
 <div class="card">
@@ -1051,10 +1051,11 @@ import ROUTER_FLOW from '$lib/router_flow.json';
                   <div class="actions-col">
                     <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
                   </div>
-        {:else if getRouterMeta(part).step === 'queued'}
-                  <div class="actions-col">
-          <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'cut' })}>Cut</button>
-                  </div>
+  {:else if getRouterMeta(part).step === 'queued'}
+      <div class="actions-col">
+    <!-- Per-row Cut removed: only header/group-level Cut allowed -->
+    <span class="status-badge status-table">{ROUTER_FLOW.labels?.[getRouterMeta(part).step] || 'Queued'}</span>
+      </div>
         {:else if getRouterMeta(part).step === 'cut'}
                   <div class="actions-col">
                     <div class="kitting-inline">

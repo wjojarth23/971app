@@ -110,6 +110,13 @@
           .select('*')
           .in('id', build.part_ids);
         if (!purchasingError) build.purchasing = purchasingData || [];
+
+        // Kitting items (COTS sent to kitting workflow)
+        const { data: kittingData, error: kittingError } = await supabase
+          .from('kitting')
+          .select('*')
+          .in('id', build.part_ids);
+        if (!kittingError) build.kitting = kittingData || [];
       } else {
         build.parts = [];
         build.purchasing = [];
@@ -137,8 +144,9 @@
           projectTotalCost = 0;
         }
       } else {
-        projectBuilds = [];
-        projectTotalCost = 0;
+        build.parts = [];
+        build.purchasing = [];
+        build.kitting = [];
       }
     } catch (error) {
       console.error('Error loading build details:', error);
@@ -180,10 +188,12 @@
       status: 'No parts',
       mfgPercent: 0,
       purPercent: 0,
+      kitPercent: 0,
       mfgCount: { complete: 0, total: 0 },
-      purCount: { complete: 0, total: 0 }
+      purCount: { complete: 0, total: 0 },
+      kitCount: { complete: 0, total: 0 }
     };
-    const allParts = [...(build.parts || []), ...(build.purchasing || [])];
+    const allParts = [...(build.parts || []), ...(build.purchasing || []), ...(build.kitting || [])];
     if (allParts.length === 0) return { 
       percent: 0, 
       manufactured: 0, 
@@ -191,18 +201,22 @@
       status: 'No parts',
       mfgPercent: 0,
       purPercent: 0,
+      kitPercent: 0,
       mfgCount: { complete: 0, total: 0 },
-      purCount: { complete: 0, total: 0 }
+      purCount: { complete: 0, total: 0 },
+      kitCount: { complete: 0, total: 0 }
     };
-    const manufactured = allParts.filter(item => item.status === 'complete' || item.status === 'delivered').length;
+    const manufactured = allParts.filter(item => item.status === 'complete' || item.status === 'delivered' || item.status === 'kitted').length;
     const inProgress = allParts.filter(item => item.status === 'in-progress' || item.status === 'cammed' || item.status === 'ordered').length;
     let status = 'Requested';
     if (manufactured === allParts.length) status = 'Ready to Assemble';
     else if (inProgress > 0 || manufactured > 0) status = 'Manufacturing';
     const mfgParts = build.parts || [];
     const purParts = build.purchasing || [];
+    const kitParts = build.kitting || [];
     const mfgComplete = mfgParts.filter(p => p.status === 'complete').length;
     const purComplete = purParts.filter(p => p.status === 'delivered').length;
+    const kitComplete = kitParts.filter(p => p.status === 'kitted').length;
     return {
       percent: Math.round((manufactured / allParts.length) * 100),
       manufactured,
@@ -211,8 +225,10 @@
       status,
       mfgPercent: mfgParts.length ? Math.round((mfgComplete / mfgParts.length) * 100) : 0,
       purPercent: purParts.length ? Math.round((purComplete / purParts.length) * 100) : 0,
+      kitPercent: kitParts.length ? Math.round((kitComplete / kitParts.length) * 100) : 0,
       mfgCount: { complete: mfgComplete, total: mfgParts.length },
-      purCount: { complete: purComplete, total: purParts.length }
+      purCount: { complete: purComplete, total: purParts.length },
+      kitCount: { complete: kitComplete, total: kitParts.length }
     };
   }
 
@@ -439,6 +455,15 @@
     persistBomUpdate(item.id, { workflow: item.workflow });
   }
 
+  // COTS workflow (Purchase vs Kit) selector in Full BOM
+  function setCotsWorkflow(index, wf) {
+    const item = bomSnapshot[index];
+    if (!item || item.part_type !== 'COTS') return;
+    item.workflow = (wf === 'kit') ? 'kit' : 'purchase';
+    bomSnapshot = [...bomSnapshot];
+    persistBomUpdate(item.id, { workflow: item.workflow });
+  }
+
   function updateBomStockChoice(index, choice) {
     const item = bomSnapshot[index];
     if (!item || item.part_type === 'COTS') return;
@@ -476,7 +501,39 @@
     try {
       const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
 
-      if (item.part_type === 'COTS' || item.workflow === 'purchase') {
+      if (item.part_type === 'COTS' && item.workflow === 'kit') {
+        // Insert into kitting (in-stock COTS, just assign to bin later)
+        const kittingInsertData = {
+          name: item.part_name || item.part_number || 'Unnamed Item',
+          requester: user?.full_name || user?.email,
+          project_id,
+          quantity: item.quantity || 1,
+          status: 'pending',
+          workflow: 'kit'
+        };
+        const { data: kit, error: kitErr } = await supabase
+          .from('kitting')
+          .insert([kittingInsertData])
+          .select();
+        if (kitErr) throw kitErr;
+        const k = kit?.[0];
+
+        if (k?.id) {
+          const current = build.part_ids || [];
+          const newPartIds = current.includes(k.id) ? current : [...current, k.id];
+          const { error: updErr } = await supabase
+            .from('builds')
+            .update({ part_ids: newPartIds })
+            .eq('id', buildId);
+          if (updErr) throw updErr;
+        }
+
+        const { error: bomUpdErr } = await supabase
+          .from('build_bom')
+          .update({ added_to_kitting: true })
+          .eq('id', item.id);
+        if (bomUpdErr) throw bomUpdErr;
+      } else if (item.part_type === 'COTS' || item.workflow === 'purchase') {
         // Attempt vendor detection
         const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
         
@@ -768,6 +825,13 @@
               </div>
               <span class="progress-count">{progress.purCount.complete}/{progress.purCount.total}</span>
             </div>
+            <div class="progress-row">
+              <span class="progress-label">Kitting</span>
+              <div class="progress-bar">
+                <div class="progress-fill kit" style="width: {progress.kitPercent}%"></div>
+              </div>
+              <span class="progress-count">{progress.kitCount.complete}/{progress.kitCount.total}</span>
+            </div>
           </div>
         {/if}
       </div>
@@ -783,7 +847,7 @@
         </div>
       </div>
       {#if build.parts || build.purchasing}
-        {@const allParts = [...(build.parts || []), ...(build.purchasing || [])]}
+        {@const allParts = [...(build.parts || []), ...(build.purchasing || []), ...(build.kitting || [])]}
         {#if allParts.length > 0}
           <div class="bom-table-container">
             <table class="bom-table">
@@ -821,8 +885,8 @@
                       </div>
                     </td>
                     <td>
-                      <span class="chip {part.workflow === 'purchase' ? 'chip-cots' : 'chip-mfg'}">
-                        {part.workflow === 'purchase' ? 'COTS' : 'Manufactured'}
+                      <span class="chip {(part.workflow === 'purchase' || part.workflow === 'kit') ? 'chip-cots' : 'chip-mfg'}">
+                        {(part.workflow === 'purchase' || part.workflow === 'kit') ? 'COTS' : 'Manufactured'}
                       </span>
                     </td>
                     <td>
@@ -851,7 +915,7 @@
                             <Wrench size={12} />
                           {:else if part.status === 'ordered'}
                             <Package size={12} />
-                          {:else if part.status === 'delivered' || part.status === 'complete' || part.status === 'manufactured'}
+                          {:else if part.status === 'delivered' || part.status === 'complete' || part.status === 'manufactured' || part.status === 'kitted'}
                             <CheckCircle size={12} />
                           {:else}
                             <Clock size={12} />
@@ -941,7 +1005,14 @@
                   </td>
                   <td>
                     {#if item.part_type === 'COTS'}
-                      <span class="workflow-badge workflow-purchase">Purchase</span>
+                      <select
+                        class="workflow-dropdown workflow-{item.workflow || 'purchase'}"
+                        value={item.workflow || 'purchase'}
+                        on:change={(e) => setCotsWorkflow(i, e.target.value)}
+                      >
+                        <option value="purchase">Purchase</option>
+                        <option value="kit">Kit</option>
+                      </select>
                     {:else}
                       <select
                         class="workflow-dropdown workflow-{item.workflow || 'mill'}"
@@ -979,9 +1050,9 @@
                     <button
                       class="btn btn-sm btn-yellow add-btn"
                       on:click={() => addFromFullBOM(item)}
-                      disabled={(item.added_to_parts_list || item.added_to_purchasing) || processingAdd}
+                      disabled={(item.added_to_parts_list || item.added_to_purchasing || item.added_to_kitting) || processingAdd}
                     >
-                      {#if item.added_to_parts_list || item.added_to_purchasing}
+                      {#if item.added_to_parts_list || item.added_to_purchasing || item.added_to_kitting}
                         <CheckCircle size={14} />
                         Added
                       {:else}
@@ -1186,6 +1257,7 @@
   .progress-fill { height: 100%; transition: width 0.3s ease; }
   .progress-fill.mfg { background: linear-gradient(90deg, #27ae60, #2ecc71); }
   .progress-fill.pur { background: linear-gradient(90deg, #ffd54f, #ffb300); }
+  .progress-fill.kit { background: linear-gradient(90deg, #9fa8da, #5c6bc0); }
   .parts-section { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1.25rem; }
   .parts-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
   .legend { display: flex; gap: 1rem; color: #666; font-size: 0.85rem; }

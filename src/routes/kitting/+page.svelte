@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import { page } from '$app/stores';
 
   let loading = true;
   let items = [];
@@ -42,20 +41,12 @@
   });
 </script>
 
-<svelte:head><title>Kitting</title></svelte:head>
+<svelte:head>
+  <title>Kitting</title>
+</svelte:head>
 
 <div class="page-header">
   <h1>Kitting</h1>
-  <div class="page-actions">
-    <a href="/manufacture" class="btn btn-secondary">Back</a>
-  </div>
-</div>
-
-<div class="subtabs">
-  <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
-  <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
-  <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
-  <a href="/manufacture/kitting" class:active={$page.url.pathname === '/manufacture/kitting'}>Kitting</a>
 </div>
 
 {#if loading}
@@ -99,15 +90,18 @@
 <style>
   .text-error { color: #b91c1c; }
   .strong { font-weight: 600; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.9rem; }
-  .subtabs { display: flex; gap: 0.5rem; margin: 0 0 1rem 0; }
-  .subtabs a { text-decoration: none; padding: 0.5rem 0.85rem; background: var(--background); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; color: var(--text); }
-  .subtabs a.active { background: var(--accent); color: var(--secondary); }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.9rem;
+  }
+
+  .page-header {
+    display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.75rem;
+  }
+  .page-header h1 { margin: 0; }
 
   .table-container { overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
   .table { width: 100%; border-collapse: collapse; }
   .table th, .table td { padding: 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
   .table thead th { background: var(--background); }
-
-  .page-header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.75rem; }
 </style>

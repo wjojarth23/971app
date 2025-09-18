@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { initAuth, userStore, signOut } from '$lib/stores/auth.js';
   import { predictSettings } from '$lib/stores/predict.js';
-  import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins } from 'lucide-svelte';
+import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -66,6 +66,10 @@
             <Hammer size={18} />
             Manufacture
           </a>
+          <a href="/kitting" class="nav-link" class:active={isActive('/kitting')}>
+            <Package size={18} />
+            Kitting
+          </a>
           <a href="/cad" class="nav-link" class:active={isActive('/cad')}>
             <Move3d size={18} />
             CAD
@@ -119,6 +123,9 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--background);
     color: var(--text);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
   }
 
 
@@ -199,6 +206,42 @@
     display: flex;
     align-items: center;
     flex-shrink: 0;
+  }
+
+  /* Footer styles */
+  .site-footer {
+    width: 100vw;
+    position: relative;
+    left: 50%;
+    right: 50%;
+    margin-left: -50vw;
+    margin-right: -50vw;
+    background: var(--primary); /* match site off-white */
+    border-top: 1px solid var(--border); /* only top border */
+    color: var(--text);
+    padding: 2.5rem 0 1.25rem; /* larger top spacing so footer isn't immediately visible */
+  }
+
+  .footer-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.9rem;
+  }
+
+  .footer-left, .footer-center, .footer-right {
+    white-space: nowrap;
+    opacity: 0.95;
+  }
+
+  /* Ensure main content area grows so footer is pushed below the fold for short pages */
+  main.container {
+    flex: 1 0 auto;
+    min-height: calc(100vh - 220px); /* header+footer buffer so footer isn't visible without scrolling on short pages */
   }
 
   /* Button styles use global tokens from app.css */

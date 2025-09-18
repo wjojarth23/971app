@@ -24,7 +24,8 @@
     if (!g || !g.parts || g.parts.length === 0) return false;
     return g.parts.every(p => {
       const m = parseMeta(p);
-      return Boolean(m?.router_meta && m.router_meta.step === 'queued');
+      // Accept either explicit travis_progged flag or router_meta.step === 'queued'
+      return Boolean((m?.router_meta && m.router_meta.step === 'queued') || m?.travis_progged || (m?.router_meta && m.router_meta.travis_progged));
     });
   }
 
@@ -338,11 +339,15 @@
   function handleDragStart(event, part) {
     dragPart = part;
     event.dataTransfer.effectAllowed = 'move';
+    // start autoscroll watcher while dragging
+    startAutoScroll(event);
   }
   function handleDragOver(event, targetPart) {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     event.currentTarget.classList.add('drag-over');
+    // update autoscroll position
+    updateAutoScroll(event);
   }
   function handleDragLeave(event) {
     event.currentTarget.classList.remove('drag-over');
@@ -351,6 +356,9 @@
     event.preventDefault();
     event.currentTarget.classList.remove('drag-over');
     if (!dragPart || dragPart.id === targetPart.id) return;
+
+    // stop autoscroll when drop completes
+    stopAutoScroll();
 
   // Establish or reuse a group id (use link-table map when present)
   let targetGroup = findGroupIdForPart(targetPart);
@@ -411,6 +419,51 @@
     await loadParts();
   }
 
+  // --- Auto-scroll while dragging ---
+  let _autoScrollTimer = null;
+  let _lastMouseY = 0;
+  const SCROLL_ZONE = 120; // px from viewport edge to start scrolling
+  const SCROLL_SPEED = 12; // px per tick
+
+  function startAutoScroll(event) {
+    _lastMouseY = event.clientY || (event.touches && event.touches[0] && event.touches[0].clientY) || 0;
+    if (_autoScrollTimer) return;
+    _autoScrollTimer = setInterval(() => {
+      try {
+        const rect = document.documentElement.getBoundingClientRect();
+        const viewHeight = window.innerHeight || (rect.bottom - rect.top);
+        if (!_lastMouseY) return;
+        // If mouse near top
+        if (_lastMouseY < SCROLL_ZONE) {
+          const amount = Math.ceil((SCROLL_ZONE - _lastMouseY) / SCROLL_ZONE * SCROLL_SPEED);
+          window.scrollBy({ top: -amount, left: 0, behavior: 'auto' });
+        } else if (_lastMouseY > viewHeight - SCROLL_ZONE) {
+          const amount = Math.ceil((_lastMouseY - (viewHeight - SCROLL_ZONE)) / SCROLL_ZONE * SCROLL_SPEED);
+          window.scrollBy({ top: amount, left: 0, behavior: 'auto' });
+        }
+      } catch (e) {
+        // ignore
+      }
+    }, 30);
+    // update last mouse position globally while dragging
+    window.addEventListener('dragover', updateAutoScroll);
+    window.addEventListener('touchmove', updateAutoScroll, { passive: true });
+  }
+
+  function updateAutoScroll(event) {
+    _lastMouseY = event.clientY || (event.touches && event.touches[0] && event.touches[0].clientY) || _lastMouseY;
+  }
+
+  function stopAutoScroll() {
+    if (_autoScrollTimer) {
+      clearInterval(_autoScrollTimer);
+      _autoScrollTimer = null;
+    }
+    window.removeEventListener('dragover', updateAutoScroll);
+    window.removeEventListener('touchmove', updateAutoScroll);
+    _lastMouseY = 0;
+  }
+
   async function removeFromGroup(part) {
     if (useDedicatedTables) {
       // identify group id
@@ -451,7 +504,7 @@
   <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
   <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
-  <a href="/manufacture/kitting" class:active={$page.url.pathname === '/manufacture/kitting'}>Kitting</a>
+  <a href="/manufacture/bins" class:active={$page.url.pathname === '/manufacture/bins'}>Bins</a>
 </div>
 
 {#if loading}
@@ -460,7 +513,7 @@
   <div class="group-list">
     {#if Object.keys(groupMap).length > 0}
       <h2 class="subheading">Groups</h2>
-      {#each Object.values(groupMap) as g}
+      {#each Object.values(groupMap).filter(g => (g.parts && g.parts.length > 0)) as g}
         {#if !groupIsCut(g)}
   <div class="group-table-wrapper" role="group" aria-label="Router group" on:dragover={(e)=>{e.preventDefault();}} on:drop={(e)=>{ if(dragPart){ handleDrop(e, g.parts[0] || dragPart); } }}>
           <div class="group-table-header">
@@ -527,31 +580,37 @@
                   <td>
                     {#key p.id}
                       {#await Promise.resolve(parseMeta(p)) then meta}
-                        {#if p.status === 'pending'}
-                          <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
-                        {:else if p.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                          <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
-                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
-                          <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { travis_progged: true, step: 'queued' })}>TProged</button>
-                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                          <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { step: 'cut' })}>Cut</button>
-                        {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
-                          <div class="kitting-inline">
-                            <select class="form-select kitting-input" bind:value={selectedBinMap[p.id]}>
-                              <option value="">Select bin…</option>
-                              {#each bins as b}
-                                <option value={b.bin_id}>{b.bin_id}</option>
-                              {/each}
-                            </select>
-                            <button class="btn btn-secondary btn-sm btn-nowrap"
-                              on:click={async () => { const v = (selectedBinMap[p.id] || '').trim(); if (v) { await supabase.from('parts').update({ kitting_bin: v, updated_at: new Date().toISOString(), status: 'complete' }).eq('id', p.id); await loadParts(); } }}
-                              disabled={!selectedBinMap[p.id]}>
-                              <Package size={14} />
-                              Kit
-                            </button>
-                          </div>
-                        {:else}
+                        {#if groupIsTravisProgged(g)}
+                          <!-- When the whole group is Travis-progged, hide per-row action buttons and show status only -->
                           <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || p.status}</span>
+                        {:else}
+                          {#if p.status === 'pending'}
+                            <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
+                          {:else if p.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
+                            <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
+                          {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
+                            <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { travis_progged: true, step: 'queued' })}>TProged</button>
+                          {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
+                            <!-- Per-row Cut button removed: only group header Cut is allowed. Show status instead. -->
+                            <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || p.status}</span>
+                          {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
+                            <div class="kitting-inline">
+                              <select class="form-select kitting-input" bind:value={selectedBinMap[p.id]}>
+                                <option value="">Select bin…</option>
+                                {#each bins as b}
+                                  <option value={b.bin_id}>{b.bin_id}</option>
+                                {/each}
+                              </select>
+                              <button class="btn btn-secondary btn-sm btn-nowrap"
+                                on:click={async () => { const v = (selectedBinMap[p.id] || '').trim(); if (v) { await supabase.from('parts').update({ kitting_bin: v, updated_at: new Date().toISOString(), status: 'complete' }).eq('id', p.id); await loadParts(); } }}
+                                disabled={!selectedBinMap[p.id]}>
+                                <Package size={14} />
+                                Kit
+                              </button>
+                            </div>
+                          {:else}
+                            <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || p.status}</span>
+                          {/if}
                         {/if}
                       {/await}
                     {/key}
@@ -623,8 +682,9 @@
                       <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
                     {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
                       <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
-                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                      <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'cut' })}>Cut</button>
+              {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
+                    <!-- Per-row Cut button removed: only group header Cut is allowed. Show status instead. -->
+                    <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || part.status}</span>
                     {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
                       <div class="kitting-inline">
                         <input type="text" placeholder="Bin ID" class="form-input kitting-input"

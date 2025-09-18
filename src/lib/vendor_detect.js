@@ -1,5 +1,33 @@
 // Simple vendor detection helpers for AM (Andymark), WCP, and McMaster
+// Respects environment variable to disable automatic vendor detection.
+// Client-side SvelteKit envs: import.meta.env.PUBLIC_AUTO_VENDOR or VITE_AUTO_VENDOR
+// Server-side: process.env.AUTO_VENDOR
+function autoVendorEnabled() {
+  try {
+    // Client-side (Vite / SvelteKit)
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      const v = import.meta.env.PUBLIC_AUTO_VENDOR ?? import.meta.env.VITE_AUTO_VENDOR ?? import.meta.env.AUTO_VENDOR;
+      if (typeof v !== 'undefined') return String(v).toLowerCase() !== 'false' && String(v) !== '0' && String(v).toLowerCase() !== 'no';
+    }
+  } catch (e) {
+    // ignore
+  }
+  try {
+    // Node/server-side
+    if (typeof process !== 'undefined' && process.env) {
+      const v = process.env.AUTO_VENDOR ?? process.env.VITE_AUTO_VENDOR ?? process.env.PUBLIC_AUTO_VENDOR;
+      if (typeof v !== 'undefined') return String(v).toLowerCase() !== 'false' && String(v) !== '0' && String(v).toLowerCase() !== 'no';
+    }
+  } catch (e) {
+    // ignore
+  }
+  return true; // default: enabled
+}
+
 export function detectVendorFromString(input) {
+  // If auto vendor detection is disabled, always return null
+  if (!autoVendorEnabled()) return null;
+
   if (!input || typeof input !== 'string') return null;
   const s = input.trim();
 

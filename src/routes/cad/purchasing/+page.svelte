@@ -6,6 +6,23 @@
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { goto } from '$app/navigation';
+  // Base URL for the Python Slack bot service (971bot). Replace with your deployed URL.
+  // Optionally expose via a public env var and import from $env/static/public
+  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || 'http://localhost:8080';
+  async function notifyPurchaseBot(payload) {
+    try {
+      const res = await fetch(`${BOT_BASE_URL}/notify/purchase`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        console.warn('Bot notify failed', await res.text());
+      }
+    } catch (e) {
+      console.warn('Bot notify error', e);
+    }
+  }
 
   let user = null;
   let loading = true;
@@ -262,6 +279,14 @@
 
       // If linked to a build, associate it so it appears in Build Components
   const newItem = inserted?.[0];
+  if (newItem) {
+        notifyPurchaseBot({
+          requester: newItem.requester || requesterName || 'Unknown',
+          item_name: newItem.name,
+          project_id: newItem.project_id || '',
+          purchase_id: newItem.id
+        });
+      }
   if (newItem && matchedBuild && matchedBuild.id) {
         try {
           const { data: bData, error: bErr } = await supabase

@@ -58,7 +58,7 @@
   <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
   <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
-  <a href="/manufacture/kitting" class:active={$page.url.pathname === '/manufacture/kitting'}>Kitting</a>
+  <a href="/manufacture/bins" class:active={$page.url.pathname === '/manufacture/bins'}>Bins</a>
   
 </div>
 
@@ -93,7 +93,7 @@
           <th>Workflow</th>
           <th class="mono">Project ID</th>
           <th>Qty</th>
-          <th>Kitting Bin / Delivery</th>
+          <th>Bin / Delivery</th>
           <th>Completed</th>
         </tr>
       </thead>

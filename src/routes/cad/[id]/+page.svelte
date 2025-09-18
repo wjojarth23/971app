@@ -11,6 +11,21 @@
   import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
 
+  // Slack bot base URL for purchase notifications
+  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || 'http://localhost:8080';
+  async function notifyPurchaseBot(payload) {
+    try {
+      const res = await fetch(`${BOT_BASE_URL}/notify/purchase`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) console.warn('Bot notify failed', await res.text());
+    } catch (e) {
+      console.warn('Bot notify error', e);
+    }
+  }
+
   let subsystemId = $page.params.id;
   let user = null;
   let loading = true;
@@ -704,6 +719,15 @@
       };
       const { data, error } = await supabase.from('purchasing').insert([queued]).select();
       if (error) throw error;
+      const inserted = data?.[0];
+      if (inserted) {
+        notifyPurchaseBot({
+          requester: inserted.requester || queued.requester || 'Unknown',
+          item_name: inserted.name,
+          project_id: inserted.project_id || '',
+          purchase_id: inserted.id
+        });
+      }
 
       // insert into build_bom
       const { error: bomError } = await supabase.from('build_bom').insert([{

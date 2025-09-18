@@ -105,3 +105,19 @@ npm run preview
 The app can be deployed to any SvelteKit-compatible platform. Make sure to configure environment variables in your deployment environment.
 
 > You may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+
+## Configuration: Disabling automatic vendor detection
+
+The app supports an environment variable to disable automatic vendor detection for BOM parsing. By default detection is enabled.
+
+- Client-side (Vite/SvelteKit): set `VITE_AUTO_VENDOR` or `PUBLIC_AUTO_VENDOR`.
+- Server-side: set `AUTO_VENDOR`.
+
+Accepted falsy values to disable detection: `false`, `0`, `no` (case-insensitive). Any other value (or omitted) leaves detection enabled.
+
+Example (.env):
+
+```env
+PUBLIC_AUTO_VENDOR=false
+```
+

@@ -150,9 +150,20 @@
           if (!purchasingError) {
             build.purchasing = purchasingData || [];
           }
+
+          // Get kitting data (COTS items sent to kitting workflow)
+          const { data: kittingData, error: kittingError } = await supabase
+            .from('kitting')
+            .select('*')
+            .in('id', build.part_ids);
+
+          if (!kittingError) {
+            build.kitting = kittingData || [];
+          }
         } else {
           build.parts = [];
           build.purchasing = [];
+          build.kitting = [];
         }
         // Compute a simple purchasing cost for the build (price or final_price * qty)
         try {
@@ -176,10 +187,10 @@
       // Recalculate and normalize build statuses based on current part states
       for (const build of builds) {
         if (build.status !== 'assembled') {
-          const allParts = [...(build.parts || []), ...(build.purchasing || [])];
+          const allParts = [...(build.parts || []), ...(build.purchasing || []), ...(build.kitting || [])];
           const hasParts = allParts.length > 0;
-          const allComplete = hasParts && allParts.every(p => p.status === 'complete' || p.status === 'delivered');
-          const anyStarted = hasParts && allParts.some(p => ['in-progress','cammed','ordered','delivered','complete','manufactured'].includes(p.status));
+          const allComplete = hasParts && allParts.every(p => p.status === 'complete' || p.status === 'delivered' || p.status === 'kitted');
+          const anyStarted = hasParts && allParts.some(p => ['in-progress','cammed','ordered','delivered','complete','manufactured','kitted'].includes(p.status));
           let newStatus = 'pending';
             if (allComplete) newStatus = 'ready_to_assemble';
             else if (anyStarted) newStatus = 'manufacturing';
@@ -236,30 +247,57 @@
     }
   }
   function getBuildProgress(build) {
-    const allParts = [...(build.parts || []), ...(build.purchasing || [])];
-    if (allParts.length === 0) return { percent: 0, manufactured: 0, total: 0, status: 'No parts' };
-    
-    const manufactured = allParts.filter(item => 
-      item.status === 'complete' || item.status === 'delivered'
+    const allParts = [...(build.parts || []), ...(build.purchasing || []), ...(build.kitting || [])];
+    if (allParts.length === 0) {
+      return {
+        percent: 0,
+        manufactured: 0,
+        total: 0,
+        status: 'No parts',
+        mfgPercent: 0,
+        purPercent: 0,
+        kitPercent: 0,
+        mfgCount: { complete: 0, total: 0 },
+        purCount: { complete: 0, total: 0 },
+        kitCount: { complete: 0, total: 0 }
+      };
+    }
+
+    const manufactured = allParts.filter(item =>
+      item.status === 'complete' || item.status === 'delivered' || item.status === 'kitted'
     ).length;
-    
-    const inProgress = allParts.filter(item => 
+
+    const inProgress = allParts.filter(item =>
       item.status === 'in-progress' || item.status === 'cammed' || item.status === 'ordered'
     ).length;
-    
+
     let status = 'Requested';
     if (manufactured === allParts.length) {
       status = 'Ready';
     } else if (inProgress > 0 || manufactured > 0) {
       status = 'Manufacturing';
     }
-    
+
+    const mfgParts = build.parts || [];
+    const purParts = build.purchasing || [];
+    const kitParts = build.kitting || [];
+
+    const mfgComplete = mfgParts.filter(p => p.status === 'complete' || p.status === 'manufactured').length;
+    const purComplete = purParts.filter(p => p.status === 'delivered').length;
+    const kitComplete = kitParts.filter(p => p.status === 'kitted').length;
+
     return {
       percent: Math.round((manufactured / allParts.length) * 100),
       manufactured,
       total: allParts.length,
       inProgress,
-      status
+      status,
+      mfgPercent: mfgParts.length ? Math.round((mfgComplete / mfgParts.length) * 100) : 0,
+      purPercent: purParts.length ? Math.round((purComplete / purParts.length) * 100) : 0,
+      kitPercent: kitParts.length ? Math.round((kitComplete / kitParts.length) * 100) : 0,
+      mfgCount: { complete: mfgComplete, total: mfgParts.length },
+      purCount: { complete: purComplete, total: purParts.length },
+      kitCount: { complete: kitComplete, total: kitParts.length }
     };
   }
 </script>
@@ -386,8 +424,28 @@
                         </span>
                       </div>
 
-                      <div class="progress-bar">
-                        <div class="progress-fill" style="width: {progress.percent}%"></div>
+                      <div class="progress-section">
+                        <div class="progress-row">
+                          <span class="progress-label">Manufacturing</span>
+                          <div class="progress-bar small">
+                            <div class="progress-fill mfg" style="width: {progress.mfgPercent}%"></div>
+                          </div>
+                          <span class="progress-count">{progress.mfgCount.complete}/{progress.mfgCount.total}</span>
+                        </div>
+                        <div class="progress-row">
+                          <span class="progress-label">Purchasing</span>
+                          <div class="progress-bar small">
+                            <div class="progress-fill pur" style="width: {progress.purPercent}%"></div>
+                          </div>
+                          <span class="progress-count">{progress.purCount.complete}/{progress.purCount.total}</span>
+                        </div>
+                        <div class="progress-row">
+                          <span class="progress-label">Kitting</span>
+                          <div class="progress-bar small">
+                            <div class="progress-fill kit" style="width: {progress.kitPercent}%"></div>
+                          </div>
+                          <span class="progress-count">{progress.kitCount.complete}/{progress.kitCount.total}</span>
+                        </div>
                       </div>
 
                       <div class="build-details">
@@ -605,6 +663,15 @@
 
   .progress-bar { width: 100%; height: 8px; background: #eef2f7; border-radius: 999px; overflow: hidden; margin-bottom: 0.75rem; }
   .progress-fill { height: 100%; background: linear-gradient(90deg, #ffd54f, #ffb300); transition: width 0.3s ease; }
+  /* Extended per-category progress styles */
+  .progress-section { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.5rem; }
+  .progress-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 0.5rem; }
+  .progress-label { font-size: 0.8rem; color: #6b7280; }
+  .progress-count { font-size: 0.8rem; color: #6b7280; }
+  .progress-bar.small { height: 8px; background: #eef2f7; border-radius: 999px; overflow: hidden; }
+  .progress-fill.mfg { background: linear-gradient(90deg, #27ae60, #2ecc71); }
+  .progress-fill.pur { background: linear-gradient(90deg, #ffd54f, #ffb300); }
+  .progress-fill.kit { background: linear-gradient(90deg, #9fa8da, #5c6bc0); }
 
   .build-details .meta { display: flex; gap: 0.5rem; flex-wrap: wrap; color: #6b7280; font-size: 0.85rem; }
 

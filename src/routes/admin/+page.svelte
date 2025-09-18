@@ -4,6 +4,18 @@
   import { PERMISSIONS, hasPermission } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
+  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || 'http://localhost:8080';
+  async function notifyUserNeedsApproval(u) {
+    try {
+      await fetch(`${BOT_BASE_URL}/notify/user_registration`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: u.id, name: u.full_name || u.email || u.id })
+      });
+    } catch (e) {
+      console.warn('Failed to notify bot about user', u.id, e);
+    }
+  }
 
   let users = [];
   let loading = false;
@@ -37,6 +49,16 @@
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to load users');
       users = body.data.map((u) => ({ ...u, permissions: Array.isArray(u.permissions) ? u.permissions : u.permissions ? [String(u.permissions)] : [] }));
+      // Notify for users lacking CAN_SEE_ROUTES (needing approval). Avoid spamming: only first load.
+      if (!window.__notifiedUsersForApproval) {
+        window.__notifiedUsersForApproval = new Set();
+      }
+      users.filter(u => !u.permissions.includes('CAN_SEE_ROUTES')).forEach(u => {
+        if (!window.__notifiedUsersForApproval.has(u.id)) {
+          window.__notifiedUsersForApproval.add(u.id);
+          notifyUserNeedsApproval(u);
+        }
+      });
     } catch (err) {
       error = err.message || String(err);
     } finally {

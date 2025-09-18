@@ -45,9 +45,10 @@
   let queue = {
     manufactured: [], // queued manufactured items (from analyzed BOM)
     cots: [],         // queued COTS items (from analyzed BOM)
+    kit: [],          // queued COTS kit items (from analyzed BOM)
     other: []         // queued "Other BOM" items (manual add section)
   };
-  $: queueCount = queue.manufactured.length + queue.cots.length + queue.other.length;
+  $: queueCount = queue.manufactured.length + queue.cots.length + queue.kit.length + queue.other.length;
 
   // Create Build processing
   let creatingBuild = false;
@@ -289,7 +290,12 @@
     if (addedPartsSet.has(partKey)) return;
 
     if (item.part_type === 'COTS') {
-      queueCOTSPromptIfNeeded(item);
+      const wf = String(item.workflow || '').trim().toLowerCase();
+      if (wf === 'kit') {
+        queueKitItem(item);
+      } else {
+        queueCOTSPromptIfNeeded(item);
+      }
       return;
     }
     const wf = String(item.workflow || item.manufacturing_process || '').trim().toLowerCase();
@@ -330,6 +336,20 @@
     queue.manufactured = [...queue.manufactured, queued];
 
     // mark queued
+    addedPartsSet = new Set([...addedPartsSet, item.part_number || item.part_name]);
+    showToast(`Added ${queued.part_name}`);
+  }
+
+  function queueKitItem(item) {
+    const queued = {
+      source: 'bom',
+      part_name: item.part_name || item.part_number || 'Unnamed Item',
+      part_number: item.part_number || null,
+      quantity: item.quantity || 1,
+      material: item.material || '',
+      workflow: 'kit'
+    };
+    queue.kit = [...queue.kit, queued];
     addedPartsSet = new Set([...addedPartsSet, item.part_number || item.part_name]);
     showToast(`Added ${queued.part_name}`);
   }
@@ -412,12 +432,28 @@
     for (const item of cotsItems) {
       const key = item.part_number || item.part_name;
       if (addedPartsSet.has(key)) continue;
+
+      const wf = String(item.workflow || 'purchase').trim().toLowerCase();
+      if (wf === 'kit') {
+        const q = {
+          source: 'bom',
+          part_name: item.part_name || item.part_number || 'Unnamed Item',
+          part_number: item.part_number || null,
+          quantity: item.quantity || 1,
+          material: item.material || '',
+          workflow: 'kit'
+        };
+        queue.kit = [...queue.kit, q];
+        addedPartsSet.add(key);
+        queuedCount++;
+        continue;
+      }
+
       const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
-      
       // Get validated URL
       const rawUrl = buildVendorSearchUrl(detection);
       const validatedUrl = rawUrl && rawUrl.trim() !== '' && !rawUrl.endsWith('=') ? rawUrl : null;
-      
+
       const q = {
         source: 'bom',
         part_name: item.part_name || item.part_number || 'Unnamed Part',
@@ -663,8 +699,26 @@
         if (row?.id) createdPurchasingIds.push(row.id);
       }
 
+      // Insert kit items into kitting
+      const createdKittingIds = [];
+      for (const it of queue.kit) {
+        const kittingInsertData = {
+          name: it.part_name,
+          requester: user.full_name || user.email,
+          project_id: `${subsystem.name}-${version.name}`,
+          quantity: it.quantity || 1,
+          material: it.material || '',
+          status: 'pending',
+          workflow: 'kit'
+        };
+        const { data, error } = await supabase.from('kitting').insert([kittingInsertData]).select();
+        if (error) throw error;
+        const row = data?.[0] || null;
+        if (row?.id) createdKittingIds.push(row.id);
+      }
+
       // Update build.part_ids with everything created
-      const newIds = [...createdPartIds, ...createdPurchasingIds].filter(Boolean);
+      const newIds = [...createdPartIds, ...createdPurchasingIds, ...createdKittingIds].filter(Boolean);
       if (newIds.length) {
         const currentIds = Array.isArray(build.part_ids) ? build.part_ids : [];
         const merged = [...currentIds, ...newIds.filter(id => !currentIds.includes(id))];
@@ -692,6 +746,7 @@ const bomRows = (buildBOM || []).map((item) => {
   );
   const wasMfgAdded = queue.manufactured.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
   const wasCotsAdded = queue.cots.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
+  const wasKitAdded = queue.kit.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
   return {
     build_id: build.id,
     build_hash: build.build_hash || null,
@@ -723,7 +778,8 @@ const bomRows = (buildBOM || []).map((item) => {
 
     // flags showing which items you chose to add
     added_to_parts_list: !isCOTS && wasMfgAdded,
-    added_to_purchasing: isCOTS && wasCotsAdded
+    added_to_purchasing: isCOTS && wasCotsAdded,
+    added_to_kitting: isCOTS && wasKitAdded
   };
 });
 
@@ -906,7 +962,14 @@ if (bomRows.length) {
                 </td>
                 <td>
                   {#if item.part_type === 'COTS'}
-                    <span class="workflow-badge workflow-purchase">Purchase</span>
+                    <select
+                      class="workflow-dropdown workflow-{item.workflow || 'purchase'}"
+                      value={item.workflow || 'purchase'}
+                      on:change={(e) => updateWorkflow(index, e.target.value)}
+                    >
+                      <option value="purchase">Purchase</option>
+                      <option value="kit">Kit</option>
+                    </select>
                   {:else}
                     <select
                       class="workflow-dropdown workflow-{item.workflow || 'mill'}"
