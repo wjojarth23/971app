@@ -120,7 +120,8 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
         console.warn('Failed to store message->purchase mapping:', e);
       }
     }
-    return resp.ok;
+    // Return the full response so callers can persist ts/channel if desired
+    return resp;
   } catch (e) {
     console.error('Slack error posting purchase request:', e?.data || e?.message || e);
     return false;

@@ -42,35 +42,52 @@ export async function POST({ request }) {
 
         if (channel && channel === approverChannel && ts) {
           // First check in-memory map (temporary workaround)
-          try {
-            const mapKey = `${channel}:${ts}`;
-            const mapped = messageToPurchaseMap.get(mapKey);
-            if (mapped) {
-              if (reaction !== 'x') {
-                console.log('Approving purchase from in-memory map', mapped, 'based on reaction', reaction);
-                await approvePurchaseInDb(mapped);
+            try {
+              const mapKey = `${channel}:${ts}`;
+              let mapped = messageToPurchaseMap.get(mapKey);
+              if (!mapped) {
+                // Try to find a durable mapping in Supabase
+                try {
+                  const { data: rows, error } = await (await import('$lib/server/971bot')).getSupabase()
+                    .from('purchasing')
+                    .select('id')
+                    .eq('slack_channel', channel)
+                    .eq('slack_ts', ts)
+                    .limit(1);
+                  if (!error && Array.isArray(rows) && rows.length) {
+                    mapped = rows[0].id;
+                  }
+                } catch (dbErr) {
+                  console.warn('DB lookup for slack mapping failed:', dbErr);
+                }
               }
-            } else {
-              // Fallback: fetch the message if the app has conversation history scopes
-              const client = getSlackClient();
-              const msgResp = await client.conversations.history({ channel, latest: ts, inclusive: true, limit: 1 });
-              console.log('Fetched message from Slack for ts', ts, msgResp?.ok, msgResp?.messages?.length || 0);
-              if (msgResp.ok && msgResp.messages && msgResp.messages.length) {
-                const msg = msgResp.messages[0];
-                const text = msg.text || '';
-                const m = /purchase_id:(\d+)/.exec(text);
-                if (m) {
-                  const purchaseId = Number(m[1]);
-                  if (reaction !== 'x') {
-                    console.log('Approving purchase', purchaseId, 'based on reaction', reaction);
-                    await approvePurchaseInDb(purchaseId);
+
+              if (mapped) {
+                if (reaction !== 'x') {
+                  console.log('Approving purchase from mapping', mapped, 'based on reaction', reaction);
+                  await approvePurchaseInDb(mapped);
+                }
+              } else {
+                // Fallback: fetch the message if the app has conversation history scopes
+                const client = getSlackClient();
+                const msgResp = await client.conversations.history({ channel, latest: ts, inclusive: true, limit: 1 });
+                console.log('Fetched message from Slack for ts', ts, msgResp?.ok, msgResp?.messages?.length || 0);
+                if (msgResp.ok && msgResp.messages && msgResp.messages.length) {
+                  const msg = msgResp.messages[0];
+                  const text = msg.text || '';
+                  const m = /purchase_id:(\d+)/.exec(text);
+                  if (m) {
+                    const purchaseId = Number(m[1]);
+                    if (reaction !== 'x') {
+                      console.log('Approving purchase', purchaseId, 'based on reaction', reaction);
+                      await approvePurchaseInDb(purchaseId);
+                    }
                   }
                 }
               }
+            } catch (e) {
+              console.error('Failed to fetch message for reaction processing:', e);
             }
-          } catch (e) {
-            console.error('Failed to fetch message for reaction processing:', e);
-          }
         }
       } catch (e) {
         console.error('Failed to process reaction:', e);
