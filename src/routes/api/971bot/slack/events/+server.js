@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { verifySlackSignature, approverDmChannelId, approvePurchaseInDb } from '$lib/server/971bot';
+import { verifySlackSignature, approvePurchaseInDb, getSlackClient, ensureApproverDmChannel } from '$lib/server/971bot';
 
 export async function POST({ request }) {
   const rawBody = await request.text();
@@ -21,21 +21,41 @@ export async function POST({ request }) {
   if (payload.type === 'event_callback') {
     const event = payload.event || {};
     const event_type = event.type;
+    console.log('Slack event callback received', { event_type, event });
     if (event_type === 'reaction_added') {
       const reaction = event.reaction;
       const item = event.item || {};
       const channel = item.channel;
-      if (channel && channel === approverDmChannelId) {
-        try {
+      try {
+        // Ensure our approver channel is up-to-date
+        const approverChannel = await ensureApproverDmChannel();
+  console.log('Approver channel (cached):', approverChannel, 'event channel:', channel);
+  if (channel && channel === approverChannel) {
           const ts = item.ts;
           if (ts) {
-            // fetch message via slack client to extract purchase id not available here (left as TODO)
-            // If message text contains purchase_id:<number>, approve unless reaction is 'x'
-            // For now, no message fetch; rely on future enhancements.
+            try {
+              const client = getSlackClient();
+              const msgResp = await client.conversations.history({ channel, latest: ts, inclusive: true, limit: 1 });
+              console.log('Fetched message from Slack for ts', ts, msgResp?.ok, msgResp?.messages?.length || 0);
+              if (msgResp.ok && msgResp.messages && msgResp.messages.length) {
+                const msg = msgResp.messages[0];
+                const text = msg.text || '';
+                const m = /purchase_id:(\d+)/.exec(text);
+                if (m) {
+                  const purchaseId = Number(m[1]);
+                  if (reaction !== 'x') {
+                    console.log('Approving purchase', purchaseId, 'based on reaction', reaction);
+                    await approvePurchaseInDb(purchaseId);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Failed to fetch message for reaction processing:', e);
+            }
           }
-        } catch (e) {
-          console.error('Failed to process reaction:', e);
         }
+      } catch (e) {
+        console.error('Failed to process reaction:', e);
       }
     }
     return json({ ok: true });

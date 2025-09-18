@@ -6,6 +6,6 @@ export async function POST({ request }) {
   const requester = data.requester || 'Unknown requester';
   const item_name = data.item_name || data.name || 'item';
   const project_id = data.project_id || data.project || 'project';
-  await postPurchaseRequestMessage(requester, item_name, project_id);
+  await postPurchaseRequestMessage(requester, item_name, project_id, data.purchase_id || data.purchaseId || null);
   return json({ ok: true });
 }

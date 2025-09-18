@@ -94,16 +94,20 @@ export async function ensureApproverDmChannel() {
   return approverDmChannelId;
 }
 
-export async function postPurchaseRequestMessage(requester, itemName, projectId) {
+export async function postPurchaseRequestMessage(requester, itemName, projectId, purchaseId = null) {
   const channel = await ensureApproverDmChannel();
   if (!channel) {
     console.warn('No approver DM channel available; skipping Slack post');
     return false;
   }
-  const text = `${requester} needs ${itemName} for ${projectId}`;
+  // Include purchase id in message text so reaction handler can map reactions to purchases
+  const idPart = purchaseId ? ` (purchase_id:${purchaseId})` : '';
+  const text = `${requester} needs ${itemName} for ${projectId}${idPart}`;
   try {
     const client = getSlackClient();
     const resp = await client.chat.postMessage({ channel, text });
+    // Log message and response for debugging
+    console.log('Posted purchase message to Slack', { channel, text, ok: resp?.ok, ts: resp?.ts, message: resp?.message });
     return resp.ok;
   } catch (e) {
     console.error('Slack error posting purchase request:', e?.data || e?.message || e);
