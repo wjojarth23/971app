@@ -1,27 +1,39 @@
 import { createClient } from '@supabase/supabase-js';
 import { WebClient } from '@slack/web-api';
 
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || process.env.BOT_TOKEN || process.env.TOKEN;
-const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET || '';
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+// Lazy initialization to avoid throwing at module import time (build-time).
+let _supabaseClient = null;
+let _slackClient = null;
+
 const APPROVER_GROUP_NAME = process.env.APPROVER_DM_NAME || 'purchase-approvals';
 const FALLBACK_APPROVER_EMAILS = (process.env.FALLBACK_APPROVER_EMAILS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
-if (!SLACK_BOT_TOKEN) {
-  throw new Error('Missing SLACK_BOT_TOKEN/BOT_TOKEN in environment');
-}
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  throw new Error('Missing SUPABASE_URL/SUPABASE_SERVICE_KEY in environment');
+function getSlackTokenFromEnv() {
+  return process.env.SLACK_BOT_TOKEN || process.env.BOT_TOKEN || process.env.TOKEN || null;
 }
 
-export const slackClient = new WebClient(SLACK_BOT_TOKEN);
+export function getSlackClient() {
+  if (_slackClient) return _slackClient;
+  const token = getSlackTokenFromEnv();
+  if (!token) {
+    throw new Error('Missing SLACK_BOT_TOKEN/BOT_TOKEN in environment');
+  }
+  _slackClient = new WebClient(token);
+  return _slackClient;
+}
 
 export function getSupabase() {
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  if (_supabaseClient) return _supabaseClient;
+  const SUPABASE_URL = process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL;
+  const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.PUBLIC_SUPABASE_ANON_KEY;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    throw new Error('Missing SUPABASE_URL/SUPABASE_SERVICE_KEY (or PUBLIC_SUPABASE_ANON_KEY) in environment');
+  }
+  _supabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  return _supabaseClient;
 }
 
 // Cached state
@@ -45,7 +57,8 @@ export async function listApproversFromDb() {
 export async function slackUserIdForEmail(email) {
   if (!email) return null;
   try {
-    const resp = await slackClient.users.lookupByEmail({ email });
+    const client = getSlackClient();
+    const resp = await client.users.lookupByEmail({ email });
     if (resp.ok) return resp.user?.id || null;
   } catch (e) {
     console.error(`Slack lookup failed for ${email}:`, e?.data || e?.message || e);
@@ -67,7 +80,8 @@ export async function syncApprovers(force = false) {
   lastApproverSync = Date.now() / 1000;
   if (approverSlackUserIds.length) {
     try {
-      const conv = await slackClient.conversations.open({ users: approverSlackUserIds.join(',') });
+      const client = getSlackClient();
+      const conv = await client.conversations.open({ users: approverSlackUserIds.join(',') });
       if (conv.ok) approverDmChannelId = conv.channel.id;
     } catch (e) {
       console.error('Failed to open approver DM:', e?.data || e?.message || e);
@@ -88,7 +102,8 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId)
   }
   const text = `${requester} needs ${itemName} for ${projectId}`;
   try {
-    const resp = await slackClient.chat.postMessage({ channel, text });
+    const client = getSlackClient();
+    const resp = await client.chat.postMessage({ channel, text });
     return resp.ok;
   } catch (e) {
     console.error('Slack error posting purchase request:', e?.data || e?.message || e);
@@ -130,7 +145,8 @@ export async function postUserApprovalNeeded(name) {
   }
   const text = `${name} needs approval`;
   try {
-    const resp = await slackClient.chat.postMessage({ channel, text });
+    const client = getSlackClient();
+    const resp = await client.chat.postMessage({ channel, text });
     return resp.ok;
   } catch (e) {
     console.error('Slack error posting user approval request:', e?.data || e?.message || e);
@@ -141,6 +157,7 @@ export async function postUserApprovalNeeded(name) {
 // Basic signature verification for Slack requests (raw body needed by SvelteKit handler)
 import crypto from 'crypto';
 export function verifySlackSignature(rawBody, headers) {
+  const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET || '';
   if (!SLACK_SIGNING_SECRET) return true;
   const timestamp = headers['x-slack-request-timestamp'];
   if (!timestamp) return false;
@@ -148,5 +165,9 @@ export function verifySlackSignature(rawBody, headers) {
   const sigBasestring = `v0:${timestamp}:${rawBody}`;
   const mySig = 'v0=' + crypto.createHmac('sha256', SLACK_SIGNING_SECRET).update(sigBasestring).digest('hex');
   const slackSig = headers['x-slack-signature'] || '';
-  return crypto.timingSafeEqual(Buffer.from(mySig), Buffer.from(slackSig));
+  try {
+    return crypto.timingSafeEqual(Buffer.from(mySig), Buffer.from(slackSig));
+  } catch (e) {
+    return false;
+  }
 }
