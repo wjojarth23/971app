@@ -11,8 +11,8 @@
   import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
 
-  // Slack bot base URL for purchase notifications
-  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || 'http://localhost:8080';
+  // Slack bot base URL for purchase notifications (defaults to in-app endpoint)
+  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
   async function notifyPurchaseBot(payload) {
     try {
       const res = await fetch(`${BOT_BASE_URL}/notify/purchase`, {

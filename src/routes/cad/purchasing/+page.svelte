@@ -6,9 +6,9 @@
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { goto } from '$app/navigation';
-  // Base URL for the Python Slack bot service (971bot). Replace with your deployed URL.
+  // Base URL for the Slack bot service (971bot). Defaults to the in-app endpoint.
   // Optionally expose via a public env var and import from $env/static/public
-  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || 'http://localhost:8080';
+  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
   async function notifyPurchaseBot(payload) {
     try {
       const res = await fetch(`${BOT_BASE_URL}/notify/purchase`, {

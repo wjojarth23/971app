@@ -4,7 +4,7 @@
   import { PERMISSIONS, hasPermission } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
-  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || 'http://localhost:8080';
+  const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
   async function notifyUserNeedsApproval(u) {
     try {
       await fetch(`${BOT_BASE_URL}/notify/user_registration`, {
