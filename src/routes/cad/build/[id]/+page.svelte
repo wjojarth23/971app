@@ -111,6 +111,7 @@
         bomSnapshot = [];
       }
 
+      // Fetch actual created items referenced in build.part_ids (if any)
       if (build.part_ids && build.part_ids.length > 0) {
         const { data: partsData, error: partsError } = await supabase
           .from('parts')
@@ -133,6 +134,71 @@
       } else {
         build.parts = [];
         build.purchasing = [];
+      }
+
+      // Also load BOM snapshot rows and include queued items as placeholders so the
+      // build page shows what was added to the build even if not yet approved/created.
+      // bomSnapshot was loaded above; convert it into placeholder lists and merge
+      // with any real rows to produce the display lists.
+      try {
+        const { data: bomData, error: bomErr } = await supabase
+          .from('build_bom')
+          .select('*')
+          .eq('build_id', buildId)
+          .order('created_at', { ascending: true });
+        const bomRows = (!bomErr && Array.isArray(bomData)) ? bomData : [];
+
+        // Build placeholder lists from BOM rows flagged as added
+        const manufacturedPlaceholders = bomRows.filter(r => r.part_type === 'manufactured' && r.added_to_parts_list).map(r => ({
+          // lightweight placeholder object for UI
+          _bom: true,
+          bom_id: r.id,
+          name: r.part_name,
+          part_number: r.part_number || null,
+          quantity: r.quantity || 1,
+          material: r.material || '',
+          workflow: r.workflow || 'mill',
+          status: 'pending',
+          stock_assignment: r.stock_assignment || null
+        }));
+
+        const purchasingPlaceholders = bomRows.filter(r => r.part_type === 'COTS' && r.added_to_purchasing).map(r => ({
+          _bom: true,
+          bom_id: r.id,
+          name: r.part_name,
+          part_number: r.part_number || null,
+          quantity: r.quantity || 1,
+          material: r.material || '',
+          workflow: r.workflow || 'purchase',
+          status: 'pending'
+        }));
+
+        const kittingPlaceholders = bomRows.filter(r => r.part_type === 'COTS' && r.added_to_kitting && r.workflow === 'kit').map(r => ({
+          _bom: true,
+          bom_id: r.id,
+          name: r.part_name,
+          part_number: r.part_number || null,
+          quantity: r.quantity || 1,
+          material: r.material || '',
+          workflow: 'kit',
+          status: 'pending'
+        }));
+
+        // Merge placeholders with actual created rows, avoiding duplicates by name+qty
+        function mergeWithPlaceholders(actual = [], placeholders = []) {
+          const out = Array.isArray(actual) ? [...actual] : [];
+          for (const ph of placeholders) {
+            const dup = out.find(a => (a.name === ph.name || a.part_name === ph.name) && Number(a.quantity || 1) === Number(ph.quantity || 1));
+            if (!dup) out.push(ph);
+          }
+          return out;
+        }
+
+        build.parts = mergeWithPlaceholders(build.parts || [], manufacturedPlaceholders);
+        build.purchasing = mergeWithPlaceholders(build.purchasing || [], purchasingPlaceholders);
+        build.kitting = mergeWithPlaceholders(build.kitting || [], kittingPlaceholders);
+      } catch (e) {
+        console.warn('Failed to merge BOM placeholders into build display lists:', e?.message || e);
       }
 
       // Compute purchasing cost for this build
@@ -261,6 +327,14 @@
 
   // Build Components edit modal
   function openEditModal(part) {
+    // If this is a BOM placeholder (not yet created in parts/purchasing/kitting)
+    // we don't open the edit modal. Edits should be performed in the Full BOM
+    // editor where the BOM snapshot is persisted.
+    if (part && part._bom) {
+      // prefer navigating to the full BOM edit page (same route)
+      showToast('This item is a queued BOM item. Edit it in the Full BOM section below.');
+      return;
+    }
     editTarget = part;
     editWorkflow = part.workflow || '';
     editMaterial = part.material || '';
@@ -277,6 +351,15 @@
     try {
       if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a') || e.target.closest('select')) return;
     } catch {}
+    // If placeholder BOM row, redirect user to the Full BOM section rather
+    // than attempting to edit a non-persisted row in the parts/purchasing lists.
+    if (part && part._bom) {
+      // Smooth scroll to Full BOM section
+      const el = document.querySelector('.bom-section:last-of-type');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      showToast('Scroll to Full BOM to edit queued items.');
+      return;
+    }
     openEditModal(part);
   }
 
