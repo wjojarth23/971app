@@ -717,13 +717,27 @@
         if (row?.id) createdKittingIds.push(row.id);
       }
 
-      // Update build.part_ids with everything created
-      const newIds = [...createdPartIds, ...createdPurchasingIds, ...createdKittingIds].filter(Boolean);
-      if (newIds.length) {
-        const currentIds = Array.isArray(build.part_ids) ? build.part_ids : [];
-        const merged = [...currentIds, ...newIds.filter(id => !currentIds.includes(id))];
-        const { error: updErr } = await supabase.from('builds').update({ part_ids: merged }).eq('id', build.id);
-        if (updErr) throw updErr;
+      // Gate by build approval: mark build as pending approval and request via Slack.
+      try {
+        await supabase.from('builds').update({ approved: false }).eq('id', build.id);
+      } catch {}
+      try {
+        await fetch('/api/971bot/notify/build', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ build_id: build.id, requester: user?.full_name || user?.email, project_id: `${subsystem.name}-${version.name}` })
+        });
+      } catch (e) { console.warn('Failed to notify Slack for build approval:', e); }
+
+      // Short-circuit for local/dev if already approved (or no Slack configured)
+      let approved = false;
+      try {
+        const { data: check } = await supabase.from('builds').select('approved').eq('id', build.id).single();
+        approved = !!check?.approved;
+      } catch {}
+
+      if (!approved) {
+        showToast('Build submitted for approval in Slack. It will populate parts/purchasing after approval.');
       }
 
 /**
@@ -864,9 +878,8 @@ if (bomRows.length) {
         }
       }
 
-      showToast('Build created and items persisted');
-      // Navigate to build details
-      goto(`/cad/build/${build.id}`);
+  showToast('Build created. Awaiting approval to add items to parts/purchasing.');
+  goto(`/cad/build/${build.id}`); // details page will refresh as items are added after approval
     } catch (e) {
       console.error('Create build failed:', e);
       alert('Failed to create build and persist items: ' + (e?.message || e));

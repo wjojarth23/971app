@@ -158,6 +158,35 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
   }
 }
 
+export async function postBuildApprovalRequest(build, requesterName = 'Unknown') {
+  // build: { id, release_name, subsystem_id, project_id }
+  const channel = await ensureApproverDmChannel();
+  if (!channel) {
+    console.warn('No approver DM channel; skipping build approval post');
+    return false;
+  }
+  const title = build?.release_name || build?.build_hash || 'Build';
+  const proj = build?.project_id || build?.release_name || '';
+  const buildId = build?.id;
+  const text = `${requesterName} requests approval for build ${title} (${proj}) build_id:${buildId}`;
+  try {
+    const client = getSlackClient();
+    const resp = await client.chat.postMessage({ channel, text });
+    if (resp && resp.ok && resp.ts && buildId) {
+      try {
+        const supa = getSupabase();
+        await supa.from('builds').update({ slack_channel: resp.channel, slack_ts: resp.ts }).eq('id', buildId);
+      } catch (e) {
+        console.warn('Failed to persist slack mapping for build approval:', e);
+      }
+    }
+    return resp;
+  } catch (e) {
+    console.error('Slack error posting build approval request:', e?.data || e?.message || e);
+    return false;
+  }
+}
+
 export async function approvePurchaseInDb(purchaseId, approverName = 'Slack Approver') {
   try {
     const supa = getSupabase();

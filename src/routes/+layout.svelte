@@ -107,7 +107,7 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
   </header>
 {/if}
 
-<main class="container">
+<main class="container page-container">
   <slot />
 </main>
 
@@ -133,12 +133,7 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
   .nav-header {
     background: var(--primary);
     border-bottom: 1px solid var(--border);
-    width: 100vw;
-    position: relative;
-    left: 50%;
-    right: 50%;
-    margin-left: -50vw;
-    margin-right: -50vw;
+    width: 100%;
     margin-bottom: 2rem;
   }
   .nav-container {
@@ -210,12 +205,7 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
 
   /* Footer styles */
   .site-footer {
-    width: 100vw;
-    position: relative;
-    left: 50%;
-    right: 50%;
-    margin-left: -50vw;
-    margin-right: -50vw;
+    width: 100%;
     background: var(--primary); /* match site off-white */
     border-top: 1px solid var(--border); /* only top border */
     color: var(--text);
@@ -239,9 +229,12 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
   }
 
   /* Ensure main content area grows so footer is pushed below the fold for short pages */
-  main.container {
+  main.container.page-container {
     flex: 1 0 auto;
     min-height: calc(100vh - 220px); /* header+footer buffer so footer isn't visible without scrolling on short pages */
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 1rem;
   }
 
   /* Button styles use global tokens from app.css */

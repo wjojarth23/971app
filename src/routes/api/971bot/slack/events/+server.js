@@ -4,7 +4,8 @@ import {
   approvePurchaseInDb,
   getSlackClient,
   ensureApproverDmChannel,
-  messageToPurchaseMap
+  messageToPurchaseMap,
+  getSupabase
 } from '$lib/server/971bot';
 
 // Avoid approving the same purchase repeatedly when multiple reactions are added.
@@ -33,7 +34,7 @@ export async function POST({ request }) {
     const event_type = event.type;
     console.log('Slack event callback received', { event_type, event });
 
-    if (event_type === 'reaction_added') {
+  if (event_type === 'reaction_added') {
       const reaction = event.reaction;
       const item = event.item || {};
       const channel = item.channel;
@@ -45,7 +46,7 @@ export async function POST({ request }) {
         const approverChannel = await ensureApproverDmChannel();
         console.log('Approver channel (cached):', approverChannel, 'event channel:', channel);
 
-        if (channel && channel === approverChannel && ts) {
+  if (channel && channel === approverChannel && ts) {
           // First check in-memory map (temporary workaround)
             try {
               const mapKey = `${channel}:${ts}`;
@@ -103,14 +104,86 @@ export async function POST({ request }) {
                 if (msgResp.ok && msgResp.messages && msgResp.messages.length) {
                   const msg = msgResp.messages[0];
                   const text = msg.text || '';
-                  const m = /purchase_id:(\d+)/.exec(text);
-                  if (m) {
-                    const purchaseId = Number(m[1]);
-                    if (reaction !== 'x') {
-                      console.log('Approving purchase', purchaseId, 'based on reaction', reaction, 'by', approverName);
-                      await approvePurchaseInDb(purchaseId, approverName);
+                    const m = /purchase_id:(\d+)/.exec(text);
+                    if (m) {
+                      const purchaseId = Number(m[1]);
+                      if (reaction !== 'x') {
+                        console.log('Approving purchase', purchaseId, 'based on reaction', reaction, 'by', approverName);
+                        await approvePurchaseInDb(purchaseId, approverName);
+                      }
+                    } else {
+                      // New: try to detect and approve builds
+                      const m2 = /build_id:([0-9a-fA-F-]{8,})/.exec(text);
+                      if (m2 && reaction !== 'x') {
+                        const buildId = m2[1];
+                        try {
+                          const supa = getSupabase();
+                          await supa.from('builds').update({ approved: true, approver: approverName }).eq('id', buildId);
+                          console.log('Approved build via Slack reaction', buildId, 'by', approverName);
+                          // Process approved build: create parts/purchasing/kitting from build_bom flags
+                          try {
+                            const { data: build } = await supa.from('builds').select('*').eq('id', buildId).single();
+                            const project_id = build?.project_id || `${build?.release_name || ''}`;
+                            const { data: rows } = await supa.from('build_bom').select('*').eq('build_id', buildId);
+                            const createdPartIds = [];
+                            const createdPurchasingIds = [];
+                            const createdKittingIds = [];
+                            for (const it of (rows || []).filter(r => r.part_type === 'manufactured' && r.added_to_parts_list)) {
+                              const baseInsert = {
+                                name: it.part_name || 'Unnamed Part',
+                                requester: 'Build System',
+                                project_id,
+                                workflow: it.workflow || 'mill',
+                                status: 'pending',
+                                quantity: it.quantity || 1,
+                                material: it.material || '',
+                                file_name: '',
+                                file_url: '',
+                                stock_assignment: it.stock_assignment || null
+                              };
+                              const { data: ins } = await supa.from('parts').insert([baseInsert]).select();
+                              if (ins?.[0]?.id) createdPartIds.push(ins[0].id);
+                            }
+                            for (const it of (rows || []).filter(r => r.part_type === 'COTS' && r.added_to_purchasing && (r.workflow || 'purchase') === 'purchase')) {
+                              const purchasingInsertData = {
+                                name: it.part_name || 'Unnamed Item',
+                                requester: 'Build System',
+                                project_id,
+                                quantity: it.quantity || 1,
+                                material: it.material || '',
+                                status: 'pending',
+                                workflow: 'purchase'
+                              };
+                              const { data: pur } = await supa.from('purchasing').insert([purchasingInsertData]).select();
+                              if (pur?.[0]?.id) createdPurchasingIds.push(pur[0].id);
+                            }
+                            for (const it of (rows || []).filter(r => r.part_type === 'COTS' && r.added_to_kitting && r.workflow === 'kit')) {
+                              const kitInsert = {
+                                name: it.part_name || 'Unnamed Item',
+                                requester: 'Build System',
+                                project_id,
+                                quantity: it.quantity || 1,
+                                material: it.material || '',
+                                status: 'pending',
+                                workflow: 'kit'
+                              };
+                              const { data: kit } = await supa.from('kitting').insert([kitInsert]).select();
+                              if (kit?.[0]?.id) createdKittingIds.push(kit[0].id);
+                            }
+                            const newIds = [...createdPartIds, ...createdPurchasingIds, ...createdKittingIds].filter(Boolean);
+                            if (newIds.length) {
+                              const currentIds = Array.isArray(build?.part_ids) ? build.part_ids : [];
+                              const merged = [...currentIds, ...newIds.filter(id => !currentIds.includes(id))];
+                              await supa.from('builds').update({ part_ids: merged }).eq('id', buildId);
+                            }
+                          } catch (procErr) {
+                            console.error('Failed to process approved build:', procErr?.message || procErr);
+                          }
+                        } catch (e) {
+                          console.error('Failed to approve build from Slack reaction:', e?.message || e);
+                        }
+                      }
                     }
-                  }
                 }
               }
             } catch (e) {

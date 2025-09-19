@@ -16,6 +16,7 @@
   let processingAdd = false;
   let projectBuilds = [];
   let projectTotalCost = 0;
+  let approvalPolling = null;
 
   // Edit modal state for build items (top table)
   let showEditModal = false;
@@ -57,6 +58,18 @@
     }
 
     await loadBuildDetails();
+    // If not approved yet, poll for approval briefly to auto-refresh
+    if (build && !build.approved) {
+      approvalPolling = setInterval(async () => {
+        try {
+          const { data } = await supabase.from('builds').select('approved').eq('id', buildId).single();
+          if (data?.approved) {
+            clearInterval(approvalPolling); approvalPolling = null;
+            await loadBuildDetails();
+          }
+        } catch {}
+      }, 5000);
+    }
     loading = false;
   });
 
@@ -175,6 +188,8 @@
       alert('Failed to mark as assembled');
     }
   }
+
+  $: canAddItems = !!build?.approved;
 
   function getStocksForWorkflow(workflow) {
     return stockData[workflow] || [];
