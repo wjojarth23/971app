@@ -12,8 +12,8 @@ export async function POST({ request }) {
     if (error || !build) return json({ ok: false, error: error?.message || 'not found' }, { status: 404 });
     if (!build.approved) return json({ ok: false, error: 'build not approved yet' }, { status: 400 });
 
-    // Gather BOM snapshot rows
-    const { data: rows, error: bomErr } = await supa.from('build_bom').select('*').eq('build_id', buildId);
+    // Gather BOM snapshot rows that were added to the build
+    const { data: rows, error: bomErr } = await supa.from('build_bom').select('*').eq('build_id', buildId).eq('added', true);
     if (bomErr) throw bomErr;
     const createdPartIds = [];
     const createdPurchasingIds = [];
@@ -21,8 +21,8 @@ export async function POST({ request }) {
 
     const project_id = build.project_id || `${build.release_name}`;
 
-    // Insert manufactured parts flagged by added_to_parts_list
-    for (const it of rows.filter(r => r.part_type === 'manufactured' && r.added_to_parts_list)) {
+    // Insert manufactured parts for items marked as added
+    for (const it of rows.filter(r => r.part_type === 'manufactured')) {
       const baseInsert = {
         name: it.part_name || 'Unnamed Part',
         requester: 'Build System',
@@ -36,11 +36,15 @@ export async function POST({ request }) {
         stock_assignment: it.stock_assignment || null
       };
       const { data: ins, error: insErr } = await supa.from('parts').insert([baseInsert]).select();
-      if (!insErr && ins?.[0]?.id) createdPartIds.push(ins[0].id);
+      if (!insErr && ins?.[0]?.id) {
+        createdPartIds.push(ins[0].id);
+        // Update the build_bom row with the relation to the newly created part
+        await supa.from('build_bom').update({ parts_id: ins[0].id }).eq('id', it.id);
+      }
     }
 
-    // Insert COTS purchases flagged by added_to_purchasing
-    for (const it of rows.filter(r => r.part_type === 'COTS' && r.added_to_purchasing && (r.workflow || 'purchase') === 'purchase')) {
+    // Insert COTS purchases for items marked as added
+    for (const it of rows.filter(r => r.part_type === 'COTS' && (r.workflow || 'purchase') === 'purchase')) {
       const purchasingInsertData = {
         name: it.part_name || 'Unnamed Item',
         requester: 'Build System',
@@ -51,11 +55,15 @@ export async function POST({ request }) {
         workflow: 'purchase'
       };
       const { data: pur, error: purErr } = await supa.from('purchasing').insert([purchasingInsertData]).select();
-      if (!purErr && pur?.[0]?.id) createdPurchasingIds.push(pur[0].id);
+      if (!purErr && pur?.[0]?.id) {
+        createdPurchasingIds.push(pur[0].id);
+        // Update the build_bom row with the relation to the newly created purchasing item
+        await supa.from('build_bom').update({ purchasing_id: pur[0].id }).eq('id', it.id);
+      }
     }
 
-    // Insert COTS items flagged for kitting
-    for (const it of rows.filter(r => r.part_type === 'COTS' && r.added_to_kitting && r.workflow === 'kit')) {
+    // Insert COTS items for kitting workflow
+    for (const it of rows.filter(r => r.part_type === 'COTS' && r.workflow === 'kit')) {
       const kitInsert = {
         name: it.part_name || 'Unnamed Item',
         requester: 'Build System',
@@ -66,7 +74,11 @@ export async function POST({ request }) {
         workflow: 'kit'
       };
       const { data: kit, error: kitErr } = await supa.from('kitting').insert([kitInsert]).select();
-      if (!kitErr && kit?.[0]?.id) createdKittingIds.push(kit[0].id);
+      if (!kitErr && kit?.[0]?.id) {
+        createdKittingIds.push(kit[0].id);
+        // Update the build_bom row with the relation to the newly created kitting item
+        await supa.from('build_bom').update({ kitting_id: kit[0].id }).eq('id', it.id);
+      }
     }
 
     // Update build.part_ids with everything created
@@ -77,7 +89,8 @@ export async function POST({ request }) {
       await supa.from('builds').update({ part_ids: merged }).eq('id', buildId);
     }
 
-    return json({ ok: true, parts: createdPartIds.length, purchasing: createdPurchasingIds.length, kitting: createdKittingIds.length });
+    console.log('process-approved: created', { buildId, createdPartIds, createdPurchasingIds, createdKittingIds });
+    return json({ ok: true, parts: createdPartIds.length, purchasing: createdPurchasingIds.length, kitting: createdKittingIds.length, part_ids: newIds, created: { parts: createdPartIds, purchasing: createdPurchasingIds, kitting: createdKittingIds } });
   } catch (e) {
     return json({ ok: false, error: e?.message || String(e) }, { status: 500 });
   }

@@ -73,6 +73,28 @@
     loading = false;
   });
 
+  async function processApprovalNow() {
+    if (!build?.id) return;
+    try {
+      const resp = await fetch('/api/builds/process-approved', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ build_id: build.id })
+      });
+      const data = await resp.json();
+      if (!data?.ok) {
+        showToast('Processing failed: ' + (data?.error || 'unknown'));
+      } else {
+        showToast(`Processed build: parts ${data.parts} purchasing ${data.purchasing} kitting ${data.kitting}`);
+        // reload details
+        await loadBuildDetails();
+      }
+    } catch (e) {
+      console.error('Failed to process approval via API:', e);
+      showToast('Failed to process approval: ' + (e?.message || e));
+    }
+  }
+
   async function loadBuildDetails() {
     try {
       const { data, error } = await supabase
@@ -111,95 +133,91 @@
         bomSnapshot = [];
       }
 
-      // Fetch actual created items referenced in build.part_ids (if any)
-      if (build.part_ids && build.part_ids.length > 0) {
+      // Load actual created items by following relations from build_bom
+      // Get all build_bom rows that have been added to the build
+      const addedBomRows = bomSnapshot.filter(row => row.added === true);
+
+      // Collect all related IDs
+      const partsIds = addedBomRows.filter(row => row.parts_id).map(row => row.parts_id);
+      const purchasingIds = addedBomRows.filter(row => row.purchasing_id).map(row => row.purchasing_id);
+      const kittingIds = addedBomRows.filter(row => row.kitting_id).map(row => row.kitting_id);
+
+      // Fetch actual created items
+      if (partsIds.length > 0) {
         const { data: partsData, error: partsError } = await supabase
           .from('parts')
           .select('*')
-          .in('id', build.part_ids);
+          .in('id', partsIds);
         if (!partsError) build.parts = partsData || [];
+      } else {
+        build.parts = [];
+      }
 
+      if (purchasingIds.length > 0) {
         const { data: purchasingData, error: purchasingError } = await supabase
           .from('purchasing')
           .select('*')
-          .in('id', build.part_ids);
+          .in('id', purchasingIds);
         if (!purchasingError) build.purchasing = purchasingData || [];
-
-        // Kitting items (COTS sent to kitting workflow)
-        const { data: kittingData, error: kittingError } = await supabase
-          .from('kitting')
-          .select('*')
-          .in('id', build.part_ids);
-        if (!kittingError) build.kitting = kittingData || [];
       } else {
-        build.parts = [];
         build.purchasing = [];
       }
 
-      // Also load BOM snapshot rows and include queued items as placeholders so the
-      // build page shows what was added to the build even if not yet approved/created.
-      // bomSnapshot was loaded above; convert it into placeholder lists and merge
-      // with any real rows to produce the display lists.
-      try {
-        const { data: bomData, error: bomErr } = await supabase
-          .from('build_bom')
+      if (kittingIds.length > 0) {
+        const { data: kittingData, error: kittingError } = await supabase
+          .from('kitting')
           .select('*')
-          .eq('build_id', buildId)
-          .order('created_at', { ascending: true });
-        const bomRows = (!bomErr && Array.isArray(bomData)) ? bomData : [];
-
-        // Build placeholder lists from BOM rows flagged as added
-        const manufacturedPlaceholders = bomRows.filter(r => r.part_type === 'manufactured' && r.added_to_parts_list).map(r => ({
-          // lightweight placeholder object for UI
-          _bom: true,
-          bom_id: r.id,
-          name: r.part_name,
-          part_number: r.part_number || null,
-          quantity: r.quantity || 1,
-          material: r.material || '',
-          workflow: r.workflow || 'mill',
-          status: 'pending',
-          stock_assignment: r.stock_assignment || null
-        }));
-
-        const purchasingPlaceholders = bomRows.filter(r => r.part_type === 'COTS' && r.added_to_purchasing).map(r => ({
-          _bom: true,
-          bom_id: r.id,
-          name: r.part_name,
-          part_number: r.part_number || null,
-          quantity: r.quantity || 1,
-          material: r.material || '',
-          workflow: r.workflow || 'purchase',
-          status: 'pending'
-        }));
-
-        const kittingPlaceholders = bomRows.filter(r => r.part_type === 'COTS' && r.added_to_kitting && r.workflow === 'kit').map(r => ({
-          _bom: true,
-          bom_id: r.id,
-          name: r.part_name,
-          part_number: r.part_number || null,
-          quantity: r.quantity || 1,
-          material: r.material || '',
-          workflow: 'kit',
-          status: 'pending'
-        }));
-
-        // Merge placeholders with actual created rows, avoiding duplicates by name+qty
-        function mergeWithPlaceholders(actual = [], placeholders = []) {
-          const out = Array.isArray(actual) ? [...actual] : [];
-          for (const ph of placeholders) {
-            const dup = out.find(a => (a.name === ph.name || a.part_name === ph.name) && Number(a.quantity || 1) === Number(ph.quantity || 1));
-            if (!dup) out.push(ph);
-          }
-          return out;
-        }
-
-        build.parts = mergeWithPlaceholders(build.parts || [], manufacturedPlaceholders);
-        build.purchasing = mergeWithPlaceholders(build.purchasing || [], purchasingPlaceholders);
-        build.kitting = mergeWithPlaceholders(build.kitting || [], kittingPlaceholders);
-      } catch (e) {
-        console.warn('Failed to merge BOM placeholders into build display lists:', e?.message || e);
+          .in('id', kittingIds);
+        if (!kittingError) build.kitting = kittingData || [];
+      } else {
+        build.kitting = [];
       }
+
+      // Create placeholder entries for added items that don't have relations yet (pending approval)
+      const pendingParts = addedBomRows.filter(row =>
+        row.part_type === 'manufactured' && !row.parts_id
+      ).map(row => ({
+        _bom: true,
+        bom_id: row.id,
+        name: row.part_name,
+        part_number: row.part_number || null,
+        quantity: row.quantity || 1,
+        material: row.material || '',
+        workflow: row.workflow || 'mill',
+        status: 'needs_approval',
+        stock_assignment: row.stock_assignment || null
+      }));
+
+      const pendingPurchasing = addedBomRows.filter(row =>
+        row.part_type === 'COTS' && (row.workflow || 'purchase') === 'purchase' && !row.purchasing_id
+      ).map(row => ({
+        _bom: true,
+        bom_id: row.id,
+        name: row.part_name,
+        part_number: row.part_number || null,
+        quantity: row.quantity || 1,
+        material: row.material || '',
+        workflow: 'purchase',
+        status: 'needs_approval'
+      }));
+
+      const pendingKitting = addedBomRows.filter(row =>
+        row.part_type === 'COTS' && row.workflow === 'kit' && !row.kitting_id
+      ).map(row => ({
+        _bom: true,
+        bom_id: row.id,
+        name: row.part_name,
+        part_number: row.part_number || null,
+        quantity: row.quantity || 1,
+        material: row.material || '',
+        workflow: 'kit',
+        status: 'needs_approval'
+      }));
+
+      // Merge placeholders with actual created rows
+      build.parts = [...(build.parts || []), ...pendingParts];
+      build.purchasing = [...(build.purchasing || []), ...pendingPurchasing];
+      build.kitting = [...(build.kitting || []), ...pendingKitting];
 
       // Compute purchasing cost for this build
       try {
@@ -380,9 +398,25 @@
     try {
       const wasCOTS = editTarget?.workflow === 'purchase';
       const wantsCOTS = editType === 'COTS';
+
+      // Find the corresponding build_bom row for synchronization
+      let bomRow = null;
+      if (editTarget._bom && editTarget.bom_id) {
+        // This is a BOM placeholder, find the build_bom row
+        bomRow = bomSnapshot.find(row => row.id === editTarget.bom_id);
+      } else {
+        // This is a created part, find the build_bom row by relation
+        bomRow = bomSnapshot.find(row =>
+          (row.parts_id === editTarget.id) ||
+          (row.purchasing_id === editTarget.id) ||
+          (row.kitting_id === editTarget.id)
+        );
+      }
+
       if (wasCOTS !== wantsCOTS) {
         const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
         if (wantsCOTS) {
+          // Converting from manufactured to COTS - create purchasing entry
           const purchasingInsertData = {
             name: editTarget.name || editTarget.part_name || 'Unnamed Item',
             requester: user?.full_name || user?.email,
@@ -399,12 +433,17 @@
           if (purErr) throw purErr;
           const newId = pur?.[0]?.id;
           if (newId) {
-            const current = build?.part_ids || [];
-            const newIds = current.map((id) => id === editTarget.id ? newId : id);
-            const { error: updErr } = await supabase.from('builds').update({ part_ids: newIds }).eq('id', buildId);
-            if (updErr) throw updErr;
+            // Update build_bom with the new relation
+            if (bomRow) {
+              await supabase.from('build_bom').update({
+                purchasing_id: newId,
+                parts_id: null,
+                kitting_id: null
+              }).eq('id', bomRow.id);
+            }
           }
         } else {
+          // Converting from COTS to manufactured - create parts entry
           const wf = editWorkflow && editWorkflow !== 'purchase' ? editWorkflow : 'mill';
           const baseInsert = {
             name: editTarget.name || editTarget.part_name || 'Unnamed Part',
@@ -434,10 +473,14 @@
             }
           }
           if (partRow?.id) {
-            const current = build?.part_ids || [];
-            const newIds = current.map((id) => id === editTarget.id ? partRow.id : id);
-            const { error: updErr } = await supabase.from('builds').update({ part_ids: newIds }).eq('id', buildId);
-            if (updErr) throw updErr;
+            // Update build_bom with the new relation
+            if (bomRow) {
+              await supabase.from('build_bom').update({
+                parts_id: partRow.id,
+                purchasing_id: null,
+                kitting_id: null
+              }).eq('id', bomRow.id);
+            }
           }
         }
         await loadBuildDetails();
@@ -445,6 +488,8 @@
         editTarget = null;
         return;
       }
+
+      // Same type, just update existing entry
       if (editType === 'COTS') {
         const { error } = await supabase
           .from('purchasing')
@@ -454,6 +499,14 @@
           })
           .eq('id', editTarget.id);
         if (error) throw error;
+
+        // Also update build_bom if we have a relation
+        if (bomRow) {
+          await supabase.from('build_bom').update({
+            material: editMaterial,
+            quantity: editQuantity
+          }).eq('id', bomRow.id);
+        }
       } else {
         // Try updating stock_assignment too; if column doesn't exist, retry without it
         let updateError = null;
@@ -488,6 +541,15 @@
             throw updateError;
           }
         }
+
+        // Also update build_bom if we have a relation
+        if (bomRow) {
+          await supabase.from('build_bom').update({
+            ...baseUpdate,
+            stock_assignment: finalStock,
+            stock_assignment_custom: editStockChoice === '__other__' ? (editStockAssignmentCustom || '') : null
+          }).eq('id', bomRow.id);
+        }
       }
       await loadBuildDetails();
     } catch (e) {
@@ -501,13 +563,23 @@
 
   async function removeBuildAssociation(partId) {
     try {
-      const current = build?.part_ids || [];
-      const newIds = current.filter((id) => id !== partId);
-      const { error } = await supabase
-        .from('builds')
-        .update({ part_ids: newIds })
-        .eq('id', buildId);
-      if (error) throw error;
+      // Find the corresponding build_bom row
+      const bomRow = bomSnapshot.find(row =>
+        (row.parts_id === partId) ||
+        (row.purchasing_id === partId) ||
+        (row.kitting_id === partId)
+      );
+
+      if (bomRow) {
+        // Remove the relation from build_bom
+        await supabase.from('build_bom').update({
+          parts_id: null,
+          purchasing_id: null,
+          kitting_id: null,
+          added: false
+        }).eq('id', bomRow.id);
+      }
+
       await loadBuildDetails();
     } catch (e) {
       console.error('Remove from build failed:', e);
@@ -617,20 +689,12 @@
         const k = kit?.[0];
 
         if (k?.id) {
-          const current = build.part_ids || [];
-          const newPartIds = current.includes(k.id) ? current : [...current, k.id];
-          const { error: updErr } = await supabase
-            .from('builds')
-            .update({ part_ids: newPartIds })
-            .eq('id', buildId);
-          if (updErr) throw updErr;
+          // Update build_bom with the new relation
+          await supabase.from('build_bom').update({
+            kitting_id: k.id,
+            added: true
+          }).eq('id', item.id);
         }
-
-        const { error: bomUpdErr } = await supabase
-          .from('build_bom')
-          .update({ added_to_kitting: true })
-          .eq('id', item.id);
-        if (bomUpdErr) throw bomUpdErr;
       } else if (item.part_type === 'COTS' || item.workflow === 'purchase') {
         // Attempt vendor detection
         const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
@@ -672,20 +736,12 @@
         const p = pur?.[0];
 
         if (p?.id) {
-          const current = build.part_ids || [];
-          const newPartIds = current.includes(p.id) ? current : [...current, p.id];
-          const { error: updErr } = await supabase
-            .from('builds')
-            .update({ part_ids: newPartIds })
-            .eq('id', buildId);
-          if (updErr) throw updErr;
+          // Update build_bom with the new relation
+          await supabase.from('build_bom').update({
+            purchasing_id: p.id,
+            added: true
+          }).eq('id', item.id);
         }
-
-        const { error: bomUpdErr } = await supabase
-          .from('build_bom')
-          .update({ added_to_purchasing: true })
-          .eq('id', item.id);
-        if (bomUpdErr) throw bomUpdErr;
       } else {
         // Insert into parts (manufactured)
         const wf = item.workflow || 'mill';
@@ -753,20 +809,12 @@
         }
 
         if (partRow?.id) {
-          const current = build.part_ids || [];
-          const newPartIds = current.includes(partRow.id) ? current : [...current, partRow.id];
-          const { error: updErr } = await supabase
-            .from('builds')
-            .update({ part_ids: newPartIds })
-            .eq('id', buildId);
-          if (updErr) throw updErr;
+          // Update build_bom with the new relation
+          await supabase.from('build_bom').update({
+            parts_id: partRow.id,
+            added: true
+          }).eq('id', item.id);
         }
-
-        const { error: bomUpdErr } = await supabase
-          .from('build_bom')
-          .update({ added_to_parts_list: true })
-          .eq('id', item.id);
-        if (bomUpdErr) throw bomUpdErr;
       }
 
       await loadBuildDetails();
@@ -807,20 +855,12 @@
       
       const p = pur?.[0];
       if (p?.id) {
-        const current = build.part_ids || [];
-        const newPartIds = current.includes(p.id) ? current : [...current, p.id];
-        const { error: updErr } = await supabase
-          .from('builds')
-          .update({ part_ids: newPartIds })
-          .eq('id', buildId);
-        if (updErr) throw updErr;
+        // Update build_bom with the new relation
+        await supabase.from('build_bom').update({
+          purchasing_id: p.id,
+          added: true
+        }).eq('id', purchaseModalItem.id);
       }
-
-      const { error: bomUpdErr } = await supabase
-        .from('build_bom')
-        .update({ added_to_purchasing: true })
-        .eq('id', purchaseModalItem.id);
-      if (bomUpdErr) throw bomUpdErr;
 
       await loadBuildDetails();
       alert('Added to purchasing successfully!');
@@ -873,6 +913,14 @@
               {#if build.assembled_at}
                 <span>Assembled: {new Date(build.assembled_at).toLocaleDateString()}</span>
               {/if}
+              <!-- Approval badge -->
+              <span style="margin-left:0.75rem;">
+                {#if build.approved}
+                  <span class="badge badge-success">Approved{#if build.approver} by {build.approver}{/if}</span>
+                {:else}
+                  <span class="badge badge-warning">Awaiting Approval</span>
+                {/if}
+              </span>
             </div>
           </div>
         </div>
@@ -883,6 +931,11 @@
               <button class="btn btn-success btn-sm" on:click={markAsAssembled}>
                 <CheckCircle size={16} />
                 Mark as Assembled
+              </button>
+            {/if}
+            {#if !build.approved}
+              <button class="btn btn-outline btn-sm" on:click={processApprovalNow} style="margin-left:0.5rem;">
+                Process Approval
               </button>
             {/if}
           {/if}

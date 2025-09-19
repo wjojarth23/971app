@@ -10,8 +10,8 @@ CREATE TABLE public.betting_bets (
   shares numeric NOT NULL CHECK (shares >= 0::numeric),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT betting_bets_pkey PRIMARY KEY (id),
-  CONSTRAINT betting_bets_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT betting_bets_market_id_fkey FOREIGN KEY (market_id) REFERENCES public.betting_markets(id)
+  CONSTRAINT betting_bets_market_id_fkey FOREIGN KEY (market_id) REFERENCES public.betting_markets(id),
+  CONSTRAINT betting_bets_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.betting_market_ticks (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -66,6 +66,8 @@ CREATE TABLE public.build_bom (
   file_url text,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
+  added_to_kitting boolean DEFAULT false,
+  stock_assignment_custom text,
   CONSTRAINT build_bom_pkey PRIMARY KEY (id),
   CONSTRAINT build_bom_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id)
 );
@@ -82,10 +84,14 @@ CREATE TABLE public.builds (
   assembled_by uuid,
   part_ids ARRAY DEFAULT '{}'::integer[],
   project_id text,
+  approved boolean NOT NULL DEFAULT false,
+  approver text,
+  slack_channel text,
+  slack_ts text,
   CONSTRAINT builds_pkey PRIMARY KEY (id),
-  CONSTRAINT builds_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id),
+  CONSTRAINT builds_assembled_by_fkey FOREIGN KEY (assembled_by) REFERENCES auth.users(id),
   CONSTRAINT builds_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id),
-  CONSTRAINT builds_assembled_by_fkey FOREIGN KEY (assembled_by) REFERENCES auth.users(id)
+  CONSTRAINT builds_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id)
 );
 CREATE TABLE public.gantt_links (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -96,8 +102,8 @@ CREATE TABLE public.gantt_links (
   created_by uuid NOT NULL DEFAULT auth.uid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT gantt_links_pkey PRIMARY KEY (id),
-  CONSTRAINT gantt_links_target_id_fkey FOREIGN KEY (target_id) REFERENCES public.gantt_tasks(id),
-  CONSTRAINT gantt_links_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.gantt_tasks(id)
+  CONSTRAINT gantt_links_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.gantt_tasks(id),
+  CONSTRAINT gantt_links_target_id_fkey FOREIGN KEY (target_id) REFERENCES public.gantt_tasks(id)
 );
 CREATE TABLE public.gantt_tasks (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -113,6 +119,21 @@ CREATE TABLE public.gantt_tasks (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT gantt_tasks_pkey PRIMARY KEY (id),
   CONSTRAINT gantt_tasks_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.gantt_tasks(id)
+);
+CREATE TABLE public.kitting (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name text NOT NULL,
+  requester text NOT NULL,
+  project_id text NOT NULL,
+  quantity integer NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  material text NOT NULL DEFAULT ''::text,
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'kitted'::text])),
+  workflow text NOT NULL DEFAULT 'kit'::text CHECK (workflow = 'kit'::text),
+  kitting_bin text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT kitting_pkey PRIMARY KEY (id),
+  CONSTRAINT kitting_kitting_bin_fkey FOREIGN KEY (kitting_bin) REFERENCES public.kitting_bins(bin_id)
 );
 CREATE TABLE public.kitting_bins (
   bin_id text NOT NULL,
@@ -168,7 +189,6 @@ CREATE TABLE public.purchasing (
   quantity integer NOT NULL DEFAULT 1,
   material text DEFAULT ''::text,
   status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'ordered'::text, 'delivered'::text, 'kitted'::text, 'rejected'::text])),
-
   vendor text,
   url text,
   price numeric,
@@ -183,6 +203,8 @@ CREATE TABLE public.purchasing (
   approver text,
   notes text,
   purchaser uuid,
+  slack_channel text,
+  slack_ts text,
   CONSTRAINT purchasing_pkey PRIMARY KEY (id),
   CONSTRAINT purchasing_purchaser_fkey FOREIGN KEY (purchaser) REFERENCES auth.users(id)
 );
@@ -190,9 +212,9 @@ CREATE TABLE public.router_group_parts (
   group_id uuid NOT NULL,
   part_id bigint NOT NULL,
   created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT router_group_parts_pkey PRIMARY KEY (group_id, part_id),
-  CONSTRAINT router_group_parts_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id),
-  CONSTRAINT router_group_parts_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.router_groups(id)
+  CONSTRAINT router_group_parts_pkey PRIMARY KEY (part_id, group_id),
+  CONSTRAINT router_group_parts_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.router_groups(id),
+  CONSTRAINT router_group_parts_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id)
 );
 CREATE TABLE public.router_groups (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -206,8 +228,8 @@ CREATE TABLE public.subsystem_members (
   user_id uuid,
   joined_at timestamp with time zone DEFAULT now(),
   CONSTRAINT subsystem_members_pkey PRIMARY KEY (id),
-  CONSTRAINT subsystem_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT subsystem_members_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id)
+  CONSTRAINT subsystem_members_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id),
+  CONSTRAINT subsystem_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.subsystems (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

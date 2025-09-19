@@ -638,9 +638,10 @@ const bomRows = (buildBOM || []).map((item) => {
       ? (item.stock_assignment_custom || item.stock_assignment || null)
       : (item._stock_choice || item.stock_assignment || null)
   );
-  const wasMfgAdded = queue.manufactured.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
-  const wasCotsAdded = queue.cots.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
-  const wasKitAdded = queue.kit.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
+  // Check if this item was added to any queue (manufactured, cots, or kit)
+  const wasAdded = queue.manufactured.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name)) ||
+                   queue.cots.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name)) ||
+                   queue.kit.some(q => (q.part_number ? q.part_number === item.part_number : q.part_name === item.part_name));
   return {
     build_id: build.id,
     build_hash: build.build_hash || null,
@@ -670,10 +671,8 @@ const bomRows = (buildBOM || []).map((item) => {
     onshape_wvm: 'v',
     onshape_wvmid: version.id,
 
-    // flags showing which items you chose to add
-    added_to_parts_list: !isCOTS && wasMfgAdded,
-    added_to_purchasing: isCOTS && wasCotsAdded,
-    added_to_kitting: isCOTS && wasKitAdded
+    // New unified flag: whether this item was selected for the build
+    added: wasAdded
   };
 });
 
@@ -749,8 +748,7 @@ if (bomRows.length) {
           bounding_box_z: it.bounding_box_z,
           stock_assignment: it.stock_assignment || null,
           stock_assignment_custom: it.stock_assignment_custom ?? null,
-          added_to_parts_list: false,
-          added_to_purchasing: false
+          added: true // Other items are always added when queued
         };
         const { error } = await supabase.from('build_bom').insert([row]);
         if (error) {

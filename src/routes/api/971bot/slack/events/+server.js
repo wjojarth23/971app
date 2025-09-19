@@ -111,11 +111,11 @@ export async function POST({ request }) {
                       try {
                         const { data: build } = await supa.from('builds').select('*').eq('id', buildId).single();
                         const project_id = build?.project_id || `${build?.release_name || ''}`;
-                        const { data: rows } = await supa.from('build_bom').select('*').eq('build_id', buildId);
+                        const { data: rows } = await supa.from('build_bom').select('*').eq('build_id', buildId).eq('added', true);
                         const createdPartIds = [];
                         const createdPurchasingIds = [];
                         const createdKittingIds = [];
-                        for (const it of (rows || []).filter(r => r.part_type === 'manufactured' && r.added_to_parts_list)) {
+                        for (const it of (rows || []).filter(r => r.part_type === 'manufactured')) {
                           const baseInsert = {
                             name: it.part_name || 'Unnamed Part',
                             requester: 'Build System',
@@ -129,9 +129,13 @@ export async function POST({ request }) {
                             stock_assignment: it.stock_assignment || null
                           };
                           const { data: ins } = await supa.from('parts').insert([baseInsert]).select();
-                          if (ins?.[0]?.id) createdPartIds.push(ins[0].id);
+                          if (ins?.[0]?.id) {
+                            createdPartIds.push(ins[0].id);
+                            // Update build_bom with relation
+                            await supa.from('build_bom').update({ parts_id: ins[0].id }).eq('id', it.id);
+                          }
                         }
-                        for (const it of (rows || []).filter(r => r.part_type === 'COTS' && r.added_to_purchasing && (r.workflow || 'purchase') === 'purchase')) {
+                        for (const it of (rows || []).filter(r => r.part_type === 'COTS' && (r.workflow || 'purchase') === 'purchase')) {
                           const purchasingInsertData = {
                             name: it.part_name || 'Unnamed Item',
                             requester: 'Build System',
@@ -142,9 +146,13 @@ export async function POST({ request }) {
                             workflow: 'purchase'
                           };
                           const { data: pur } = await supa.from('purchasing').insert([purchasingInsertData]).select();
-                          if (pur?.[0]?.id) createdPurchasingIds.push(pur[0].id);
+                          if (pur?.[0]?.id) {
+                            createdPurchasingIds.push(pur[0].id);
+                            // Update build_bom with relation
+                            await supa.from('build_bom').update({ purchasing_id: pur[0].id }).eq('id', it.id);
+                          }
                         }
-                        for (const it of (rows || []).filter(r => r.part_type === 'COTS' && r.added_to_kitting && r.workflow === 'kit')) {
+                        for (const it of (rows || []).filter(r => r.part_type === 'COTS' && r.workflow === 'kit')) {
                           const kitInsert = {
                             name: it.part_name || 'Unnamed Item',
                             requester: 'Build System',
@@ -155,7 +163,11 @@ export async function POST({ request }) {
                             workflow: 'kit'
                           };
                           const { data: kit } = await supa.from('kitting').insert([kitInsert]).select();
-                          if (kit?.[0]?.id) createdKittingIds.push(kit[0].id);
+                          if (kit?.[0]?.id) {
+                            createdKittingIds.push(kit[0].id);
+                            // Update build_bom with relation
+                            await supa.from('build_bom').update({ kitting_id: kit[0].id }).eq('id', it.id);
+                          }
                         }
                         const newIds = [...createdPartIds, ...createdPurchasingIds, ...createdKittingIds].filter(Boolean);
                         if (newIds.length) {
