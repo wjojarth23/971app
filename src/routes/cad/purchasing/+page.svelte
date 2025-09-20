@@ -227,7 +227,25 @@
     if (!user) { alert('You must be signed in to delete items'); return; }
     if (!editPart) return;
     try {
-      const { data, error } = await supabase.from('purchasing').delete().eq('id', editPart.id);
+      // Normalize id for matching against build_bom bigint columns
+      const normalizedId = (typeof editPart.id === 'string' && /^\d+$/.test(editPart.id)) ? Number(editPart.id) : editPart.id;
+
+      // Clear any build_bom references to this purchasing id before attempting delete
+      try {
+        const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').eq('purchasing_id', normalizedId);
+        if (refErr) throw refErr;
+        if (refs && refs.length > 0) {
+          const ids = refs.map(r => r.id);
+          const { error: clearErr } = await supabase.from('build_bom').update({ purchasing_id: null, added: false }).in('id', ids);
+          if (clearErr) throw clearErr;
+        }
+      } catch (e) {
+        console.error('Failed to clear build_bom references for purchasing id before delete:', e);
+        alert('Failed to delete item: could not clear BOM references. Remove or unlink BOM rows first.');
+        return;
+      }
+
+      const { data, error } = await supabase.from('purchasing').delete().eq('id', normalizedId);
       if (error) {
         console.error('Failed to delete item', error);
         alert('Failed to delete item: ' + (error.message || JSON.stringify(error)));

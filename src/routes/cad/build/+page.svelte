@@ -128,51 +128,127 @@
       if (error) throw error;
       builds = data || [];
       
-      // Get parts data for each build
+      // Get parts data for each build using build_bom table (same approach as detailed build page)
       for (const build of builds) {
-        if (build.part_ids && build.part_ids.length > 0) {
-          // Get parts from parts table
-          const { data: partsData, error: partsError } = await supabase
-            .from('parts')
+        try {
+          // Load BOM snapshot for this build
+          const { data: bomData, error: bomErr } = await supabase
+            .from('build_bom')
             .select('*')
-            .in('id', build.part_ids);
+            .eq('build_id', build.id)
+            .order('created_at', { ascending: true });
 
-          if (!partsError) {
-            build.parts = partsData || [];
+          let bomSnapshot = [];
+          if (!bomErr && bomData) {
+            bomSnapshot = bomData;
           }
 
-          // Get purchasing data (COTS parts might be in purchasing table)
-          const { data: purchasingData, error: purchasingError } = await supabase
-            .from('purchasing')
-            .select('*')
-            .in('id', build.part_ids);
+          // Get BOM rows that have been added to the build
+          const addedBomRows = bomSnapshot.filter(row => row.added === true);
 
-          if (!purchasingError) {
-            build.purchasing = purchasingData || [];
+          // Collect all related IDs from added BOM rows
+          const partsIds = addedBomRows.filter(row => row.parts_id).map(row => row.parts_id);
+          const purchasingIds = addedBomRows.filter(row => row.purchasing_id).map(row => row.purchasing_id);
+          const kittingIds = addedBomRows.filter(row => row.kitting_id).map(row => row.kitting_id);
+
+          // Fetch actual created items only (no placeholders)
+          let partsData = [];
+          let purchasingData = [];
+          let kittingData = [];
+
+          if (partsIds.length > 0) {
+            const { data, error: partsError } = await supabase
+              .from('parts')
+              .select('*')
+              .in('id', partsIds);
+            if (!partsError) partsData = data || [];
           }
 
-          // Get kitting data (COTS items sent to kitting workflow)
-          const { data: kittingData, error: kittingError } = await supabase
-            .from('kitting')
-            .select('*')
-            .in('id', build.part_ids);
-
-          if (!kittingError) {
-            build.kitting = kittingData || [];
+          if (purchasingIds.length > 0) {
+            const { data, error: purchasingError } = await supabase
+              .from('purchasing')
+              .select('*')
+              .in('id', purchasingIds);
+            if (!purchasingError) purchasingData = data || [];
           }
-        } else {
+
+          if (kittingIds.length > 0) {
+            const { data, error: kittingError } = await supabase
+              .from('kitting')
+              .select('*')
+              .in('id', kittingIds);
+            if (!kittingError) kittingData = data || [];
+          }
+
+          // Create placeholder entries only for BOM rows that were explicitly added
+          // to the build (row.added === true). This ensures progress and cost
+          // calculations only measure items the user chose to include.
+          const allBomRows = (bomSnapshot || []).filter(r => r.added === true);
+
+          const pendingParts = allBomRows.filter(row =>
+            row.part_type === 'manufactured' && !row.parts_id
+          ).map(row => ({
+            _bom: true,
+            bom_id: row.id,
+            name: row.part_name,
+            part_number: row.part_number || null,
+            quantity: row.quantity || 1,
+            material: row.material || '',
+            workflow: row.workflow || 'mill',
+            status: 'needs_approval',
+            stock_assignment: row.stock_assignment || null
+          }));
+
+          const pendingPurchasing = allBomRows.filter(row =>
+            row.part_type === 'COTS' && (row.workflow || 'purchase') === 'purchase' && !row.purchasing_id
+          ).map(row => ({
+            _bom: true,
+            bom_id: row.id,
+            name: row.part_name,
+            part_number: row.part_number || null,
+            quantity: row.quantity || 1,
+            material: row.material || '',
+            workflow: 'purchase',
+            status: 'needs_approval'
+          }));
+
+          const pendingKitting = allBomRows.filter(row =>
+            row.part_type === 'COTS' && row.workflow === 'kit' && !row.kitting_id
+          ).map(row => ({
+            _bom: true,
+            bom_id: row.id,
+            name: row.part_name,
+            part_number: row.part_number || null,
+            quantity: row.quantity || 1,
+            material: row.material || '',
+            workflow: 'kit',
+            status: 'needs_approval'
+          }));
+
+          // Merge placeholders with actual created rows (actuals only fetched for added BOM rows)
+          const mergedParts = [...(partsData || []), ...(pendingParts || [])];
+          const mergedPurchasing = [...(purchasingData || []), ...(pendingPurchasing || [])];
+          const mergedKitting = [...(kittingData || []), ...(pendingKitting || [])];
+
+          build.parts = mergedParts;
+          build.purchasing = mergedPurchasing;
+          build.kitting = mergedKitting;
+
+          // Compute purchasing cost for this build from merged purchasing rows
+          try {
+            build.totalPurchasingCost = (mergedPurchasing || []).reduce((sum, p) => {
+              const unit = (p.final_price ?? p.price) || 0;
+              const qty = p.quantity || 1;
+              return sum + (Number(unit) * Number(qty));
+            }, 0);
+          } catch (e) { build.totalPurchasingCost = 0; }
+        } catch (e) {
+          console.error(`Error loading parts for build ${build.id}:`, e);
           build.parts = [];
           build.purchasing = [];
           build.kitting = [];
+          build.totalPurchasingCost = 0;
         }
-        // Compute a simple purchasing cost for the build (price or final_price * qty)
-        try {
-          build.totalPurchasingCost = (build.purchasing || []).reduce((sum, p) => {
-            const unit = (p.final_price ?? p.price) || 0;
-            const qty = p.quantity || 1;
-            return sum + (Number(unit) * Number(qty));
-          }, 0);
-        } catch (e) { build.totalPurchasingCost = 0; }
       }
       
       // Calculate stats and update build statuses
@@ -246,6 +322,7 @@
       alert('Failed to mark as assembled');
     }
   }
+  // Calculate progress based on BOM rows (each row counts as one part regardless of quantity)
   function getBuildProgress(build) {
     const allParts = [...(build.parts || []), ...(build.purchasing || []), ...(build.kitting || [])];
     if (allParts.length === 0) {
@@ -263,24 +340,19 @@
       };
     }
 
-    const manufactured = allParts.filter(item =>
-      item.status === 'complete' || item.status === 'delivered' || item.status === 'kitted'
-    ).length;
-
-    const inProgress = allParts.filter(item =>
-      item.status === 'in-progress' || item.status === 'cammed' || item.status === 'ordered'
-    ).length;
+    // For row-based progress we treat each item in the merged lists as one row
+    // (this matches the BOM rows shown to users). Ignore per-row quantity.
+    const manufactured = allParts.filter(item => item.status === 'complete' || item.status === 'delivered' || item.status === 'kitted').length;
+    const inProgress = allParts.filter(item => item.status === 'in-progress' || item.status === 'cammed' || item.status === 'ordered').length;
 
     let status = 'Requested';
-    if (manufactured === allParts.length) {
-      status = 'Ready';
-    } else if (inProgress > 0 || manufactured > 0) {
-      status = 'Manufacturing';
-    }
+    if (manufactured === allParts.length) status = 'Ready to Assemble';
+    else if (inProgress > 0 || manufactured > 0) status = 'Manufacturing';
 
-    const mfgParts = build.parts || [];
-    const purParts = build.purchasing || [];
-    const kitParts = build.kitting || [];
+    // Derive per-workflow row counts (row-based)
+    const mfgParts = allParts.filter(p => (p.workflow || '').toString() !== 'purchase' && (p.workflow || '').toString() !== 'kit');
+    const purParts = allParts.filter(p => (p.workflow || '').toString() === 'purchase');
+    const kitParts = allParts.filter(p => (p.workflow || '').toString() === 'kit');
 
     const mfgComplete = mfgParts.filter(p => p.status === 'complete' || p.status === 'manufactured').length;
     const purComplete = purParts.filter(p => p.status === 'delivered').length;
@@ -371,11 +443,12 @@
             {@const human = pid === '__NO_PROJECT__' ? 'Unassigned' : pid}
             {@const projectBuilds = groupedBuilds[pid]}
             {@const projectTotalCost = projectBuilds.reduce((s,b) => s + (b.totalPurchasingCost || 0), 0)}
+            {@const projectPartsCount = projectBuilds.reduce((s,b) => s + (((b.parts||[]).length || 0) + ((b.purchasing||[]).length || 0) + ((b.kitting||[]).length || 0)), 0)}
             <div class="project-container" role="group" on:drop={(e) => dropOnProject(e, pid)} on:dragover={allowDrop} on:dragenter={allowDrop}>
               <div class="project-header" on:click={() => { if (pid !== '__NO_PROJECT__') projectOpen = { ...projectOpen, [pid]: !projectOpen[pid] }; }} on:keydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && pid !== '__NO_PROJECT__') { projectOpen = { ...projectOpen, [pid]: !projectOpen[pid] }; } }} role="button" tabindex="0">
                 <div>
                   <strong class="project-name">{human}</strong>
-                  <div class="project-meta">{projectBuilds.length} builds • Total cost: ${projectTotalCost.toFixed(2)}</div>
+                  <div class="project-meta">{projectBuilds.length} builds • {projectPartsCount} parts • Total cost: ${projectTotalCost.toFixed(2)}</div>
                 </div>
                 <div class="project-actions">
                   {#if pid === '__NO_PROJECT__'}

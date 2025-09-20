@@ -16,7 +16,7 @@
   let processingAdd = false;
   let projectBuilds = [];
   let projectTotalCost = 0;
-  let approvalPolling = null;
+  let projectPartsCount = 0;
 
   // Edit modal state for build items (top table)
   let showEditModal = false;
@@ -58,42 +58,8 @@
     }
 
     await loadBuildDetails();
-    // If not approved yet, poll for approval briefly to auto-refresh
-    if (build && !build.approved) {
-      approvalPolling = setInterval(async () => {
-        try {
-          const { data } = await supabase.from('builds').select('approved').eq('id', buildId).single();
-          if (data?.approved) {
-            clearInterval(approvalPolling); approvalPolling = null;
-            await loadBuildDetails();
-          }
-        } catch {}
-      }, 5000);
-    }
     loading = false;
   });
-
-  async function processApprovalNow() {
-    if (!build?.id) return;
-    try {
-      const resp = await fetch('/api/builds/process-approved', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ build_id: build.id })
-      });
-      const data = await resp.json();
-      if (!data?.ok) {
-        showToast('Processing failed: ' + (data?.error || 'unknown'));
-      } else {
-        showToast(`Processed build: parts ${data.parts} purchasing ${data.purchasing} kitting ${data.kitting}`);
-        // reload details
-        await loadBuildDetails();
-      }
-    } catch (e) {
-      console.error('Failed to process approval via API:', e);
-      showToast('Failed to process approval: ' + (e?.message || e));
-    }
-  }
 
   async function loadBuildDetails() {
     try {
@@ -117,12 +83,11 @@
       if (error) throw error;
       build = data;
 
-      // Load saved BOM snapshot (manufactured + COTS items)
+      // Load saved BOM snapshot (all items)
       const { data: bomData, error: bomErr } = await supabase
         .from('build_bom')
         .select('*')
         .eq('build_id', buildId)
-        .in('part_type', ['COTS', 'manufactured'])
         .order('created_at', { ascending: true });
       if (!bomErr) {
         bomSnapshot = (bomData || []).map(it => ({
@@ -130,6 +95,7 @@
           _stock_choice: it.stock_assignment_custom ? '__other__' : '',
         }));
       } else {
+        console.error('Error loading BOM snapshot:', bomErr);
         bomSnapshot = [];
       }
 
@@ -143,35 +109,41 @@
       const kittingIds = addedBomRows.filter(row => row.kitting_id).map(row => row.kitting_id);
 
       // Fetch actual created items
+      let partsData = [];
+      let purchasingData = [];
+      let kittingData = [];
+
       if (partsIds.length > 0) {
-        const { data: partsData, error: partsError } = await supabase
+        const { data, error: partsError } = await supabase
           .from('parts')
           .select('*')
           .in('id', partsIds);
-        if (!partsError) build.parts = partsData || [];
-      } else {
-        build.parts = [];
+        if (!partsError) partsData = data || [];
       }
 
       if (purchasingIds.length > 0) {
-        const { data: purchasingData, error: purchasingError } = await supabase
+        const { data, error: purchasingError } = await supabase
           .from('purchasing')
           .select('*')
           .in('id', purchasingIds);
-        if (!purchasingError) build.purchasing = purchasingData || [];
-      } else {
-        build.purchasing = [];
+        if (!purchasingError) purchasingData = data || [];
       }
 
       if (kittingIds.length > 0) {
-        const { data: kittingData, error: kittingError } = await supabase
+        const { data, error: kittingError } = await supabase
           .from('kitting')
           .select('*')
           .in('id', kittingIds);
-        if (!kittingError) build.kitting = kittingData || [];
-      } else {
-        build.kitting = [];
+        if (!kittingError) kittingData = data || [];
       }
+
+      // Update build object to trigger reactivity
+      build = {
+        ...build,
+        parts: partsData,
+        purchasing: purchasingData,
+        kitting: kittingData
+      };
 
       // Create placeholder entries for added items that don't have relations yet (pending approval)
       const pendingParts = addedBomRows.filter(row =>
@@ -214,19 +186,33 @@
         status: 'needs_approval'
       }));
 
-      // Merge placeholders with actual created rows
-      build.parts = [...(build.parts || []), ...pendingParts];
-      build.purchasing = [...(build.purchasing || []), ...pendingPurchasing];
-      build.kitting = [...(build.kitting || []), ...pendingKitting];
+  // Merge placeholders with actual created rows
+  // Use `let` so variables exist even if an earlier error occurs during load
+  let mergedParts = [];
+  let mergedPurchasing = [];
+  let mergedKitting = [];
+  mergedParts = [...(partsData || []), ...(pendingParts || [])];
+  mergedPurchasing = [...(purchasingData || []), ...(pendingPurchasing || [])];
+  mergedKitting = [...(kittingData || []), ...(pendingKitting || [])];
 
       // Compute purchasing cost for this build
+      let totalCost = 0;
       try {
-        build.totalPurchasingCost = (build.purchasing || []).reduce((sum, p) => {
+        totalCost = mergedPurchasing.reduce((sum, p) => {
           const unit = (p.final_price ?? p.price) || 0;
           const qty = p.quantity || 1;
           return sum + (Number(unit) * Number(qty));
         }, 0);
-      } catch (e) { build.totalPurchasingCost = 0; }
+      } catch (e) { totalCost = 0; }
+
+      // Update build object with merged data and total cost
+      build = {
+        ...build,
+        parts: mergedParts,
+        purchasing: mergedPurchasing,
+        kitting: mergedKitting,
+        totalPurchasingCost: totalCost
+      };
 
       // If build has a project_id, load sibling builds in the same project to show project container
       if (build.project_id) {
@@ -235,15 +221,17 @@
           if (!sibErr) {
             projectBuilds = siblings || [];
             projectTotalCost = projectBuilds.reduce((s, b) => s + (b.totalPurchasingCost || 0), 0);
+            // compute project parts (row-based) across sibling builds
+            try {
+              projectPartsCount = projectBuilds.reduce((s, b) => s + (((b.parts||[]).length || 0) + ((b.purchasing||[]).length || 0) + ((b.kitting||[]).length || 0)), 0);
+            } catch (e) {
+              projectPartsCount = 0;
+            }
           }
         } catch (e) {
           projectBuilds = [];
           projectTotalCost = 0;
         }
-      } else {
-        build.parts = [];
-        build.purchasing = [];
-        build.kitting = [];
       }
     } catch (error) {
       console.error('Error loading build details:', error);
@@ -272,8 +260,6 @@
       alert('Failed to mark as assembled');
     }
   }
-
-  $: canAddItems = !!build?.approved;
 
   function getStocksForWorkflow(workflow) {
     return stockData[workflow] || [];
@@ -310,12 +296,17 @@
     let status = 'Requested';
     if (manufactured === allParts.length) status = 'Ready to Assemble';
     else if (inProgress > 0 || manufactured > 0) status = 'Manufacturing';
-    const mfgParts = build.parts || [];
-    const purParts = build.purchasing || [];
-    const kitParts = build.kitting || [];
-    const mfgComplete = mfgParts.filter(p => p.status === 'complete').length;
-    const purComplete = purParts.filter(p => p.status === 'delivered').length;
-    const kitComplete = kitParts.filter(p => p.status === 'kitted').length;
+  // Derive per-workflow lists from the aggregated allParts so counts
+  // align with the overall manufactured/total calculations. This
+  // handles cases where parts/purchasing/kitting arrays may not be
+  // populated consistently but allParts still contains the items.
+  const mfgParts = allParts.filter(p => (p.workflow || '').toString() !== 'purchase' && (p.workflow || '').toString() !== 'kit');
+  const purParts = allParts.filter(p => (p.workflow || '').toString() === 'purchase');
+  const kitParts = allParts.filter(p => (p.workflow || '').toString() === 'kit');
+
+  const mfgComplete = mfgParts.filter(p => p.status === 'complete').length;
+  const purComplete = purParts.filter(p => p.status === 'delivered').length;
+  const kitComplete = kitParts.filter(p => p.status === 'kitted').length;
     return {
       percent: Math.round((manufactured / allParts.length) * 100),
       manufactured,
@@ -563,27 +554,79 @@
 
   async function removeBuildAssociation(partId) {
     try {
-      // Find the corresponding build_bom row
-      const bomRow = bomSnapshot.find(row =>
-        (row.parts_id === partId) ||
-        (row.purchasing_id === partId) ||
-        (row.kitting_id === partId)
-      );
+      // Normalize the incoming id to the probable DB type
+      // parts/purchasing/kitting use bigint ids; build_bom stores those in columns parts_id, purchasing_id, kitting_id
+      // If the id is a string that looks like a number, coerce to Number so the query matches correctly.
+      const normalizedId = (typeof partId === 'string' && /^\d+$/.test(partId)) ? Number(partId) : partId;
 
-      if (bomRow) {
-        // Remove the relation from build_bom
-        await supabase.from('build_bom').update({
-          parts_id: null,
-          purchasing_id: null,
-          kitting_id: null,
-          added: false
-        }).eq('id', bomRow.id);
+      // Find any build_bom rows that reference this id so we can report them if clearing fails
+      const { data: referencingRows, error: refErr } = await supabase.from('build_bom').select('id, parts_id, purchasing_id, kitting_id, build_id').or(
+        `parts_id.eq.${normalizedId},purchasing_id.eq.${normalizedId},kitting_id.eq.${normalizedId}`
+      );
+      if (refErr) {
+        console.warn('Error querying build_bom for references:', refErr);
       }
 
+      // Attempt targeted clears only for the columns that actually reference this id
+      // If there are any build_bom rows referencing this id, clear the specific
+      // relation column and mark the BOM row as not added (added = false).
+      // This intentionally does NOT block deletion of the parts/purchasing/kitting
+      // row: we want to remove the created item while keeping the BOM row.
+      if (referencingRows && referencingRows.length > 0) {
+        const partsRefs = referencingRows.filter(r => r.parts_id === normalizedId).map(r => r.id);
+        const purchRefs = referencingRows.filter(r => r.purchasing_id === normalizedId).map(r => r.id);
+        const kitRefs = referencingRows.filter(r => r.kitting_id === normalizedId).map(r => r.id);
+
+        async function clearBomRows(column, ids) {
+          if (!ids || ids.length === 0) return;
+          try {
+            const patch = {};
+            patch[column] = null;
+            patch.added = false;
+            const { error } = await supabase.from('build_bom').update(patch).in('id', ids);
+            if (error) throw error;
+          } catch (e) {
+            // Log but don't block deletion; best-effort update to BOM rows
+            console.warn(`Error clearing ${column} references in build_bom for ids ${ids}:`, e);
+          }
+        }
+
+        await clearBomRows('parts_id', partsRefs);
+        await clearBomRows('purchasing_id', purchRefs);
+        await clearBomRows('kitting_id', kitRefs);
+      }
+
+      // Attempt deletion from each table; only one should match but trying all is safe.
+      // If deletion fails due to lingering FK refs, the errors will be surfaced to the user.
+      const { error: delPartsErr } = await supabase.from('parts').delete().eq('id', normalizedId);
+      if (delPartsErr && String(delPartsErr.message || delPartsErr).toLowerCase().includes('foreign key')) {
+        console.error('Failed to delete part due to foreign key:', delPartsErr);
+        alert('Failed to delete part: ' + delPartsErr.message);
+        return;
+      }
+      if (delPartsErr) console.warn('Non-critical error deleting from parts:', delPartsErr);
+
+      const { error: delPurchErr } = await supabase.from('purchasing').delete().eq('id', normalizedId);
+      if (delPurchErr && String(delPurchErr.message || delPurchErr).toLowerCase().includes('foreign key')) {
+        console.error('Failed to delete purchasing due to foreign key:', delPurchErr);
+        alert('Failed to delete purchasing entry: ' + delPurchErr.message);
+        return;
+      }
+      if (delPurchErr) console.warn('Non-critical error deleting from purchasing:', delPurchErr);
+
+      const { error: delKitErr } = await supabase.from('kitting').delete().eq('id', normalizedId);
+      if (delKitErr && String(delKitErr.message || delKitErr).toLowerCase().includes('foreign key')) {
+        console.error('Failed to delete kitting due to foreign key:', delKitErr);
+        alert('Failed to delete kitting entry: ' + delKitErr.message);
+        return;
+      }
+      if (delKitErr) console.warn('Non-critical error deleting from kitting:', delKitErr);
+
+      // Reload the build details to reflect changes
       await loadBuildDetails();
     } catch (e) {
       console.error('Remove from build failed:', e);
-      alert('Failed to remove from build');
+      alert('Failed to remove from build: ' + (e?.message || e));
     }
   }
 
@@ -913,14 +956,9 @@
               {#if build.assembled_at}
                 <span>Assembled: {new Date(build.assembled_at).toLocaleDateString()}</span>
               {/if}
-              <!-- Approval badge -->
-              <span style="margin-left:0.75rem;">
-                {#if build.approved}
-                  <span class="badge badge-success">Approved{#if build.approver} by {build.approver}{/if}</span>
-                {:else}
-                  <span class="badge badge-warning">Awaiting Approval</span>
-                {/if}
-              </span>
+              {#if build.project_id}
+                <span>{projectBuilds.length} builds • {projectPartsCount} parts • Total cost: ${projectTotalCost.toFixed(2)}</span>
+              {/if}
             </div>
           </div>
         </div>
@@ -931,11 +969,6 @@
               <button class="btn btn-success btn-sm" on:click={markAsAssembled}>
                 <CheckCircle size={16} />
                 Mark as Assembled
-              </button>
-            {/if}
-            {#if !build.approved}
-              <button class="btn btn-outline btn-sm" on:click={processApprovalNow} style="margin-left:0.5rem;">
-                Process Approval
               </button>
             {/if}
           {/if}
@@ -1152,6 +1185,7 @@
                     >
                       <option value="COTS">COTS</option>
                       <option value="manufactured">Manufactured</option>
+                      <option value="other">Other</option>
                     </select>
                   </td>
                   <td>
@@ -1201,9 +1235,9 @@
                     <button
                       class="btn btn-sm btn-yellow add-btn"
                       on:click={() => addFromFullBOM(item)}
-                      disabled={(item.added_to_parts_list || item.added_to_purchasing || item.added_to_kitting) || processingAdd}
+                      disabled={(item.parts_id || item.purchasing_id || item.kitting_id) || processingAdd}
                     >
-                      {#if item.added_to_parts_list || item.added_to_purchasing || item.added_to_kitting}
+                      {#if item.parts_id || item.purchasing_id || item.kitting_id}
                         <CheckCircle size={14} />
                         Added
                       {:else}

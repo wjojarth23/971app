@@ -660,10 +660,28 @@ import ROUTER_FLOW from '$lib/router_flow.json';
     if (!editPart) return;
     if (!confirm('Delete this part permanently?')) return;
     try {
+      // Normalize id (parts.id is bigint)
+      const normalizedId = (typeof editPart.id === 'string' && /^\d+$/.test(editPart.id)) ? Number(editPart.id) : editPart.id;
+
+      // Clear any build_bom references to this part first
+      try {
+        const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').eq('parts_id', normalizedId);
+        if (refErr) throw refErr;
+        if (refs && refs.length > 0) {
+          const ids = refs.map(r => r.id);
+          const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', ids);
+          if (clearErr) throw clearErr;
+        }
+      } catch (e) {
+        console.error('Failed to clear BOM refs before deleting part:', e);
+        alert('Failed to delete part: could not clear BOM references. Remove or unlink those BOM rows first.');
+        return;
+      }
+
       const { error } = await supabase
         .from('parts')
         .delete()
-        .eq('id', editPart.id);
+        .eq('id', normalizedId);
       if (error) throw error;
       await loadParts();
       showToastMessage('Part deleted');

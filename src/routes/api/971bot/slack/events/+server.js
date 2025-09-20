@@ -65,18 +65,6 @@ export async function POST({ request }) {
                   if (!pErr && Array.isArray(pRows) && pRows.length) {
                     mapped = pRows[0].id;
                     console.log('Found purchasing mapping in DB for', channel, ts, '->', mapped);
-                  } else {
-                    // Also check builds table for build approvals
-                    const { data: bRows, error: bErr } = await supa
-                      .from('builds')
-                      .select('id')
-                      .eq('slack_channel', channel)
-                      .eq('slack_ts', ts)
-                      .limit(1);
-                    if (!bErr && Array.isArray(bRows) && bRows.length) {
-                      mapped = { build: bRows[0].id };
-                      console.log('Found build mapping in DB for', channel, ts, '->', bRows[0].id);
-                    }
                   }
                 } catch (dbErr) {
                   console.warn('DB lookup for slack mapping failed:', dbErr);
@@ -98,103 +86,17 @@ export async function POST({ request }) {
               }
 
               if (mapped) {
-                // mapped can be a purchasing id (number) or an object { build: id }
-                if (typeof mapped === 'object' && mapped.build) {
-                  // Approve build directly
-                  const buildId = mapped.build;
-                  if (reaction !== 'x') {
-                    try {
-                      const supa = getSupabase();
-                      await supa.from('builds').update({ approved: true, approver: approverName }).eq('id', buildId);
-                      console.log('Approved build via DB mapping', buildId, 'by', approverName);
-                      // Process approved build: create parts/purchasing/kitting via existing logic
-                      try {
-                        const { data: build } = await supa.from('builds').select('*').eq('id', buildId).single();
-                        const project_id = build?.project_id || `${build?.release_name || ''}`;
-                        const { data: rows } = await supa.from('build_bom').select('*').eq('build_id', buildId).eq('added', true);
-                        const createdPartIds = [];
-                        const createdPurchasingIds = [];
-                        const createdKittingIds = [];
-                        for (const it of (rows || []).filter(r => r.part_type === 'manufactured')) {
-                          const baseInsert = {
-                            name: it.part_name || 'Unnamed Part',
-                            requester: 'Build System',
-                            project_id,
-                            workflow: it.workflow || 'mill',
-                            status: 'pending',
-                            quantity: it.quantity || 1,
-                            material: it.material || '',
-                            file_name: '',
-                            file_url: '',
-                            stock_assignment: it.stock_assignment || null
-                          };
-                          const { data: ins } = await supa.from('parts').insert([baseInsert]).select();
-                          if (ins?.[0]?.id) {
-                            createdPartIds.push(ins[0].id);
-                            // Update build_bom with relation
-                            await supa.from('build_bom').update({ parts_id: ins[0].id }).eq('id', it.id);
-                          }
-                        }
-                        for (const it of (rows || []).filter(r => r.part_type === 'COTS' && (r.workflow || 'purchase') === 'purchase')) {
-                          const purchasingInsertData = {
-                            name: it.part_name || 'Unnamed Item',
-                            requester: 'Build System',
-                            project_id,
-                            quantity: it.quantity || 1,
-                            material: it.material || '',
-                            status: 'pending',
-                            workflow: 'purchase'
-                          };
-                          const { data: pur } = await supa.from('purchasing').insert([purchasingInsertData]).select();
-                          if (pur?.[0]?.id) {
-                            createdPurchasingIds.push(pur[0].id);
-                            // Update build_bom with relation
-                            await supa.from('build_bom').update({ purchasing_id: pur[0].id }).eq('id', it.id);
-                          }
-                        }
-                        for (const it of (rows || []).filter(r => r.part_type === 'COTS' && r.workflow === 'kit')) {
-                          const kitInsert = {
-                            name: it.part_name || 'Unnamed Item',
-                            requester: 'Build System',
-                            project_id,
-                            quantity: it.quantity || 1,
-                            material: it.material || '',
-                            status: 'pending',
-                            workflow: 'kit'
-                          };
-                          const { data: kit } = await supa.from('kitting').insert([kitInsert]).select();
-                          if (kit?.[0]?.id) {
-                            createdKittingIds.push(kit[0].id);
-                            // Update build_bom with relation
-                            await supa.from('build_bom').update({ kitting_id: kit[0].id }).eq('id', it.id);
-                          }
-                        }
-                        const newIds = [...createdPartIds, ...createdPurchasingIds, ...createdKittingIds].filter(Boolean);
-                        if (newIds.length) {
-                          const currentIds = Array.isArray(build?.part_ids) ? build.part_ids : [];
-                          const merged = [...currentIds, ...newIds.filter(id => !currentIds.includes(id))];
-                          await supa.from('builds').update({ part_ids: merged }).eq('id', buildId);
-                        }
-                      } catch (procErr) {
-                        console.error('Failed to process approved build:', procErr?.message || procErr);
-                      }
-                    } catch (e) {
-                      console.error('Failed to approve build from DB mapping reaction:', e?.message || e);
-                    }
-                  }
-                } else {
-                  // Treat mapped as a purchasing id (number)
-                  const purchaseId = Number(mapped);
-                  if (reaction !== 'x') {
-                    if (recentlyApprovedPurchases.has(purchaseId)) {
-                      console.log('Purchase already approved recently, skipping duplicate approve for', purchaseId);
-                    } else {
-                      console.log('Approving purchase from mapping', purchaseId, 'based on reaction', reaction, 'by', approverName);
-                      const ok = await approvePurchaseInDb(purchaseId, approverName);
-                      if (ok) {
-                        recentlyApprovedPurchases.add(purchaseId);
-                        setTimeout(() => recentlyApprovedPurchases.delete(purchaseId), 30 * 1000);
-                      }
+                // mapped is a purchasing id (number)
+                const purchaseId = Number(mapped);
+                if (reaction !== 'x') {
+                  if (recentlyApprovedPurchases.has(purchaseId)) {
+                    console.log('Purchase already approved recently, skipping duplicate approve for', purchaseId);
+                  } else {
+                    console.log('Approving purchase from mapping', purchaseId, 'based on reaction', reaction, 'by', approverName);
+                    const ok = await approvePurchaseInDb(purchaseId, approverName);
+                    if (ok) {
+                      recentlyApprovedPurchases.add(purchaseId);
+                      setTimeout(() => recentlyApprovedPurchases.delete(purchaseId), 30 * 1000);
                     }
                   }
                 }

@@ -55,8 +55,6 @@ CREATE TABLE public.build_bom (
   bounding_box_z numeric,
   onshape_part_id character varying,
   status character varying DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying::text, 'ordered'::character varying::text, 'delivered'::character varying::text, 'manufactured'::character varying::text, 'in-progress'::character varying::text, 'cammed'::character varying::text, 'complete'::character varying::text])),
-  added_to_parts_list boolean DEFAULT false,
-  added_to_purchasing boolean DEFAULT false,
   onshape_document_id character varying,
   onshape_wvm character varying,
   onshape_wvmid character varying,
@@ -66,10 +64,16 @@ CREATE TABLE public.build_bom (
   file_url text,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
-  added_to_kitting boolean DEFAULT false,
   stock_assignment_custom text,
+  added boolean DEFAULT false,
+  parts_id bigint,
+  purchasing_id bigint,
+  kitting_id bigint,
   CONSTRAINT build_bom_pkey PRIMARY KEY (id),
-  CONSTRAINT build_bom_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id)
+  CONSTRAINT build_bom_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id),
+  CONSTRAINT build_bom_parts_id_fkey FOREIGN KEY (parts_id) REFERENCES public.parts(id),
+  CONSTRAINT build_bom_purchasing_id_fkey FOREIGN KEY (purchasing_id) REFERENCES public.purchasing(id),
+  CONSTRAINT build_bom_kitting_id_fkey FOREIGN KEY (kitting_id) REFERENCES public.kitting(id)
 );
 CREATE TABLE public.builds (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -82,7 +86,6 @@ CREATE TABLE public.builds (
   created_at timestamp with time zone DEFAULT now(),
   assembled_at timestamp with time zone,
   assembled_by uuid,
-  part_ids ARRAY DEFAULT '{}'::integer[],
   project_id text,
   approved boolean NOT NULL DEFAULT false,
   approver text,
