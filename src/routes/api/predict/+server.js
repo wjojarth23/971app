@@ -62,19 +62,19 @@ async function getPredictSettings() {
     // Fall back to env-based demo if table missing/inaccessible
     const envDemo = ((CEMO ?? cemo ?? '') + '').toLowerCase();
     const demo = envDemo === 'true' || envDemo === '1' || envDemo === 'yes' || envDemo === 'y';
-    return { id: 'global', demo, competitions: [], tab_visible: false, updated_at: new Date().toISOString() };
+    return { id: 'global', demo, competitions: ['2025cc'], tab_visible: true, updated_at: new Date().toISOString() };
   }
   if (!data) {
     const envDemo = ((CEMO ?? cemo ?? '') + '').toLowerCase();
     const demo = envDemo === 'true' || envDemo === '1' || envDemo === 'yes' || envDemo === 'y';
-    return { id: 'global', demo, competitions: [], tab_visible: false, updated_at: new Date().toISOString() };
+    return { id: 'global', demo, competitions: ['2025cc'], tab_visible: true, updated_at: new Date().toISOString() };
   }
   // Normalize
   return {
     id: data.id || 'global',
     demo: !!data.demo,
-    competitions: Array.isArray(data.competitions) ? data.competitions.map(String) : [],
-    tab_visible: !!data.tab_visible,
+    competitions: (Array.isArray(data.competitions) ? data.competitions.map(String) : []).filter(Boolean).length ? data.competitions.map(String) : ['2025cc'],
+    tab_visible: data.tab_visible == null ? true : !!data.tab_visible,
     updated_at: data.updated_at || new Date().toISOString()
   };
 }
@@ -93,22 +93,7 @@ async function savePredictSettings({ demo, competitions, tab_visible }) {
   return data;
 }
 
-async function isSpartanPredictAdmin(user_id) {
-  if (!user_id) return false;
-  const { data, error } = await supabase
-    .from('user_profiles')
-    .select('role, permissions')
-    .eq('id', user_id)
-    .maybeSingle();
-  if (error) return false;
-  const isAdmin = data?.role === 'admin';
-  const perms = Array.isArray(data?.permissions)
-    ? data.permissions.map(String)
-    : data?.permissions
-    ? [String(data.permissions)]
-    : [];
-  return isAdmin || perms.includes('SPARTAN_PREDICT_ADMIN');
-}
+// Admin permission checks removed for predict save endpoint (no longer supported)
 
 async function demoMode() {
   const s = await getPredictSettings();
@@ -535,14 +520,7 @@ export async function POST({ request }) {
       return json({ success: true, data: { market_id: market.id, winning_outcome: winner, payouts: Object.fromEntries(payouts) } });
     }
 
-    if (action === 'save-settings') {
-      const { actor_id, demo, competitions, tab_visible } = body || {};
-      if (!actor_id) return json({ error: 'actor_id is required' }, { status: 400 });
-      const allowed = await isSpartanPredictAdmin(actor_id);
-      if (!allowed) return json({ error: 'Not authorized' }, { status: 403 });
-      const saved = await savePredictSettings({ demo, competitions, tab_visible });
-      return json({ success: true, data: { demo: !!saved.demo, competitions: saved.competitions || [], tab_visible: !!saved.tab_visible } });
-    }
+    // 'save-settings' action removed — predictive settings are no longer editable via this endpoint
 
     return json({ error: 'Invalid action' }, { status: 400 });
   } catch (e) {

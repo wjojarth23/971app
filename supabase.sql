@@ -267,3 +267,15 @@ CREATE TABLE public.user_profiles (
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
+
+-- Scouting notes table for simple text notes per match/team
+CREATE TABLE public.scout_notes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  match_key text NOT NULL,
+  match_number integer,
+  team_key text NOT NULL,
+  notes text,
+  created_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT scout_notes_pkey PRIMARY KEY (id)
+);

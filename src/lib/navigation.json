@@ -1,0 +1,11 @@
+{
+  "tabs": {
+    "kitting": false,
+    "build": false,
+    "manufacture": true,
+    "cad": true,
+    "purchasing": true,
+    "notescout": true,
+    "predict": true
+  }
+}

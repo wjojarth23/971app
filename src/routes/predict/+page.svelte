@@ -46,16 +46,7 @@
   let loadingPortfolio = false;
   let portfolio = []; // [{ bet, market }]
 
-  // Admin modal state
-  function isPredictAdmin() {
-    return hasPermission(user, 'SPARTAN_PREDICT_ADMIN');
-  }
-  let adminOpen = false;
-  let settingsDemo = false;
-  let settingsCompetitionsText = '';
-  let settingsTabVisible = false;
-  let savingSettings = false;
-  let settingsError = '';
+  // Admin settings removed for Predict
 
   function formatProb(p) {
     if (p == null) return '-';
@@ -75,11 +66,6 @@
         demo = !!data?.data?.demo;
         configuredCompetitions = Array.isArray(data?.data?.competitions) ? data.data.competitions : [];
         predictTabVisible = !!data?.data?.tab_visible;
-
-        // Pre-fill admin form state
-        settingsDemo = demo;
-        settingsCompetitionsText = configuredCompetitions.join('\n');
-        settingsTabVisible = predictTabVisible;
       }
     } catch {} finally { loadedInfo = true; }
   }
@@ -232,52 +218,7 @@
     }
   }
 
-  function openAdminModal() {
-    // Refresh current values from server before showing
-    settingsError = '';
-    settingsDemo = demo;
-    settingsCompetitionsText = configuredCompetitions.join('\n');
-    settingsTabVisible = predictTabVisible;
-    adminOpen = true;
-  }
-
-  async function saveSettings() {
-    if (!isPredictAdmin() || !user?.id) return;
-    savingSettings = true;
-    settingsError = '';
-    try {
-      const competitions = settingsCompetitionsText
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const resp = await fetch('/api/predict', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          action: 'save-settings',
-          actor_id: user.id,
-          demo: !!settingsDemo,
-          competitions,
-          tab_visible: !!settingsTabVisible
-        })
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data?.error || 'Save failed');
-      }
-      // Persist locally
-      demo = !!data?.data?.demo;
-      configuredCompetitions = Array.isArray(data?.data?.competitions) ? data.data.competitions : [];
-      predictTabVisible = !!data?.data?.tab_visible;
-      // Refresh lists
-      await loadUpcoming();
-      adminOpen = false;
-    } catch (e) {
-      settingsError = e?.message || String(e);
-    } finally {
-      savingSettings = false;
-    }
-  }
+  // Admin settings removed — no client-side save endpoint
 
   onMount(() => {
     void loadInfo();
@@ -352,9 +293,7 @@
           <span class="demo-badge">Demo Mode</span>
         {/if}
       </div>
-      {#if isPredictAdmin()}
-        <button class="btn btn-secondary btn-sm" on:click={openAdminModal}>Admin Settings</button>
-      {/if}
+      <!-- Admin Settings removed -->
     </div>
   </div>
 
@@ -532,34 +471,7 @@
   {/if}
 </div>
 
-{#if adminOpen}
-  <div class="modal-backdrop" on:click={() => (adminOpen = false)} />
-  <div class="modal">
-    <h3>Predict Settings</h3>
-    <div class="field">
-      <label><input type="checkbox" bind:checked={settingsDemo} /> Demo Mode</label>
-      <div class="help">In demo mode, finished matches may still appear.</div>
-    </div>
-    <div class="field">
-      <label>Competitions (one per line)</label>
-      <textarea rows="6" class="form-input" bind:value={settingsCompetitionsText} placeholder="e.g. 2025casj&#10;2025cada"></textarea>
-      <div class="help">These event codes determine which matches are shown when Demo is off.</div>
-    </div>
-    <div class="field">
-      <label><input type="checkbox" bind:checked={settingsTabVisible} /> Show Predict tab to all users</label>
-      <div class="help">If off, only Spartan Predict Admins can see the Predict tab.</div>
-    </div>
-    {#if settingsError}
-      <div class="error">{settingsError}</div>
-    {/if}
-    <div class="modal-actions">
-      <button class="btn" on:click={() => (adminOpen = false)} disabled={savingSettings}>Cancel</button>
-      <button class="btn btn-yellow" on:click={saveSettings} disabled={savingSettings}>
-        {#if savingSettings} Saving... {:else} Save Settings {/if}
-      </button>
-    </div>
-  </div>
-{/if}
+<!-- Admin modal removed -->
 
 {/if}
 

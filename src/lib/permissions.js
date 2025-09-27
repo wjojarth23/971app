@@ -9,7 +9,7 @@ export const PERMISSIONS = [
   'APPROVE_USERS',
   'CAN_SEE_ROUTES',
   'EDIT_PERMISSIONS',
-  'SPARTAN_PREDICT_ADMIN',
+  // 'SPARTAN_PREDICT_ADMIN' removed — predict admin role is no longer used
   'VIEW_ADMIN_PANEL'
 ];
 

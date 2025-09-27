@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { initAuth, userStore, signOut } from '$lib/stores/auth.js';
   import { predictSettings } from '$lib/stores/predict.js';
+  import notescoutConfig from '$lib/notescout.json';
+  import navConfig from '$lib/navigation.json';
 import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
@@ -61,28 +63,38 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
           <Home size={18} />
           Home
         </a>
-        {#if can('CAN_SEE_ROUTES')}
+          {#if can('CAN_SEE_ROUTES')}
           <a href="/manufacture" class="nav-link" class:active={isActive('/manufacture')}>
             <Hammer size={18} />
             Manufacture
           </a>
+          {#if navConfig?.tabs?.kitting !== false}
           <a href="/kitting" class="nav-link" class:active={isActive('/kitting')}>
             <Package size={18} />
             Kitting
           </a>
+          {/if}
           <a href="/cad" class="nav-link" class:active={isActive('/cad')}>
             <Move3d size={18} />
             CAD
           </a>
+          {#if navConfig?.tabs?.build !== false}
           <a href="/cad/build" class="nav-link" class:active={isActive('/cad/build')}>
             <Wrench size={18} />
             Build
           </a>
+          {/if}
           <a href="/cad/purchasing" class="nav-link" class:active={isActive('/cad/purchasing')}>
             <Receipt size={18} />
             Purchasing
           </a>
-          {#if (false)}
+          {#if notescoutConfig?.event_key}
+            <a href="/notescout" class="nav-link" class:active={isActive('/notescout')}>
+              <Coins size={18} />
+              Note Scouting
+            </a>
+          {/if}
+          {#if predictInfoLoaded && predictTabVisible}
             <a href="/predict" class="nav-link" class:active={isActive('/predict')}>
               <Coins size={18} />
               Predict
