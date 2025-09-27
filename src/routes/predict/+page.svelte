@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { userStore } from '$lib/stores/user.js';
   import { hasPermission } from '$lib/permissions.js';
-  import { sharesForSpend } from '$lib/lmsr.js';
+  import { sharesForSpend, payoutForWinningShares } from '$lib/lmsr.js';
   import { Coins } from 'lucide-svelte';
 
   // Auth/user
@@ -55,7 +55,7 @@
 
   function teamList(keys = []) {
     // keys look like ["frc971","frc254"] -> show numbers only
-    return keys.map((k) => k.replace(/^frc/i, '')).join(', ');
+    return (keys || []).map((k) => String(k).replace(/^frc/i, '')).join(', ');
   }
 
   async function loadInfo() {
@@ -218,15 +218,57 @@
     }
   }
 
+  async function sellBet(betId) {
+    if (!user?.id) return;
+    try {
+      const resp = await fetch('/api/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sell-bet', user_id: user.id, bet_id: betId })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data?.success) {
+        console.warn('Sell failed', data?.error);
+        return;
+      }
+      // Refresh UI pieces
+      await ensureBalance();
+      await loadPortfolio();
+      if (market?.id === data?.data?.market?.id) {
+        market = data.data.market;
+        await loadTicks();
+      }
+    } catch (e) {
+      console.error('sellBet exception', e);
+    }
+  }
+
   // Admin settings removed — no client-side save endpoint
 
   onMount(() => {
     void loadInfo();
     void ensureBalance();
-    void loadUpcoming();
+    // Try to settle any finished matches on server before loading markets
+    void settleFinishedThenLoad();
     void loadPortfolio();
     return () => { unsub?.(); };
   });
+
+  async function settleFinishedThenLoad() {
+    try {
+      // best-effort: backfill winners for already-settled markets, then try settling open ones
+      await fetch('/api/predict?action=backfill-winners');
+      await fetch('/api/predict?action=settle-finished');
+      // ignore response details; proceed to refresh upcoming list and selected market/portfolio
+      await loadUpcoming();
+      if (market?.id) await openMarketForMatch(selectedMatch || { match_key: market.match_key });
+      await ensureBalance();
+      await loadPortfolio();
+    } catch (e) {
+      // ignore errors; still load upcoming so UI remains functional
+      await loadUpcoming();
+    }
+  }
 
   // -------- Price chart helpers (simple inline SVG) ----------
   const CHART_W = 360;
@@ -270,7 +312,7 @@
 
 {#if !loadedInfo}
   <div class="predict-page"><div class="empty">Loading Predict...</div></div>
-{:else if predictTabVisible || isPredictAdmin()}
+{:else if predictTabVisible}
 <div class="predict-page">
   <div class="header">
     <div class="title">
@@ -320,7 +362,7 @@
         {:else}
           <div class="match-list">
             {#each upcoming as m}
-              <div class="match-item" class:selected={selectedMatch?.match_key === m.match_key} on:click={() => openMarketForMatch(m)}>
+              <button type="button" class="match-item" class:selected={selectedMatch?.match_key === m.match_key} on:click={() => openMarketForMatch(m)}>
                 <div class="line">
                   <div class="code">{m.match_key}</div>
                   <div class="time">
@@ -345,7 +387,7 @@
                     <span class="odds">{formatProb(m.initial_odds?.blue)}</span>
                   </div>
                 </div>
-              </div>
+              </button>
             {/each}
           </div>
         {/if}
@@ -449,6 +491,8 @@
                 <th>Shares</th>
                 <th>Market Status</th>
                 <th>Winner</th>
+                <th>Result</th>
+                <th>Payout ($)</th>
               </tr>
             </thead>
             <tbody>
@@ -459,8 +503,28 @@
                   <td style="color: {row.bet.outcome === 'red' ? '#a00' : '#005'}">{row.bet.outcome}</td>
                   <td>${Number(row.bet.amount || 0).toFixed(2)}</td>
                   <td>{Number(row.bet.shares || 0).toFixed(4)}</td>
-                  <td>{row.market?.status || '-'}</td>
-                  <td>{row.market?.winning_outcome || '-'}</td>
+                      <td>{row.market?.status || '-'}</td>
+                      <td>{row.market?.winning_outcome || '-'}</td>
+                      <td>
+                        {#if row.market?.status === 'settled'}
+                          {#if row.market?.winning_outcome === row.bet.outcome}
+                            Won
+                          {:else}
+                            Lost
+                          {/if}
+                        {:else if row.market?.status === 'open'}
+                          <button class="btn btn-small" on:click={() => sellBet(row.bet.id)}>Sell</button>
+                        {:else}
+                          -
+                        {/if}
+                      </td>
+                      <td>
+                        {#if row.market?.status === 'settled' && row.market?.winning_outcome === row.bet.outcome}
+                          ${payoutForWinningShares(Number(row.bet.shares || 0), 0.01).toFixed(2)}
+                        {:else}
+                          -
+                        {/if}
+                      </td>
                 </tr>
               {/each}
             </tbody>
@@ -508,8 +572,7 @@
   .btn { height: 36px; padding: 0 0.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--background); cursor: pointer; }
   .btn-yellow { background: #FFD700; color: #333; border-color: #e5c100; }
   .btn-yellow:disabled { opacity: 0.6; cursor: not-allowed; }
-  .btn-sm { height: 30px; font-size: 0.85rem; }
-  .btn-secondary { background: var(--primary); color: var(--text); }
+  /* .btn-sm and .btn-secondary were removed (unused) */
   .note { font-size: 0.85rem; color: var(--secondary); margin-bottom: 0.5rem; }
 
   .content { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
@@ -564,18 +627,5 @@
   .table th, .table td { padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: left; }
 
   /* Modal */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.25);
-  }
-  .modal {
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: min(640px, 92vw); background: #fff; border: 1px solid var(--border); border-radius: 10px;
-    padding: 1rem;
-  }
-  .modal h3 { margin: 0 0 0.75rem; }
-  .modal .field { margin-bottom: 0.75rem; }
-  .modal .field label { font-weight: 600; display: block; margin-bottom: 0.25rem; }
-  .modal .field .help { color: var(--secondary); font-size: 0.85rem; }
-  .modal textarea.form-input { height: auto; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem; }
+  /* modal styles removed (admin modal no longer used) */
 </style>

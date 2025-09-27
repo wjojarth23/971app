@@ -5,6 +5,7 @@ import { TBA_API_KEY, CEMO } from '$env/static/private';
 
 // Helpers
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
+const STATBOTICS_BASE = 'https://api.statbotics.io/v3';
 
 function tbaHeaders() {
   if (!TBA_API_KEY) return {};
@@ -13,6 +14,17 @@ function tbaHeaders() {
 
 function clamp01(x) {
   return Math.min(0.99, Math.max(0.01, x));
+}
+
+// Fetch a single match from Statbotics (no auth required). Returns parsed JSON or null.
+async function fetchStatboticsMatch(match_key) {
+  try {
+    const resp = await fetch(`${STATBOTICS_BASE}/match/${match_key}`, { headers: { accept: 'application/json' } });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
 }
 
 // For 2-outcome LMSR, to initialize with target p_red, set q_blue=0 and q_red=b*ln(p/(1-p))
@@ -148,6 +160,7 @@ function serializeMarket(m) {
     q_red: Number(m.q_red),
     q_blue: Number(m.q_blue),
     status: m.status,
+    winning_outcome: m.winning_outcome || null,
     start_time: m.start_time,
     prices: marketPrices(m)
   };
@@ -179,6 +192,7 @@ export async function GET({ url }) {
     }
 
     if (action === 'upcoming') {
+      const source = url.searchParams.get('source'); // optional: 'statbotics'
       const singleEventKey = url.searchParams.get('event_key'); // optional per-event fallback
       const settings = await getPredictSettings();
 
@@ -215,23 +229,90 @@ export async function GET({ url }) {
         if (!(await demoMode())) {
           list = matches.filter((m) => !m.actual_time || (m.time || 0) > now);
         }
+  // Default to Statbotics for all events unless client explicitly requests TBA via source=tba
+  const upcoming = [];
+        // Build upcoming list. Prefer an existing Supabase market's prices; otherwise prefer Statbotics
+        for (const m of list) {
+          // Default values
+          let redP = 0.5;
+          let blueP = 0.5;
+          let redTeams = m.alliances?.red?.team_keys || [];
+          let blueTeams = m.alliances?.blue?.team_keys || [];
+          let timeVal = m.predicted_time || m.time || null;
 
-        const upcoming = list.map((m) => {
-          const p = preds?.[m.key];
-          const redP = p?.redWinProb ?? 0.5;
-          const blueP = p?.blueWinProb ?? 0.5;
-          return {
+          // If a supabase market already exists for this match, use its current prices and team keys
+          try {
+            const marketRow = await getMarketByMatchKey(m.key);
+            if (marketRow) {
+              const prices = marketPrices(marketRow);
+              redP = clamp01(prices.red);
+              blueP = clamp01(prices.blue);
+              if (Array.isArray(marketRow.red_team_keys) && marketRow.red_team_keys.length) redTeams = marketRow.red_team_keys;
+              if (Array.isArray(marketRow.blue_team_keys) && marketRow.blue_team_keys.length) blueTeams = marketRow.blue_team_keys;
+              // prefer market start_time if present
+              if (marketRow.start_time) timeVal = marketRow.start_time;
+            } else {
+              // No market exists: use Statbotics (default) or TBA predictions per existing logic
+              const useStatbotics = source === 'tba' ? false : true;
+              if (useStatbotics) {
+                try {
+                  const sb = await fetchStatboticsMatch(m.key);
+                  if (sb) {
+                    if (sb.pred?.red_win_prob != null) {
+                      redP = clamp01(Number(sb.pred.red_win_prob));
+                      blueP = clamp01(1 - Number(sb.pred.red_win_prob));
+                    } else if (typeof sb.pred?.red === 'number') {
+                      redP = clamp01(Number(sb.pred.red));
+                      blueP = clamp01(1 - Number(sb.pred.red));
+                    }
+                    if (Array.isArray(sb.alliances?.red?.team_keys)) redTeams = sb.alliances.red.team_keys;
+                    if (Array.isArray(sb.alliances?.blue?.team_keys)) blueTeams = sb.alliances.blue.team_keys;
+                    if (sb.predicted_time) timeVal = sb.predicted_time;
+                  } else {
+                    // Fallback to TBA predictions if statbotics didn't return useful data
+                    const p = preds?.[m.key];
+                    if (p) {
+                      redP = p?.redWinProb ?? redP;
+                      blueP = p?.blueWinProb ?? blueP;
+                    }
+                  }
+                } catch {
+                  // On error, fallback to TBA predictions if available
+                  const p = preds?.[m.key];
+                  if (p) {
+                    redP = p?.redWinProb ?? redP;
+                    blueP = p?.blueWinProb ?? blueP;
+                  }
+                }
+              } else {
+                const p = preds?.[m.key];
+                if (p) {
+                  redP = p?.redWinProb ?? redP;
+                  blueP = p?.blueWinProb ?? blueP;
+                }
+              }
+            }
+          } catch {
+            // If anything goes wrong querying supabase or statbotics, best-effort fallback to TBA preds
+            const p = preds?.[m.key];
+            if (p) {
+              redP = p?.redWinProb ?? redP;
+              blueP = p?.blueWinProb ?? blueP;
+            }
+          }
+
+          upcoming.push({
             match_key: m.key,
             comp_level: m.comp_level,
             set_number: m.set_number,
             match_number: m.match_number,
             time: m.time || null,
-            predicted_time: m.predicted_time || null,
-            red_team_keys: m.alliances?.red?.team_keys || [],
-            blue_team_keys: m.alliances?.blue?.team_keys || [],
+            predicted_time: timeVal,
+            red_team_keys: redTeams,
+            blue_team_keys: blueTeams,
             initial_odds: { red: clamp01(redP), blue: clamp01(blueP) }
-          };
-        });
+          });
+        }
 
         allMatches.push(...upcoming);
       }
@@ -252,6 +333,7 @@ export async function GET({ url }) {
     if (action === 'market') {
       const match_key = url.searchParams.get('match_key');
       const event_key = url.searchParams.get('event_key'); // optional
+  const source = url.searchParams.get('source'); // 'statbotics' to prefer statbotics
       const initRedProbParam = url.searchParams.get('init_red_prob');
       const initRedProb = initRedProbParam ? Number(initRedProbParam) : undefined;
       if (!match_key) {
@@ -278,8 +360,29 @@ export async function GET({ url }) {
           }
         }
 
+        // Prefer Statbotics for initial odds and team keys when requested
         let initProb = initRedProb ?? 0.5;
-        if (TBA_API_KEY && !initRedProb) {
+        // Default to Statbotics unless caller explicitly asks for TBA via source=tba
+        const useStatbotics = source === 'tba' ? false : true;
+        if (useStatbotics) {
+          try {
+            const sb = await fetchStatboticsMatch(match_key);
+            if (sb) {
+              // sb.pred (if present) contains red_win_prob / blue_win_prob
+              if (sb.pred?.red_win_prob != null) initProb = clamp01(Number(sb.pred.red_win_prob));
+              else if (typeof sb.pred?.red === 'number') initProb = clamp01(Number(sb.pred.red));
+              // team keys may be numeric in statbotics response
+              if (Array.isArray(sb.alliances?.red?.team_keys)) red_team_keys = sb.alliances.red.team_keys;
+              if (Array.isArray(sb.alliances?.blue?.team_keys)) blue_team_keys = sb.alliances.blue.team_keys;
+              if (sb.predicted_time) start_time = sb.predicted_time;
+            }
+          } catch {
+            // ignore
+            // On error, try falling back to TBA predictions if available below
+          }
+        }
+        // Fallback to TBA predictions if statbotics didn't yield and caller asked for TBA or TBA is available
+        if ((initRedProb == null || !initRedProb) && TBA_API_KEY) {
           try {
             const ek = event_key || match_key.split('_')[0]; // e.g., 2025casj_qm1 -> 2025casj
             const preds = await fetchEventPredictions(ek);
@@ -324,6 +427,98 @@ export async function GET({ url }) {
       const { data, error } = await query.order('updated_at', { ascending: false }).limit(200);
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data: (data || []).map(serializeMarket) });
+    }
+
+    // Attempt to settle any open markets whose match result is available from TBA
+    if (action === 'settle-finished') {
+      // If no TBA key, we cannot resolve winners automatically
+      if (!TBA_API_KEY) {
+        return json({ success: true, note: 'Missing TBA key; nothing settled', data: [] });
+      }
+
+      const { data: openMarkets, error: mErr } = await supabase.from('betting_markets').select('*').eq('status', 'open').limit(500);
+      if (mErr) return json({ error: mErr.message }, { status: 500 });
+
+      const settled = [];
+      for (const market of openMarkets || []) {
+        try {
+          const resp = await fetch(`${TBA_BASE}/match/${market.match_key}`, { headers: tbaHeaders() });
+          if (!resp.ok) continue;
+          const m = await resp.json();
+          const res = m?.winning_alliance; // 'red' | 'blue' | ''
+          if (res !== 'red' && res !== 'blue') continue;
+
+          // Fetch bets for this market
+          const { data: bets, error: betsErr } = await supabase.from('betting_bets').select('*').eq('market_id', market.id);
+          if (betsErr) throw new Error(betsErr.message);
+
+          // Compute payouts
+          const payouts = new Map();
+          for (const bet of bets) {
+            if (bet.outcome === res) {
+              const amt = payoutForWinningShares(Number(bet.shares), 0.01);
+              payouts.set(bet.user_id, Number(payouts.get(bet.user_id) || 0) + amt);
+            }
+          }
+
+          // Apply payouts
+          for (const [user_id, amt] of payouts.entries()) {
+            await getOrCreateBalance(user_id);
+            const { data: balRow, error: getErr } = await supabase.from('user_balances').select('balance').eq('user_id', user_id).single();
+            if (getErr) throw new Error(getErr.message);
+            const { error: updErr } = await supabase.from('user_balances').update({ balance: Number(balRow.balance) + amt }).eq('user_id', user_id);
+            if (updErr) throw new Error(updErr.message);
+          }
+
+          // Close market
+          const { error: closeErr } = await supabase
+            .from('betting_markets')
+            .update({ status: 'settled', winning_outcome: res, updated_at: new Date().toISOString() })
+            .eq('id', market.id);
+          if (closeErr) throw new Error(closeErr.message);
+
+          settled.push({ market_id: market.id, match_key: market.match_key, winning_outcome: res, payouts: Object.fromEntries(payouts) });
+        } catch {
+          // Best-effort: continue to next market on any error
+          continue;
+        }
+      }
+
+      return json({ success: true, data: settled });
+    }
+
+    // Backfill winning_outcome for markets that were marked 'settled' but lack a winner
+    if (action === 'backfill-winners') {
+      if (!TBA_API_KEY) {
+        return json({ success: true, note: 'Missing TBA key; nothing backfilled', data: [] });
+      }
+
+      const { data: mkts, error: mkErr } = await supabase
+        .from('betting_markets')
+        .select('*')
+        .eq('status', 'settled')
+        .is('winning_outcome', null)
+        .limit(500);
+      if (mkErr) return json({ error: mkErr.message }, { status: 500 });
+
+      const backfilled = [];
+      for (const m of mkts || []) {
+        try {
+          const resp = await fetch(`${TBA_BASE}/match/${m.match_key}`, { headers: tbaHeaders() });
+          if (!resp.ok) continue;
+          const mm = await resp.json();
+          const res = mm?.winning_alliance; // 'red' | 'blue' | ''
+          if (res !== 'red' && res !== 'blue') continue;
+
+          const { error: updErr } = await supabase.from('betting_markets').update({ winning_outcome: res, updated_at: new Date().toISOString() }).eq('id', m.id);
+          if (updErr) continue;
+          backfilled.push({ market_id: m.id, match_key: m.match_key, winning_outcome: res });
+        } catch {
+          continue;
+        }
+      }
+
+      return json({ success: true, data: backfilled });
     }
 
     if (action === 'user-bets') {
@@ -518,6 +713,59 @@ export async function POST({ request }) {
       if (closeErr) throw new Error(closeErr.message);
 
       return json({ success: true, data: { market_id: market.id, winning_outcome: winner, payouts: Object.fromEntries(payouts) } });
+    }
+
+    if (action === 'sell-bet') {
+      const { user_id, bet_id } = body || {};
+      if (!user_id) return json({ error: 'user_id is required' }, { status: 400 });
+      if (!bet_id) return json({ error: 'bet_id is required' }, { status: 400 });
+
+      // Load bet
+      const { data: bet, error: betErr } = await supabase.from('betting_bets').select('*').eq('id', bet_id).maybeSingle();
+      if (betErr) throw new Error(betErr.message);
+      if (!bet) return json({ error: 'Bet not found' }, { status: 404 });
+      if (bet.user_id !== user_id) return json({ error: 'Not your bet' }, { status: 403 });
+
+      // Load market
+      const { data: market, error: mErr } = await supabase.from('betting_markets').select('*').eq('id', bet.market_id).maybeSingle();
+      if (mErr) throw new Error(mErr.message);
+      if (!market) return json({ error: 'Market not found' }, { status: 404 });
+      if (market.status !== 'open') return json({ error: 'Market is not open; cannot sell' }, { status: 400 });
+
+      // Compute current price for the bet's outcome
+      const b = Number(market.b || 50);
+      const q = { red: Number(market.q_red || 0), blue: Number(market.q_blue || 0) };
+      const prices = lmsrPrices(q, b);
+      const price = prices[bet.outcome];
+
+      // Refund amount = shares * price (note: winning share pays ~1; price is current probability)
+      const refund = Number(bet.shares) * Number(price);
+
+      // Update user balance (credit refund)
+      await getOrCreateBalance(user_id);
+      const { data: balRow, error: getErr } = await supabase.from('user_balances').select('balance').eq('user_id', user_id).single();
+      if (getErr) throw new Error(getErr.message);
+      const { error: updBalErr } = await supabase.from('user_balances').update({ balance: Number(balRow.balance) + refund }).eq('user_id', user_id);
+      if (updBalErr) throw new Error(updBalErr.message);
+
+      // Remove bet and adjust market q by subtracting the shares bought
+      const { error: delErr } = await supabase.from('betting_bets').delete().eq('id', bet_id);
+      if (delErr) throw new Error(delErr.message);
+
+      const qNext = { ...q, [bet.outcome]: q[bet.outcome] - Number(bet.shares) };
+      const { error: updMErr, data: updatedMarketRows } = await supabase.from('betting_markets').update({ q_red: qNext.red, q_blue: qNext.blue, updated_at: new Date().toISOString() }).eq('id', market.id).select('*');
+      if (updMErr) throw new Error(updMErr.message);
+      const updatedMarket = (updatedMarketRows || [])[0] || { ...market, q_red: qNext.red, q_blue: qNext.blue };
+
+      // Snapshot tick
+      await insertMarketTick(updatedMarket);
+
+      return json({ success: true, data: { refunded: refund, market: serializeMarket(updatedMarket) } });
+    }
+
+    if (action === 'sell-bet') {
+      // Not a GET in normal flow but keep symmetric for safety
+      return json({ error: 'sell-bet requires POST' }, { status: 400 });
     }
 
     // 'save-settings' action removed — predictive settings are no longer editable via this endpoint
