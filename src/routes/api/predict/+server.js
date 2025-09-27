@@ -738,10 +738,12 @@ export async function POST({ request }) {
       const prices = lmsrPrices(q, b);
       const price = prices[bet.outcome];
 
-      // Refund amount = shares * price (note: winning share pays ~1; price is current probability)
-      const refund = Number(bet.shares) * Number(price);
+  // Refund amount = shares * price (note: winning share pays ~1; price is current probability)
+  // Apply 75% return on sell (user receives 75% of current value)
+  const grossRefund = Number(bet.shares) * Number(price);
+  const refund = grossRefund * 0.75;
 
-      // Update user balance (credit refund)
+  // Update user balance (credit refund)
       await getOrCreateBalance(user_id);
       const { data: balRow, error: getErr } = await supabase.from('user_balances').select('balance').eq('user_id', user_id).single();
       if (getErr) throw new Error(getErr.message);
@@ -760,7 +762,7 @@ export async function POST({ request }) {
       // Snapshot tick
       await insertMarketTick(updatedMarket);
 
-      return json({ success: true, data: { refunded: refund, market: serializeMarket(updatedMarket) } });
+  return json({ success: true, data: { refunded: refund, gross_refund: grossRefund, market: serializeMarket(updatedMarket) } });
     }
 
     if (action === 'sell-bet') {
