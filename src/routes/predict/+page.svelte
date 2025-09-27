@@ -218,29 +218,10 @@
     }
   }
 
+   // Selling has been disabled application-wide. Keep function present but make it a no-op
   async function sellBet(betId) {
-    if (!user?.id) return;
-    try {
-      const resp = await fetch('/api/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'sell-bet', user_id: user.id, bet_id: betId })
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data?.success) {
-        console.warn('Sell failed', data?.error);
-        return;
-      }
-      // Refresh UI pieces
-      await ensureBalance();
-      await loadPortfolio();
-      if (market?.id === data?.data?.market?.id) {
-        market = data.data.market;
-        await loadTicks();
-      }
-    } catch (e) {
-      console.error('sellBet exception', e);
-    }
+    console.warn('Selling is disabled; sellBet was called for bet id:', betId);
+    return;
   }
 
   // Admin settings removed — no client-side save endpoint
@@ -513,7 +494,8 @@
                             Lost
                           {/if}
                         {:else if row.market?.status === 'open'}
-                          <button class="btn btn-small" on:click={() => sellBet(row.bet.id)}>Sell</button>
+                          <!-- Selling disabled: show disabled Sell button -->
+                          <button class="btn btn-small" disabled title="Selling has been disabled">Sell (disabled)</button>
                         {:else}
                           -
                         {/if}

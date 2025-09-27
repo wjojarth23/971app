@@ -716,58 +716,13 @@ export async function POST({ request }) {
     }
 
     if (action === 'sell-bet') {
-      const { user_id, bet_id } = body || {};
-      if (!user_id) return json({ error: 'user_id is required' }, { status: 400 });
-      if (!bet_id) return json({ error: 'bet_id is required' }, { status: 400 });
-
-      // Load bet
-      const { data: bet, error: betErr } = await supabase.from('betting_bets').select('*').eq('id', bet_id).maybeSingle();
-      if (betErr) throw new Error(betErr.message);
-      if (!bet) return json({ error: 'Bet not found' }, { status: 404 });
-      if (bet.user_id !== user_id) return json({ error: 'Not your bet' }, { status: 403 });
-
-      // Load market
-      const { data: market, error: mErr } = await supabase.from('betting_markets').select('*').eq('id', bet.market_id).maybeSingle();
-      if (mErr) throw new Error(mErr.message);
-      if (!market) return json({ error: 'Market not found' }, { status: 404 });
-      if (market.status !== 'open') return json({ error: 'Market is not open; cannot sell' }, { status: 400 });
-
-      // Compute current price for the bet's outcome
-      const b = Number(market.b || 50);
-      const q = { red: Number(market.q_red || 0), blue: Number(market.q_blue || 0) };
-      const prices = lmsrPrices(q, b);
-      const price = prices[bet.outcome];
-
-  // Refund amount = shares * price (note: winning share pays ~1; price is current probability)
-  // Apply 75% return on sell (user receives 75% of current value)
-  const grossRefund = Number(bet.shares) * Number(price);
-  const refund = grossRefund * 0.75;
-
-  // Update user balance (credit refund)
-      await getOrCreateBalance(user_id);
-      const { data: balRow, error: getErr } = await supabase.from('user_balances').select('balance').eq('user_id', user_id).single();
-      if (getErr) throw new Error(getErr.message);
-      const { error: updBalErr } = await supabase.from('user_balances').update({ balance: Number(balRow.balance) + refund }).eq('user_id', user_id);
-      if (updBalErr) throw new Error(updBalErr.message);
-
-      // Remove bet and adjust market q by subtracting the shares bought
-      const { error: delErr } = await supabase.from('betting_bets').delete().eq('id', bet_id);
-      if (delErr) throw new Error(delErr.message);
-
-      const qNext = { ...q, [bet.outcome]: q[bet.outcome] - Number(bet.shares) };
-      const { error: updMErr, data: updatedMarketRows } = await supabase.from('betting_markets').update({ q_red: qNext.red, q_blue: qNext.blue, updated_at: new Date().toISOString() }).eq('id', market.id).select('*');
-      if (updMErr) throw new Error(updMErr.message);
-      const updatedMarket = (updatedMarketRows || [])[0] || { ...market, q_red: qNext.red, q_blue: qNext.blue };
-
-      // Snapshot tick
-      await insertMarketTick(updatedMarket);
-
-  return json({ success: true, data: { refunded: refund, gross_refund: grossRefund, market: serializeMarket(updatedMarket) } });
+      // Selling has been disabled application-wide.
+      return json({ error: 'Selling disabled' }, { status: 403 });
     }
 
     if (action === 'sell-bet') {
-      // Not a GET in normal flow but keep symmetric for safety
-      return json({ error: 'sell-bet requires POST' }, { status: 400 });
+      // Selling is disabled; respond consistently for any method
+      return json({ error: 'Selling disabled' }, { status: 403 });
     }
 
     // 'save-settings' action removed — predictive settings are no longer editable via this endpoint
