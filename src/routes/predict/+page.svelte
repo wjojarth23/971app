@@ -84,6 +84,37 @@
       }
       apiNote = data?.note || '';
       upcoming = Array.isArray(data?.data) ? data.data : [];
+
+      // Try to fetch current market for each upcoming match in background so
+      // the match-list boxes can show the live market prices instead of
+      // initial_odds. This is best-effort and will silently ignore failures.
+      if (upcoming.length) {
+        // Fire parallel requests but don't block the UI; update when done.
+        void (async () => {
+          const keys = upcoming.map((m) => m.match_key).filter(Boolean);
+          const promises = keys.map(async (match_key) => {
+            try {
+              const url = new URL('/api/predict', window.location.origin);
+              url.searchParams.set('action', 'market');
+              url.searchParams.set('match_key', match_key);
+              const r = await fetch(url);
+              const d = await r.json();
+              if (r.ok && d?.data) {
+                const idx = upcoming.findIndex((x) => x.match_key === match_key);
+                if (idx >= 0) {
+                  // attach market payload (including market.prices)
+                  upcoming[idx] = { ...upcoming[idx], market: d.data };
+                  // force Svelte reactivity by replacing the array
+                  upcoming = [...upcoming];
+                }
+              }
+            } catch (e) {
+              // ignore individual market fetch errors
+            }
+          });
+          await Promise.allSettled(promises);
+        })();
+      }
     } catch (e) {
       apiNote = 'Failed to fetch matches';
       console.error(e);
@@ -199,6 +230,19 @@
     } finally {
       placing = false;
     }
+  }
+
+  // Determine whether a market is tradable (can buy/sell): must be open and match start_time in future
+  function isMarketTradable(m) {
+    if (!m) return false;
+    if (m.status !== 'open') return false;
+    // prefer explicit start_time on market, else undefined
+    const start = m.start_time ?? null;
+    if (!start) return true; // unknown start time -> allow (server will enforce in edge cases)
+    const startNum = Number(start);
+    if (Number.isNaN(startNum)) return true;
+    const nowSec = Math.floor(Date.now() / 1000);
+    return startNum > nowSec;
   }
 
   async function loadPortfolio() {
@@ -394,12 +438,24 @@
                   <div class="red">
                     <span class="label">Red:</span>
                     <span class="teams">{teamList(m.red_team_keys)}</span>
-                    <span class="odds">{formatProb(m.initial_odds?.red)}</span>
+                    <span class="odds">
+                      {#if m.market?.prices?.red != null}
+                        {formatProb(m.market.prices.red)}
+                      {:else}
+                        {formatProb(m.initial_odds?.red)}
+                      {/if}
+                    </span>
                   </div>
                   <div class="blue">
                     <span class="label">Blue:</span>
                     <span class="teams">{teamList(m.blue_team_keys)}</span>
-                    <span class="odds">{formatProb(m.initial_odds?.blue)}</span>
+                    <span class="odds">
+                      {#if m.market?.prices?.blue != null}
+                        {formatProb(m.market.prices.blue)}
+                      {:else}
+                        {formatProb(m.initial_odds?.blue)}
+                      {/if}
+                    </span>
                   </div>
                 </div>
               </button>
@@ -478,7 +534,7 @@
                 <div class="error">{placeError}</div>
               {/if}
               <div class="actions">
-                <button class="btn btn-primary" on:click={placeBet} disabled={placing || !user || !market || !(amount > 0)}>
+                <button class="btn btn-primary" on:click={placeBet} disabled={placing || !user || !market || !(amount > 0) || !isMarketTradable(market)}>
                   {#if placing} Placing… {:else} Place Bet {/if}
                 </button>
               </div>
@@ -532,15 +588,19 @@
                             Lost
                           {/if}
                         {:else if row.market?.status === 'open'}
-                          <button
-                            class="btn btn-sm btn-secondary"
-                            type="button"
-                            on:click={() => sellBet(row.bet.id)}
-                            disabled={!!sellingStatus[row.bet.id]}
-                            title="Sell this position back to the market"
-                          >
-                            {sellingStatus[row.bet.id] ? 'Selling…' : 'Sell'}
-                          </button>
+                          {#if isMarketTradable(row.market)}
+                            <button
+                              class="btn btn-sm btn-secondary"
+                              type="button"
+                              on:click={() => sellBet(row.bet.id)}
+                              disabled={!!sellingStatus[row.bet.id]}
+                              title="Sell this position back to the market"
+                            >
+                              {sellingStatus[row.bet.id] ? 'Selling…' : 'Sell'}
+                            </button>
+                          {:else}
+                            <button class="btn btn-sm btn-secondary" type="button" disabled title="Match started - selling disabled">Sell</button>
+                          {/if}
                         {:else}
                           -
                         {/if}

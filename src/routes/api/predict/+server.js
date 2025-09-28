@@ -62,6 +62,81 @@ function clamp01(x) {
   return Math.min(0.99, Math.max(0.01, x));
 }
 
+// Determine whether a match has started or finished by consulting multiple sources.
+// Returns { started: boolean, finished: boolean }
+async function detectMatchProgress(match_key, marketRowLike) {
+  try {
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // 1) Prefer explicit market start_time if available
+    const startTimeVal = marketRowLike?.start_time ?? null;
+    if (startTimeVal != null) {
+      const sNum = Number(startTimeVal);
+      if (!Number.isNaN(sNum) && sNum <= nowSec) {
+        // If start_time is in the past or now, consider started. We cannot
+        // reliably say finished from this alone.
+        return { started: true, finished: false };
+      }
+    }
+
+    // 2) Statbotics probe (best-effort)
+    try {
+      const sb = await fetchStatboticsMatch(match_key);
+      if (sb) {
+        // Many shapes: check for explicit indicators first
+        if (sb.actual_time || sb.winning_alliance || sb.winner) return { started: true, finished: true };
+        // status-like fields
+        const status = sb.status || sb.match_status || sb.state || null;
+        if (typeof status === 'string' && /in[-_ ]?progress|started|running/i.test(status)) return { started: true, finished: false };
+        const tm = sb.predicted_time ?? sb.time ?? sb.actual_time ?? null;
+        if (tm != null) {
+          const tnum = Number(tm);
+          if (!Number.isNaN(tnum) && tnum <= nowSec) return { started: true, finished: !!sb.actual_time || !!sb.winning_alliance };
+        }
+      }
+    } catch {
+      // ignore statbotics errors
+    }
+
+    // 3) TBA simple cached endpoint
+    try {
+      const mi = await fetchMatchSimpleCached(match_key, marketRowLike?.event_key || eventKeyFromMatchKey(match_key));
+      if (mi) {
+        if (mi.actual_time || mi.winning_alliance) return { started: true, finished: true };
+        const tm = mi.predicted_time ?? mi.time ?? mi.actual_time ?? null;
+        if (tm != null) {
+          const tnum = Number(tm);
+          if (!Number.isNaN(tnum) && tnum <= nowSec) return { started: true, finished: !!mi.actual_time || !!mi.winning_alliance };
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 4) TBA detailed when available (slower but may include actual_time/winner)
+    if (TBA_API_KEY) {
+      try {
+        const md = await fetchMatchDetailedCached(match_key);
+        if (md) {
+          if (md.actual_time || md.winning_alliance) return { started: true, finished: true };
+          const tm = md.predicted_time ?? md.time ?? md.actual_time ?? null;
+          if (tm != null) {
+            const tnum = Number(tm);
+            if (!Number.isNaN(tnum) && tnum <= nowSec) return { started: true, finished: !!md.actual_time || !!md.winning_alliance };
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return { started: false, finished: false };
+  } catch {
+    // On unexpected errors, fall back to not blocking (best-effort)
+    return { started: false, finished: false };
+  }
+}
+
 // Fetch a single match from Statbotics (no auth required). Returns parsed JSON or null.
 async function fetchStatboticsMatch(match_key) {
   try {
@@ -767,35 +842,12 @@ export async function POST({ request }) {
 
       // Prevent placing bets on matches that have already begun or finished.
       try {
-        const nowSec = Math.floor(Date.now() / 1000);
-        // Prefer market.start_time if present; otherwise try TBA cached/simple match info
-        let startTime = market.start_time ?? null;
-        if (!startTime && market.match_key) {
-          const mi = await fetchMatchSimpleCached(market.match_key, market.event_key || eventKeyFromMatchKey(market.match_key));
-          if (mi) {
-            // TBA returns times as seconds since epoch in many endpoints
-            startTime = mi.predicted_time ?? mi.time ?? mi.actual_time ?? null;
-          }
-        }
-
-        const startNum = startTime == null ? null : Number(startTime);
-        if (startNum && !Number.isNaN(startNum) && startNum <= nowSec) {
+        const progress = await detectMatchProgress(market.match_key || (match_key ?? ''), market);
+        if (progress.started || progress.finished) {
           return json({ error: 'Cannot place bet: match has already started or is in progress' }, { status: 400 });
         }
-
-        // As an extra check, if we have no start time but detailed match info indicates actual_time or a winner, block.
-        if (!startNum && market.match_key && TBA_API_KEY) {
-          try {
-            const md = await fetchMatchDetailedCached(market.match_key);
-            if (md && (md.actual_time || md.winning_alliance)) {
-              return json({ error: 'Cannot place bet: match has already started or finished' }, { status: 400 });
-            }
-          } catch {
-            // ignore TBA errors and fall through; don't block on fetch failures
-          }
-        }
       } catch {
-        // best-effort: if any internal checks fail, allow operation to continue (do not block due to check failure)
+        // best-effort: if detection fails, allow operation to continue
       }
 
       // Balance check
@@ -925,6 +977,16 @@ export async function POST({ request }) {
       if (mErr) throw new Error(mErr.message);
       if (!market) return json({ error: 'Market not found' }, { status: 404 });
       if (market.status !== 'open') return json({ error: 'Market is not open; cannot sell' }, { status: 400 });
+
+      // Prevent selling bets on matches that have already begun or finished.
+      try {
+        const progress = await detectMatchProgress(market.match_key || '', market);
+        if (progress.started || progress.finished) {
+          return json({ error: 'Cannot sell bet: match has already started or is in progress' }, { status: 400 });
+        }
+      } catch {
+        // best-effort: if detection fails, allow operation to continue
+      }
 
       // Delete bet row atomically (returns deleted row). Prevents double-selling dupes.
       const { data: deletedBetRows, error: delErr } = await supabase
