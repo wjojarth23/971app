@@ -951,12 +951,12 @@ export async function POST({ request }) {
   // Calculate fair LMSR refund (gross) then cap it to the original amount paid for this bet
   // to avoid simple round-trip arbitrage where other trades temporarily push the
   // marginal cost up and allow a sell to return more than the user originally paid.
-  // Keep the existing 75% multiplier as a fee/penalty.
+  // No sell fee: refund the full capped gross amount.
   const grossRefundUncapped = Math.max(0, lmsrCost(qCurrent, b) - lmsrCost(qAfter, b));
   const originalPaid = Number(soldBet.amount || 0);
   // Cap gross refund to at most the original amount the user paid for the bet.
   const grossRefund = Math.min(grossRefundUncapped, originalPaid);
-  const refund = grossRefund * 0.75;
+  const refund = grossRefund;
 
       // Credit user balance
       await getOrCreateBalance(user_id);

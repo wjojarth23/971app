@@ -324,49 +324,54 @@
   <div class="predict-page"><div class="empty">Loading Predict...</div></div>
 {:else if predictTabVisible}
 <div class="predict-page">
-  <div class="header">
-    <div class="title">
-      <Coins size={22} />
-      <h1>Predict</h1>
+  <!-- Page header consistent with other tabs -->
+  <div class="page-header card">
+    <div class="header-left">
+      <div style="display:flex; align-items:center; gap:0.5rem">
+        <Coins size={22} />
+        <h2 style="margin:0">Predict</h2>
+      </div>
       {#if configuredCompetitions.length}
-        <span class="competitions">Events: {configuredCompetitions.join(', ')}</span>
+        <div class="form-label" style="margin-top:0.25rem">Events: {configuredCompetitions.join(', ')}</div>
       {/if}
     </div>
-    <div class="right-side">
-      <div class="balance">
+    <div class="page-actions">
+      <div class="balance-chip">
         {#if loadingBalance}
-          <span>Loading balance...</span>
+          <span>Loading balance…</span>
         {:else if balance != null}
           <span>Balance: ${balance.toFixed(2)}</span>
         {:else}
           <span>Sign in to see balance</span>
         {/if}
         {#if demo}
-          <span class="demo-badge">Demo Mode</span>
+          <span class="demo-badge">Demo</span>
         {/if}
       </div>
-      <!-- Admin Settings removed -->
     </div>
   </div>
 
-  <div class="tabs">
-    <button class="tab" class:active={activeTab === 'markets'} on:click={() => activeTab = 'markets'}>Markets</button>
-    <button class="tab" class:active={activeTab === 'portfolio'} on:click={() => activeTab = 'portfolio'}>Portfolio</button>
+  <!-- Sub tabs -->
+  <div class="subtabs">
+    <button class="btn {activeTab === 'markets' ? 'btn-primary' : 'btn-secondary'} btn-sm" on:click={() => activeTab = 'markets'}>Markets</button>
+    <button class="btn {activeTab === 'portfolio' ? 'btn-primary' : 'btn-secondary'} btn-sm" on:click={() => activeTab = 'portfolio'}>Portfolio</button>
   </div>
 
   {#if activeTab === 'markets'}
-    <div class="controls">
-      <button class="btn btn-yellow" on:click={() => loadUpcoming()} disabled={loadingUpcoming}>
-        {#if loadingUpcoming} Loading... {:else} Refresh Matches {/if}
-      </button>
-    </div>
     {#if apiNote}
       <div class="note">{apiNote}</div>
     {/if}
 
     <div class="content">
-      <div class="matches">
-        <h2>Upcoming Matches</h2>
+      <div class="card matches">
+        <div class="card-header">
+          <h3>Upcoming Matches</h3>
+          <div class="page-actions">
+            <button class="btn btn-secondary btn-sm" on:click={() => loadUpcoming()} disabled={loadingUpcoming}>
+              {#if loadingUpcoming} Loading… {:else} Refresh {/if}
+            </button>
+          </div>
+        </div>
         {#if upcoming.length === 0}
           <div class="empty">No upcoming matches loaded</div>
         {:else}
@@ -403,8 +408,10 @@
         {/if}
       </div>
 
-      <div class="market">
-        <h2>Market</h2>
+      <div class="card market">
+        <div class="card-header">
+          <h3>Market</h3>
+        </div>
         {#if loadingMarket}
           <div class="empty">Loading market...</div>
         {:else if !market}
@@ -457,7 +464,7 @@
                 </label>
               </div>
               <div class="stake">
-                <label for="amt">Stake ($)</label>
+                <label class="form-label" for="amt">Stake ($)</label>
                 <input id="amt" class="form-input" type="number" min="0" step="0.01" bind:value={amount} />
               </div>
               <div class="quote">
@@ -471,8 +478,8 @@
                 <div class="error">{placeError}</div>
               {/if}
               <div class="actions">
-                <button class="btn btn-yellow" on:click={placeBet} disabled={placing || !user || !market || !(amount > 0)}>
-                  {#if placing} Placing... {:else} Place Bet {/if}
+                <button class="btn btn-primary" on:click={placeBet} disabled={placing || !user || !market || !(amount > 0)}>
+                  {#if placing} Placing… {:else} Place Bet {/if}
                 </button>
               </div>
             </div>
@@ -481,8 +488,10 @@
       </div>
     </div>
   {:else if activeTab === 'portfolio'}
-    <div class="portfolio">
-      <h2>My Portfolio</h2>
+    <div class="card portfolio">
+      <div class="card-header">
+        <h3>My Portfolio</h3>
+      </div>
       {#if !user}
         <div class="empty">Sign in to see your portfolio</div>
       {:else if loadingPortfolio}
@@ -524,13 +533,13 @@
                           {/if}
                         {:else if row.market?.status === 'open'}
                           <button
-                            class="btn btn-small"
+                            class="btn btn-sm btn-secondary"
                             type="button"
                             on:click={() => sellBet(row.bet.id)}
                             disabled={!!sellingStatus[row.bet.id]}
-                            title="Sell this position back to the market (returns 75% of current value)"
+                            title="Sell this position back to the market"
                           >
-                            {sellingStatus[row.bet.id] ? 'Selling...' : 'Sell'}
+                            {sellingStatus[row.bet.id] ? 'Selling…' : 'Sell'}
                           </button>
                         {:else}
                           -
@@ -558,46 +567,19 @@
 {/if}
 
 <style>
-  .predict-page { max-width: 1200px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
-  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; gap: 0.5rem; }
-  .title { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .title h1 { margin: 0; font-size: 1.5rem; }
-  .competitions { color: var(--secondary); font-size: 0.85rem; }
-  .right-side { display: flex; align-items: center; gap: 0.5rem; }
-  .balance { color: var(--secondary); }
-  .demo-badge {
-    margin-left: 0.5rem;
-    padding: 0.15rem 0.4rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: #fff6cc;
-    color: #6b5000;
-    font-size: 0.75rem;
-  }
+  .predict-page { max-width: 1200px; margin: 0 auto; padding: 0 0 2rem; }
+  .balance-chip { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--secondary); }
+  .demo-badge { padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; background: #fff6cc; color: #6b5000; font-size: 0.75rem; }
 
-  .tabs { display: flex; gap: 0.5rem; margin: 0.25rem 0 0.75rem; }
-  .tab {
-    padding: 0.4rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--primary);
-    cursor: pointer;
-  }
-  .tab.active { background: var(--accent); }
+  .subtabs { display: flex; gap: 0.5rem; margin: 0 0 1rem; }
 
-  .controls { display: flex; align-items: end; gap: 0.5rem; margin-bottom: 0.5rem; }
-  .form-input { padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--text); height: 36px; }
-  .btn { height: 36px; padding: 0 0.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--background); cursor: pointer; }
-  .btn-yellow { background: #FFD700; color: #333; border-color: #e5c100; }
-  .btn-yellow:disabled { opacity: 0.6; cursor: not-allowed; }
-  /* .btn-sm and .btn-secondary were removed (unused) */
-  .note { font-size: 0.85rem; color: var(--secondary); margin-bottom: 0.5rem; }
+  .note { font-size: 0.9rem; color: var(--secondary); margin-bottom: 0.5rem; }
 
   .content { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
   @media (max-width: 900px) { .content { grid-template-columns: 1fr; } }
 
-  .matches, .market, .portfolio { border: 1px solid var(--border); border-radius: 8px; background: #fff; padding: 0.75rem; }
-  .matches h2, .market h2, .portfolio h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin: -0.25rem 0 0.5rem; }
+  .card-header h3 { margin: 0; font-size: 1.05rem; }
   .empty { padding: 0.75rem; color: var(--secondary); font-style: italic; }
 
   .match-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 60vh; overflow: auto; }
@@ -639,10 +621,8 @@
   .error { color: #a00; }
   .actions { display: flex; justify-content: flex-end; }
 
-  /* Portfolio table */
+  /* Portfolio table tweaks (use global table styles) */
   .table-container { overflow: auto; }
-  .table { width: 100%; border-collapse: collapse; }
-  .table th, .table td { padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: left; }
 
   /* Modal */
   /* modal styles removed (admin modal no longer used) */
