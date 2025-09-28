@@ -45,6 +45,7 @@
   // Portfolio
   let loadingPortfolio = false;
   let portfolio = []; // [{ bet, market }]
+  let sellingStatus = {}; // { [betId]: boolean }
 
   // Admin settings removed for Predict
 
@@ -218,10 +219,38 @@
     }
   }
 
-   // Selling has been disabled application-wide. Keep function present but make it a no-op
   async function sellBet(betId) {
-    console.warn('Selling is disabled; sellBet was called for bet id:', betId);
-    return;
+    if (!user?.id || !betId) return;
+    sellingStatus = { ...sellingStatus, [betId]: true };
+    let sold = false;
+    try {
+      const resp = await fetch('/api/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sell-bet', user_id: user.id, bet_id: betId })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data?.success) {
+        console.warn('Sell failed', data?.error);
+        return;
+      }
+      sold = true;
+      balance = data?.data?.new_balance ?? balance;
+      await loadPortfolio();
+      if (market?.id === data?.data?.market?.id) {
+        market = data.data.market;
+        await loadTicks();
+      }
+    } catch (e) {
+      console.error('sellBet exception', e);
+    } finally {
+      if (sold) {
+        await ensureBalance();
+      }
+      const currentStatus = sellingStatus;
+      const { [betId]: _ignored, ...rest } = currentStatus;
+      sellingStatus = rest;
+    }
   }
 
   // Admin settings removed — no client-side save endpoint
@@ -494,8 +523,15 @@
                             Lost
                           {/if}
                         {:else if row.market?.status === 'open'}
-                          <!-- Selling disabled: show disabled Sell button -->
-                          <button class="btn btn-small" disabled title="Selling has been disabled">Sell (disabled)</button>
+                          <button
+                            class="btn btn-small"
+                            type="button"
+                            on:click={() => sellBet(row.bet.id)}
+                            disabled={!!sellingStatus[row.bet.id]}
+                            title="Sell this position back to the market (returns 75% of current value)"
+                          >
+                            {sellingStatus[row.bet.id] ? 'Selling...' : 'Sell'}
+                          </button>
                         {:else}
                           -
                         {/if}

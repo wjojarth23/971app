@@ -1,11 +1,57 @@
 import { json } from '@sveltejs/kit';
 import { supabase } from '$lib/supabase.js';
-import { payoutForWinningShares, prices as lmsrPrices } from '$lib/lmsr.js';
+import { payoutForWinningShares, prices as lmsrPrices, cost as lmsrCost } from '$lib/lmsr.js';
 import { TBA_API_KEY, CEMO } from '$env/static/private';
 
 // Helpers
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
 const STATBOTICS_BASE = 'https://api.statbotics.io/v3';
+const TBA_CACHE_TTL_MS = 60_000;
+const tbaEventCache = new Map(); // event_key -> { matches, matchMap, fetchedAt }
+const tbaEventInflight = new Map(); // event_key -> Promise<matches | null>
+const tbaMatchCache = new Map(); // match_key -> { match, fetchedAt }
+const tbaFullMatchCache = new Map(); // match_key -> { match, fetchedAt }
+const tbaPredictionsCache = new Map(); // event_key -> { predictions, fetchedAt }
+
+function eventKeyFromMatchKey(match_key) {
+  if (typeof match_key !== 'string' || !match_key.length) return null;
+  const idx = match_key.indexOf('_');
+  return idx === -1 ? match_key : match_key.slice(0, idx);
+}
+
+function cacheEventMatches(event_key, matches) {
+  const fetchedAt = Date.now();
+  const matchMap = new Map();
+  for (const match of matches || []) {
+    if (match?.key) {
+      matchMap.set(match.key, match);
+      tbaMatchCache.set(match.key, { match, fetchedAt });
+    }
+  }
+  tbaEventCache.set(event_key, { matches: matches || [], matchMap, fetchedAt });
+  return tbaEventCache.get(event_key);
+}
+
+function getFreshEventCache(event_key) {
+  const cached = tbaEventCache.get(event_key);
+  if (!cached) return null;
+  if (Date.now() - cached.fetchedAt > TBA_CACHE_TTL_MS) return null;
+  return cached;
+}
+
+function getFreshMatchCache(match_key) {
+  const cached = tbaMatchCache.get(match_key);
+  if (!cached) return null;
+  if (Date.now() - cached.fetchedAt > TBA_CACHE_TTL_MS) return null;
+  return cached.match;
+}
+
+function getFreshFullMatchCache(match_key) {
+  const cached = tbaFullMatchCache.get(match_key);
+  if (!cached) return null;
+  if (Date.now() - cached.fetchedAt > TBA_CACHE_TTL_MS) return null;
+  return cached.match;
+}
 
 function tbaHeaders() {
   if (!TBA_API_KEY) return {};
@@ -27,6 +73,27 @@ async function fetchStatboticsMatch(match_key) {
   }
 }
 
+async function fetchStatboticsMatchesBatch(matchKeys, { batchSize = 5 } = {}) {
+  const result = new Map();
+  if (!Array.isArray(matchKeys) || !matchKeys.length) return result;
+  const limit = Math.max(1, Number(batchSize) || 1);
+  for (let i = 0; i < matchKeys.length; i += limit) {
+    const chunk = matchKeys.slice(i, i + limit);
+    const entries = await Promise.all(
+      chunk.map(async (matchKey) => {
+        const data = await fetchStatboticsMatch(matchKey);
+        return [matchKey, data];
+      })
+    );
+    for (const [matchKey, data] of entries) {
+      if (data != null) {
+        result.set(matchKey, data);
+      }
+    }
+  }
+  return result;
+}
+
 // For 2-outcome LMSR, to initialize with target p_red, set q_blue=0 and q_red=b*ln(p/(1-p))
 function initialQFromProb(p_red, b) {
   const p = clamp01(p_red);
@@ -34,19 +101,116 @@ function initialQFromProb(p_red, b) {
   return { red: q_red, blue: 0 };
 }
 
-async function fetchEventMatchesSimple(event_key) {
-  if (!TBA_API_KEY) return null;
-  const resp = await fetch(`${TBA_BASE}/event/${event_key}/matches/simple`, { headers: tbaHeaders() });
-  if (!resp.ok) return null;
-  return await resp.json();
+async function fetchEventMatchesSimple(event_key, { forceRefresh = false } = {}) {
+  if (!TBA_API_KEY || !event_key) return null;
+  const stale = tbaEventCache.get(event_key);
+  if (!forceRefresh) {
+    const fresh = getFreshEventCache(event_key);
+    if (fresh) return fresh.matches;
+    const inflight = tbaEventInflight.get(event_key);
+    if (inflight) return inflight;
+  }
+  const fetchPromise = (async () => {
+    try {
+      const resp = await fetch(`${TBA_BASE}/event/${event_key}/matches/simple`, { headers: tbaHeaders() });
+      if (!resp.ok) {
+        return stale?.matches ?? null;
+      }
+      const matches = await resp.json();
+      cacheEventMatches(event_key, matches);
+      return matches;
+    } catch {
+      return stale?.matches ?? null;
+    } finally {
+      tbaEventInflight.delete(event_key);
+    }
+  })();
+  tbaEventInflight.set(event_key, fetchPromise);
+  return fetchPromise;
+}
+
+function getCachedMatchFromEvent(event_key, match_key) {
+  if (!event_key || !match_key) return null;
+  const cached = getFreshEventCache(event_key);
+  return cached?.matchMap?.get(match_key) ?? null;
+}
+
+async function fetchMatchSimpleCached(match_key, event_key) {
+  if (!TBA_API_KEY || !match_key) return null;
+  const cached = getFreshMatchCache(match_key);
+  if (cached) return cached;
+
+  const candidateEventKey = event_key || eventKeyFromMatchKey(match_key);
+  if (candidateEventKey) {
+    const fromCache = getCachedMatchFromEvent(candidateEventKey, match_key);
+    if (fromCache) {
+      tbaMatchCache.set(match_key, { match: fromCache, fetchedAt: Date.now() });
+      return fromCache;
+    }
+    const matches = await fetchEventMatchesSimple(candidateEventKey);
+    if (matches) {
+      const updated = getCachedMatchFromEvent(candidateEventKey, match_key);
+      if (updated) return updated;
+    }
+  }
+
+  try {
+    const resp = await fetch(`${TBA_BASE}/match/${match_key}/simple`, { headers: tbaHeaders() });
+    if (!resp.ok) return null;
+    const match = await resp.json();
+    tbaMatchCache.set(match_key, { match, fetchedAt: Date.now() });
+    return match;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchMatchDetailedCached(match_key) {
+  if (!TBA_API_KEY || !match_key) return null;
+  const cached = getFreshFullMatchCache(match_key);
+  if (cached) return cached;
+
+  const simpleCached = getFreshMatchCache(match_key);
+
+  try {
+    const resp = await fetch(`${TBA_BASE}/match/${match_key}`, { headers: tbaHeaders() });
+    if (!resp.ok) return simpleCached ?? null;
+    const match = await resp.json();
+    const now = Date.now();
+    tbaFullMatchCache.set(match_key, { match, fetchedAt: now });
+    if (!tbaMatchCache.has(match_key)) {
+      tbaMatchCache.set(match_key, { match, fetchedAt: now });
+    }
+    return match;
+  } catch {
+    return simpleCached ?? null;
+  }
+}
+
+async function primeEventMatchCacheForMarkets(markets = []) {
+  const eventKeys = Array.from(
+    new Set(
+      (markets || [])
+        .map((m) => m?.event_key || eventKeyFromMatchKey(m?.match_key))
+        .filter((ek) => typeof ek === 'string' && ek.length)
+    )
+  );
+  if (!eventKeys.length) return;
+  await Promise.all(eventKeys.map((ek) => fetchEventMatchesSimple(ek)));
 }
 
 // Best-effort: TBA may expose predictions; if not available, return null
 async function fetchEventPredictions(event_key) {
-  if (!TBA_API_KEY) return null;
+  if (!TBA_API_KEY || !event_key) return null;
+  const cached = tbaPredictionsCache.get(event_key);
+  if (cached && Date.now() - cached.fetchedAt <= TBA_CACHE_TTL_MS) {
+    return cached.predictions;
+  }
   try {
     const resp = await fetch(`${TBA_BASE}/event/${event_key}/predictions`, { headers: tbaHeaders() });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      return cached?.predictions ?? null;
+    }
     const data = await resp.json();
     // Shape may vary; try to map to { [match_key]: { redWinProb, blueWinProb } }
     const out = {};
@@ -59,11 +223,12 @@ async function fetchEventPredictions(event_key) {
           out[k] = { redWinProb: clamp01(red), blueWinProb: clamp01(blue) };
         }
       }
-      return out;
     }
-    return null;
+    const result = Object.keys(out).length ? out : null;
+    tbaPredictionsCache.set(event_key, { predictions: result, fetchedAt: Date.now() });
+    return result;
   } catch {
-    return null;
+    return cached?.predictions ?? null;
   }
 }
 
@@ -191,10 +356,16 @@ export async function GET({ url }) {
       return json({ error: 'Missing action' }, { status: 400 });
     }
 
+    if (action === 'sell-bet') {
+      return json({ error: 'sell-bet requires POST' }, { status: 405 });
+    }
+
     if (action === 'upcoming') {
       const source = url.searchParams.get('source'); // optional: 'statbotics'
       const singleEventKey = url.searchParams.get('event_key'); // optional per-event fallback
       const settings = await getPredictSettings();
+      const preferStatbotics = source === 'tba' ? false : true;
+      const isDemo = !!settings.demo;
 
       // Build list of events to query
       const eventKeys = singleEventKey
@@ -212,92 +383,82 @@ export async function GET({ url }) {
         });
       }
 
-      // Fetch matches and predictions per event, then merge
-      const allMatches = [];
+      const now = Date.now() / 1000;
+      const eventsData = [];
+      const matchKeySet = new Set();
+
       for (const ek of eventKeys) {
         const matches = await fetchEventMatchesSimple(ek);
         const preds = await fetchEventPredictions(ek);
+        if (!matches) continue;
 
-        if (!matches) {
-          // Skip if no TBA; continue to next event
-          continue;
-        }
+        const filtered = isDemo ? matches : matches.filter((m) => !m.actual_time || (m.time || 0) > now);
+        if (!filtered.length) continue;
 
-        // Build list; in demo mode include finished matches too
-        const now = Date.now() / 1000;
-        let list = matches;
-        if (!(await demoMode())) {
-          list = matches.filter((m) => !m.actual_time || (m.time || 0) > now);
+        eventsData.push({ matches: filtered, preds });
+        for (const m of filtered) {
+          if (m?.key) matchKeySet.add(m.key);
         }
-  // Default to Statbotics for all events unless client explicitly requests TBA via source=tba
-  const upcoming = [];
-        // Build upcoming list. Prefer an existing Supabase market's prices; otherwise prefer Statbotics
-        for (const m of list) {
-          // Default values
+      }
+
+      const matchKeys = Array.from(matchKeySet);
+      let marketMap = new Map();
+      if (matchKeys.length) {
+        const { data: marketRows, error: marketsErr } = await supabase
+          .from('betting_markets')
+          .select('*')
+          .in('match_key', matchKeys);
+        if (!marketsErr && Array.isArray(marketRows)) {
+          marketMap = new Map(marketRows.map((row) => [row.match_key, row]));
+        }
+      }
+
+      let statboticsMap = new Map();
+      if (preferStatbotics) {
+        const needsStatbotics = matchKeys.filter((key) => !marketMap.has(key));
+        statboticsMap = await fetchStatboticsMatchesBatch(needsStatbotics, { batchSize: 6 });
+      }
+
+      const upcoming = [];
+      for (const { matches, preds } of eventsData) {
+        for (const m of matches) {
           let redP = 0.5;
           let blueP = 0.5;
           let redTeams = m.alliances?.red?.team_keys || [];
           let blueTeams = m.alliances?.blue?.team_keys || [];
           let timeVal = m.predicted_time || m.time || null;
 
-          // If a supabase market already exists for this match, use its current prices and team keys
-          try {
-            const marketRow = await getMarketByMatchKey(m.key);
-            if (marketRow) {
-              const prices = marketPrices(marketRow);
-              redP = clamp01(prices.red);
-              blueP = clamp01(prices.blue);
-              if (Array.isArray(marketRow.red_team_keys) && marketRow.red_team_keys.length) redTeams = marketRow.red_team_keys;
-              if (Array.isArray(marketRow.blue_team_keys) && marketRow.blue_team_keys.length) blueTeams = marketRow.blue_team_keys;
-              // prefer market start_time if present
-              if (marketRow.start_time) timeVal = marketRow.start_time;
-            } else {
-              // No market exists: use Statbotics (default) or TBA predictions per existing logic
-              const useStatbotics = source === 'tba' ? false : true;
-              if (useStatbotics) {
-                try {
-                  const sb = await fetchStatboticsMatch(m.key);
-                  if (sb) {
-                    if (sb.pred?.red_win_prob != null) {
-                      redP = clamp01(Number(sb.pred.red_win_prob));
-                      blueP = clamp01(1 - Number(sb.pred.red_win_prob));
-                    } else if (typeof sb.pred?.red === 'number') {
-                      redP = clamp01(Number(sb.pred.red));
-                      blueP = clamp01(1 - Number(sb.pred.red));
-                    }
-                    if (Array.isArray(sb.alliances?.red?.team_keys)) redTeams = sb.alliances.red.team_keys;
-                    if (Array.isArray(sb.alliances?.blue?.team_keys)) blueTeams = sb.alliances.blue.team_keys;
-                    if (sb.predicted_time) timeVal = sb.predicted_time;
-                  } else {
-                    // Fallback to TBA predictions if statbotics didn't return useful data
-                    const p = preds?.[m.key];
-                    if (p) {
-                      redP = p?.redWinProb ?? redP;
-                      blueP = p?.blueWinProb ?? blueP;
-                    }
-                  }
-                } catch {
-                  // On error, fallback to TBA predictions if available
-                  const p = preds?.[m.key];
-                  if (p) {
-                    redP = p?.redWinProb ?? redP;
-                    blueP = p?.blueWinProb ?? blueP;
-                  }
-                }
-              } else {
-                const p = preds?.[m.key];
-                if (p) {
-                  redP = p?.redWinProb ?? redP;
-                  blueP = p?.blueWinProb ?? blueP;
-                }
-              }
+          const marketRow = marketMap.get(m.key);
+          if (marketRow) {
+            const prices = marketPrices(marketRow);
+            redP = clamp01(prices.red);
+            blueP = clamp01(prices.blue);
+            if (Array.isArray(marketRow.red_team_keys) && marketRow.red_team_keys.length) redTeams = marketRow.red_team_keys;
+            if (Array.isArray(marketRow.blue_team_keys) && marketRow.blue_team_keys.length) blueTeams = marketRow.blue_team_keys;
+            if (marketRow.start_time) timeVal = marketRow.start_time;
+          } else {
+            let sb = null;
+            if (preferStatbotics) {
+              sb = statboticsMap.get(m.key) || null;
             }
-          } catch {
-            // If anything goes wrong querying supabase or statbotics, best-effort fallback to TBA preds
-            const p = preds?.[m.key];
-            if (p) {
-              redP = p?.redWinProb ?? redP;
-              blueP = p?.blueWinProb ?? blueP;
+
+            if (sb) {
+              if (sb.pred?.red_win_prob != null) {
+                redP = clamp01(Number(sb.pred.red_win_prob));
+                blueP = clamp01(1 - Number(sb.pred.red_win_prob));
+              } else if (typeof sb.pred?.red === 'number') {
+                redP = clamp01(Number(sb.pred.red));
+                blueP = clamp01(1 - Number(sb.pred.red));
+              }
+              if (Array.isArray(sb.alliances?.red?.team_keys)) redTeams = sb.alliances.red.team_keys;
+              if (Array.isArray(sb.alliances?.blue?.team_keys)) blueTeams = sb.alliances.blue.team_keys;
+              if (sb.predicted_time) timeVal = sb.predicted_time;
+            } else {
+              const p = preds?.[m.key];
+              if (p) {
+                redP = p?.redWinProb ?? redP;
+                blueP = p?.blueWinProb ?? blueP;
+              }
             }
           }
 
@@ -313,15 +474,9 @@ export async function GET({ url }) {
             initial_odds: { red: clamp01(redP), blue: clamp01(blueP) }
           });
         }
-
-        allMatches.push(...upcoming);
       }
 
-      // Sort combined list chronologically and limit
-      const sorted = allMatches
-        .sort((a, b) => (a.predicted_time || a.time || 0) - (b.predicted_time || b.time || 0));
-
-      // Provide note about TBA if nothing could be loaded
+      const sorted = upcoming.sort((a, b) => (a.predicted_time || a.time || 0) - (b.predicted_time || b.time || 0));
       const note =
         !TBA_API_KEY
           ? 'No TBA data available (missing or invalid TBA key). Provide TBA_API_KEY in env to enable live matches.'
@@ -346,18 +501,15 @@ export async function GET({ url }) {
         let red_team_keys = [];
         let blue_team_keys = [];
         let start_time = null;
-        if (TBA_API_KEY) {
-          try {
-            const resp = await fetch(`${TBA_BASE}/match/${match_key}/simple`, { headers: tbaHeaders() });
-            if (resp.ok) {
-              const m = await resp.json();
-              red_team_keys = m?.alliances?.red?.team_keys || [];
-              blue_team_keys = m?.alliances?.blue?.team_keys || [];
-              start_time = m?.predicted_time || m?.time || null;
-            }
-          } catch {
-            // ignore
+        try {
+          const matchInfo = await fetchMatchSimpleCached(match_key, event_key || market?.event_key || null);
+          if (matchInfo) {
+            red_team_keys = matchInfo?.alliances?.red?.team_keys || [];
+            blue_team_keys = matchInfo?.alliances?.blue?.team_keys || [];
+            start_time = matchInfo?.predicted_time || matchInfo?.time || null;
           }
+        } catch {
+          // ignore
         }
 
         // Prefer Statbotics for initial odds and team keys when requested
@@ -438,14 +590,17 @@ export async function GET({ url }) {
 
       const { data: openMarkets, error: mErr } = await supabase.from('betting_markets').select('*').eq('status', 'open').limit(500);
       if (mErr) return json({ error: mErr.message }, { status: 500 });
+      if (!openMarkets?.length) {
+        return json({ success: true, data: [] });
+      }
+
+      await primeEventMatchCacheForMarkets(openMarkets);
 
       const settled = [];
       for (const market of openMarkets || []) {
         try {
-          const resp = await fetch(`${TBA_BASE}/match/${market.match_key}`, { headers: tbaHeaders() });
-          if (!resp.ok) continue;
-          const m = await resp.json();
-          const res = m?.winning_alliance; // 'red' | 'blue' | ''
+          const matchInfo = await fetchMatchDetailedCached(market.match_key);
+          const res = matchInfo?.winning_alliance; // 'red' | 'blue' | ''
           if (res !== 'red' && res !== 'blue') continue;
 
           // Fetch bets for this market
@@ -504,9 +659,7 @@ export async function GET({ url }) {
       const backfilled = [];
       for (const m of mkts || []) {
         try {
-          const resp = await fetch(`${TBA_BASE}/match/${m.match_key}`, { headers: tbaHeaders() });
-          if (!resp.ok) continue;
-          const mm = await resp.json();
+          const mm = await fetchMatchDetailedCached(m.match_key);
           const res = mm?.winning_alliance; // 'red' | 'blue' | ''
           if (res !== 'red' && res !== 'blue') continue;
 
@@ -601,6 +754,39 @@ export async function POST({ request }) {
       if (!market) return json({ error: 'Market not found' }, { status: 404 });
       if (market.status !== 'open') return json({ error: 'Market is not open' }, { status: 400 });
 
+      // Prevent placing bets on matches that have already begun or finished.
+      try {
+        const nowSec = Math.floor(Date.now() / 1000);
+        // Prefer market.start_time if present; otherwise try TBA cached/simple match info
+        let startTime = market.start_time ?? null;
+        if (!startTime && market.match_key) {
+          const mi = await fetchMatchSimpleCached(market.match_key, market.event_key || eventKeyFromMatchKey(market.match_key));
+          if (mi) {
+            // TBA returns times as seconds since epoch in many endpoints
+            startTime = mi.predicted_time ?? mi.time ?? mi.actual_time ?? null;
+          }
+        }
+
+        const startNum = startTime == null ? null : Number(startTime);
+        if (startNum && !Number.isNaN(startNum) && startNum <= nowSec) {
+          return json({ error: 'Cannot place bet: match has already started or is in progress' }, { status: 400 });
+        }
+
+        // As an extra check, if we have no start time but detailed match info indicates actual_time or a winner, block.
+        if (!startNum && market.match_key && TBA_API_KEY) {
+          try {
+            const md = await fetchMatchDetailedCached(market.match_key);
+            if (md && (md.actual_time || md.winning_alliance)) {
+              return json({ error: 'Cannot place bet: match has already started or finished' }, { status: 400 });
+            }
+          } catch {
+            // ignore TBA errors and fall through; don't block on fetch failures
+          }
+        }
+      } catch {
+        // best-effort: if any internal checks fail, allow operation to continue (do not block due to check failure)
+      }
+
       // Balance check
       const bal = await getOrCreateBalance(user_id);
       if (Number(bal.balance) < amt) return json({ error: 'Insufficient balance' }, { status: 400 });
@@ -668,13 +854,10 @@ export async function POST({ request }) {
       let winner = winning_outcome;
       if (!winner && TBA_API_KEY) {
         try {
-          const resp = await fetch(`${TBA_BASE}/match/${match_key}`, { headers: tbaHeaders() });
-          if (resp.ok) {
-            const m = await resp.json();
-            const res = m?.winning_alliance; // 'red' | 'blue' | ''
-            if (res === 'red' || res === 'blue') {
-              winner = res;
-            }
+          const m = await fetchMatchDetailedCached(match_key);
+          const res = m?.winning_alliance; // 'red' | 'blue' | ''
+          if (res === 'red' || res === 'blue') {
+            winner = res;
           }
         } catch {
           // ignore
@@ -716,13 +899,89 @@ export async function POST({ request }) {
     }
 
     if (action === 'sell-bet') {
-      // Selling has been disabled application-wide.
-      return json({ error: 'Selling disabled' }, { status: 403 });
-    }
+      const { user_id, bet_id } = body || {};
+      if (!user_id) return json({ error: 'user_id is required' }, { status: 400 });
+      if (!bet_id) return json({ error: 'bet_id is required' }, { status: 400 });
 
-    if (action === 'sell-bet') {
-      // Selling is disabled; respond consistently for any method
-      return json({ error: 'Selling disabled' }, { status: 403 });
+      // Load bet
+      const { data: bet, error: betErr } = await supabase.from('betting_bets').select('*').eq('id', bet_id).maybeSingle();
+      if (betErr) throw new Error(betErr.message);
+      if (!bet) return json({ error: 'Bet not found' }, { status: 404 });
+      if (bet.user_id !== user_id) return json({ error: 'Not your bet' }, { status: 403 });
+
+      // Load market
+      const { data: market, error: mErr } = await supabase.from('betting_markets').select('*').eq('id', bet.market_id).maybeSingle();
+      if (mErr) throw new Error(mErr.message);
+      if (!market) return json({ error: 'Market not found' }, { status: 404 });
+      if (market.status !== 'open') return json({ error: 'Market is not open; cannot sell' }, { status: 400 });
+
+      // Delete bet row atomically (returns deleted row). Prevents double-selling dupes.
+      const { data: deletedBetRows, error: delErr } = await supabase
+        .from('betting_bets')
+        .delete()
+        .eq('id', bet_id)
+        .eq('user_id', user_id)
+        .eq('market_id', bet.market_id)
+        .select('*');
+      if (delErr) throw new Error(delErr.message);
+      if (!deletedBetRows?.length) {
+        return json({ error: 'Bet already sold or not found' }, { status: 409 });
+      }
+      const soldBet = deletedBetRows[0];
+
+      const b = Number(market.b || 50);
+      const qCurrent = { red: Number(market.q_red || 0), blue: Number(market.q_blue || 0) };
+      const sharesSold = Number(soldBet.shares || 0);
+      if (!(sharesSold > 0)) return json({ error: 'Bet has no shares to sell' }, { status: 400 });
+      const outcomeSold = soldBet.outcome;
+      const qAfter = { ...qCurrent };
+      qAfter[outcomeSold] = Math.max(0, qCurrent[outcomeSold] - sharesSold);
+
+  // Calculate fair LMSR refund (gross) then cap it to the original amount paid for this bet
+  // to avoid simple round-trip arbitrage where other trades temporarily push the
+  // marginal cost up and allow a sell to return more than the user originally paid.
+  // Keep the existing 75% multiplier as a fee/penalty.
+  const grossRefundUncapped = Math.max(0, lmsrCost(qCurrent, b) - lmsrCost(qAfter, b));
+  const originalPaid = Number(soldBet.amount || 0);
+  // Cap gross refund to at most the original amount the user paid for the bet.
+  const grossRefund = Math.min(grossRefundUncapped, originalPaid);
+  const refund = grossRefund * 0.75;
+
+      // Credit user balance
+      await getOrCreateBalance(user_id);
+      const { data: balRow, error: getErr } = await supabase.from('user_balances').select('balance').eq('user_id', user_id).single();
+      if (getErr) throw new Error(getErr.message);
+      const nextBalanceVal = Number(balRow.balance) + refund;
+      const { data: updatedBal, error: updBalErr } = await supabase
+        .from('user_balances')
+        .update({ balance: nextBalanceVal })
+        .eq('user_id', user_id)
+        .select('balance')
+        .single();
+      if (updBalErr) throw new Error(updBalErr.message);
+      const newBalance = Number(updatedBal?.balance ?? nextBalanceVal);
+
+      // Update market liquidity (remove sold shares)
+      const { data: updatedMarketRows, error: updMErr } = await supabase
+        .from('betting_markets')
+        .update({ q_red: qAfter.red, q_blue: qAfter.blue, updated_at: new Date().toISOString() })
+        .eq('id', market.id)
+        .select('*');
+      if (updMErr) throw new Error(updMErr.message);
+      const updatedMarket = (updatedMarketRows || [])[0] || { ...market, q_red: qAfter.red, q_blue: qAfter.blue };
+
+      // Snapshot tick for charts
+      await insertMarketTick(updatedMarket);
+
+      return json({
+        success: true,
+        data: {
+          refunded: refund,
+          gross_refund: grossRefund,
+          new_balance: newBalance,
+          market: serializeMarket(updatedMarket)
+        }
+      });
     }
 
     // 'save-settings' action removed — predictive settings are no longer editable via this endpoint
