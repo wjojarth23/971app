@@ -392,7 +392,18 @@ export async function GET({ url }) {
         const preds = await fetchEventPredictions(ek);
         if (!matches) continue;
 
-        const filtered = isDemo ? matches : matches.filter((m) => !m.actual_time || (m.time || 0) > now);
+        const filtered = isDemo
+          ? matches
+          : matches.filter((m) => {
+              // Determine scheduled time (prefer predicted_time when available)
+              const timeVal = m.predicted_time ?? m.time ?? null;
+              // Consider match started if we have a time and it's <= now
+              const started = timeVal != null && Number(timeVal) <= now;
+              // Consider match finished if TBA reports an actual_time or a winning_alliance
+              const finished = !!m.actual_time || m.winning_alliance === 'red' || m.winning_alliance === 'blue';
+              // Include only matches that have not started and are not finished
+              return !started && !finished;
+            });
         if (!filtered.length) continue;
 
         eventsData.push({ matches: filtered, preds });
