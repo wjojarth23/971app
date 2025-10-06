@@ -24,26 +24,17 @@
     return String(t).replace(/^frc/i, '');
   }
 
-  // Load matches for configured competition via /api/predict?action=upcoming&event_key=...
+  // Predict API was removed; we cannot fetch upcoming matches here.
   async function loadMatches() {
     apiNote = '';
-    try {
-      if (!notescoutConfig?.event_key) {
-        apiNote = 'No event configured for Note Scouting.';
-        matches = [];
-        return;
-      }
-      const res = await fetch('/api/predict?action=upcoming&event_key=' + encodeURIComponent(notescoutConfig.event_key));
-      const data = await res.json();
-      if (!data?.success) {
-        apiNote = data?.note || data?.error || 'Failed to load matches';
-        matches = [];
-        return;
-      }
-      matches = data.data || [];
-    } catch (e) {
-      apiNote = e.message || 'Failed to load matches';
+    if (!notescoutConfig?.event_key) {
+      apiNote = 'No event configured for Note Scouting.';
+      matches = [];
+      return;
     }
+    // Inform user that the Predict backend was removed
+    apiNote = 'Match loading is unavailable: Predict feature has been removed from this deployment.';
+    matches = [];
   }
 
   function onSelectMatch(m) {

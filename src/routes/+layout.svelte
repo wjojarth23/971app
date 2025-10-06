@@ -1,10 +1,9 @@
 <script>  import '../app.css';
   import { onMount } from 'svelte';
-  import { initAuth, userStore, signOut } from '$lib/stores/auth.js';
-  import { predictSettings } from '$lib/stores/predict.js';
+  import { initAuth, userStore } from '$lib/stores/auth.js';
   import notescoutConfig from '$lib/notescout.json';
   import navConfig from '$lib/navigation.json';
-import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package } from 'lucide-svelte';
+import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -21,19 +20,8 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
   onMount(() => {
     const unsub = userStore.subscribe((v) => { user = v; });
     const uninit = initAuth();
-    // Load Predict tab visibility from server settings
-    fetch('/api/predict?action=info')
-      .then((r) => r.json())
-      .then((d) => { 
-        predictSettings.set({ 
-          tab_visible: !!d?.data?.tab_visible, 
-          demo: !!d?.data?.demo, 
-          competitions: d?.data?.competitions || [] 
-        });
-        predictInfoLoaded = true;
-      })
-      .catch(() => { predictInfoLoaded = true; });
-    const unsubPredict = predictSettings.subscribe((s) => { predictTabVisible = s.tab_visible; });
+    // Predict feature has been removed; mark loaded so nav renders normally
+    predictInfoLoaded = true;
     return () => { unsub?.(); uninit?.(); unsubPredict?.(); };
   });
 
@@ -94,12 +82,7 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
               Note Scouting
             </a>
           {/if}
-          {#if predictInfoLoaded && predictTabVisible}
-            <a href="/predict" class="nav-link" class:active={isActive('/predict')}>
-              <Coins size={18} />
-              Predict
-            </a>
-          {/if}
+          <!-- Predict feature removed -->
         {/if}
         {#if can('VIEW_ADMIN_PANEL')}
         <a href="/admin" class="nav-link" class:active={isActive('/admin')}>
@@ -109,11 +92,12 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
         {/if}
       </nav>
 
-      <!-- User Menu - Simplified -->      <div class="user-menu">
-        <button class="btn btn-ghost btn-sm" on:click={handleLogout}>
-          <LogOut size={16} />
-          Sign Out
-        </button>
+      <!-- User Menu - Profile link -->
+      <div class="user-menu">
+        <a href="/profile" class="profile-link">
+          <User size={18} />
+          <span class="profile-name">{user?.full_name || user?.email || 'Profile'}</span>
+        </a>
       </div>
     </div>
   </header>
@@ -214,9 +198,11 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
     align-items: center;
     flex-shrink: 0;
   }
+  .profile-link { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--secondary); text-decoration: none; padding: 0.25rem 0.5rem; }
+  .profile-name { margin-left: 0.25rem; font-weight: 600; }
 
   /* Footer styles */
-  .site-footer {
+  :global(.site-footer) {
     width: 100%;
     background: var(--primary); /* match site off-white */
     border-top: 1px solid var(--border); /* only top border */
@@ -224,7 +210,7 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
     padding: 2.5rem 0 1.25rem; /* larger top spacing so footer isn't immediately visible */
   }
 
-  .footer-container {
+  :global(.footer-container) {
     max-width: 1400px;
     margin: 0 auto;
     padding: 0 2rem;
@@ -235,7 +221,7 @@ import { LogOut, Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Packag
     font-size: 0.9rem;
   }
 
-  .footer-left, .footer-center, .footer-right {
+  :global(.footer-left), :global(.footer-center), :global(.footer-right) {
     white-space: nowrap;
     opacity: 0.95;
   }
