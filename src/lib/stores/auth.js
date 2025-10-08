@@ -14,7 +14,7 @@ export const userProfile = writable(null);
 let subscription = null;
 let initialized = false;
 
-async function fetchUserProfile(userId) {
+export async function fetchUserProfile(userId) {
   if (!userId) {
     userProfile.set(null);
     return null;
@@ -22,7 +22,7 @@ async function fetchUserProfile(userId) {
   try {
     const { data, error } = await supabase
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, created_at, updated_at, banned')
+      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned')
       .eq('id', userId)
       .single();
 
@@ -31,7 +31,22 @@ async function fetchUserProfile(userId) {
       userProfile.set(null);
       return null;
     }
-    userProfile.set({
+    // Normalize header_tabs: it may come back as JSON text or as an array
+    let headerTabs = data.header_tabs ?? null;
+    if (typeof headerTabs === 'string') {
+      try {
+        headerTabs = JSON.parse(headerTabs);
+      } catch (e) {
+        console.warn('Failed to parse header_tabs JSON', e);
+        headerTabs = null;
+      }
+    }
+    if (headerTabs && !Array.isArray(headerTabs)) {
+      // unexpected shape, ignore
+      headerTabs = null;
+    }
+
+    const profile = {
       id: data.id,
       email: data.email || '',
       full_name: data.full_name || '',
@@ -41,11 +56,16 @@ async function fetchUserProfile(userId) {
         : data.permissions
         ? [String(data.permissions)]
         : [],
+      // new customization fields
+      header_tabs: headerTabs,
+      dashboard_layout: data.dashboard_layout || 'grid',
       created_at: data.created_at || '',
       updated_at: data.updated_at || '',
       banned: !!data.banned
-    });
-    return data;
+    };
+
+    userProfile.set(profile);
+    return profile;
   } catch (e) {
     console.warn('user_profiles fetch exception:', e?.message || e);
     userProfile.set(null);

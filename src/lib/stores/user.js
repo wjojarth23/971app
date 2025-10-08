@@ -52,6 +52,16 @@ function normalizeProfile(row) {
     full_name: row.full_name || '',
     role: row.role || 'member',
     permissions: normalizePermissions(row.permissions),
+    // New customization fields - ensure header_tabs is an array or null
+    header_tabs: (function() {
+      let h = row.header_tabs ?? null;
+      if (typeof h === 'string') {
+        try { h = JSON.parse(h); } catch (e) { console.warn('Failed to parse header_tabs in user.js', e); h = null; }
+      }
+      if (h && !Array.isArray(h)) return null;
+      return h;
+    })(),
+    dashboard_layout: row.dashboard_layout || 'grid',
     created_at: row.created_at || '',
     updated_at: row.updated_at || '',
     banned: !!row.banned
@@ -70,7 +80,7 @@ export async function fetchUserProfileByUUID(supabase, uuid) {
   try {
     const { data, error } = await supabase
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, created_at, updated_at, banned')
+      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned')
       .eq('id', uuid)
       .single();
 

@@ -268,6 +268,15 @@ CREATE TABLE public.user_profiles (
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
 
+-- Migration: add profile customization columns
+-- Run the SQL below against your Supabase/Postgres database to add support for header_tabs and dashboard_layout
+-- This migration is additive and preserves existing data.
+-- Example: psql 'postgresql://...'
+
+-- ALTER TABLE public.user_profiles
+--   ADD COLUMN header_tabs jsonb DEFAULT NULL,
+--   ADD COLUMN dashboard_layout text DEFAULT 'grid';
+
 -- Scouting notes table for simple text notes per match/team
 CREATE TABLE public.scout_notes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
