@@ -1,10 +1,19 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
+  import { hasPermission } from '$lib/permissions.js';
   import { userStore } from '$lib/stores/auth.js';
   import notescoutConfig from '$lib/notescout.json';
+  import ScoutAssignmentPanel from '$lib/components/ScoutAssignmentPanel.svelte';
   let user;
   userStore.subscribe((v) => (user = v));
+
+  // Reactive permission gate for assignment panel (explicit perm; admin does not auto-bypass)
+  $: canSeeNoteAssignments = !!user && Array.isArray(user.permissions) && user.permissions.includes('NOTE_SCOUT_ADMIN');
+  // Debug (reactive; logs when values change)
+  $: if (typeof window !== 'undefined') {
+    console.log('[notescout]', { permissions: user?.permissions, role: user?.role, canSeeNoteAssignments });
+  }
 
   let matches = [];
   let noteText = '';
@@ -18,13 +27,25 @@
   let teamNotes = [];
   let saving = false;
   let apiNote = '';
+  // assignment awareness
+  let myAssignments = [];
+  let nextAssignment = null;
+  async function loadMyAssignments(){
+    if(!user?.id) return;
+    try{
+      const res = await fetch(`/api/scout-assignments?scouting_type=note&mine=1&user_id=${encodeURIComponent(user.id)}`);
+      const js = await res.json();
+      if(js?.success){ myAssignments = (js.data||[]).filter(r=> !r.completed_at); nextAssignment = myAssignments[0]||null; }
+    }catch(e){ /* ignore */ }
+  }
+  function gotoNextAssignment(){ if(!nextAssignment) return; selectedMatchKey = nextAssignment.match_key; onSelectMatchByKey(); selectedTeam = nextAssignment.team_key; }
 
   function displayTeam(t) {
     if (!t) return '';
     return String(t).replace(/^frc/i, '');
   }
 
-  // Predict API was removed; we cannot fetch upcoming matches here.
+  // Load qualification matches via server proxy to The Blue Alliance
   async function loadMatches() {
     apiNote = '';
     if (!notescoutConfig?.event_key) {
@@ -32,9 +53,26 @@
       matches = [];
       return;
     }
-    // Inform user that the Predict backend was removed
-    apiNote = 'Match loading is unavailable: Predict feature has been removed from this deployment.';
-    matches = [];
+    try {
+      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`);
+      let data;
+      try { data = await res.json(); } catch(parseErr){
+        const text = await res.text();
+        apiNote = 'Non-JSON response from server (status '+res.status+'): '+ text.slice(0,120);
+        matches=[]; return;
+      }
+      if (!data?.success) {
+        apiNote = data?.error || 'Failed to load matches';
+        matches = [];
+        return;
+      }
+      matches = (data.data || []).map(m => ({
+        match_key: m.key,
+        match_number: m.match_number,
+        red_team_keys: m.alliances?.red?.team_keys || [],
+        blue_team_keys: m.alliances?.blue?.team_keys || []
+      }));
+    } catch (e) { apiNote = e.message || 'Failed to load matches'; matches = []; }
   }
 
   function onSelectMatch(m) {
@@ -109,8 +147,7 @@
     }
   }
 
-  onMount(() => { loadMatches(); });
-  onMount(() => { loadTeamsWithNotes(); });
+  onMount(() => { loadMatches(); loadTeamsWithNotes(); loadMyAssignments(); });
 </script>
 
 <div class="page-header card">
@@ -125,8 +162,14 @@
   </div>
 
   <div class="page-actions">
+    {#if nextAssignment}
+      <div class="form-group" style="min-width:140px">
+        <div class="form-label">Next Up</div>
+        <button class="btn btn-primary" style="width:100%" on:click={gotoNextAssignment}>Match {nextAssignment.match_key.split('_').pop()}</button>
+      </div>
+    {/if}
     <div class="form-group" style="min-width:220px">
-      <label class="form-label">Match</label>
+      <label class="form-label" for="matchSelect">Match</label>
       <select class="form-select" id="matchSelect" bind:value={selectedMatchKey} on:change={onSelectMatchByKey}>
         <option value="">-- choose match --</option>
         {#each matches as m}
@@ -138,9 +181,9 @@
     </div>
 
     <div class="form-group" style="min-width:200px">
-      <label class="form-label">View notes for</label>
+      <label class="form-label" for="notesTeamSelect">View notes for</label>
       <div style="display:flex; gap:0.5rem; align-items:center">
-        <select class="form-select" bind:value={selectedTeamWithNotes}>
+        <select class="form-select" id="notesTeamSelect" bind:value={selectedTeamWithNotes}>
           <option value="">-- choose team --</option>
           {#each teamsWithNotes as t}
             <option value={t}>{displayTeam(t)}</option>
@@ -162,8 +205,8 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Team</label>
-        <select class="form-select" bind:value={selectedTeam}>
+  <label class="form-label" for="teamSelect">Team</label>
+  <select id="teamSelect" class="form-select" bind:value={selectedTeam}>
           {#each teams as t}
             <option value={t}>{displayTeam(t)}</option>
           {/each}
@@ -171,8 +214,8 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Notes</label>
-        <textarea class="form-input" rows="10" bind:value={noteText} placeholder="Enter scouting notes here (plain text)."></textarea>
+  <label class="form-label" for="notesArea">Notes</label>
+  <textarea id="notesArea" class="form-input" rows="10" bind:value={noteText} placeholder="Enter scouting notes here (plain text)."></textarea>
       </div>
 
       <div class="page-actions">
@@ -207,11 +250,10 @@
   </div>
 </div>
 
+{#if canSeeNoteAssignments}
+  <ScoutAssignmentPanel scoutingType="note" permissionAdmin="NOTE_SCOUT_ADMIN" memberPerm="DATA_SCOUT_MEMBER" />
+{/if}
+
 <style>
-  .two-col { display:flex; gap:1rem; }
-  .matches { width:320px; border:1px solid var(--border); padding:0.5rem; border-radius:8px; background:#fff }
-  .editor { flex:1; border:1px solid var(--border); padding:0.5rem; border-radius:8px; background:#fff }
   .empty { color:var(--secondary); padding:0.5rem }
-  .viewer-controls { margin-bottom: 0.75rem; }
-  .viewer-row { display:flex; gap:0.5rem; align-items:center; }
 </style>

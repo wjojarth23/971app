@@ -9,8 +9,12 @@ export const PERMISSIONS = [
   'APPROVE_USERS',
   'CAN_SEE_ROUTES',
   'EDIT_PERMISSIONS',
-  // 'SPARTAN_PREDICT_ADMIN' removed — predict admin role is no longer used
-  'VIEW_ADMIN_PANEL'
+  'VIEW_ADMIN_PANEL',
+  // Scouting system permissions
+  'NOTE_SCOUT_ADMIN', // can manage note scouting assignments
+  'DATA_SCOUT_ADMIN', // can manage data scouting assignments
+  'DATA_SCOUT_MEMBER', // eligible to be assigned to data scouting
+  'VIDEO_SCOUT_MEMBER' // eligible for future video scouting workflows
 ];
 
 export function hasPermission(user, perm) {

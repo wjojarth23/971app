@@ -28,6 +28,27 @@
   let authError = '';
   let authSuccess = '';
 
+  // Scouting assignment alert state
+  let myScoutAssignments = [];
+  let nextScoutAssignment = null; // { scouting_type, match_key, team_key }
+  let showScoutAlert = true;
+
+  async function loadScoutAssignments(){
+    if(!user?.id) return;
+    try {
+      // Fetch both types
+      const res1 = await fetch(`/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`);
+      const js1 = await res1.json();
+      const res2 = await fetch(`/api/scout-assignments?scouting_type=note&mine=1&user_id=${encodeURIComponent(user.id)}`);
+      const js2 = await res2.json();
+      const rows = [].concat(js1?.data||[], js2?.data||[]);
+      // Filter incomplete
+      const incomplete = rows.filter(r => !r.completed_at);
+      myScoutAssignments = incomplete;
+      nextScoutAssignment = incomplete.sort((a,b)=> a.match_key.localeCompare(b.match_key))[0] || null;
+    }catch(e){ /* ignore */ }
+  }
+
   onMount(() => {
     const unsub = userStore.subscribe((v) => { user = v; });
     const uninit = initAuth();
@@ -131,6 +152,7 @@
   $: if (user && !listsLoaded) {
     listsLoaded = true;
     loadUserLists();
+    loadScoutAssignments();
   }
 
   async function handleAuth() {
@@ -227,6 +249,22 @@
       <!-- Simplified header: we no longer show individual info boxes here -->
       <p class="muted">Quick access to your CAD subsystems, builds, and purchases.</p>
     </div>
+
+    {#if showScoutAlert && myScoutAssignments.length>0}
+      <div class="pending-notice" style="background:#fffbe6; border:1px solid #f5d87b;">
+        <AlertCircle size={20} />
+        <div>
+          <h3>Scouting Assignments</h3>
+          <p>You have {myScoutAssignments.length} upcoming scouting assignment{myScoutAssignments.length===1?'':'s'}.</p>
+          {#if nextScoutAssignment}
+            <div style="margin-top:0.25rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
+              <button class="btn btn-primary" on:click={() => goto(`/${nextScoutAssignment.scouting_type==='note'?'notescout':'datascout'}`)}>Go to Next ({nextScoutAssignment.scouting_type} – {nextScoutAssignment.match_key.split('_').pop()} – {nextScoutAssignment.team_key.replace('frc','')})</button>
+              <button class="btn btn-outline" on:click={() => showScoutAlert=false}>Dismiss</button>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
 
     {#if !can('CAN_SEE_ROUTES')}
       <div class="pending-notice">

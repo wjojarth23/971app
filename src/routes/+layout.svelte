@@ -13,8 +13,6 @@
   let profile = null;
   let lastProfile = null;
   $: activeProfile = profile ?? lastProfile;
-  let predictTabVisible = false;
-  let predictInfoLoaded = false;
 
   // Use the fetched profile (user_profiles) for role/permission checks
   function can(perm) {
@@ -27,8 +25,6 @@
     const unsubAuth = authUserStore.subscribe((v) => { authUser = v; });
     const unsubProfile = userStore.subscribe((v) => { profile = v; if (v) lastProfile = v; });
     const uninit = initAuth();
-    // Predict feature has been removed; mark loaded so nav renders normally
-    predictInfoLoaded = true;
     return () => { unsubAuth?.(); unsubProfile?.(); uninit?.(); };
   });
 
@@ -51,8 +47,9 @@
       case 'build': return '/cad/build';
       case 'purchasing': return '/cad/purchasing';
       case 'notescout': return '/notescout';
-      case 'predict': return '/predict';
+      case 'datascout': return '/datascout';
       case 'home': return '/';
+      case 'profile': return '/profile';
       default: return '/' + key;
     }
   }
@@ -65,6 +62,7 @@
     build: Wrench,
     purchasing: Receipt,
     notescout: Coins,
+    datascout: Coins,
     home: Home,
     profile: User
   };
@@ -87,6 +85,24 @@
     if (typeof item === 'string') return String(item).replace(/^(.)/, (m) => m.toUpperCase());
     return item.label ?? '';
   }
+
+  // Defensive clone & validate header tabs to avoid accidental mutation & invalid objects causing wrong links
+  function sanitizeTabs(tabs) {
+    if (!Array.isArray(tabs)) return null;
+    return tabs.map(entry => {
+      if (!entry || typeof entry !== 'object') return null;
+      const copy = { ...entry };
+      if (copy.type === 'folder') {
+        copy.children = Array.isArray(copy.children) ? copy.children.map(c => ({ ...c })) : [];
+      }
+      if (!copy.key && !copy.label) {
+        console.warn('Dropping header_tabs item lacking key/label', copy);
+        return null;
+      }
+      return copy;
+    }).filter(Boolean);
+  }
+  $: customTabs = sanitizeTabs(activeProfile?.header_tabs);
 </script>
 
 {#if authUser || activeProfile}
@@ -105,8 +121,8 @@
           Home
         </a>
 
-        {#if activeProfile?.header_tabs && Array.isArray(activeProfile.header_tabs)}
-          {#each activeProfile.header_tabs as item}
+        {#if customTabs}
+          {#each customTabs as item}
             {#if item.type === 'folder'}
               <div class="nav-folder">
                 <button class="nav-link folder-trigger">
@@ -165,6 +181,10 @@
               <svelte:component this={iconMap['notescout'] ?? Coins} size={18} />
               Note Scouting
             </a>
+            <a href="/datascout" class="nav-link" class:active={isActive('/datascout')}>
+              <svelte:component this={iconMap['datascout'] ?? Coins} size={18} />
+              Data Scouting
+            </a>
           {/if}
         {/if}
 
@@ -183,6 +203,7 @@
           <span class="profile-name">{activeProfile?.full_name || activeProfile?.email || 'Profile'}</span>
         </a>
       </div>
+    </div>
   </header>
 {/if}
 

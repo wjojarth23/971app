@@ -6,6 +6,6 @@
     "cad": true,
     "purchasing": true,
     "notescout": true,
-    "predict": true
+    "datascout": true
   }
 }

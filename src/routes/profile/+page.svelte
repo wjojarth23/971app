@@ -23,6 +23,7 @@
   let newFolderName = '';
   let addTabKey = '';
   let targetFolderIdx = '';
+  let resettingNav = false;
 
   // Basic tab manipulation helpers (in-memory; saved when profile saved)
   function ensureHeaderTabs() {
@@ -170,6 +171,27 @@
       changingPassword = false;
     }
   }
+
+  async function resetNavigation() {
+    if (!user?.id) return toastActions.show('Not signed in');
+    if (!confirm('Reset navigation to defaults? This will remove all custom folders/tabs you have added.')) return;
+    resettingNav = true;
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ header_tabs: null })
+        .eq('id', user.id);
+      if (error) throw error;
+      header_tabs = null;
+      toastActions.show('Navigation reset. Reloading profile...');
+      try { await fetchUserProfile(user.id); } catch (e) { /* ignore */ }
+    } catch (e) {
+      console.error('resetNavigation error', e);
+      toastActions.show(e.message || 'Failed to reset navigation');
+    } finally {
+      resettingNav = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -291,6 +313,7 @@
             {/each}
           </select>
           <button on:click={addTab}>Add tab</button>
+          <button class="btn btn-outline" disabled={resettingNav} on:click={resetNavigation}>{resettingNav ? 'Resetting...' : 'Reset Navigation'}</button>
         </div>
       </div>
     </section>
