@@ -4,6 +4,7 @@
   import { supabase } from '$lib/supabase.js';
   import { toastActions } from '$lib/toast.js';
   import navigation from '$lib/navigation.json';
+  import HeaderPreview from '$lib/components/HeaderPreview.svelte';
 
   let user = null;
   let unsub;
@@ -31,16 +32,13 @@
   }
 
   function createFolder() {
-    if (!newFolderName) return toastActions.show('Folder name required');
+    if (!newFolderName.trim()) return toastActions.show('Folder name required');
     ensureHeaderTabs();
-    header_tabs.push({ type: 'folder', label: newFolderName, children: [] });
-    // trigger svelte reactivity by reassigning a new array reference
+    header_tabs.push({ type: 'folder', label: newFolderName.trim(), children: [] });
     header_tabs = header_tabs.slice();
-    console.log('createFolder -> header_tabs', header_tabs);
     toastActions.show('Folder added');
     newFolderName = '';
-    // Auto-save so users see persistence immediately
-    try { saveProfile(); } catch (e) { console.warn('autosave createFolder failed', e); }
+    autosave();
   }
 
   function addTab() {
@@ -54,47 +52,71 @@
     } else {
       header_tabs.push(newTab);
     }
-    // reassign to ensure Svelte notices the change
     header_tabs = header_tabs.slice();
     toastActions.show('Tab added');
     addTabKey = '';
-    // Auto-save so users see persistence immediately
-    try { saveProfile(); } catch (e) { console.warn('autosave addTab failed', e); }
-  }
-
-  function moveUp(idx) {
-    ensureHeaderTabs();
-    if (idx <= 0) return;
-    const a = header_tabs[idx-1];
-    header_tabs[idx-1] = header_tabs[idx];
-    header_tabs[idx] = a;
-    header_tabs = header_tabs.slice();
-  }
-
-  function moveDown(idx) {
-    ensureHeaderTabs();
-    if (idx >= header_tabs.length - 1) return;
-    const a = header_tabs[idx+1];
-    header_tabs[idx+1] = header_tabs[idx];
-    header_tabs[idx] = a;
-    header_tabs = header_tabs.slice();
+    autosave();
   }
 
   function removeEntry(idx) {
     ensureHeaderTabs();
+    if (!confirm('Remove this tab/folder?')) return;
     header_tabs.splice(idx, 1);
     header_tabs = header_tabs.slice();
     toastActions.show('Removed');
-    try { saveProfile(); } catch (e) { console.warn('autosave removeEntry failed', e); }
+    autosave();
   }
 
   function removeChild(folderIdx, childIdx) {
     ensureHeaderTabs();
     const f = header_tabs[folderIdx];
+    if (!confirm('Remove this tab from the folder?')) return;
     if (f && Array.isArray(f.children)) f.children.splice(childIdx, 1);
     header_tabs = header_tabs.slice();
     toastActions.show('Removed');
-    try { saveProfile(); } catch (e) { console.warn('autosave removeChild failed', e); }
+    autosave();
+  }
+
+  // Drag and drop handler
+  function handleDrop(event) {
+    const { payload, target } = event.detail;
+    ensureHeaderTabs();
+
+    // Extract the item being dragged
+    let draggedItem;
+    if (payload.fromType === 'top') {
+      draggedItem = header_tabs[payload.idx];
+      header_tabs.splice(payload.idx, 1);
+    } else if (payload.fromType === 'child') {
+      const folder = header_tabs[payload.folderIdx];
+      if (folder && Array.isArray(folder.children)) {
+        draggedItem = folder.children[payload.childIdx];
+        folder.children.splice(payload.childIdx, 1);
+      }
+    }
+
+    if (!draggedItem) return;
+
+    // Insert at target
+    if (target.type === 'folder') {
+      const targetFolder = header_tabs[target.folderIdx];
+      if (targetFolder && targetFolder.type === 'folder') {
+        targetFolder.children = Array.isArray(targetFolder.children) ? targetFolder.children : [];
+        targetFolder.children.push(draggedItem);
+      }
+    } else if (target.type === 'index') {
+      header_tabs.splice(target.idx, 0, draggedItem);
+    } else if (target.type === 'end') {
+      header_tabs.push(draggedItem);
+    }
+
+    header_tabs = header_tabs.slice();
+    toastActions.show('Reordered');
+    autosave();
+  }
+
+  function autosave() {
+    try { saveProfile(); } catch (e) { console.warn('autosave failed', e); }
   }
 
   onMount(() => {
@@ -244,77 +266,104 @@
     </section>
 
     <section class="card">
-      <h3>Customize</h3>
-      <label>Dashboard layout
-        <select bind:value={dashboard_layout}>
-          <option value="grid">Grid</option>
-          <option value="compact">Compact</option>
-          <option value="detailed">Detailed</option>
-        </select>
-      </label>
-      <div class="actions" style="margin-top:0.5rem">
-        <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save customizations'}</button>
+      <h3>Customize Navigation</h3>
+      <p class="muted">Drag and drop to reorder tabs and folders. Add new tabs or create folders to organize your navigation.</p>
+
+      <!-- Live Preview -->
+      <div class="preview-container">
+        <h4>Preview</h4>
+        <HeaderPreview header_tabs={header_tabs} on:drop={handleDrop} />
       </div>
 
-      <div style="margin-top:0.5rem">
-        <h4>Header tabs & folders</h4>
-        <p class="muted">Reorder tabs, create folders and group pages. Changes are saved with your profile.</p>
-
-        <div class="tabs-manifest">
-          <!-- If user has custom header_tabs, show it; otherwise build a default list from navigation.json -->
-          {#if header_tabs && Array.isArray(header_tabs)}
-            <ul>
-              {#each header_tabs as item, idx}
-                <li class="tab-item">
-                  {#if item.type === 'folder'}
-                    <strong>{item.label}</strong>
-                    <button on:click={() => moveUp(idx)}>▲</button>
-                    <button on:click={() => moveDown(idx)}>▼</button>
-                    <button on:click={() => removeEntry(idx)}>Remove</button>
-                    <ul class="folder-children">
-                      {#each item.children as child, cidx}
-                        <li>{child.label} <button on:click={() => removeChild(idx, cidx)}>Remove</button></li>
-                      {/each}
-                    </ul>
-                  {:else}
-                    <span>{item.label}</span>
-                    <button on:click={() => moveUp(idx)}>▲</button>
-                    <button on:click={() => moveDown(idx)}>▼</button>
-                    <button on:click={() => removeEntry(idx)}>Remove</button>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {:else}
-            <div class="muted">No custom tabs configured — using defaults.</div>
-            <ul>
-              {#each Object.keys(navigation.tabs) as key}
-                <li>{key} {navigation.tabs[key] ? '' : '(hidden by default)'}</li>
-              {/each}
-            </ul>
-          {/if}
+      <!-- Quick Actions -->
+      <div class="quick-actions">
+        <div class="action-group">
+          <label for="new-folder-name">Create folder</label>
+          <div class="input-group">
+            <input id="new-folder-name" placeholder="Folder name" bind:value={newFolderName} />
+            <button class="btn btn-sm" on:click={createFolder} disabled={!newFolderName.trim()}>Create</button>
+          </div>
         </div>
 
-        <div class="tabs-actions">
-          <input placeholder="New folder name" bind:value={newFolderName} />
-          <button on:click={createFolder}>Create folder</button>
-          <select bind:value={addTabKey}>
-            <option value="">-- Add tab --</option>
-            {#each Object.keys(navigation.tabs) as key}
-              <option value={key}>{key}</option>
-            {/each}
-          </select>
-          <select bind:value={targetFolderIdx} title="Add tab to">
-            <option value="">Top level</option>
-            {#each (header_tabs && Array.isArray(header_tabs) ? header_tabs : []) as it, i}
-              {#if it.type === 'folder'}
-                <option value={i}>Folder: {it.label}</option>
+        <div class="action-group">
+          <label for="add-tab-select">Add tab</label>
+          <div class="input-group">
+            <select id="add-tab-select" bind:value={addTabKey}>
+              <option value="">-- Select tab --</option>
+              {#each Object.keys(navigation.tabs) as key}
+                <option value={key}>{key}</option>
+              {/each}
+            </select>
+
+            <select id="target-folder-select" title="Add to">
+              <option value="">Top level</option>
+              {#each (header_tabs && Array.isArray(header_tabs) ? header_tabs : []) as it, i}
+                {#if it.type === 'folder'}
+                  <option value={i}>{it.label}</option>
+                {/if}
+              {/each}
+            </select>
+
+            <button class="btn btn-sm" on:click={addTab} disabled={!addTabKey}>Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Management -->
+      {#if header_tabs && Array.isArray(header_tabs) && header_tabs.length > 0}
+        <div class="manage-section">
+          <h4>Manage Items</h4>
+          <div class="items-list">
+            {#each header_tabs as item, idx}
+              <div class="item-row">
+                <div class="item-info">
+                  <span class="item-label">{item.label}</span>
+                  {#if item.type === 'folder'}
+                    <span class="badge">Folder</span>
+                    {#if Array.isArray(item.children) && item.children.length > 0}
+                      <span class="item-meta">{item.children.length} items</span>
+                    {/if}
+                  {:else}
+                    <span class="badge badge-tab">Tab</span>
+                  {/if}
+                </div>
+                <button class="btn-remove" on:click={() => removeEntry(idx)} aria-label="Remove {item.label}">Remove</button>
+              </div>
+
+              {#if item.type === 'folder' && Array.isArray(item.children) && item.children.length > 0}
+                <div class="folder-items">
+                  {#each item.children as child, cidx}
+                    <div class="item-row child">
+                      <span class="item-label">{child.label}</span>
+                      <button class="btn-remove small" on:click={() => removeChild(idx, cidx)} aria-label="Remove {child.label}">✕</button>
+                    </div>
+                  {/each}
+                </div>
               {/if}
             {/each}
-          </select>
-          <button on:click={addTab}>Add tab</button>
-          <button class="btn btn-outline" disabled={resettingNav} on:click={resetNavigation}>{resettingNav ? 'Resetting...' : 'Reset Navigation'}</button>
+          </div>
         </div>
+      {/if}
+
+      <div class="actions">
+        <button class="btn btn-outline" disabled={resettingNav} on:click={resetNavigation}>
+          {resettingNav ? 'Resetting...' : 'Reset to Defaults'}
+        </button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Dashboard Layout</h3>
+      <label for="dashboard-layout">Layout style</label>
+      <select id="dashboard-layout" bind:value={dashboard_layout}>
+        <option value="grid">Grid</option>
+        <option value="compact">Compact</option>
+        <option value="detailed">Detailed</option>
+      </select>
+      <div class="actions">
+        <button class="btn" on:click={saveProfile} disabled={savingProfile}>
+          {savingProfile ? 'Saving...' : 'Save Layout'}
+        </button>
       </div>
     </section>
   </div>
@@ -326,16 +375,49 @@
 {/if}
 
 <style>
-  .profile-page { max-width: 720px; margin: 0 auto; padding: 1rem; }
-  .card { background: var(--card); padding: 1rem; margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; }
-  label { display: block; margin: 0.5rem 0; }
-  input { width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px; }
-  .actions { margin-top: 0.5rem; }
-  .permissions ul { margin: 0; padding-left: 1.25rem; }
-  .profile-name { margin-left: 0.5rem; }
-  .muted { color: var(--muted); font-size: 0.9rem; }
-  .tabs-manifest ul { list-style: none; padding-left: 0; }
-  .tab-item { display:flex; gap:0.5rem; align-items:center; padding:0.25rem 0; }
-  .folder-children { margin-left:1rem; list-style: disc; }
-  .tabs-actions { margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center; }
+  .profile-page { max-width: 860px; margin: 0 auto; padding: 1rem; }
+  .card { background: var(--card); padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid var(--border); border-radius: 8px; }
+  .card h3 { margin-top: 0; margin-bottom: 1rem; font-size: 1.25rem; }
+  .card h4 { margin: 1rem 0 0.5rem; font-size: 1rem; font-weight: 600; }
+  
+  label { display: block; margin-bottom: 0.35rem; font-weight: 500; font-size: 0.95rem; }
+  input, select { width: 100%; padding: 0.6rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95rem; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  
+  .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
+  .permissions ul { margin: 0; padding-left: 1.5rem; }
+  .permissions li { margin: 0.25rem 0; }
+  .muted { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
+
+  /* Preview */
+  .preview-container { margin: 1.5rem 0; padding: 1rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
+  .preview-container h4 { margin-top: 0; margin-bottom: 0.75rem; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+
+  /* Quick Actions */
+  .quick-actions { display: flex; flex-direction: column; gap: 1rem; margin: 1.5rem 0; }
+  .action-group { display: flex; flex-direction: column; gap: 0.5rem; }
+  .action-group label { margin-bottom: 0.25rem; }
+  .input-group { display: flex; gap: 0.5rem; }
+  .input-group input, .input-group select { flex: 1; min-width: 0; }
+  .btn-sm { padding: 0.5rem 1rem; font-size: 0.9rem; white-space: nowrap; }
+
+  /* Manage Items */
+  .manage-section { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+  .items-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .item-row { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
+  .item-row.child { margin-left: 2rem; padding: 0.5rem 0.75rem; background: transparent; border: 1px dashed var(--border); }
+  .item-info { display: flex; align-items: center; gap: 0.5rem; flex: 1; }
+  .item-label { font-weight: 500; }
+  .item-meta { font-size: 0.85rem; color: var(--muted); }
+  .badge { background: var(--accent); color: var(--text); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+  .badge-tab { background: var(--muted-bg); color: var(--muted); }
+  .btn-remove { background: transparent; border: 1px solid #f5c6c6; color: #b33; padding: 0.4rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .btn-remove.small { padding: 0.2rem 0.4rem; font-size: 0.8rem; }
+  .btn-remove:hover { background: #ffecec; }
+  .folder-items { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
+
+  @media (max-width: 640px) {
+    .input-group { flex-direction: column; }
+    .input-group input, .input-group select { width: 100%; }
+  }
 </style>
