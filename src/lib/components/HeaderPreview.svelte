@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { Home, Hammer, Package, Move3d, Wrench, Receipt, Coins, User, Briefcase } from 'lucide-svelte';
+  import { Home, Hammer, Package, Move3d, Wrench, Receipt, Coins, User, Briefcase, ChevronDown } from 'lucide-svelte';
   
   export let header_tabs = [];
   const dispatch = createEventDispatcher();
@@ -33,8 +33,14 @@
 
   function displayLabel(item) {
     if (!item) return '';
-    if (typeof item === 'string') return String(item).replace(/^(.)/, (m) => m.toUpperCase());
-    return item.label ?? '';
+    let lab = '';
+    if (typeof item === 'string') lab = String(item);
+    else if (item.label) lab = String(item.label);
+    else if (item.key) lab = String(item.key);
+    lab = lab.trim();
+    if (!lab) return '';
+    if (lab.toLowerCase() === 'cad') return 'CAD';
+    return lab.replace(/^(.)/, (m) => m.toUpperCase());
   }
 
   // Drag payloads use this shape; we stringify into dataTransfer
@@ -117,11 +123,12 @@
             tabindex="0" 
             draggable="true" 
             on:dragstart={(e) => dragStart(e, { fromType: 'top', idx })}
+            class:folder-main={item.type === 'folder'}
           >
             {#if item.type === 'folder'}
               <div class="hp-folder">
-                <span class="hp-label">{item.label}</span>
-                <span class="hp-caret">▾</span>
+                <span class="hp-label hp-folder-label">{displayLabel(item)}</span>
+                <ChevronDown size={12} class="hp-caret" />
                 <div class="hp-dropdown">
                   {#if Array.isArray(item.children) && item.children.length > 0}
                     <div class="hp-dropdown-list">
@@ -156,7 +163,7 @@
               class="hp-folder-drop" 
               class:drag-over={draggedOver === `folder-${idx}`}
               role="region" 
-              aria-label="Drop zone for {item.label}"
+              aria-label={"Drop zone for " + displayLabel(item)}
               on:dragover|preventDefault={(e)=>{allowDrop(e); handleDragOver(`folder-${idx}`);}} 
               on:dragleave={handleDragLeave}
               on:drop={(e)=>dropOnFolder(e, idx)}
@@ -243,9 +250,9 @@
     cursor: grabbing;
   }
 
+  /* Default hover for tabs: subtle border change */
   .hp-main:hover {
     border-color: var(--border);
-    background: var(--background);
   }
 
   .hp-main:focus { 
@@ -261,16 +268,29 @@
   }
 
   .hp-label { 
+    color: var(--secondary);
     font-weight: 500; 
-    font-size: 0.9rem;
+    font-size: 0.95rem;
   }
 
-  .hp-caret { 
+  :global(.hp-caret) { 
     opacity: 0.6; 
     margin-left: 0.15rem;
     font-size: 0.85rem;
   }
 
+  /* folder label uses same text styling as tabs */
+  .hp-folder-label { color: var(--secondary); font-weight: 500; font-size: 0.95rem; }
+
+  /* Folder trigger hover: square light grey */
+  .hp-main.folder-main:hover {
+    background: var(--background);
+    border-radius: 0;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  /* Dropdown card */
   .hp-dropdown { 
     display: none; 
     position: absolute; 
@@ -278,11 +298,11 @@
     left: 0; 
     background: var(--card); 
     border: 1px solid var(--border); 
-    padding: 0.5rem; 
+    padding: 0.35rem; 
     border-radius: 6px; 
     z-index: 40; 
     min-width: 180px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.06);
   }
 
   .hp-folder:hover .hp-dropdown { 
@@ -304,13 +324,16 @@
     border: none;
     border-radius: 4px;
     cursor: grab;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     color: var(--text);
+    font-weight: 500;
     transition: background .12s ease;
   }
 
-  .hp-child:hover {
-    background: var(--accent);
+  /* Child items hover in dropdown: accent */
+  .hp-child:hover { 
+    background: var(--accent); 
+    color: var(--secondary); 
   }
 
   .hp-child:active {

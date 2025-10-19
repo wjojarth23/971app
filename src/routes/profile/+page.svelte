@@ -34,7 +34,10 @@
   function createFolder() {
     if (!newFolderName.trim()) return toastActions.show('Folder name required');
     ensureHeaderTabs();
-    header_tabs.push({ type: 'folder', label: newFolderName.trim(), children: [] });
+    // Normalize label: keep CAD uppercase, otherwise capitalize first char
+    const raw = newFolderName.trim();
+    const label = raw.toLowerCase() === 'cad' ? 'CAD' : raw.replace(/^(.)/, (m) => m.toUpperCase());
+    header_tabs.push({ type: 'folder', label, children: [] });
     header_tabs = header_tabs.slice();
     toastActions.show('Folder added');
     newFolderName = '';
@@ -44,7 +47,9 @@
   function addTab() {
     if (!addTabKey) return toastActions.show('Select a tab to add');
     ensureHeaderTabs();
-    const newTab = { type: 'tab', key: addTabKey, label: addTabKey };
+    const raw = String(addTabKey || '').trim();
+    const label = raw.toLowerCase() === 'cad' ? 'CAD' : raw.replace(/^(.)/, (m) => m.toUpperCase());
+    const newTab = { type: 'tab', key: addTabKey, label };
     if (targetFolderIdx !== '' && header_tabs[Number(targetFolderIdx)]?.type === 'folder') {
       const f = header_tabs[Number(targetFolderIdx)];
       f.children = Array.isArray(f.children) ? f.children : [];
@@ -299,7 +304,7 @@
               <option value="">Top level</option>
               {#each (header_tabs && Array.isArray(header_tabs) ? header_tabs : []) as it, i}
                 {#if it.type === 'folder'}
-                  <option value={i}>{it.label}</option>
+                  <option value={i}>{it.label ? (it.label.toLowerCase() === 'cad' ? 'CAD' : it.label.replace(/^(.)/, (m) => m.toUpperCase())) : ''}</option>
                 {/if}
               {/each}
             </select>
@@ -317,7 +322,7 @@
             {#each header_tabs as item, idx}
               <div class="item-row">
                 <div class="item-info">
-                  <span class="item-label">{item.label}</span>
+                  <span class="item-label">{item.label ? (item.label.toLowerCase() === 'cad' ? 'CAD' : item.label.replace(/^(.)/, (m) => m.toUpperCase())) : ''}</span>
                   {#if item.type === 'folder'}
                     <span class="badge">Folder</span>
                     {#if Array.isArray(item.children) && item.children.length > 0}
@@ -327,15 +332,15 @@
                     <span class="badge badge-tab">Tab</span>
                   {/if}
                 </div>
-                <button class="btn-remove" on:click={() => removeEntry(idx)} aria-label="Remove {item.label}">Remove</button>
+                <button class="btn-remove" on:click={() => removeEntry(idx)} aria-label={"Remove " + (item.label ? (item.label.toLowerCase() === 'cad' ? 'CAD' : item.label.replace(/^(.)/, (m) => m.toUpperCase())) : '')}>Remove</button>
               </div>
 
               {#if item.type === 'folder' && Array.isArray(item.children) && item.children.length > 0}
                 <div class="folder-items">
                   {#each item.children as child, cidx}
                     <div class="item-row child">
-                      <span class="item-label">{child.label}</span>
-                      <button class="btn-remove small" on:click={() => removeChild(idx, cidx)} aria-label="Remove {child.label}">✕</button>
+                      <span class="item-label">{child.label ? (child.label.toLowerCase() === 'cad' ? 'CAD' : child.label.replace(/^(.)/, (m) => m.toUpperCase())) : ''}</span>
+                      <button class="btn-remove small" on:click={() => removeChild(idx, cidx)} aria-label={"Remove " + (child.label ? (child.label.toLowerCase() === 'cad' ? 'CAD' : child.label.replace(/^(.)/, (m) => m.toUpperCase())) : '')}>✕</button>
                     </div>
                   {/each}
                 </div>

@@ -4,7 +4,7 @@
   import { initAuth, user as authUserStore, userStore, signOut } from '$lib/stores/auth.js';
   import notescoutConfig from '$lib/notescout.json';
   import navConfig from '$lib/navigation.json';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -80,10 +80,18 @@
     return lab.replace(/[^a-z0-9]/g, '');
   }
 
+  // Format labels for display: capitalize first character for everything
+  // but keep 'CAD' fully uppercase when present.
   function displayLabel(item) {
     if (!item) return '';
-    if (typeof item === 'string') return String(item).replace(/^(.)/, (m) => m.toUpperCase());
-    return item.label ?? '';
+    let lab = '';
+    if (typeof item === 'string') lab = String(item);
+    else if (item.label) lab = String(item.label);
+    else if (item.key) lab = String(item.key);
+    lab = lab.trim();
+    if (!lab) return '';
+    if (lab.toLowerCase() === 'cad') return 'CAD';
+    return lab.replace(/^(.)/, (m) => m.toUpperCase());
   }
 
   // Defensive clone & validate header tabs to avoid accidental mutation & invalid objects causing wrong links
@@ -125,8 +133,9 @@
           {#each customTabs as item}
             {#if item.type === 'folder'}
               <div class="nav-folder">
-                <button class="nav-link folder-trigger">
-                  {item.label}
+                <button class="nav-link folder-trigger" aria-haspopup="true" aria-expanded="false">
+                  <span class="folder-label">{displayLabel(item)}</span>
+                  <ChevronDown size={14} class="folder-caret" />
                 </button>
                 <div class="folder-menu">
                   {#each item.children ?? [] as child}
@@ -136,7 +145,7 @@
                         {displayLabel(child)}
                       </a>
                     {:else}
-                      <span class="nav-link">{child.label}</span>
+                      <span class="nav-link">{displayLabel(child)}</span>
                     {/if}
                   {/each}
                 </div>
@@ -308,9 +317,21 @@
   /* Folder dropdown styles */
   .nav-folder { position: relative; }
   .folder-trigger { background: transparent; border: none; cursor: pointer; color: var(--secondary); padding: 0.75rem 1.25rem; font-weight: 500; }
-  .folder-menu { display: none; position: absolute; top: 100%; left: 0; background: var(--accent); border: 1px solid var(--border); min-width: 200px; z-index: 40; }
+  /* Folder-specific tweaks: bold label, caret */
+  .folder-trigger { display: inline-flex; align-items: center; gap: 0.35rem; }
+  :global(.folder-caret) { font-size: 0.85rem; opacity: 0.85; margin-left: 0.15rem; }
+  /* Make folder label text match nav-link text */
+  .folder-label { color: var(--secondary); font-weight: 500; font-size: 0.95rem; }
+  /* Ensure dropdown child links use the same weight/size */
+  .folder-menu .nav-link { font-weight: 500; font-size: 0.95rem; }
+  /* Folder hover: square light grey (no rounding or yellow) */
+  .nav-folder:hover > .folder-trigger { background: var(--background); color: var(--text); border-radius: 0; border: 1px solid var(--border); }
+
+  /* Dropdown menu: styled as a subtle card; child items keep accent hover */
+  .folder-menu { display: none; position: absolute; top: 100%; left: 0; background: var(--card); border: 1px solid var(--border); min-width: 220px; z-index: 40; padding: 0.35rem; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
   .nav-folder:hover .folder-menu { display: block; }
-  .folder-menu .nav-link { display: block; padding: 0.5rem 1rem; }
+  .folder-menu .nav-link { display: block; padding: 0.5rem 0.9rem; border-radius: 4px; color: var(--text); }
+  .folder-menu .nav-link:hover { background: var(--accent); color: var(--secondary); }
 
   /* Footer styles */
   :global(.site-footer) {

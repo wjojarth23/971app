@@ -4,7 +4,7 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus } from 'lucide-svelte';
+  import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus, Download } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
 
@@ -34,6 +34,12 @@
   let purchaseModalItem = null;
   let purchaseModalUrl = '';
   let purchaseModalPrice = '';
+
+  // Version selector modal for refetching BOM
+  let showVersionModal = false;
+  let versionTimeline = [];
+  let loadingVersions = false;
+  let selectedVersionForRefetch = null;
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -917,6 +923,139 @@
       purchaseModalPrice = '';
     }
   }
+
+  // Version refetch functionality
+  async function openVersionSelector() {
+    if (!build?.subsystems?.onshape_document_id) {
+      alert('No OnShape document linked to this subsystem');
+      return;
+    }
+    
+    showVersionModal = true;
+    loadingVersions = true;
+    
+    try {
+      const { onShapeAPI } = await import('$lib/onshape.js');
+      const allVersions = await onShapeAPI.getDocumentVersions(build.subsystems.onshape_document_id);
+      
+      if (!Array.isArray(allVersions)) {
+        console.warn('Invalid versions response');
+        versionTimeline = [];
+        return;
+      }
+      
+      // Take the last 15 versions (newest first)
+      const sortedVersions = allVersions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const recentVersions = sortedVersions.slice(0, 15);
+      
+      versionTimeline = recentVersions.map(version => ({
+        ...version,
+        type: 'version',
+        date: new Date(version.createdAt)
+      }));
+      
+    } catch (error) {
+      console.error('Error loading versions:', error);
+      alert('Failed to load versions: ' + (error?.message || error));
+    } finally {
+      loadingVersions = false;
+    }
+  }
+
+  async function refetchBOMFromVersion() {
+    if (!selectedVersionForRefetch) {
+      alert('Please select a version');
+      return;
+    }
+    
+    if (!build?.subsystems?.onshape_document_id || !build?.subsystems?.onshape_workspace_id || !build?.subsystems?.onshape_element_id) {
+      alert('Missing OnShape configuration for this build');
+      return;
+    }
+    
+    try {
+      loadingVersions = true;
+      
+      // Import OnShape API
+      const { onShapeAPI } = await import('$lib/onshape.js');
+      
+      // Get BOM from OnShape using the selected version ID
+      const bom = await onShapeAPI.getAssemblyBOM(
+        build.subsystems.onshape_document_id,
+        build.subsystems.onshape_workspace_id,
+        build.subsystems.onshape_element_id,
+        selectedVersionForRefetch.id
+      );
+      
+      // Analyze BOM
+      const newBOM = await onShapeAPI.analyzeBOM(bom, build.subsystems.onshape_workspace_id);
+      
+      // Get list of already added parts (crosscheck by name and part_number)
+      const addedParts = bomSnapshot.filter(row => row.added === true);
+      const addedIdentifiers = new Set();
+      
+      addedParts.forEach(part => {
+        if (part.part_name) addedIdentifiers.add(part.part_name.toLowerCase().trim());
+        if (part.part_number) addedIdentifiers.add(part.part_number.toLowerCase().trim());
+      });
+      
+      // Filter out parts that already exist in the build
+      const filteredNewBOM = newBOM.filter(newPart => {
+        const name = (newPart.part_name || '').toLowerCase().trim();
+        const partNum = (newPart.part_number || '').toLowerCase().trim();
+        
+        // If either name or part_number matches an existing part, discard this entry
+        if (name && addedIdentifiers.has(name)) return false;
+        if (partNum && addedIdentifiers.has(partNum)) return false;
+        
+        return true;
+      });
+      
+      // Insert new BOM entries into build_bom table (marked as not added)
+      if (filteredNewBOM.length > 0) {
+        const bomInserts = filteredNewBOM.map(part => ({
+          build_id: buildId,
+          part_name: part.part_name || 'Unnamed Part',
+          part_number: part.part_number || null,
+          part_type: part.part_type || 'manufactured',
+          workflow: part.workflow || 'mill',
+          quantity: part.quantity || 1,
+          material: part.material || '',
+          stock_assignment: part.stock_assignment || null,
+          stock_assignment_custom: part.stock_assignment_custom || null,
+          onshape_document_id: part.onshape_document_id || null,
+          onshape_wvm: 'v',
+          onshape_wvmid: selectedVersionForRefetch.id,
+          onshape_element_id: part.onshape_element_id || null,
+          onshape_part_id: part.onshape_part_id || null,
+          added: false
+        }));
+        
+        const { error: insertError } = await supabase
+          .from('build_bom')
+          .insert(bomInserts);
+        
+        if (insertError) throw insertError;
+        
+        // Reload build details to show new BOM entries
+        await loadBuildDetails();
+        
+        alert(`Added ${filteredNewBOM.length} new parts to BOM (${newBOM.length - filteredNewBOM.length} duplicates skipped)`);
+      } else {
+        alert('No new parts to add - all parts from this version are already in the build');
+      }
+      
+      showVersionModal = false;
+      selectedVersionForRefetch = null;
+      
+    } catch (error) {
+      console.error('Error refetching BOM:', error);
+      alert('Failed to refetch BOM: ' + (error?.message || error));
+    } finally {
+      loadingVersions = false;
+    }
+  }
+
 </script>
 
 <svelte:head>
@@ -1021,10 +1160,10 @@
       </div>
     </div>
 
-    <!-- Build Components on top -->
+    <!-- Build Components on top - Added Parts Only -->
     <div class="bom-section">
       <div class="parts-header">
-        <h2>Build Components</h2>
+        <h2>Build Components (Added Parts)</h2>
         <div class="legend">
           <span class="legend-item"><span class="dot manufactured"></span>Manufactured</span>
           <span class="legend-item"><span class="dot cots"></span>COTS</span>
@@ -1139,16 +1278,24 @@
       {/if}
     </div>
 
-    <!-- Full BOM below -->
+    <!-- Full BOM below - Unadded Parts Only -->
     <div class="bom-section">
       <div class="parts-header">
-        <h2>Full BOM</h2>
-        <div class="legend">
-          <span class="legend-item"><span class="dot manufactured"></span>Manufactured</span>
-          <span class="legend-item"><span class="dot cots"></span>COTS</span>
+        <h2>Full BOM (Unadded Parts)</h2>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <button class="btn btn-secondary btn-sm" on:click={openVersionSelector}>
+            <Download size={16} />
+            Change Version
+          </button>
+          <div class="legend">
+            <span class="legend-item"><span class="dot manufactured"></span>Manufactured</span>
+            <span class="legend-item"><span class="dot cots"></span>COTS</span>
+          </div>
         </div>
       </div>
       {#if bomSnapshot && bomSnapshot.length > 0}
+        {@const unaddedParts = bomSnapshot.filter(item => !item.added && !item.parts_id && !item.purchasing_id && !item.kitting_id)}
+        {#if unaddedParts.length > 0}
         <div class="bom-table-container">
           <table class="bom-table">
             <thead>
@@ -1162,7 +1309,8 @@
               </tr>
             </thead>
             <tbody>
-              {#each bomSnapshot as item, i}
+              {#each unaddedParts as item, i}
+                {@const actualIndex = bomSnapshot.findIndex(b => b.id === item.id)}
                 <tr class="row {i % 2 === 0 ? 'even' : 'odd'}">
                   <td class="part-name">
                     <div class="name-cell">
@@ -1181,7 +1329,7 @@
                     <select
                       class="type-dropdown {item.part_type === 'COTS' ? 'type-cots' : 'type-manufactured'}"
                       value={item.part_type}
-                      on:change={(e) => updateBomType(i, e.target.value)}
+                      on:change={(e) => updateBomType(actualIndex, e.target.value)}
                     >
                       <option value="COTS">COTS</option>
                       <option value="manufactured">Manufactured</option>
@@ -1193,7 +1341,7 @@
                       <select
                         class="workflow-dropdown workflow-{item.workflow || 'purchase'}"
                         value={item.workflow || 'purchase'}
-                        on:change={(e) => setCotsWorkflow(i, e.target.value)}
+                        on:change={(e) => setCotsWorkflow(actualIndex, e.target.value)}
                       >
                         <option value="purchase">Purchase</option>
                         <option value="kit">Kit</option>
@@ -1202,7 +1350,7 @@
                       <select
                         class="workflow-dropdown workflow-{item.workflow || 'mill'}"
                         value={item.workflow || 'mill'}
-                        on:change={(e) => updateBomWorkflow(i, e.target.value)}
+                        on:change={(e) => updateBomWorkflow(actualIndex, e.target.value)}
                       >
                         <option value="3d-print">3D Print</option>
                         <option value="laser-cut">Laser Cut</option>
@@ -1215,7 +1363,7 @@
                   <td class="quantity">{item.quantity || 1}</td>
                   <td class="material">
                     {#if item.part_type !== 'COTS'}
-                      <select on:change={(e) => updateBomStockChoice(i, e.target.value)} value={item._stock_choice || item.stock_assignment || ''}>
+                      <select on:change={(e) => updateBomStockChoice(actualIndex, e.target.value)} value={item._stock_choice || item.stock_assignment || ''}>
                         <option value="">Select Stock</option>
                         {#each getStocksForWorkflow(item.workflow || 'mill') as stock}
                           <option value={stock.description}>{stock.description}</option>
@@ -1224,7 +1372,7 @@
                       </select>
                       {#if item._stock_choice === '__other__'}
                         <div style="margin-top:0.35rem;">
-                          <input class="form-input" type="text" placeholder="Type custom stock" value={item.stock_assignment_custom || ''} on:input={(e) => updateBomCustomStock(i, e.target.value)} />
+                          <input class="form-input" type="text" placeholder="Type custom stock" value={item.stock_assignment_custom || ''} on:input={(e) => updateBomCustomStock(actualIndex, e.target.value)} />
                         </div>
                       {/if}
                     {:else}
@@ -1251,11 +1399,18 @@
             </tbody>
           </table>
         </div>
+        {:else}
+          <div class="empty-state">
+            <Package size={48} />
+            <h3>No Unadded Parts in BOM</h3>
+            <p>All BOM items have been added to the build, or you can load a new version.</p>
+          </div>
+        {/if}
       {:else}
         <div class="empty-state">
           <Package size={48} />
-          <h3>No Full BOM Items</h3>
-          <p>The BOM snapshot for this build does not contain items yet.</p>
+          <h3>No BOM Snapshot</h3>
+          <p>The BOM snapshot for this build does not contain items yet. Click "Change Version" to load a BOM.</p>
         </div>
       {/if}
     </div>
@@ -1355,6 +1510,57 @@
     <div class="modal-actions">
       <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
       <button class="btn btn-yellow" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
+    </div>
+  </div>
+{/if}
+
+<!-- Version Selector Modal -->
+{#if showVersionModal}
+  <div class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showVersionModal = false; selectedVersionForRefetch = null; }}></div>
+  <div class="modal version-modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showVersionModal = false; selectedVersionForRefetch = null; } }}>
+    <h3>Select Version to Load BOM</h3>
+    <p style="color: #666; margin-bottom: 1rem;">Choose a version to fetch its BOM. Parts already added will be skipped.</p>
+    
+    {#if loadingVersions}
+      <div style="display: flex; flex-direction: column; align-items: center; padding: 2rem; gap: 1rem;">
+        <div class="loading-spinner"></div>
+        <p>Loading versions...</p>
+      </div>
+    {:else if versionTimeline.length > 0}
+      <div class="version-timeline" style="max-height: 400px; overflow-y: auto; margin-bottom: 1rem;">
+        {#each versionTimeline as version}
+          <div 
+            class="version-item {selectedVersionForRefetch?.id === version.id ? 'selected' : ''}"
+            on:click={() => selectedVersionForRefetch = version}
+            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedVersionForRefetch = version; } }}
+            role="button"
+            tabindex="0"
+          >
+            <div class="version-info">
+              <div class="version-name">{version.name || `Version ${version.id.substring(0, 8)}`}</div>
+              <div class="version-date">{new Date(version.date).toLocaleDateString()} at {new Date(version.date).toLocaleTimeString()}</div>
+            </div>
+            {#if selectedVersionForRefetch?.id === version.id}
+              <div class="version-checkmark">✓</div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <div style="padding: 2rem; text-align: center; color: #666;">
+        <p>No versions available</p>
+      </div>
+    {/if}
+    
+    <div class="modal-actions">
+      <button class="btn" on:click={() => { showVersionModal = false; selectedVersionForRefetch = null; }}>Cancel</button>
+      <button 
+        class="btn btn-yellow" 
+        on:click={refetchBOMFromVersion}
+        disabled={!selectedVersionForRefetch || loadingVersions}
+      >
+        {loadingVersions ? 'Loading...' : 'Load BOM from Version'}
+      </button>
     </div>
   </div>
 {/if}
@@ -1511,6 +1717,64 @@
   .workflow-dropdown.workflow-router { background: #fce4ec; color: #c2185b; border-color: #f8bbd9; }
   select { padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.8125rem; background: white; cursor: pointer; height: 32px; }
   /* removed unused .chip-edit styles */
+
+  /* Version Modal Styles */
+  .version-modal {
+    width: min(650px, 92vw);
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .version-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .version-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: white;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .version-item:hover {
+    border-color: #FFD700;
+    background: #fffef8;
+  }
+  .version-item.selected {
+    border-color: #FFD700;
+    background: #fff8e1;
+  }
+  .version-info {
+    flex: 1;
+  }
+  .version-name {
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+  }
+  .version-date {
+    font-size: 0.8rem;
+    color: var(--secondary);
+  }
+  .version-checkmark {
+    width: 24px;
+    height: 24px;
+    background: #FFD700;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #333;
+  }
 
   
 </style>
