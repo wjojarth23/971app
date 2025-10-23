@@ -75,6 +75,7 @@
   let miscUrl = '';
   let miscPrice = '';
   let miscQuantity = 1;
+  let miscVendor = 'Other'; // Selected vendor
   // Item name (separate from project)
   let miscProjectText = '';
   // Project selection/linking to a build
@@ -95,6 +96,30 @@
   let saving = false;
   let showNotesModal = false;
   let notesModalPart = null;
+
+  // Vendor management
+  let vendors = [];
+  let vendorDropdownOptions = [];
+  $: vendorDropdownOptions = ['Other', ...vendors.map(v => v.name)];
+
+  // Order creation mode
+  let orderMode = false;
+  let selectedItems = new Set();
+  let selectedVendor = null;
+  let showOrderModal = false;
+  let orderShippingCost = 0;
+  let orderNotes = '';
+  
+  // Filter items for order mode - only show approved items
+  $: orderableItems = parts.filter(p => p.status === 'approved' && !p.order_id);
+  
+  // When in order mode and a vendor is selected, filter to that vendor only
+  $: displayedOrderItems = orderMode && selectedVendor 
+    ? orderableItems.filter(p => {
+        const itemVendor = p.vendor || 'Other';
+        return itemVendor === selectedVendor;
+      })
+    : orderableItems;
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -117,9 +142,46 @@
       await loadUserFromUUID(supabase);
     }
 
-  await Promise.all([loadParts(), loadBuildOptions()]);
+  await Promise.all([loadParts(), loadBuildOptions(), loadVendors()]);
     loading = false;
   });
+
+  async function loadVendors() {
+    try {
+      const { data, error } = await supabase
+        .from('vendors')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      vendors = data || [];
+    } catch (err) {
+      console.error('Failed to load vendors', err);
+      // Don't block the page if vendors fail to load
+    }
+  }
+
+  function detectVendorFromUrl(url) {
+    if (!url || !vendors.length) return 'Other';
+    
+    const cleanUrl = url.toLowerCase().trim();
+    
+    for (const vendor of vendors) {
+      const urlBase = vendor.url_base.toLowerCase().trim();
+      if (cleanUrl.includes(urlBase)) {
+        return vendor.name;
+      }
+    }
+    
+    return 'Other';
+  }
+
+  // Watch for URL changes in misc modal and auto-detect vendor
+  $: if (miscUrl) {
+    const detected = detectVendorFromUrl(miscUrl);
+    if (detected !== miscVendor) {
+      miscVendor = detected;
+    }
+  }
 
   async function loadParts() {
     try {
@@ -134,6 +196,128 @@
     } catch (error) {
       console.error('Error loading parts:', error);
       alert('Failed to load parts');
+    }
+  }
+
+  function toggleOrderMode() {
+    orderMode = !orderMode;
+    if (!orderMode) {
+      // Reset selections when exiting order mode
+      selectedItems.clear();
+      selectedVendor = null;
+      selectedItems = selectedItems; // trigger reactivity
+    }
+  }
+
+  function toggleItemSelection(item) {
+    const itemVendor = item.vendor || 'Other';
+    
+    if (selectedItems.has(item.id)) {
+      // Deselecting item
+      selectedItems.delete(item.id);
+      selectedItems = selectedItems;
+      
+      // If no items left, reset vendor filter
+      if (selectedItems.size === 0) {
+        selectedVendor = null;
+      }
+    } else {
+      // Selecting item
+      if (selectedItems.size === 0) {
+        // First item selected - set vendor filter
+        selectedVendor = itemVendor;
+      }
+      selectedItems.add(item.id);
+      selectedItems = selectedItems;
+    }
+  }
+
+  function openOrderConfirmModal() {
+    if (selectedItems.size === 0) {
+      toastActions.show('Please select at least one item to order');
+      return;
+    }
+    
+    // Check if vendor has free shipping
+    const vendorObj = vendors.find(v => v.name === selectedVendor);
+    orderShippingCost = 0;
+    orderNotes = '';
+    showOrderModal = true;
+  }
+
+  async function placeOrder() {
+    if (!user) {
+      toastActions.show('You must be signed in to place orders');
+      return;
+    }
+
+    try {
+      const selectedParts = parts.filter(p => selectedItems.has(p.id));
+      const totalCost = selectedParts.reduce((sum, p) => {
+        return sum + ((p.final_price || p.price || 0) * (p.quantity || 1));
+      }, 0);
+
+      // Generate order number
+      const orderNumber = `ORD-${Date.now()}`;
+
+      // Create order record
+      const orderData = {
+        order_number: orderNumber,
+        vendor: selectedVendor,
+        total_items: selectedParts.length,
+        total_cost: totalCost,
+        shipping_cost: parseFloat(orderShippingCost) || 0,
+        placed_by: user.id,
+        notes: orderNotes && orderNotes.trim() !== '' ? orderNotes.trim() : null
+      };
+
+      const { data: orderRecord, error: orderError } = await supabase
+        .from('orders')
+        .insert([orderData])
+        .select();
+
+      if (orderError) throw orderError;
+
+      const orderId = orderRecord[0].id;
+
+      // Calculate shipping cost allocation per item (proportional to item cost)
+      const shippingCostNum = parseFloat(orderShippingCost) || 0;
+      const allocations = selectedParts.map(p => {
+        const itemCost = (p.final_price || p.price || 0) * (p.quantity || 1);
+        const allocation = totalCost > 0 ? (itemCost / totalCost) * shippingCostNum : 0;
+        return {
+          id: p.id,
+          allocation: allocation
+        };
+      });
+
+      // Update all selected items
+      for (const part of selectedParts) {
+        const allocation = allocations.find(a => a.id === part.id)?.allocation || 0;
+        
+        const { error: updateError } = await supabase
+          .from('purchasing')
+          .update({
+            status: 'ordered',
+            order_id: orderId,
+            shipping_cost_allocated: allocation
+          })
+          .eq('id', part.id);
+
+        if (updateError) throw updateError;
+      }
+
+      toastActions.show(`Order ${orderNumber} placed successfully!`);
+      showOrderModal = false;
+      orderMode = false;
+      selectedItems.clear();
+      selectedVendor = null;
+      selectedItems = selectedItems;
+      
+      await loadParts();
+    } catch (err) {
+      console.error('Failed to place order', err);
+      toastActions.show('Failed to place order: ' + (err.message || String(err)));
     }
   }
 
@@ -284,6 +468,7 @@
         url: miscUrl && miscUrl.trim() !== '' ? miscUrl.trim() : null,
         price: miscPrice === '' ? null : Number(miscPrice),
         quantity: miscQuantity ? Number(miscQuantity) : 1,
+        vendor: miscVendor && miscVendor !== 'Other' ? miscVendor : null,
   requester: requesterName || 'Unknown',
   purchaser: user.id,
         approved: false,
@@ -476,12 +661,36 @@
           <p>Track vendor parts, orders, delivery, and kitting</p>
         </div>
       </div>
-      <div style="margin-top:1rem; display:flex; gap:0.5rem;">
+      <div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap: wrap;">
           {#if hasPermission(user, 'PLACE_ORDERS_MISC')}
             <button class="btn btn-secondary" on:click={() => { showAddMiscModal = true; }}>Add Misc Item</button>
           {/if}
+          {#if hasPermission(user, 'APPROVE_PURCHASES')}
+            {#if !orderMode}
+              <button class="btn btn-primary" on:click={toggleOrderMode}>
+                <Package size={16} /> Create Order
+              </button>
+            {:else}
+              <button class="btn btn-success" on:click={openOrderConfirmModal} disabled={selectedItems.size === 0}>
+                <CheckCircle size={16} /> Confirm Order ({selectedItems.size} items)
+              </button>
+              <button class="btn btn-secondary" on:click={toggleOrderMode}>Cancel</button>
+            {/if}
+          {/if}
         </div>
     </div>
+
+    {#if orderMode}
+      <div class="order-mode-banner">
+        <div class="order-mode-content">
+          <div class="order-mode-icon">📦</div>
+          <div>
+            <strong>Order Creation Mode</strong>
+            <p>Select items to include in this order. {selectedVendor ? `Showing only ${selectedVendor} items.` : 'Select an item to filter by vendor.'}</p>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <div class="card">
       <div class="filters">
@@ -520,36 +729,56 @@
       </div>
     </div>
 
-    {#if filteredParts.length > 0}
+    {#if (orderMode ? displayedOrderItems : filteredParts).length > 0}
       <div class="table-container">
         <table class="table">
           <thead>
             <tr>
+              {#if orderMode}
+                <th style="width: 40px;">
+                  <input type="checkbox" disabled style="opacity: 0.3;" />
+                </th>
+              {/if}
               <th>Name</th>
               <th>Vendor</th>
               <th>Project ID</th>
               <th>Requester</th>
               <th>Quantity</th>
               <th>Price</th>
-              <th>Link</th>
-              <th>Approved</th>
-              <th>Status</th>
-              <th>Kit</th>
+              {#if !orderMode}
+                <th>Link</th>
+                <th>Approved</th>
+                <th>Status</th>
+                <th>Shipping</th>
+                <th>Kit</th>
+              {:else}
+                <th>Total</th>
+              {/if}
             </tr>
           </thead>
           <tbody>
-            {#each filteredParts as part}
+            {#each (orderMode ? displayedOrderItems : filteredParts) as part}
               <tr
-                on:click={(e) => onRowClick(e, part)}
-                on:keydown={(e) => onRowKeyDown(e, part)}
-                role={canEdit(part) ? 'button' : undefined}
-                tabindex={canEdit(part) ? '0' : undefined}
-                style={canEdit(part) ? 'cursor: pointer;' : ''}
+                on:click={(e) => orderMode ? null : onRowClick(e, part)}
+                on:keydown={(e) => orderMode ? null : onRowKeyDown(e, part)}
+                role={orderMode ? undefined : (canEdit(part) ? 'button' : undefined)}
+                tabindex={orderMode ? undefined : (canEdit(part) ? '0' : undefined)}
+                style={orderMode ? '' : (canEdit(part) ? 'cursor: pointer;' : '')}
+                class={orderMode && selectedItems.has(part.id) ? 'selected-row' : ''}
               >
+                {#if orderMode}
+                  <td on:click|stopPropagation>
+                    <input 
+                      type="checkbox" 
+                      checked={selectedItems.has(part.id)}
+                      on:change={() => toggleItemSelection(part)}
+                    />
+                  </td>
+                {/if}
                 <td class="part-name">
                   <div class="name-cell">
                     {part.name}
-                    {#if part.notes}
+                    {#if part.notes && !orderMode}
                       <button class="notes-badge" title="View notes" on:click={() => { notesModalPart = part; showNotesModal = true; }}>
                         !
                       </button>
@@ -569,8 +798,8 @@
                   {part.quantity || 1}
                 </td>
                 <td class="price">
-                  {#if part.price !== null && part.price !== undefined}
-                    <div>${part.price.toFixed(2)}</div>
+                  {#if orderMode || (part.price !== null && part.price !== undefined)}
+                    <div>${(part.price || 0).toFixed(2)}</div>
                   {:else}
                     <input type="number" min="0" step="0.01" class="form-input price-input" placeholder="unit cost" value={part.price || ''}
                       on:change={async (e) => {
@@ -587,6 +816,7 @@
                     />
                   {/if}
                 </td>
+                {#if !orderMode}
                 <td class="download">
                   <button class="btn btn-secondary btn-sm" on:click={() => {
                       if (part.url) {
@@ -661,6 +891,15 @@
                     <option value="kitted" data-color="#2ecc71">Kitted</option>
                   </select>
                 </td>
+                <td class="shipping">
+                  {#if part.shipping_cost_allocated && part.shipping_cost_allocated > 0}
+                    <span style="color: var(--text-secondary); font-size: 12px;">
+                      +${part.shipping_cost_allocated.toFixed(2)}
+                    </span>
+                  {:else}
+                    <span style="color: var(--text-secondary); font-size: 12px;">—</span>
+                  {/if}
+                </td>
                 <td class="kit">
                   <div class="kit-inline">
                     <input 
@@ -673,6 +912,11 @@
                     />
                   </div>
                 </td>
+                {:else}
+                  <td class="price">
+                    <strong>${((part.price || 0) * (part.quantity || 1)).toFixed(2)}</strong>
+                  </td>
+                {/if}
               </tr>
             {/each}
           </tbody>
@@ -733,11 +977,32 @@
         </div>
         <div class="form-row">
           <label for="edit-vendor">Vendor</label>
-          <input id="edit-vendor" type="text" bind:value={editVendor} />
+          <select id="edit-vendor" bind:value={editVendor}>
+            <option value="">Other</option>
+            {#each vendors as vendor}
+              <option value={vendor.name}>{vendor.name}</option>
+            {/each}
+          </select>
         </div>
         <div class="form-row">
           <label for="edit-project">Project ID</label>
-          <input id="edit-project" type="text" bind:value={editProjectId} />
+          <select id="edit-project" bind:value={editProjectId}>
+            <option value="">Select project…</option>
+            {#each buildOptions as b}
+              <option value={b.label}>{b.label}</option>
+            {/each}
+            <option value="Mechanical Supply">Mechanical Supply</option>
+            <option value="Mechanical Consumable">Mechanical Consumable</option>
+            <option value="Electrical Supply">Electrical Supply</option>
+            <option value="Electrical Consumable">Electrical Consumable</option>
+            <option value="Lab Consumable">Lab Consumable</option>
+            <option value="Lab Supply">Lab Supply</option>
+            <option value="Software Consumable">Software Consumable</option>
+            <option value="Software Supply">Software Supply</option>
+            <option value="Competition">Competition</option>
+            <option value="Outreach + Fundraising">Outreach + Fundraising</option>
+            <option value="Other">Other</option>
+          </select>
         </div>
         <div class="form-row">
           <label for="edit-qty">Quantity</label>
@@ -785,6 +1050,8 @@
             {/each}
             <option value="Mechanical Supply">Mechanical Supply</option>
             <option value="Mechanical Consumable">Mechanical Consumable</option>
+            <option value="Electrical Supply">Electrical Supply</option>
+            <option value="Electrical Consumable">Electrical Consumable</option>
             <option value="Lab Consumable">Lab Consumable</option>
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
@@ -805,6 +1072,15 @@
         <div class="form-row">
           <label for="misc-url">Link (optional)</label>
           <input id="misc-url" type="text" bind:value={miscUrl} placeholder="https://..." />
+        </div>
+        <div class="form-row">
+          <label for="misc-vendor">Vendor</label>
+          <select id="misc-vendor" bind:value={miscVendor} class="form-select modal-select">
+            {#each vendorDropdownOptions as vendorOpt}
+              <option value={vendorOpt}>{vendorOpt}</option>
+            {/each}
+          </select>
+          <small style="color: var(--text-secondary); margin-top: 0.25rem;">Auto-detected from URL if available</small>
         </div>
         <div class="form-row">
           <label for="misc-notes">Notes (optional)</label>
@@ -838,6 +1114,70 @@
       </div>
     </div>
   {/if}
+
+  {#if showOrderModal}
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h3>Confirm Order</h3>
+        
+        <div class="order-summary">
+          <div class="order-summary-row">
+            <span>Vendor:</span>
+            <strong>{selectedVendor}</strong>
+          </div>
+          <div class="order-summary-row">
+            <span>Items:</span>
+            <strong>{selectedItems.size}</strong>
+          </div>
+          <div class="order-summary-row">
+            <span>Subtotal:</span>
+            <strong>${parts.filter(p => selectedItems.has(p.id)).reduce((sum, p) => sum + ((p.final_price || p.price || 0) * (p.quantity || 1)), 0).toFixed(2)}</strong>
+          </div>
+        </div>
+
+        {#if !vendors.find(v => v.name === selectedVendor)?.free_shipping}
+          <div class="form-row">
+            <label for="order-shipping">Shipping Cost</label>
+            <input 
+              id="order-shipping" 
+              type="number" 
+              min="0" 
+              step="0.01" 
+              bind:value={orderShippingCost} 
+              placeholder="0.00"
+            />
+            <small style="color: var(--text-secondary); margin-top: 0.25rem;">
+              This will be distributed across items proportionally by cost
+            </small>
+          </div>
+        {:else}
+          <div class="free-shipping-notice">
+            ✅ This vendor has free shipping
+          </div>
+        {/if}
+
+        <div class="form-row">
+          <label for="order-notes">Order Notes (optional)</label>
+          <textarea 
+            id="order-notes" 
+            rows="3" 
+            bind:value={orderNotes} 
+            placeholder="Tracking info, PO number, etc."
+          ></textarea>
+        </div>
+
+        <div class="order-summary-row total-row">
+          <span>Total (incl. shipping):</span>
+          <strong>${(parts.filter(p => selectedItems.has(p.id)).reduce((sum, p) => sum + ((p.final_price || p.price || 0) * (p.quantity || 1)), 0) + (parseFloat(orderShippingCost) || 0)).toFixed(2)}</strong>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" on:click={() => { showOrderModal = false; }}>Cancel</button>
+          <button class="btn btn-primary" on:click={placeOrder}>Place Order</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 {:else}
   <div class="error-container">
     <p>Please log in to access Parts Management.</p>
@@ -850,6 +1190,83 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--background);
     color: var(--text);
+  }
+
+  .order-mode-banner {
+    margin: 1rem 0;
+    padding: 0.875rem 1rem;
+    background: var(--primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .order-mode-content {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .order-mode-icon {
+    font-size: 2rem;
+  }
+
+  .order-mode-banner strong {
+    color: var(--text);
+    font-size: 1.1rem;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  .order-mode-banner p {
+    color: var(--text-secondary);
+    margin: 0;
+    opacity: 1;
+  }
+
+  .selected-row {
+    background: transparent !important;
+    border-left: 3px solid var(--border);
+  }
+
+  .order-summary {
+    background: var(--primary);
+    border: 1px solid var(--border);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+  }
+
+  .order-summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .order-summary-row:last-child {
+    border-bottom: none;
+  }
+
+  .order-summary-row.total-row {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--secondary);
+    font-size: 1.2rem;
+  }
+
+  .order-summary-row.total-row strong {
+    color: var(--secondary);
+  }
+
+  .free-shipping-notice {
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid #4caf50;
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: #4caf50;
+    font-weight: 600;
+    text-align: center;
   }
 
 
@@ -1102,6 +1519,8 @@
   .modal .form-row { margin: 0.5rem 0; display:flex; flex-direction:column; }
   .modal .form-row label { font-size: 0.9rem; margin-bottom: 0.25rem; }
   .modal input[type="text"], .modal input[type="number"] { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; }
+  /* Make selects inside modal visually consistent with inputs */
+  .modal select, .modal .modal-select, .modal .combo-input { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; height: 36px; background: white; color: var(--text); }
   .modal .combo-input { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; }
   .modal textarea { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; resize: vertical; }
   .modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.75rem; }

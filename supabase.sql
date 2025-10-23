@@ -208,8 +208,25 @@ CREATE TABLE public.purchasing (
   purchaser uuid,
   slack_channel text,
   slack_ts text,
+  order_id bigint,
+  shipping_cost_allocated numeric DEFAULT 0,
   CONSTRAINT purchasing_pkey PRIMARY KEY (id),
-  CONSTRAINT purchasing_purchaser_fkey FOREIGN KEY (purchaser) REFERENCES auth.users(id)
+  CONSTRAINT purchasing_purchaser_fkey FOREIGN KEY (purchaser) REFERENCES auth.users(id),
+  CONSTRAINT purchasing_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id)
+);
+
+CREATE TABLE public.orders (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  order_number text NOT NULL UNIQUE,
+  vendor text,
+  total_items integer NOT NULL DEFAULT 0,
+  total_cost numeric NOT NULL DEFAULT 0,
+  shipping_cost numeric NOT NULL DEFAULT 0,
+  placed_by uuid,
+  placed_at timestamp with time zone NOT NULL DEFAULT now(),
+  notes text,
+  CONSTRAINT orders_pkey PRIMARY KEY (id),
+  CONSTRAINT orders_placed_by_fkey FOREIGN KEY (placed_by) REFERENCES auth.users(id)
 );
 CREATE TABLE public.router_group_parts (
   group_id uuid NOT NULL,
@@ -266,6 +283,17 @@ CREATE TABLE public.user_profiles (
   banned boolean DEFAULT false,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+
+CREATE TABLE public.vendors (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name text NOT NULL,
+  url_base text NOT NULL,
+  free_shipping boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT vendors_pkey PRIMARY KEY (id),
+  CONSTRAINT vendors_name_unique UNIQUE (name)
 );
 
 -- Migration: add profile customization columns
