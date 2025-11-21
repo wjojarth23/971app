@@ -61,7 +61,7 @@ body {
   padding: 0.625rem 1rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 400;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
@@ -171,6 +171,7 @@ body {
 .form-input, .form-select {
   width: 100%;
   padding: 0.625rem 0.75rem;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 1rem;
@@ -228,6 +229,13 @@ body {
 .status-complete {
   background: var(--success);
   color: var(--primary);
+}
+
+/* Travis-progged (queued) badge: green */
+.status-travis {
+  background: #e6ffed;
+  color: #0b6623;
+  border-color: rgba(11,102,35,0.12);
 }
 
 /* Additional status helpers for consistency across pages */
@@ -446,3 +454,240 @@ body {
     padding: 0.5rem;
   }
 }
+
+/* ========================================================================
+   Centralized control styles
+   - Two size variants only: control--large (default for forms/modals/controls)
+     and control--small (compact, for table rows, dropdowns inside tables, etc.)
+   - Existing class names like .form-input, .form-select, .btn, .btn-sm, .price-input,
+     .kit-input, .status-select are mapped here so migration requires minimal
+     or no markup changes across components. Use the control classes directly
+     in markup when you want to be explicit.
+   ======================================================================== */
+
+:root {
+  --control-height-lg: 40px; /* used in modals and main forms */
+  --control-height-sm: 32px; /* compact for table rows and small buttons */
+  --control-padding-lg: 0.6rem 0.75rem;
+  --control-padding-sm: 0.35rem 0.5rem;
+  --control-font-lg: 1rem;
+  --control-font-sm: 0.875rem;
+}
+
+/* base control tokens */
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.control--large {
+  height: var(--control-height-lg);
+  padding: var(--control-padding-lg);
+  font-size: var(--control-font-lg);
+}
+
+.control--small {
+  height: var(--control-height-sm);
+  padding: var(--control-padding-sm);
+  font-size: var(--control-font-sm);
+}
+
+/* Focus styling shared across controls */
+.control:focus,
+.control:focus-visible,
+.control:focus-within {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(241,195,49,0.12);
+}
+
+/* Map legacy/specific classes to the centralized control tokens so markup does
+   not need immediate changes across the codebase. Large is default for forms
+   and modals; small is applied to compact controls like table inputs/buttons. */
+
+/* Inputs & selects - default to large (use .small-* or .control--small where compactness is required) */
+.form-input,
+.form-select,
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="number"],
+textarea,
+.modal input,
+.modal select,
+.modal textarea,
+.form-file {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--primary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text);
+  /* default to large appearance */
+  height: var(--control-height-lg);
+  padding: var(--control-padding-lg);
+  font-size: var(--control-font-lg);
+}
+
+.form-input:focus,
+.form-select:focus,
+input[type="text"]:focus,
+input[type="date"]:focus,
+input[type="number"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(241,195,49,0.12);
+}
+
+/* Compact variants for table rows and small controls */
+.price-input,
+.kit-input,
+.table .form-input,
+.table input[type="number"],
+.table input[type="text"],
+.table .form-select,
+.btn-sm,
+.status-select,
+.btn-remove.small {
+  height: var(--control-height-sm) !important;
+  padding: var(--control-padding-sm) !important;
+  font-size: var(--control-font-sm) !important;
+}
+
+/* Buttons: unify with control tokens but preserve existing color/variant classes */
+.btn {
+  /* keep existing look, but normalize height via tokens */
+  height: var(--control-height-lg);
+  padding: var(--control-padding-lg);
+  font-size: var(--control-font-lg);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-sm { height: var(--control-height-sm); padding: var(--control-padding-sm); font-size: var(--control-font-sm); }
+
+/* Make small icon-only buttons consistent */
+.btn-icon { width: var(--control-height-sm); height: var(--control-height-sm); padding: 0; }
+
+/* Keep modal buttons visually balanced with modal inputs */
+.modal .btn { height: var(--control-height-lg); padding: var(--control-padding-lg); }
+
+/* Provide explicit helper classes so future markup can be explicit */
+.control.large { height: var(--control-height-lg); padding: var(--control-padding-lg); font-size: var(--control-font-lg); }
+.control.small { height: var(--control-height-sm); padding: var(--control-padding-sm); font-size: var(--control-font-sm); }
+
+/* Notes badge should remain visually small and consistent */
+.notes-badge {
+  /* Small, fully rounded badge used for notes (!) — centralized sizing + distinct visual style.
+     This enforces the small circular appearance across the app while allowing per-page
+     color overrides if needed. */
+  height: 20px;
+  width: 20px;
+  min-width: 20px;
+  aspect-ratio: 1 / 1;
+  font-size: var(--control-font-sm);
+  border-radius: 50%;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  box-sizing: border-box !important;
+  vertical-align: middle !important;
+}
+
+/* Source tag & download button alignment
+   Ensure file-type tags (STEP/DXF/STL) and the icon-only download
+   buttons share the same compact control height and baseline alignment
+   when rendered inline in lists/tables (manufacture pages). */
+.source-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.source-tag {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-height-sm);
+  padding: 0 0.5rem;
+  font-size: var(--control-font-sm);
+  border-radius: var(--radius-sm);
+  background: var(--muted-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-sizing: border-box;
+}
+
+.source-cell .btn-icon {
+  /* make sure the icon button matches the tag height and doesn't add extra padding */
+  height: var(--control-height-sm) !important;
+  width: var(--control-height-sm) !important;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Status-select specific color mapping retained but size comes from centralized tokens */
+.status-select { height: var(--control-height-sm); padding: var(--control-padding-sm); font-size: var(--control-font-sm); }
+
+/* ================================================================
+   Enforcement: make centralized sizing authoritative across the app.
+   These use stronger rules and !important to ensure any leftover
+   per-component CSS that still sets padding/height/radius does not
+   break the two-variant contract. Color/background rules are left
+   to per-component styles when intentional.
+   ================================================================ */
+
+/* Large controls (forms, modals) */
+.form-input,
+.form-select,
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="number"],
+textarea,
+.modal input,
+.modal select,
+.modal textarea {
+  height: var(--control-height-lg) !important;
+  padding: var(--control-padding-lg) !important;
+  font-size: var(--control-font-lg) !important;
+  border-radius: var(--radius-sm) !important;
+  box-sizing: border-box;
+}
+
+/* Small/compact controls (table rows, inline controls) */
+.table .form-input,
+.price-input,
+.kit-input,
+.status-select,
+.btn-sm,
+.btn-icon {
+  height: var(--control-height-sm) !important;
+  padding: var(--control-padding-sm) !important;
+  font-size: var(--control-font-sm) !important;
+  border-radius: var(--radius-sm) !important;
+  box-sizing: border-box;
+}
+
+/* Buttons: ensure btn and btn variants pick up centralized sizing */
+.btn,
+.modal .btn { height: var(--control-height-lg) !important; padding: var(--control-padding-lg) !important; border-radius: var(--radius-sm) !important; }
+.btn-sm { height: var(--control-height-sm) !important; padding: var(--control-padding-sm) !important; font-size: var(--control-font-sm) !important; }
+
+

@@ -558,13 +558,11 @@
     font-weight: 500;
   }
 
+  /* Control sizing/padding/radius handled globally in src/app.css */
   .form-group input,
   .form-group select {
     width: 100%;
-    padding: 0.75rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: 1rem;
   }
 
   .form-group input:focus,
@@ -677,13 +675,12 @@
     text-align: center;
   }
 
+  /* Keep color and semantics, sizing comes from global .btn tokens when markup uses .btn
+     (we intentionally avoid local padding/border-radius here). */
   .submit-btn {
     background: var(--accent);
     color: var(--secondary);
     border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 4px;
-    font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
   }

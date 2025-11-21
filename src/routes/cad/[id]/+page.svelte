@@ -2161,10 +2161,9 @@
     margin-top: 1rem;
   }
 
+  /* Control sizing/padding/radius handled globally in src/app.css */
   .form-input {
-    padding: 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
     background: var(--background);
     color: var(--text);
   }

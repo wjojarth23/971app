@@ -1689,12 +1689,11 @@
     color: var(--secondary);
   }
 
+  /* Control sizing/padding/radius handled globally in src/app.css */
   .form-group input,
   .form-group textarea {
     width: 100%;
-    padding: 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 6px;
     background: var(--primary);
     color: var(--text);
   }

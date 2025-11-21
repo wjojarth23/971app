@@ -33,13 +33,14 @@ import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText,
   const statuses = [
     { value: 'pending', label: 'Pending' },
     { value: 'in-progress', label: 'In Progress' },
-  { value: 'cammed', label: 'Cammed' },
-  { value: 'cam_review', label: 'Needs CAM Review' },
+  { value: 'cammed', label: 'CAM Reviewed' },
+  { value: 'cam_review', label: 'CAM Review Ready' },
   { value: 'machined', label: 'Machined' },
     { value: 'complete', label: 'Complete' }
   ];
 
 import ROUTER_FLOW from '$lib/router_flow.json';
+import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
 
   import stockData from '$lib/stock.json';
   let showEditModal = false;
@@ -477,12 +478,8 @@ import ROUTER_FLOW from '$lib/router_flow.json';
     // Router: reflect sub-steps using router_meta; prefer sub-step label if present
     if (part.workflow === 'router') {
       const meta = getRouterMeta(part);
-      if (meta?.step && ROUTER_FLOW.labels[meta.step]) {
-        return ROUTER_FLOW.labels[meta.step];
-      }
-      if (part.status === 'cammed') {
-        return meta?.travis_progged ? 'TProged' : 'Cammed';
-      }
+      // Prefer the centralized display mapping
+      return getDisplayStatus(part.status, meta);
     }
 
   // Lathe/Mill: no inspection stage; show raw status
@@ -955,7 +952,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
               {/if}
             </td>
             <td>
-              <span class="status-badge {getStatusBadgeClass(part.status)} status-table status-fade">{getStatusDisplay(part)}</span>
+              <span class="status-badge {getBadgeClass(part.status, getRouterMeta(part))} status-table status-fade">{getStatusDisplay(part)}</span>
             </td>
             <td>{formatDate(part.created_at)}</td>
             <td>
@@ -990,9 +987,9 @@ import ROUTER_FLOW from '$lib/router_flow.json';
                     <button
                       class="btn btn-secondary btn-sm"
                       on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
-                      title="CAMed"
+                      title={BUTTONS.CAM_REVIEWED}
                     >
-                      CAMed
+                      {BUTTONS.CAM_REVIEWED}
                     </button>
                   </div>
                   {/if}
@@ -1065,15 +1062,15 @@ import ROUTER_FLOW from '$lib/router_flow.json';
 
               {:else if part.workflow === 'router' && part.status === 'cammed'}
                 <!-- Router after Cammed per new flow: layout -> TProged -> queued -> Cut -> Bin/Kit -->
-                {#if getRouterMeta(part).step === 'layout'}
-                  <div class="actions-col">
-                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
-                  </div>
-  {:else if getRouterMeta(part).step === 'queued'}
-      <div class="actions-col">
-    <!-- Per-row Cut removed: only header/group-level Cut allowed -->
-    <span class="status-badge status-table">{ROUTER_FLOW.labels?.[getRouterMeta(part).step] || 'Queued'}</span>
-      </div>
+                  {#if getRouterMeta(part).step === 'layout'}
+                                  <div class="actions-col">
+                                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>{BUTTONS.TRAVIS}</button>
+                                  </div>
+                  {:else if getRouterMeta(part).step === 'queued'}
+                      <div class="actions-col">
+                    <!-- Per-row Cut removed: only header/group-level Cut allowed -->
+                    <!-- Travis-progged items: intentionally leave actions column empty (no flag) -->
+                      </div>
         {:else if getRouterMeta(part).step === 'cut'}
                   <div class="actions-col">
                     <div class="kitting-inline">
@@ -1272,7 +1269,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    min-width: 192px;
+    min-width: 110px; /* make actions column skinnier */
   }
 
   .kitting-inline {
@@ -1282,13 +1279,10 @@ import ROUTER_FLOW from '$lib/router_flow.json';
   }
 
   .kitting-input {
-  min-width: 120px;
-  margin: 0;
-  padding: 0 0.75rem;
-  height: 32px; /* match badge/button height */
-  line-height: 32px;
-  border-radius: 4px;
-  box-sizing: border-box;
+    min-width: 120px;
+    margin: 0;
+    box-sizing: border-box;
+    /* sizing/padding/radius inherited from centralized controls */
   }
 
   /* Workflow / tag styles (match BOM muted-outline look) */
@@ -1380,6 +1374,7 @@ import ROUTER_FLOW from '$lib/router_flow.json';
   .status-badge.status-table.status-progress { --badge-bg: #e3f2fd; background: #e3f2fd; color: #1976d2; border-color: #bbdefb; }
   .status-badge.status-table.status-cammed { --badge-bg: #f3e5f5; background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
   .status-badge.status-table.status-complete { --badge-bg: #e8f5e8; background: #e8f5e8; color: var(--success); border-color: #a5d6a7; }
+  .status-badge.status-table.status-travis { --badge-bg: #e6ffed; background: #e6ffed; color: #0b6623; border-color: rgba(11,102,35,0.12); }
 
   /* Unified tag/button sizing to keep consistent height, padding and corner radius (BOM-like) */
   .workflow-badge,

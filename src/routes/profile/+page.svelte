@@ -386,7 +386,8 @@
   .card h4 { margin: 1rem 0 0.5rem; font-size: 1rem; font-weight: 600; }
   
   label { display: block; margin-bottom: 0.35rem; font-weight: 500; font-size: 0.95rem; }
-  input, select { width: 100%; padding: 0.6rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95rem; }
+  /* Inputs/selects sizing controlled globally in src/app.css */
+  input, select { width: 100%; border: 1px solid var(--border); }
   input:focus, select:focus { outline: none; border-color: var(--accent); }
   
   .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
@@ -404,7 +405,8 @@
   .action-group label { margin-bottom: 0.25rem; }
   .input-group { display: flex; gap: 0.5rem; }
   .input-group input, .input-group select { flex: 1; min-width: 0; }
-  .btn-sm { padding: 0.5rem 1rem; font-size: 0.9rem; white-space: nowrap; }
+  /* Compact button sizing handled by global .btn-sm tokens */
+  .btn-sm { white-space: nowrap; }
 
   /* Manage Items */
   .manage-section { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
@@ -416,8 +418,8 @@
   .item-meta { font-size: 0.85rem; color: var(--muted); }
   .badge { background: var(--accent); color: var(--text); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
   .badge-tab { background: var(--muted-bg); color: var(--muted); }
-  .btn-remove { background: transparent; border: 1px solid #f5c6c6; color: #b33; padding: 0.4rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-  .btn-remove.small { padding: 0.2rem 0.4rem; font-size: 0.8rem; }
+  .btn-remove { background: transparent; border: 1px solid #f5c6c6; color: #b33; cursor: pointer; }
+  /* small variant sizing provided globally */
   .btn-remove:hover { background: #ffecec; }
   .folder-items { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
 

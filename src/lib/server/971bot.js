@@ -50,6 +50,47 @@ export const messageToPurchaseMap = new Map();
 export const recentPostDedupe = new Map();
 const DEDUPE_TTL_MS = 10 * 1000; // 10 seconds
 
+const USD_FORMATTER = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD'
+});
+
+function toNumber(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toPositiveNumber(value) {
+  const num = toNumber(value);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
+function normalizeUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function formatPriceLine(perUnitPrice, quantity = 1) {
+  const price = toNumber(perUnitPrice);
+  if (!Number.isFinite(price)) return null;
+  const qty = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+  const total = price * qty;
+  if (!Number.isFinite(total)) return null;
+  const totalFmt = USD_FORMATTER.format(total);
+  if (qty === 1) return totalFmt;
+  const unitFmt = USD_FORMATTER.format(price);
+  return `${totalFmt} (${qty} @ ${unitFmt})`;
+}
+
 export async function listApproversFromDb() {
   const supa = getSupabase();
   try {
@@ -120,7 +161,41 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
 
   // Do not include purchase id in message text (avoid leaking IDs in chat)
   // Mapping from message ts -> purchaseId is still stored in-memory and persisted below when purchaseId provided.
-  const text = `${requester} needs ${itemName} for ${projectId}`;
+  let text = `${requester} needs ${itemName} for ${projectId}`;
+  if (purchaseId) {
+    try {
+      const supa = getSupabase();
+      const { data: purchaseRow } = await supa
+        .from('purchasing')
+        .select('price, quantity, url')
+        .eq('id', purchaseId)
+        .single();
+      if (purchaseRow) {
+        const formattedPrice = formatPriceLine(purchaseRow.price, purchaseRow.quantity || 1);
+        const normalizedUrl = normalizeUrl(purchaseRow.url);
+        const purchaseLinkBase =
+          process.env.PUBLIC_APP_ORIGIN ||
+          process.env.APP_ORIGIN ||
+          process.env.SITE_URL ||
+          process.env.PUBLIC_SITE_URL ||
+          'https://971app.vercel.app';
+        const purchaseLink = `${purchaseLinkBase.replace(/\/$/, '')}/cad/purchasing?purchase=${purchaseId}`;
+
+        const blocks = [];
+        blocks.push(`${requester} needs *${itemName}* for *${projectId}*`);
+        if (formattedPrice) {
+          blocks.push(`Cost: ${formattedPrice}`);
+        }
+        blocks.push(`<${purchaseLink}|Review & Approve>`);
+        if (normalizedUrl) {
+          blocks.push(`<${normalizedUrl}|Vendor Link>`);
+        }
+        text = blocks.join('\n');
+      }
+    } catch (err) {
+      console.warn('Failed to enrich Slack purchase message:', err?.message || err);
+    }
+  }
   try {
     const client = getSlackClient();
     const resp = await client.chat.postMessage({ channel, text });

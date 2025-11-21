@@ -38,6 +38,7 @@
   let editingGroupName = '';
 
   import ROUTER_FLOW from '$lib/router_flow.json';
+  import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
 
   // We store grouping metadata inside file_url JSON under router_group_id
   function parseMeta(part) {
@@ -79,6 +80,47 @@
       }
     }
     await loadParts();
+  }
+
+  // Router helpers: compute next router step for a part and advance it
+  function getNextRouterStep(part) {
+    const meta = parseMeta(part);
+    const seq = ROUTER_FLOW.sequence || [];
+    const current = meta?.router_meta?.step;
+    if (current) {
+      const idx = seq.indexOf(current);
+      if (idx >= 0 && idx < seq.length - 1) return seq[idx + 1];
+      return null;
+    }
+    // No explicit step stored: infer from status
+    if (part.status === 'pending' || part.status === 'in-progress') return 'cam_ing';
+    if (part.status === 'cammed') return 'layout'; // assume cammed means ready for layout when no meta
+    return null;
+  }
+
+  async function advanceRouterStep(part, nextStep) {
+    if (!part || !nextStep) return;
+    try {
+      if (nextStep === 'cam_ing') {
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterMeta(part, { step: 'cam_ing' });
+      } else if (nextStep === 'cam_review') {
+        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterMeta(part, { step: 'cam_review' });
+      } else if (nextStep === 'queued') {
+        // TravisProgged: underlying cammed + flag
+        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterMeta(part, { travis_progged: true, step: 'queued' });
+      } else {
+        // generic step (e.g., layout)
+        await updateRouterMeta(part, { step: nextStep });
+      }
+    } catch (e) {
+      console.error('Failed to advance router step', e);
+      alert('Failed to advance step: ' + (e?.message || e));
+    } finally {
+      await loadParts();
+    }
   }
 
   // When using dedicated tables as the source of truth, clear any stale JSON router_group_id
@@ -180,7 +222,7 @@
 
   async function updateStatus(part, value) {
     if (!part) return;
-    if (value === 'Pending') {
+    if (value === BUTTONS.PENDING) {
       // set status pending and clear travis flag
       await supabase.from('parts').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', part.id);
       const meta = parseMeta(part);
@@ -188,7 +230,7 @@
         if (meta.travis_progged) delete meta.travis_progged;
         await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', part.id);
       }
-    } else if (value === 'Cammed') {
+    } else if (value === BUTTONS.CAM_REVIEWED) {
       // status cammed & remove travis flag
       await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
       const meta = parseMeta(part);
@@ -196,7 +238,7 @@
         delete meta.travis_progged;
         await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', part.id);
       }
-    } else if (value === 'Travis Progged') {
+    } else if (value === BUTTONS.TRAVIS) {
       // underlying status cammed + flag
       await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
       const meta = parseMeta(part);
@@ -522,7 +564,7 @@
             {:else}
               <button class="group-name-btn" on:click={()=>{ editingGroupId=g.id; editingGroupName=g.name || g.id; }}>{g.name || g.id}</button>
               {#if groupIsReadyForTProged(g)}
-                <button class="btn btn-primary btn-sm" on:click={() => applyGroupAction(g.id, 'tproged')}>TProged</button>
+                <button class="btn btn-primary btn-sm" on:click={() => applyGroupAction(g.id, 'tproged')}>{BUTTONS.TRAVIS}</button>
               {:else if groupIsTravisProgged(g)}
                 <button class="btn btn-warning btn-sm" on:click={() => applyGroupAction(g.id, 'cut')}>Cut</button>
               {/if}
@@ -537,8 +579,8 @@
                 <th>Project</th>
                 <th>Qty</th>
                 <th>Source</th>
-                <th>Action</th>
-                <th></th>
+                <th class="action-col">Status</th>
+                <th class="remove-col"></th>
               </tr>
             </thead>
             <tbody>
@@ -577,22 +619,22 @@
                       {/await}
                     {/if}
                   </td>
-                  <td>
+                  <td class="action-cell">
                     {#key p.id}
                       {#await Promise.resolve(parseMeta(p)) then meta}
                         {#if groupIsTravisProgged(g)}
-                          <!-- When the whole group is Travis-progged, hide per-row action buttons and show status only -->
-                          <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || p.status}</span>
+                          <!-- When the whole group is Travis-progged, show a green TravisProgged tag in the status column -->
+                          <span class="status-badge {getBadgeClass(p.status, meta)} status-table">{getDisplayStatus(p.status, meta)}</span>
                         {:else}
                           {#if p.status === 'pending'}
                             <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
                           {:else if p.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                            <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
+                            <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_review' }); await loadParts(); }}>{BUTTONS.CAM_REVIEWED}</button>
                           {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
-                            <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { travis_progged: true, step: 'queued' })}>TProged</button>
+                            <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { travis_progged: true, step: 'queued' })}>{BUTTONS.TRAVIS}</button>
                           {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                            <!-- Per-row Cut button removed: only group header Cut is allowed. Show status instead. -->
-                            <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || p.status}</span>
+                            <!-- Per-row Cut button removed: only group header Cut is allowed. Show Travis tag in status column -->
+                            <span class="status-badge {getBadgeClass(p.status, meta)} status-table">{getDisplayStatus(p.status, meta)}</span>
                           {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
                             <div class="kitting-inline">
                               <select class="form-select kitting-input" bind:value={selectedBinMap[p.id]}>
@@ -609,13 +651,19 @@
                               </button>
                             </div>
                           {:else}
-                            <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || p.status}</span>
+                            {#if getNextRouterStep(p) && getNextRouterStep(p) !== 'cut'}
+                              <button class="btn btn-secondary btn-sm" on:click={() => advanceRouterStep(p, getNextRouterStep(p))}>{ROUTER_FLOW.labels?.[getNextRouterStep(p)] || getNextRouterStep(p)}</button>
+                            {:else if getNextRouterStep(p) === 'cut'}
+                              <!-- Next step is cut (group-level) — leave per-row actions empty -->
+                            {:else}
+                              <span class="status-badge status-table">{getDisplayStatus(p.status, meta)}</span>
+                            {/if}
                           {/if}
                         {/if}
                       {/await}
                     {/key}
                   </td>
-                  <td><button class="remove-inline" on:click={()=>removeFromGroup(p)} title="Remove">×</button></td>
+                  <td class="remove-col"><button class="remove-inline" on:click={()=>removeFromGroup(p)} title="Remove">×</button></td>
                 </tr>
               {/each}
             </tbody>
@@ -653,7 +701,7 @@
                     <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(part)}><Download size={14} /></button>
                   </div>
                 {:else}
-                  {#await Promise.resolve(parseMeta(part)) then meta}
+                    {#await Promise.resolve(parseMeta(part)) then meta}
                     <div class="source-cell">
                       {#if meta.step_file}
                         <span class="source-tag">STEP</span>
@@ -673,19 +721,18 @@
                   {/await}
                 {/if}
               </td>
-              <td>
+              <td class="action-cell">
                 {#key part.id}
                   {#await Promise.resolve(parseMeta(part)) then meta}
-                    {#if part.status === 'pending'}
+                      {#if part.status === 'pending'}
                       <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
                     {:else if part.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                      <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_review' }); await loadParts(); }}>CAMed</button>
-                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
-                      <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>TProged</button>
-              {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                    <!-- Per-row Cut button removed: only group header Cut is allowed. Show status instead. -->
-                    <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || part.status}</span>
-                    {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
+                      <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_review' }); await loadParts(); }}>{BUTTONS.CAM_REVIEWED}</button>
+                          {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
+                            <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>{BUTTONS.TRAVIS}</button>
+                          {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
+                          <!-- Next is cut (group-level) - leave actions empty -->
+                          {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
                       <div class="kitting-inline">
                         <input type="text" placeholder="Bin ID" class="form-input kitting-input"
                           on:keydown={async (e) => { if (e.key === 'Enter' && e.target.value.trim()) {
@@ -705,7 +752,13 @@
                         </button>
                       </div>
                     {:else}
-                      <span class="status-badge status-table">{(meta.router_meta && ROUTER_FLOW.labels[meta.router_meta.step]) || part.status}</span>
+                      {#if getNextRouterStep(part) && getNextRouterStep(part) !== 'cut'}
+                        <button class="btn btn-secondary btn-sm" on:click={() => advanceRouterStep(part, getNextRouterStep(part))}>{ROUTER_FLOW.labels?.[getNextRouterStep(part)] || getNextRouterStep(part)}</button>
+                      {:else if getNextRouterStep(part) === 'cut'}
+                        <!-- Next is cut (group-level) - leave actions empty -->
+                      {:else}
+                        <span class="status-badge {getBadgeClass(part.status, meta)} status-table">{getDisplayStatus(part.status, meta)}</span>
+                      {/if}
                     {/if}
                   {/await}
                 {/key}
@@ -722,31 +775,95 @@
 
 <style>
   .subtabs { display:flex; gap:0.5rem; margin:0 0 1rem 0; }
-  .subtabs a { text-decoration:none; padding:0.5rem 0.85rem; background:var(--background); border:1px solid var(--border); border-radius:4px; font-size:0.85rem; color:var(--text); }
+  .subtabs a { text-decoration:none; padding:0.5rem 0.85rem; background:var(--background); border:1px solid var(--border); border-radius:6px; font-size:0.85rem; color:var(--text); }
   .subtabs a.active { background: var(--accent); color: var(--secondary); }
-  .group-list { display:flex; flex-direction:column; gap:1.5rem; }
+  .group-list { display:flex; flex-direction:column; gap:1.25rem; }
   .subheading { margin:0; font-size:1rem; font-weight:600; }
-  .group-table-header { font-size:1.2rem; font-weight:600; margin:-0.25em 0 0.5rem 0; display:flex; align-items:center; }
-  .group-name-btn { background:none; border:none; font:inherit; padding:0.25rem 0.5rem; border-radius:4px; cursor:pointer; }
+
+  /* Group wrapper and header */
+  .group-table-wrapper { padding:0.6rem; border-radius:8px; background:var(--surface, #fff); border:1px solid rgba(0,0,0,0.03); }
+  .group-table-header { font-size:1.05rem; font-weight:600; margin:0 0 0.5rem 0; display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
+  .group-name-btn { background:none; border:none; font:inherit; cursor:pointer; padding:0.15rem 0.35rem; border-radius:6px; }
   .group-name-btn:hover { background: #f3f4f6; }
-  .group-name-input { padding:0.35rem 0.5rem; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; width:160px; }
-  .remove-inline { background:none; border:1px solid var(--border); border-radius:4px; padding:0 6px; cursor:pointer; font-size:0.7rem; }
+  .group-name-input { border:1px solid var(--border); padding:0.25rem 0.4rem; border-radius:6px; }
+
+  /* Buttons: consistent sizing/spacing used locally to avoid relying on global styles */
+  .btn { display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.6rem; border-radius:6px; border:1px solid var(--border); background:var(--background); color:var(--text); cursor:pointer; font-size:0.85rem; }
+  .btn-secondary { background:var(--background); }
+  .btn-primary { background:var(--accent); color:var(--secondary); border-color:transparent; }
+  .btn-warning { background:#f59e0b; color:#fff; border-color:transparent; }
+  .btn-sm { padding:0.2rem 0.45rem; font-size:0.78rem; border-radius:6px; }
+  .btn-icon { padding:0.25rem; width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; }
+  .btn-nowrap { white-space:nowrap; }
+
+  /* Remove button (×) styled as a small inline icon */
+  .remove-inline { background:transparent; border:none; color:var(--text-muted, #8b0000); font-size:1.1rem; padding:0.2rem 0.35rem; border-radius:6px; cursor:pointer; }
+
   :global(.router-table tr.drag-over), :global(.group-table tr.drag-over) { outline:2px dashed var(--accent); }
   .parts-table-wrapper { position:relative; }
-  .hint { font-size:0.7rem; color:#555; margin-top:0.5rem; }
-  /* Mirror CAD build table styles */
-  .bom-table-container { overflow-x:auto; border:1px solid var(--border); border-radius:8px; }
-  .bom-table { width:100%; border-collapse:collapse; font-size:0.875rem; }
-  .bom-table th, .bom-table td { padding:0.75rem; text-align:left; border-bottom:1px solid var(--border); }
-  .bom-table th { background: var(--background); font-weight:600; color: var(--text); }
-  .bom-table tbody tr.row.even { background:#fff; }
-  .bom-table tbody tr.row.odd { background:#fcfcfd; }
-  .bom-table tbody tr:hover { background:#f6f7f9; }
-  .bom-table tbody tr:last-child td { border-bottom:none; }
-  .part-name { font-weight:600; color: var(--text); }
-  .source-cell { display:flex; align-items:center; gap:0.35rem; }
-  .source-tag { display:inline-block; padding:0.25rem 0.5rem; background:#f3f4f6; border:1px solid var(--border); border-radius:4px; font-size:0.65rem; font-weight:500; }
-  .file-label { max-width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.65rem; }
-  .btn-icon { display:inline-flex; align-items:center; justify-content:center; padding:0.25rem; height:28px; width:28px; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono','Courier New', monospace; font-size:0.7rem; }
+  .hint { font-size:0.8rem; color:#555; margin-top:0.5rem; }
+
+  /* Mirror CAD build table styles (canonical) */
+  .bom-table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .bom-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  .bom-table th, .bom-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+  .bom-table th { background: var(--background); font-weight: 600; color: var(--text); }
+  .bom-table .table-row,
+  .bom-table tbody tr.row,
+  .bom-table tbody tr.row.even,
+  .bom-table tbody tr.row.odd {
+    background: #fff;
+  }
+  .bom-table tr:hover { background: #f8f9fa; }
+  .bom-table tbody tr:last-child td { border-bottom: none; }
+
+  /* Make first column wider for part names, and keep action/remove columns compact */
+  .bom-table th:first-child, .bom-table td:first-child { min-width:220px; max-width:520px; }
+  .bom-table th:nth-last-child(1), .bom-table td:nth-last-child(1) { width:56px; text-align:right; }
+
+  .part-name { font-weight:500; color: var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Use global .source-cell/.source-tag sizing from app.css so tags match other lists */
+  .source-cell { display:inline-flex; align-items:center; gap:0.5rem; }
+  /* Match the exact parts-list tag/button sizing so STEP/DXF tags are visually identical:
+     - height: 32px
+     - font-size: 0.8125rem
+     - padding: 0 0.75rem
+     - border-radius: 4px
+  */
+  .source-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: var(--secondary);
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-right: 0.25rem;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 0.75rem;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    line-height: 1;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  /* End source-tag exact-match */
+  .btn-icon { padding:0; display:inline-flex; align-items:center; justify-content:center; height:32px; width:32px; }
+  .file-label { max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.78rem; }
+
+  .kitting-inline { display:flex; gap:0.5rem; align-items:center; }
+  .kitting-input { padding:0.35rem; border:1px solid var(--border); border-radius:6px; min-width:110px; }
+
+  .status-badge { display:inline-block; padding:0.25rem 0.45rem; border-radius:6px; background:#eef2ff; color:#3730a3; font-weight:700; font-size:0.78rem; }
+  .status-table { font-weight:700; }
+
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono','Courier New', monospace; font-size:0.75rem; }
+  /* Column sizing for action and remove columns */
+  .bom-table th.action-col, .bom-table td.action-cell { width:110px; max-width:120px; white-space:nowrap; }
+  .bom-table td.remove-col { width:36px; max-width:40px; text-align:center; }
+  .remove-inline { font-size:1rem; line-height:1; padding:0.15rem 0.35rem; }
 </style>

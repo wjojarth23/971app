@@ -1,12 +1,12 @@
 {
   "sequence": ["cam_ing", "cam_review", "layout", "queued", "cut", "complete"],
   "labels": {
-    "cam_ing": "CAMing",
-    "cam_review": "Needs CAM Review",
-    "layout": "Layout",
-    "queued": "Queued",
-    "cut": "Cut",
-    "complete": "Complete",
-    "travis_progged": "TProged"
+    "cam_ing": "CAM Review Ready",
+    "cam_review": "CAM Review Ready",
+    "layout": "CAM Reviewed",
+    "queued": "TravisProgged",
+    "cut": "Machined",
+    "complete": "Kitted",
+    "travis_progged": "TravisProgged"
   }
 }

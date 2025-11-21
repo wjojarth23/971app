@@ -107,7 +107,9 @@
   let selectedItems = new Set();
   let selectedVendor = null;
   let showOrderModal = false;
-  let orderShippingCost = 0;
+  let orderTotal = 0;
+  let orderDeliveryDate = ''; // iso date string YYYY-MM-DD when user picks a date
+  let orderDeliveryInDays = ''; // if user chooses "in X days" this is a number (string-bound)
   let orderNotes = '';
   
   // Filter items for order mode - only show approved items
@@ -238,9 +240,11 @@
       return;
     }
     
-    // Check if vendor has free shipping
-    const vendorObj = vendors.find(v => v.name === selectedVendor);
-    orderShippingCost = 0;
+    // compute subtotal for selected items and pre-fill order total with subtotal (user can edit)
+    const subtotal = parts.filter(p => selectedItems.has(p.id)).reduce((sum, p) => sum + ((p.final_price || p.price || 0) * (p.quantity || 1)), 0);
+    orderTotal = subtotal;
+    orderDeliveryDate = '';
+    orderDeliveryInDays = '';
     orderNotes = '';
     showOrderModal = true;
   }
@@ -260,13 +264,30 @@
       // Generate order number
       const orderNumber = `ORD-${Date.now()}`;
 
+      // Determine final order total and shipping
+      const parsedOrderTotal = parseFloat(orderTotal) || 0;
+      // If user supplied an order total, compute shipping as order_total - items_total (min 0)
+      const shippingCostNum = Math.max(0, parsedOrderTotal - totalCost);
+      // Determine delivery date from either explicit date or "in X days"
+      let deliveryDateFinal = null;
+      if (orderDeliveryInDays && Number(orderDeliveryInDays) > 0) {
+        const d = new Date();
+        d.setDate(d.getDate() + Number(orderDeliveryInDays));
+        deliveryDateFinal = d.toISOString().slice(0,10);
+      } else if (orderDeliveryDate) {
+        // assume YYYY-MM-DD string
+        deliveryDateFinal = orderDeliveryDate;
+      }
+
       // Create order record
       const orderData = {
         order_number: orderNumber,
         vendor: selectedVendor,
         total_items: selectedParts.length,
         total_cost: totalCost,
-        shipping_cost: parseFloat(orderShippingCost) || 0,
+        order_total: parsedOrderTotal || (totalCost + 0),
+        shipping_cost: shippingCostNum,
+        delivery_date: deliveryDateFinal,
         placed_by: user.id,
         notes: orderNotes && orderNotes.trim() !== '' ? orderNotes.trim() : null
       };
@@ -281,7 +302,7 @@
       const orderId = orderRecord[0].id;
 
       // Calculate shipping cost allocation per item (proportional to item cost)
-      const shippingCostNum = parseFloat(orderShippingCost) || 0;
+      // shippingCostNum already computed above
       const allocations = selectedParts.map(p => {
         const itemCost = (p.final_price || p.price || 0) * (p.quantity || 1);
         const allocation = totalCost > 0 ? (itemCost / totalCost) * shippingCostNum : 0;
@@ -300,7 +321,8 @@
           .update({
             status: 'ordered',
             order_id: orderId,
-            shipping_cost_allocated: allocation
+            shipping_cost_allocated: allocation,
+            delivery_date: deliveryDateFinal
           })
           .eq('id', part.id);
 
@@ -668,12 +690,13 @@
           {#if hasPermission(user, 'APPROVE_PURCHASES')}
             {#if !orderMode}
               <button class="btn btn-primary" on:click={toggleOrderMode}>
-                <Package size={16} /> Create Order
-              </button>
-            {:else}
-              <button class="btn btn-success" on:click={openOrderConfirmModal} disabled={selectedItems.size === 0}>
-                <CheckCircle size={16} /> Confirm Order ({selectedItems.size} items)
-              </button>
+                  <Package size={16} /> Create Order
+                </button>
+              {:else}
+                <!-- use primary (accent) for confirm instead of green success; keep semantic icon -->
+                <button class="btn btn-primary" on:click={openOrderConfirmModal} disabled={selectedItems.size === 0}>
+                  <CheckCircle size={16} /> Confirm Order ({selectedItems.size} items)
+                </button>
               <button class="btn btn-secondary" on:click={toggleOrderMode}>Cancel</button>
             {/if}
           {/if}
@@ -683,7 +706,7 @@
     {#if orderMode}
       <div class="order-mode-banner">
         <div class="order-mode-content">
-          <div class="order-mode-icon">📦</div>
+          <div class="order-mode-icon"><Package size={28} /></div>
           <div>
             <strong>Order Creation Mode</strong>
             <p>Select items to include in this order. {selectedVendor ? `Showing only ${selectedVendor} items.` : 'Select an item to filter by vendor.'}</p>
@@ -750,6 +773,7 @@
                 <th>Approved</th>
                 <th>Status</th>
                 <th>Shipping</th>
+                <th>Delivery</th>
                 <th>Kit</th>
               {:else}
                 <th>Total</th>
@@ -896,6 +920,13 @@
                     <span style="color: var(--text-secondary); font-size: 12px;">
                       +${part.shipping_cost_allocated.toFixed(2)}
                     </span>
+                  {:else}
+                    <span style="color: var(--text-secondary); font-size: 12px;">—</span>
+                  {/if}
+                </td>
+                <td class="delivery">
+                  {#if part.delivery_date}
+                    <span style="font-size:12px; color:var(--text-secondary);">{new Date(part.delivery_date).toLocaleDateString()}</span>
                   {:else}
                     <span style="color: var(--text-secondary); font-size: 12px;">—</span>
                   {/if}
@@ -1135,31 +1166,43 @@
           </div>
         </div>
 
-        {#if !vendors.find(v => v.name === selectedVendor)?.free_shipping}
           <div class="form-row">
-            <label for="order-shipping">Shipping Cost</label>
-            <input 
-              id="order-shipping" 
-              type="number" 
-              min="0" 
-              step="0.01" 
-              bind:value={orderShippingCost} 
-              placeholder="0.00"
-            />
+            <label for="order-total">Order Total (items + shipping)</label>
+            <input
+                id="order-total"
+                class="form-input"
+                type="number"
+                min="0"
+                step="0.01"
+                bind:value={orderTotal}
+                placeholder="0.00"
+              />
             <small style="color: var(--text-secondary); margin-top: 0.25rem;">
-              This will be distributed across items proportionally by cost
+              Enter the total charged for the order. Shipping will be calculated as (order total - items total)
+              and distributed across items proportionally by cost.
             </small>
           </div>
-        {:else}
-          <div class="free-shipping-notice">
-            ✅ This vendor has free shipping
+
+        <div class="form-row">
+          <label>Delivery Date</label>
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <input type="date" class="form-input" bind:value={orderDeliveryDate} />
+            <div style="display:flex; align-items:center; gap:0.25rem;">
+              <label style="margin:0; font-size:12px; color:var(--text-secondary);">or in</label>
+              <input type="number" class="form-input" min="0" step="1" placeholder="days" bind:value={orderDeliveryInDays} />
+              <span style="font-size:12px; color:var(--text-secondary);">days</span>
+            </div>
           </div>
-        {/if}
+          <small style="color: var(--text-secondary); margin-top: 0.25rem;">
+            Choose a specific delivery date or specify "in X days". Leave blank if unknown.
+          </small>
+        </div>
 
         <div class="form-row">
           <label for="order-notes">Order Notes (optional)</label>
           <textarea 
-            id="order-notes" 
+            id="order-notes"
+            class="form-input"
             rows="3" 
             bind:value={orderNotes} 
             placeholder="Tracking info, PO number, etc."
@@ -1168,7 +1211,7 @@
 
         <div class="order-summary-row total-row">
           <span>Total (incl. shipping):</span>
-          <strong>${(parts.filter(p => selectedItems.has(p.id)).reduce((sum, p) => sum + ((p.final_price || p.price || 0) * (p.quantity || 1)), 0) + (parseFloat(orderShippingCost) || 0)).toFixed(2)}</strong>
+          <strong>${(parseFloat(orderTotal) && parseFloat(orderTotal) > 0) ? parseFloat(orderTotal).toFixed(2) : parts.filter(p => selectedItems.has(p.id)).reduce((sum, p) => sum + ((p.final_price || p.price || 0) * (p.quantity || 1)), 0).toFixed(2)}</strong>
         </div>
 
         <div class="modal-actions">
@@ -1197,7 +1240,7 @@
     padding: 0.875rem 1rem;
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 4px;
   }
 
   .order-mode-content {
@@ -1232,7 +1275,7 @@
     background: var(--primary);
     border: 1px solid var(--border);
     padding: 0.75rem 1rem;
-    border-radius: 6px;
+    border-radius: 4px;
     margin-bottom: 1rem;
   }
 
@@ -1258,16 +1301,6 @@
     color: var(--secondary);
   }
 
-  .free-shipping-notice {
-    background: rgba(76, 175, 80, 0.1);
-    border: 1px solid #4caf50;
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    color: #4caf50;
-    font-weight: 600;
-    text-align: center;
-  }
 
 
   .loading-container {
@@ -1357,12 +1390,9 @@
     text-align: center;
   }
 
-  /* Make the link button compact and match input/select sizing and corner radius */
+  /* Make the link button compact visually but sizing is driven from centralized tokens in app.css */
   .download .btn {
-    padding: 0.375rem 0.5rem;
-    height: 32px;
-    border-radius: 4px;
-    min-width: 36px;
+    /* layout only; sizing (height/padding/radius) comes from centralized .btn tokens */
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1376,16 +1406,10 @@
 
   .status-select {
     border: 1px solid var(--border);
-    /* Use same compact sizing as BOM route: 32px height, 4px radius */
-    border-radius: 4px;
-    padding: 0.375rem 0.5rem;
-    font-size: 0.8125rem;
+    /* visual colors retained; sizing/padding/radius provided by centralized styles */
     background: white;
     color: var(--text);
     min-width: 120px;
-    height: 32px;
-    line-height: normal;
-    vertical-align: middle;
   }
 
   /* Approve button styling: muted yellow with yellow border, match dropdown radius */
@@ -1393,10 +1417,6 @@
     background: #fff7cc; /* muted yellow */
     color: #5a4300; /* darker yellow/brown text for contrast */
     border: 1px solid #ffdf7a; /* yellow border */
-    padding: 0.375rem 0.6rem;
-    height: 32px;
-    border-radius: 4px;
-    font-size: 0.8125rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1414,10 +1434,6 @@
     background: #ffecec; /* light red */
     color: #7a0f0f; /* dark red text */
     border: 1px solid #f5a5a5; /* red border */
-    padding: 0.375rem 0.6rem;
-    height: 32px;
-    border-radius: 4px;
-    font-size: 0.8125rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1471,11 +1487,11 @@
   .status-select.colorful option[value="kitted"] { background: #e0f7fa; }
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }
-  /* Match BOM sizing so inputs and selects align: 32px height, small radius */
-  .kit-input { min-width: 140px; padding: 0.375rem 0.5rem; font-size: 0.8125rem; border-radius: 4px; height: 32px; }
+  /* Keep min-width for layout only; sizing/padding/radius come from centralized tokens */
+  .kit-input { min-width: 140px; }
 
-  /* Price input in table should match the compact BOM control sizing */
-  .price-input { padding: 0.375rem 0.5rem; font-size: 0.8125rem; border-radius: 4px; height: 32px; }
+  /* Price input in table should be compact — sizing comes from app.css small tokens */
+  .price-input { }
 
   /* removed unused states */
 
@@ -1503,13 +1519,13 @@
 
   .form-group { display:flex; flex-direction:column; }
   .form-label { font-size:0.9rem; margin-bottom:0.25rem; color:#333; }
-  .form-select { padding:0.45rem; border:1px solid var(--border); border-radius:4px; height:36px; }
+  .form-select { border:1px solid var(--border); }
 
   .modal {
     background: var(--primary);
     border: 1px solid var(--border);
     padding: 1.25rem;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     width: 420px;
     max-width: calc(100% - 2rem);
     box-shadow: var(--shadow-lg);
@@ -1518,11 +1534,11 @@
   .modal h3 { margin: 0 0 0.5rem 0; }
   .modal .form-row { margin: 0.5rem 0; display:flex; flex-direction:column; }
   .modal .form-row label { font-size: 0.9rem; margin-bottom: 0.25rem; }
-  .modal input[type="text"], .modal input[type="number"] { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; }
-  /* Make selects inside modal visually consistent with inputs */
-  .modal select, .modal .modal-select, .modal .combo-input { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; height: 36px; background: white; color: var(--text); }
-  .modal .combo-input { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; }
-  .modal textarea { padding: 0.45rem; border: 1px solid var(--border); border-radius: 4px; resize: vertical; }
+  .modal input[type="text"], .modal input[type="number"] { border: 1px solid var(--border); }
+  /* Make selects inside modal visually consistent with inputs; sizing via centralized styles */
+  .modal select, .modal .modal-select, .modal .combo-input { border: 1px solid var(--border); background: white; color: var(--text); width: auto; }
+  .modal .combo-input { border: 1px solid var(--border); width: 100%; }
+  .modal textarea { border: 1px solid var(--border); resize: vertical; }
   .modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.75rem; }
 
   .empty-state {
@@ -1534,7 +1550,7 @@
     text-align: center;
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: 4px;
     color: #666;
   }
 
@@ -1551,13 +1567,10 @@
   /* removed unused .edit-cell styles */
 
   .notes-badge {
-    /* Paler red background with red outline to match danger button styling */
+    /* Paler red background with red outline to match danger button styling; size from centralized tokens */
     background: #ffe6e6; /* pale red */
     color: #7a0b0b; /* darker red text for contrast */
     border: 1px solid #ffb3b3; /* red outline */
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1565,7 +1578,19 @@
     font-weight: 700;
     cursor: pointer;
     padding: 0;
-    font-size: 12px;
+    /* Force a perfect circle and clip any overflowed text */
+    height: 20px;
+    width: 20px;
+    min-width: 20px;
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 0.75rem;
+    line-height: 1;
+    box-sizing: border-box;
+    vertical-align: middle;
   }
 
 .notes-badge:hover {
@@ -1574,6 +1599,9 @@
 
   .btn-danger { background: #ffe6e6; color: #7a0b0b; border: 1px solid #ffb3b3; cursor: pointer; }
   .btn-danger:hover { background: #ffd6d6; }
+
+  /* Control sizing now driven globally in src/app.css via centralized tokens. Keep modal textarea minimum height for usability. */
+  .modal textarea { min-height: 72px; }
 
   .error-container {
     display: flex;

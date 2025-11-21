@@ -704,7 +704,8 @@
   .project-meta { color:#666; font-size:0.9rem; }
   .project-builds { padding:0.5rem 0.25rem; }
   .cost-badge { background:#f3f4f6; padding:0.25rem 0.5rem; border-radius:6px; font-weight:600; }
-  .assign-project .form-input { width:140px; }
+  /* layout constraint only; avoid forcing control sizing/padding/radius */
+  .assign-project .form-input { max-width:140px; }
   .build-card { background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 12px; padding: 0.9rem; transition: box-shadow 0.2s ease, transform 0.15s ease; cursor: pointer; }
 
   .build-card:hover {

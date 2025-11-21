@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus, Download } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
+  import { BUTTONS } from '$lib/statuses.js';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
 
   let user = null;
@@ -1226,9 +1227,9 @@
                             await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
                             await loadBuildDetails();
                           }}
-                          title="Mark as CAMed"
+                          title={BUTTONS.CAM_REVIEWED}
                         >
-                          CAMed
+                          {BUTTONS.CAM_REVIEWED}
                         </button>
                       {:else}
                         <span class="chip {part.status ? `chip-status-${part.status}` : 'chip-neutral'}">
@@ -1599,11 +1600,10 @@
     gap: 0.75rem;
     margin: 0.5rem 0;
   }
+  /* Control sizing/padding/radius handled globally in src/app.css */
   .form-input {
     width: 100%;
-    padding: 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 6px;
   }
   .modal-actions {
     display: flex;
@@ -1696,26 +1696,26 @@
     border-bottom: none;
   }
   .part-description { font-size: 0.75rem; color: var(--secondary); margin-top: 0.25rem; }
-  .workflow-badge { display: inline-flex; align-items: center; padding: 0.375rem 0.75rem; border-radius: 4px; font-size: 0.8125rem; font-weight: 500; background: var(--background); border: 1px solid var(--border); height: 32px; }
+  .workflow-badge { display: inline-flex; align-items: center; background: var(--background); border: 1px solid var(--border); font-weight: 500; }
   .workflow-purchase { background: #fff8e1; color: #f57f17; border-color: #ffcc02; }
   .no-data { color: var(--secondary); font-style: italic; }
-  .btn-yellow { background: #FFD700; color: #333; height: 40px; }
+  .btn-yellow { background: #FFD700; color: #333; }
   .btn-yellow:hover { background: #FFC107; }
   .btn-outline-danger { background: #fff5f5; color: #e74c3c; border: 1px solid #e74c3c; }
   .btn-outline-danger:hover { background: #ffe8e8; }
   .add-btn { min-width: 80px; }
-  .type-dropdown { padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.8125rem; background: white; cursor: pointer; height: 32px; }
+  .type-dropdown { border: 1px solid var(--border); background: white; cursor: pointer; }
   .type-cots { background: #fff8e1 !important; color: #f57f17 !important; border-color: #ffcc02 !important; }
   .type-manufactured { background: #e1f5fe !important; color: #0277bd !important; border-color: #81d4fa !important; }
   .bounding-box { font-family: monospace; font-size: 0.75rem; }
   .no-stock { color: var(--secondary); font-style: italic; }
-  .workflow-dropdown { padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.8125rem; background: var(--background); color: var(--text); cursor: pointer; height: 32px; }
+  .workflow-dropdown { border: 1px solid var(--border); background: var(--background); color: var(--text); cursor: pointer; }
   .workflow-dropdown.workflow-3d-print { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
   .workflow-dropdown.workflow-laser-cut { background: #fff3e0; color: #ef6c00; border-color: #ffcc02; }
   .workflow-dropdown.workflow-lathe { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
   .workflow-dropdown.workflow-mill { background: #e8f5e8; color: #388e3c; border-color: #a5d6a7; }
   .workflow-dropdown.workflow-router { background: #fce4ec; color: #c2185b; border-color: #f8bbd9; }
-  select { padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.8125rem; background: white; cursor: pointer; height: 32px; }
+  select { border: 1px solid var(--border); background: white; cursor: pointer; }
   /* removed unused .chip-edit styles */
 
   /* Version Modal Styles */
