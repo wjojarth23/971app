@@ -1,6 +1,8 @@
 import { PUBLIC_ONSHAPE_ACCESS_KEY, PUBLIC_ONSHAPE_SECRET_KEY, PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
 import { partClassificationService } from './bom_classify.js';
 
+const ENABLE_BBOX = false;
+
 class OnShapeAPI {
     constructor() {
         this.accessKey = PUBLIC_ONSHAPE_ACCESS_KEY;
@@ -394,12 +396,16 @@ class OnShapeAPI {
                     vendor 
                 });
 
-                // Bounding box fetch disabled globally per requirements - never call bounding box APIs
                 let boundingBox = null;
                 let boundingBoxX = null;
                 let boundingBoxY = null;
-                let boundingBoxZ = null;
-                console.log('Bounding box fetch disabled; skipping bounding box lookup for all parts');
+
+                if (ENABLE_BBOX) {
+                    // Bounding box fetch logic would go here
+                    console.log('Bounding box fetch enabled');
+                } else {
+                    console.log('Bounding box fetch disabled; skipping bounding box lookup for all parts');
+                }
                 
                 // Add to data for AI analysis
                 bomDataForAI.push({

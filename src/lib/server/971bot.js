@@ -1,18 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 import { WebClient } from '@slack/web-api';
+import { env } from '$env/dynamic/private';
+import { env as publicEnv } from '$env/dynamic/public';
 
 // Lazy initialization to avoid throwing at module import time (build-time).
 let _supabaseClient = null;
 let _slackClient = null;
 
-const APPROVER_GROUP_NAME = process.env.APPROVER_DM_NAME || 'purchase-approvals';
-const FALLBACK_APPROVER_EMAILS = (process.env.FALLBACK_APPROVER_EMAILS || '')
+const APPROVER_GROUP_NAME = env.APPROVER_DM_NAME || 'purchase-approvals';
+const FALLBACK_APPROVER_EMAILS = (env.FALLBACK_APPROVER_EMAILS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
 function getSlackTokenFromEnv() {
-  return process.env.SLACK_BOT_TOKEN || process.env.BOT_TOKEN || process.env.TOKEN || null;
+  return env.SLACK_BOT_TOKEN || env.BOT_TOKEN || env.TOKEN || null;
 }
 
 export function getSlackClient() {
@@ -27,10 +29,15 @@ export function getSlackClient() {
 
 export function getSupabase() {
   if (_supabaseClient) return _supabaseClient;
-  const SUPABASE_URL = process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL;
-  const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.PUBLIC_SUPABASE_ANON_KEY;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    throw new Error('Missing SUPABASE_URL/SUPABASE_SERVICE_KEY (or PUBLIC_SUPABASE_ANON_KEY) in environment');
+  const SUPABASE_URL = env.SUPABASE_URL || publicEnv.PUBLIC_SUPABASE_URL;
+  // The bot MUST use service_role key to bypass RLS and query all user_profiles for approvers
+  const SUPABASE_SERVICE_KEY = env.SUPABASE_SERVICE_KEY;
+  
+  if (!SUPABASE_URL) {
+    throw new Error('Missing SUPABASE_URL in environment');
+  }
+  if (!SUPABASE_SERVICE_KEY) {
+    throw new Error('Missing SUPABASE_SERVICE_KEY in environment. The bot requires service_role access to query user_profiles for approvers.');
   }
   _supabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   return _supabaseClient;
@@ -94,11 +101,24 @@ function formatPriceLine(perUnitPrice, quantity = 1) {
 export async function listApproversFromDb() {
   const supa = getSupabase();
   try {
-    const { data } = await supa.from('user_profiles').select('id, email, full_name, permissions');
+    console.log('Querying user_profiles for approvers with APPROVE_PURCHASES permission...');
+    const { data, error } = await supa.from('user_profiles').select('id, email, full_name, permissions');
+    
+    if (error) {
+      console.error('Supabase query error:', error);
+      throw error;
+    }
+    
     const users = data || [];
-    return users.filter((u) => Array.isArray(u.permissions) && u.permissions.includes('APPROVE_PURCHASES'));
+    console.log(`Found ${users.length} total users in user_profiles`);
+    
+    const approvers = users.filter((u) => Array.isArray(u.permissions) && u.permissions.includes('APPROVE_PURCHASES'));
+    console.log(`Found ${approvers.length} users with APPROVE_PURCHASES permission:`, approvers.map(a => a.email));
+    
+    return approvers;
   } catch (e) {
     console.error('Error fetching approvers from Supabase:', e);
+    console.error('This may be an RLS policy issue. Ensure SUPABASE_SERVICE_KEY is set correctly.');
     return [];
   }
 }
@@ -231,10 +251,12 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
         const formattedPrice = formatPriceLine(purchaseRow.price, purchaseRow.quantity || 1);
         const normalizedUrl = normalizeUrl(purchaseRow.url);
         const purchaseLinkBase =
-          process.env.PUBLIC_APP_ORIGIN ||
-          process.env.APP_ORIGIN ||
-          process.env.SITE_URL ||
-          process.env.PUBLIC_SITE_URL ||
+          env.PUBLIC_APP_ORIGIN ||
+          env.APP_ORIGIN ||
+          env.SITE_URL ||
+          env.PUBLIC_SITE_URL ||
+          publicEnv.PUBLIC_APP_ORIGIN ||
+          publicEnv.PUBLIC_SITE_URL ||
           'https://971app.vercel.app';
         const purchaseLink = `${purchaseLinkBase.replace(/\/$/, '')}/cad/purchasing?purchase=${purchaseId}`;
 
@@ -384,7 +406,7 @@ export async function postUserApprovalNeeded(name) {
 // Basic signature verification for Slack requests (raw body needed by SvelteKit handler)
 import crypto from 'crypto';
 export function verifySlackSignature(rawBody, headers) {
-  const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET || '';
+  const SLACK_SIGNING_SECRET = env.SLACK_SIGNING_SECRET || '';
   if (!SLACK_SIGNING_SECRET) return true;
   const timestamp = headers['x-slack-request-timestamp'];
   if (!timestamp) return false;

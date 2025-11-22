@@ -4,6 +4,8 @@
  * and assigns manufacturing processes based on defined criteria
  */
 
+const ENABLE_CEMO = true;
+
 class PartClassificationService {
     constructor() {
         // No API route needed for manual classification

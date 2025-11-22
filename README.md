@@ -48,8 +48,7 @@ A comprehensive manufacturing management system built with SvelteKit, featuring 
    # Betting Demo Mode (server-side only)
    # When true, include finished matches in "upcoming" so you can test past events.
    # Accepted truthy values: "true", "1", "yes", "y"
-   # Uses CEMO (preferred). Lowercase "cemo" is also supported.
-   CEMO=false
+
    ```
 
 4. Set up the database (run in Supabase SQL Editor, in this order):
