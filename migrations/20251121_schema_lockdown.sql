@@ -329,8 +329,20 @@ USING (
   )
 );
 
-CREATE POLICY build_bom_write_authenticated ON public.build_bom
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY build_bom_insert_authenticated ON public.build_bom
+FOR INSERT TO authenticated
+WITH CHECK (
+  has_permission('CREATE_BUILDS')
+  OR EXISTS (
+    SELECT 1
+    FROM public.builds b
+    JOIN public.subsystem_members sm ON sm.subsystem_id = b.subsystem_id
+    WHERE b.id = public.build_bom.build_id AND sm.user_id = auth.uid()
+  )
+);
+
+CREATE POLICY build_bom_update_authenticated ON public.build_bom
+FOR UPDATE TO authenticated
 USING (
   has_permission('CREATE_BUILDS')
   OR EXISTS (
@@ -350,6 +362,18 @@ WITH CHECK (
   )
 );
 
+CREATE POLICY build_bom_delete_authenticated ON public.build_bom
+FOR DELETE TO authenticated
+USING (
+  has_permission('CREATE_BUILDS')
+  OR EXISTS (
+    SELECT 1
+    FROM public.builds b
+    JOIN public.subsystem_members sm ON sm.subsystem_id = b.subsystem_id
+    WHERE b.id = public.build_bom.build_id AND sm.user_id = auth.uid()
+  )
+);
+
 CREATE POLICY build_bom_service_all ON public.build_bom
 FOR ALL TO service_role
 USING (true) WITH CHECK (true);
@@ -360,10 +384,18 @@ CREATE POLICY parts_select_authenticated ON public.parts
 FOR SELECT TO authenticated
 USING (approved_user());
 
-CREATE POLICY parts_write_authenticated ON public.parts
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY parts_insert_authenticated ON public.parts
+FOR INSERT TO authenticated
+WITH CHECK (approved_user());
+
+CREATE POLICY parts_update_authenticated ON public.parts
+FOR UPDATE TO authenticated
 USING (approved_user())
 WITH CHECK (approved_user());
+
+CREATE POLICY parts_delete_authenticated ON public.parts
+FOR DELETE TO authenticated
+USING (approved_user());
 
 CREATE POLICY parts_service_all ON public.parts
 FOR ALL TO service_role
@@ -398,10 +430,18 @@ CREATE POLICY purchasing_budgets_select_authenticated ON public.purchasing_budge
 FOR SELECT TO authenticated
 USING (has_any_permission(ARRAY['PLACE_ORDERS_MISC','APPROVE_PURCHASES']));
 
-CREATE POLICY purchasing_budgets_manage_authenticated ON public.purchasing_budgets
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY purchasing_budgets_insert_authenticated ON public.purchasing_budgets
+FOR INSERT TO authenticated
+WITH CHECK (has_any_permission(ARRAY['PLACE_ORDERS_MISC','APPROVE_PURCHASES']));
+
+CREATE POLICY purchasing_budgets_update_authenticated ON public.purchasing_budgets
+FOR UPDATE TO authenticated
 USING (has_any_permission(ARRAY['PLACE_ORDERS_MISC','APPROVE_PURCHASES']))
 WITH CHECK (has_any_permission(ARRAY['PLACE_ORDERS_MISC','APPROVE_PURCHASES']));
+
+CREATE POLICY purchasing_budgets_delete_authenticated ON public.purchasing_budgets
+FOR DELETE TO authenticated
+USING (has_any_permission(ARRAY['PLACE_ORDERS_MISC','APPROVE_PURCHASES']));
 
 CREATE POLICY purchasing_budgets_service_all ON public.purchasing_budgets
 FOR ALL TO service_role
@@ -424,10 +464,18 @@ CREATE POLICY vendors_select_authenticated ON public.vendors
 FOR SELECT TO authenticated
 USING (approved_user());
 
-CREATE POLICY vendors_manage_authenticated ON public.vendors
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY vendors_insert_authenticated ON public.vendors
+FOR INSERT TO authenticated
+WITH CHECK (has_permission('PLACE_ORDERS_MISC'));
+
+CREATE POLICY vendors_update_authenticated ON public.vendors
+FOR UPDATE TO authenticated
 USING (has_permission('PLACE_ORDERS_MISC'))
 WITH CHECK (has_permission('PLACE_ORDERS_MISC'));
+
+CREATE POLICY vendors_delete_authenticated ON public.vendors
+FOR DELETE TO authenticated
+USING (has_permission('PLACE_ORDERS_MISC'));
 
 CREATE POLICY vendors_service_all ON public.vendors
 FOR ALL TO service_role
@@ -439,10 +487,18 @@ CREATE POLICY kitting_bins_select_authenticated ON public.kitting_bins
 FOR SELECT TO authenticated
 USING (approved_user());
 
-CREATE POLICY kitting_bins_manage_authenticated ON public.kitting_bins
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY kitting_bins_insert_authenticated ON public.kitting_bins
+FOR INSERT TO authenticated
+WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY kitting_bins_update_authenticated ON public.kitting_bins
+FOR UPDATE TO authenticated
 USING (has_permission('CAN_SEE_ROUTES'))
 WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY kitting_bins_delete_authenticated ON public.kitting_bins
+FOR DELETE TO authenticated
+USING (has_permission('CAN_SEE_ROUTES'));
 
 CREATE POLICY kitting_bins_service_all ON public.kitting_bins
 FOR ALL TO service_role
@@ -454,10 +510,18 @@ CREATE POLICY kitting_select_authenticated ON public.kitting
 FOR SELECT TO authenticated
 USING (approved_user());
 
-CREATE POLICY kitting_manage_authenticated ON public.kitting
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY kitting_insert_authenticated ON public.kitting
+FOR INSERT TO authenticated
+WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY kitting_update_authenticated ON public.kitting
+FOR UPDATE TO authenticated
 USING (has_permission('CAN_SEE_ROUTES'))
 WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY kitting_delete_authenticated ON public.kitting
+FOR DELETE TO authenticated
+USING (has_permission('CAN_SEE_ROUTES'));
 
 CREATE POLICY kitting_service_all ON public.kitting
 FOR ALL TO service_role
@@ -469,10 +533,18 @@ CREATE POLICY router_groups_select_authenticated ON public.router_groups
 FOR SELECT TO authenticated
 USING (approved_user());
 
-CREATE POLICY router_groups_manage_authenticated ON public.router_groups
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY router_groups_insert_authenticated ON public.router_groups
+FOR INSERT TO authenticated
+WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY router_groups_update_authenticated ON public.router_groups
+FOR UPDATE TO authenticated
 USING (has_permission('CAN_SEE_ROUTES'))
 WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY router_groups_delete_authenticated ON public.router_groups
+FOR DELETE TO authenticated
+USING (has_permission('CAN_SEE_ROUTES'));
 
 CREATE POLICY router_groups_service_all ON public.router_groups
 FOR ALL TO service_role
@@ -483,10 +555,18 @@ CREATE POLICY router_group_parts_select_authenticated ON public.router_group_par
 FOR SELECT TO authenticated
 USING (approved_user());
 
-CREATE POLICY router_group_parts_manage_authenticated ON public.router_group_parts
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY router_group_parts_insert_authenticated ON public.router_group_parts
+FOR INSERT TO authenticated
+WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY router_group_parts_update_authenticated ON public.router_group_parts
+FOR UPDATE TO authenticated
 USING (has_permission('CAN_SEE_ROUTES'))
 WITH CHECK (has_permission('CAN_SEE_ROUTES'));
+
+CREATE POLICY router_group_parts_delete_authenticated ON public.router_group_parts
+FOR DELETE TO authenticated
+USING (has_permission('CAN_SEE_ROUTES'));
 
 CREATE POLICY router_group_parts_service_all ON public.router_group_parts
 FOR ALL TO service_role
@@ -548,13 +628,27 @@ USING (
   OR (scouting_type = 'note' AND has_permission('NOTE_SCOUT_ADMIN'))
 );
 
-CREATE POLICY scout_assignments_manage ON public.scout_match_assignments
-FOR INSERT, UPDATE, DELETE TO authenticated
+CREATE POLICY scout_assignments_insert ON public.scout_match_assignments
+FOR INSERT TO authenticated
+WITH CHECK (
+  (scouting_type = 'data' AND has_permission('DATA_SCOUT_ADMIN'))
+  OR (scouting_type = 'note' AND has_permission('NOTE_SCOUT_ADMIN'))
+);
+
+CREATE POLICY scout_assignments_update ON public.scout_match_assignments
+FOR UPDATE TO authenticated
 USING (
   (scouting_type = 'data' AND has_permission('DATA_SCOUT_ADMIN'))
   OR (scouting_type = 'note' AND has_permission('NOTE_SCOUT_ADMIN'))
 )
 WITH CHECK (
+  (scouting_type = 'data' AND has_permission('DATA_SCOUT_ADMIN'))
+  OR (scouting_type = 'note' AND has_permission('NOTE_SCOUT_ADMIN'))
+);
+
+CREATE POLICY scout_assignments_delete ON public.scout_match_assignments
+FOR DELETE TO authenticated
+USING (
   (scouting_type = 'data' AND has_permission('DATA_SCOUT_ADMIN'))
   OR (scouting_type = 'note' AND has_permission('NOTE_SCOUT_ADMIN'))
 );

@@ -116,30 +116,87 @@ export async function slackUserIdForEmail(email) {
 }
 
 export async function syncApprovers(force = false) {
-  if (!force && Date.now() / 1000 - lastApproverSync < APPROVER_SYNC_TTL && approverSlackUserIds.length) return;
+  if (!force && Date.now() / 1000 - lastApproverSync < APPROVER_SYNC_TTL && approverSlackUserIds.length && approverDmChannelId) return;
+  
+  console.log('Syncing approvers from database...');
   const approvers = await listApproversFromDb();
   let emails = approvers.map((a) => a.email).filter(Boolean);
-  if (!emails.length && FALLBACK_APPROVER_EMAILS.length) emails = FALLBACK_APPROVER_EMAILS;
+  
+  if (!emails.length && FALLBACK_APPROVER_EMAILS.length) {
+    console.log('No approvers found in DB, using fallback emails:', FALLBACK_APPROVER_EMAILS);
+    emails = FALLBACK_APPROVER_EMAILS;
+  }
+  
+  if (!emails.length) {
+    console.warn('No approver emails configured. Set FALLBACK_APPROVER_EMAILS or add users with APPROVE_PURCHASES permission.');
+    return;
+  }
+  
   const userIds = [];
   for (const email of emails) {
     const uid = await slackUserIdForEmail(email);
-    if (uid) userIds.push(uid);
+    if (uid) {
+      console.log(`Found Slack user ID for ${email}: ${uid}`);
+      userIds.push(uid);
+    } else {
+      console.warn(`Could not find Slack user ID for ${email}`);
+    }
   }
+  
   approverSlackUserIds = Array.from(new Set(userIds)).sort();
   lastApproverSync = Date.now() / 1000;
-  if (approverSlackUserIds.length) {
-    try {
-      const client = getSlackClient();
-      const conv = await client.conversations.open({ users: approverSlackUserIds.join(',') });
-      if (conv.ok) approverDmChannelId = conv.channel.id;
-    } catch (e) {
-      console.error('Failed to open approver DM:', e?.data || e?.message || e);
+  
+  if (!approverSlackUserIds.length) {
+    console.warn('No Slack user IDs found for approvers. Check that approver emails match Slack workspace users.');
+    return;
+  }
+  
+  console.log(`Found ${approverSlackUserIds.length} approver(s):`, approverSlackUserIds);
+  
+  try {
+    const client = getSlackClient();
+    
+    // For a single approver, open a DM. For multiple, open a multi-party DM (MPIM).
+    if (approverSlackUserIds.length === 1) {
+      console.log('Opening 1-on-1 DM with single approver...');
+      const conv = await client.conversations.open({ users: approverSlackUserIds[0] });
+      if (conv.ok && conv.channel) {
+        approverDmChannelId = conv.channel.id;
+        console.log('Approver DM channel opened:', approverDmChannelId);
+      } else {
+        console.error('Failed to open 1-on-1 DM:', conv);
+      }
+    } else {
+      // For multiple users, we need to open an MPIM (multi-party instant message).
+      // The conversations.open API with multiple users creates an MPIM.
+      console.log('Opening MPIM with multiple approvers...');
+      const conv = await client.conversations.open({ 
+        users: approverSlackUserIds.join(','),
+        return_im: false // Ensure we get a proper MPIM
+      });
+      if (conv.ok && conv.channel) {
+        approverDmChannelId = conv.channel.id;
+        console.log('Approver MPIM channel opened:', approverDmChannelId, 'Type:', conv.channel.is_mpim ? 'MPIM' : conv.channel.is_im ? 'IM' : 'other');
+      } else {
+        console.error('Failed to open MPIM:', conv);
+      }
     }
+  } catch (e) {
+    console.error('Failed to open approver DM/MPIM:', e?.data || e?.message || e);
+    approverDmChannelId = null;
   }
 }
 
 export async function ensureApproverDmChannel() {
-  if (!approverDmChannelId) await syncApprovers(true);
+  if (!approverDmChannelId) {
+    console.log('No approver DM channel cached, syncing approvers...');
+    await syncApprovers(true);
+  }
+  
+  if (!approverDmChannelId) {
+    console.error('Failed to establish approver DM channel after sync');
+  }
+  
   return approverDmChannelId;
 }
 
@@ -198,9 +255,22 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
   }
   try {
     const client = getSlackClient();
+    console.log('Posting purchase message to channel:', channel);
     const resp = await client.chat.postMessage({ channel, text });
+    
+    if (!resp.ok) {
+      console.error('Slack API returned ok=false:', resp);
+      return false;
+    }
+    
     // Log message and response for debugging
-    console.log('Posted purchase message to Slack', { channel, text, ok: resp?.ok, ts: resp?.ts, message: resp?.message });
+    console.log('Posted purchase message to Slack successfully', { 
+      channel, 
+      ts: resp?.ts, 
+      purchaseId,
+      textPreview: text.substring(0, 100)
+    });
+    
     // If we posted successfully and have a purchaseId, record the mapping in memory
     if (resp && resp.ok && resp.ts && purchaseId) {
       try {
@@ -294,10 +364,16 @@ export async function postUserApprovalNeeded(name) {
     console.warn('No approver DM channel available for user approval message');
     return false;
   }
-  const text = `${name} needs approval`;
+  const text = `New user *${name}* needs approval to access the system`;
   try {
     const client = getSlackClient();
+    console.log('Posting user approval message to channel:', channel);
     const resp = await client.chat.postMessage({ channel, text });
+    if (resp.ok) {
+      console.log('User approval message posted successfully');
+    } else {
+      console.error('Failed to post user approval message:', resp);
+    }
     return resp.ok;
   } catch (e) {
     console.error('Slack error posting user approval request:', e?.data || e?.message || e);
