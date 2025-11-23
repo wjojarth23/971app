@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
-import { supabase } from '$lib/supabase.js';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { notifyScoutAssignment } from '$lib/server/slack_notifications.js';
 
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
@@ -14,7 +14,7 @@ async function fetchActorProfile(supa) {
   const { data: authRes } = await supa.auth.getUser();
   const actorId = authRes?.user?.id || null;
   if (!actorId) return { actorId: null, profile: null };
-  const { data: profileRow } = await supabase
+  const { data: profileRow } = await supa
     .from('user_profiles')
     .select('id, role, permissions')
     .eq('id', actorId)
@@ -76,7 +76,7 @@ export async function GET({ url, request }) {
       }
     }
 
-    const base = supabase
+    const base = supa
       .from('scout_match_assignments')
       .select('id, scouting_type, match_key, team_key, assigned_user, completed_at')
       .eq('scouting_type', scouting_type);
@@ -97,7 +97,7 @@ export async function GET({ url, request }) {
     const ids = Array.from(new Set((data || []).map(r => r.assigned_user).filter(Boolean)));
     let nameMap = {};
     if (ids.length > 0) {
-      const { data: users, error: uErr } = await supabase
+      const { data: users, error: uErr } = await supa
         .from('user_profiles')
         .select('id, full_name, email')
         .in('id', ids);
@@ -139,7 +139,7 @@ export async function POST({ request, url }) {
 
     async function upsert(match_key, team_key, user_id){
       // Try update then insert
-      let { error } = await supabase
+      let { error } = await supa
         .from('scout_match_assignments')
         .upsert({ scouting_type, match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' });
       if(error) return { error };
@@ -149,23 +149,62 @@ export async function POST({ request, url }) {
     if(action === 'assign-single'){
       const { match_key, team_key, user_id } = body;
       if(!match_key || !team_key || !user_id) return json({ error: 'match_key, team_key, user_id required' }, { status:400 });
-      const { error } = await supabase
+      const { data: existing } = await supa
         .from('scout_match_assignments')
-        .upsert({ scouting_type, match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' });
+        .select('id, assigned_user')
+        .eq('scouting_type', scouting_type)
+        .eq('match_key', match_key)
+        .eq('team_key', team_key)
+        .maybeSingle();
+
+      const { data: upserted, error } = await supa
+        .from('scout_match_assignments')
+        .upsert({ scouting_type, match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' })
+        .select('id, assigned_user')
+        .single();
       if(error) return json({ error: error.message }, { status:500 });
+      if (upserted?.assigned_user && upserted.assigned_user !== existing?.assigned_user) {
+        await notifyScoutAssignment({
+          assignmentId: upserted.id,
+          userId: upserted.assigned_user,
+          matchKey: match_key,
+          teamKey: team_key,
+          scoutingType: scouting_type
+        });
+      }
       return json({ success:true });
     }
 
     if(action === 'assign-robot'){
       const { team_key, user_id } = body;
       if(!team_key || !user_id) return json({ error: 'team_key, user_id required' }, { status:400 });
+      const { data: existingRows } = await supa
+        .from('scout_match_assignments')
+        .select('id, match_key, team_key, assigned_user')
+        .eq('scouting_type', scouting_type)
+        .eq('team_key', team_key);
+      const prevMap = new Map((existingRows || []).map((row) => [`${row.match_key}:${row.team_key}`, row]));
       // find all matches containing this team in existing rows OR accept client does not send matches (no strict enforcement)
       // simplest: client must send match_key for single; here we just update all rows currently referencing team_key
-      const { data: existing, error: selErr } = await supabase.from('scout_match_assignments').select('match_key').eq('scouting_type', scouting_type).eq('team_key', team_key);
+  const { data: existing, error: selErr } = await supa.from('scout_match_assignments').select('match_key').eq('scouting_type', scouting_type).eq('team_key', team_key);
       if(selErr) return json({ error: selErr.message }, { status:500 });
       for(const row of existing || []){
-        const { error } = await supabase.from('scout_match_assignments').upsert({ scouting_type, match_key: row.match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' });
+        const { data: upserted, error } = await supa
+          .from('scout_match_assignments')
+          .upsert({ scouting_type, match_key: row.match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' })
+          .select('id, assigned_user')
+          .single();
         if(error) return json({ error: error.message }, { status:500 });
+        const prev = prevMap.get(`${row.match_key}:${team_key}`)?.assigned_user;
+        if (upserted?.assigned_user && upserted.assigned_user !== prev) {
+          await notifyScoutAssignment({
+            assignmentId: upserted.id,
+            userId: upserted.assigned_user,
+            matchKey: row.match_key,
+            teamKey,
+            scoutingType: scouting_type
+          });
+        }
       }
       return json({ success:true });
     }
@@ -174,8 +213,35 @@ export async function POST({ request, url }) {
       const items = Array.isArray(body.items)? body.items: [];
       if(items.length===0) return json({ error: 'items required' }, { status:400 });
       const rows = items.map(i => ({ scouting_type, match_key: i.match_key, team_key: i.team_key, assigned_user: i.user_id }));
-      const { error } = await supabase.from('scout_match_assignments').upsert(rows, { onConflict: 'scouting_type,match_key,team_key' });
+      const matchKeys = [...new Set(items.map(i => i.match_key))];
+      const teamKeys = [...new Set(items.map(i => i.team_key))];
+      let prevMap = new Map();
+      if (matchKeys.length && teamKeys.length) {
+        const { data: existingRows } = await supa
+          .from('scout_match_assignments')
+          .select('id, match_key, team_key, assigned_user')
+          .eq('scouting_type', scouting_type)
+          .in('match_key', matchKeys)
+          .in('team_key', teamKeys);
+        prevMap = new Map((existingRows || []).map(row => [`${row.match_key}:${row.team_key}`, row]));
+      }
+      const { data: updatedRows, error } = await supa
+        .from('scout_match_assignments')
+        .upsert(rows, { onConflict: 'scouting_type,match_key,team_key' })
+        .select('id, match_key, team_key, assigned_user');
       if(error) return json({ error: error.message }, { status:500 });
+      for (const row of updatedRows || []) {
+        const prev = prevMap.get(`${row.match_key}:${row.team_key}`)?.assigned_user;
+        if (row.assigned_user && row.assigned_user !== prev) {
+          await notifyScoutAssignment({
+            assignmentId: row.id,
+            userId: row.assigned_user,
+            matchKey: row.match_key,
+            teamKey: row.team_key,
+            scoutingType: scouting_type
+          });
+        }
+      }
       return json({ success:true });
     }
 
@@ -185,7 +251,7 @@ export async function POST({ request, url }) {
       // Only the signed-in assignee can complete (unless local bypass)
       if (!isLocal && (!actorId || user_id !== actorId)) return json({ error: 'Forbidden' }, { status:403 });
       // Ensure the row exists and belongs to user
-      const { data: row, error: rErr } = await supabase
+      const { data: row, error: rErr } = await supa
         .from('scout_match_assignments')
         .select('assigned_user')
         .eq('scouting_type', scouting_type)
@@ -194,7 +260,7 @@ export async function POST({ request, url }) {
         .single();
       if(rErr) return json({ error: rErr.message }, { status:500 });
       if(row.assigned_user !== user_id) return json({ error: 'Not owner' }, { status:403 });
-      const { error } = await supabase
+      const { error } = await supa
         .from('scout_match_assignments')
         .update({ completed_at: new Date().toISOString() })
         .eq('scouting_type', scouting_type)

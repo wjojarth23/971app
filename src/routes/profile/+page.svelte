@@ -5,6 +5,8 @@
   import { toastActions } from '$lib/toast.js';
   import navigation from '$lib/navigation.json';
   import HeaderPreview from '$lib/components/HeaderPreview.svelte';
+  import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
+  import { mergeNotificationSettings } from '$lib/notifications/settings.js';
 
   let user = null;
   let unsub;
@@ -25,6 +27,7 @@
   let addTabKey = '';
   let targetFolderIdx = '';
   let resettingNav = false;
+  let notificationSettings = mergeNotificationSettings();
 
   // Basic tab manipulation helpers (in-memory; saved when profile saved)
   function ensureHeaderTabs() {
@@ -133,10 +136,18 @@
         // load appearance settings if present
         header_tabs = user.header_tabs || null;
         dashboard_layout = user.dashboard_layout || 'grid';
+        notificationSettings = mergeNotificationSettings(user.notification_settings);
       }
     });
     return () => unsub?.();
   });
+
+  function toggleNotification(key, enabled) {
+    notificationSettings = {
+      ...notificationSettings,
+      [key]: enabled
+    };
+  }
 
   async function saveProfile() {
   if (!user?.id) return toastActions.show('Not signed in');
@@ -147,7 +158,8 @@
         full_name: full_name,
         email: email,
         dashboard_layout: dashboard_layout,
-        header_tabs: header_tabs
+        header_tabs: header_tabs,
+        notification_settings: notificationSettings
       };
       console.log('saveProfile payload', payload);
 
@@ -267,6 +279,29 @@
         {:else}
           <div>No extra permissions (role: {user.role})</div>
         {/if}
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Notifications</h3>
+      <p class="muted">Choose which Slack DMs you want to receive.</p>
+      <div class="notification-grid">
+        {#each NOTIFICATION_UI_OPTIONS as option}
+          <label class="notify-row">
+            <input
+              type="checkbox"
+              checked={notificationSettings?.[option.key] !== false}
+              on:change={(event) => toggleNotification(option.key, event.currentTarget.checked)}
+            />
+            <div>
+              <div class="notify-label">{option.label}</div>
+              <div class="notify-desc">{option.description}</div>
+            </div>
+          </label>
+        {/each}
+      </div>
+      <div class="actions">
+        <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save Notifications'}</button>
       </div>
     </section>
 
@@ -398,6 +433,11 @@
   /* Preview */
   .preview-container { margin: 1.5rem 0; padding: 1rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
   .preview-container h4 { margin-top: 0; margin-bottom: 0.75rem; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .notification-grid { display: flex; flex-direction: column; gap: 0.75rem; }
+  .notify-row { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+  .notify-row:last-child { border-bottom: none; }
+  .notify-label { font-weight: 600; }
+  .notify-desc { color: var(--muted); font-size: 0.85rem; }
 
   /* Quick Actions */
   .quick-actions { display: flex; flex-direction: column; gap: 1rem; margin: 1.5rem 0; }

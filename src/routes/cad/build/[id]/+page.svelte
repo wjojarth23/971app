@@ -1696,7 +1696,6 @@
     border-bottom: none;
   }
   .part-description { font-size: 0.75rem; color: var(--secondary); margin-top: 0.25rem; }
-  .workflow-badge { display: inline-flex; align-items: center; background: var(--background); border: 1px solid var(--border); font-weight: 500; }
   .workflow-purchase { background: #fff8e1; color: #f57f17; border-color: #ffcc02; }
   .no-data { color: var(--secondary); font-style: italic; }
   .btn-yellow { background: #FFD700; color: #333; }

@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { userStore, getUserUUID } from '$lib/stores/user.js';
-  import { PERMISSIONS, hasPermission } from '$lib/permissions.js';
+  import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
   import { ShoppingCart, DollarSign, TrendingUp, Package, Plus, Edit, Trash2, User } from 'lucide-svelte';
@@ -9,7 +9,7 @@
   const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
 
   // Tab management
-  let activeTab = 'permissions'; // 'permissions' or 'purchasing'
+  let activeTab = 'access'; // 'access', 'purchasing', 'rosters'
   async function notifyUserNeedsApproval(u) {
     try {
       await fetch(`${BOT_BASE_URL}/notify/user_registration`, {
@@ -26,8 +26,28 @@
   let users = [];
   let loading = false;
   let error = null;
-  // Feature toggle to enable/disable ban button across the UI
-  const enableBan = false;
+  let userSearchQuery = '';
+  let generalRoleFilter = 'all';
+  let purchasingRoleFilter = 'all';
+  let teamRoleFilter = 'all';
+  let approvalFilter = 'all';
+  let savingRoleIds = new Set();
+
+  // Roster Management State
+  let rosters = [];
+  let rosterKeys = [];
+  let rosterEntries = [];
+  let selectedRoster = null;
+  let loadingRosters = false;
+  let showCreateRosterModal = false;
+  let newRosterName = '';
+  let newRosterType = 'multi';
+  let newRosterPublic = false;
+  let newRosterAdmin = false;
+  let newKeyName = '';
+  let newKeyCategory = 'General';
+  let rosterSearchQuery = '';
+  let rosterMemberSearchQuery = '';
 
   // Purchasing admin state
   let vendors = [];
@@ -47,6 +67,78 @@
   let timePeriodDays = 30;
   let customStartDate = '';
   let customEndDate = '';
+
+  const defaultGeneralRole = GENERAL_ROLES.NONE;
+  const defaultPurchasingRole = PURCHASING_ROLES.BASIC;
+  const defaultTeamRole = TEAM_ROLES.OTHER;
+
+  const generalRoleThemes = {
+    [GENERAL_ROLES.NONE]: { bg: 'var(--muted-bg)', border: '#e5e7eb', text: '#6b7280' },
+    [GENERAL_ROLES.MEMBER]: { bg: '#dbeafe', border: '#bfdbfe', text: '#1e3a8a' },
+    [GENERAL_ROLES.SUBSYSTEM_LEAD]: { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
+    [GENERAL_ROLES.LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' }
+  };
+
+  const purchasingRoleThemes = {
+    [PURCHASING_ROLES.BASIC]: { bg: '#f3f4f6', border: '#e5e7eb', text: '#374151' },
+    [PURCHASING_ROLES.APPROVER]: { bg: '#e0f2f1', border: '#bae4de', text: '#0f766e' },
+    [PURCHASING_ROLES.LEAD]: { bg: '#fee2e2', border: '#fecaca', text: '#991b1b' },
+    [PURCHASING_ROLES.BUDGETING]: { bg: '#ede9fe', border: '#ddd6fe', text: '#5b21b6' }
+  };
+
+  const teamRoleThemes = {
+    [TEAM_ROLES.COMPETITION_LEAD]: { bg: '#e0e7ff', border: '#c7d2fe', text: '#3730a3' },
+    [TEAM_ROLES.MECHANICAL_LEAD]: { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
+    [TEAM_ROLES.SOFTWARE_LEAD]: { bg: '#ddd6fe', border: '#c4b5fd', text: '#5b21b6' },
+    [TEAM_ROLES.MANUFACTURING_LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' },
+    [TEAM_ROLES.MANUFACTURING_MEMBER]: { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412' },
+    [TEAM_ROLES.CAD_MEMBER]: { bg: '#fef2f2', border: '#fee2e2', text: '#991b1b' },
+    [TEAM_ROLES.SOFTWARE_MEMBER]: { bg: '#e0f2fe', border: '#bae6fd', text: '#075985' },
+    [TEAM_ROLES.OTHER]: { bg: '#f3f4f6', border: '#e5e7eb', text: '#374151' }
+  };
+
+  const approvalFilterOptions = [
+    { value: 'all', label: 'All Statuses' },
+    { value: 'pending', label: 'Pending Approval' },
+    { value: 'approved', label: 'Approved' }
+  ];
+
+  const generalRoleOptions = Object.values(GENERAL_ROLES);
+  const purchasingRoleOptions = Object.values(PURCHASING_ROLES);
+  const teamRoleOptions = Array.from(new Set(Object.values(TEAM_ROLES)));
+
+  function formatRoleLabel(value) {
+    if (!value) return 'Unassigned';
+    return value
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase())
+      .trim();
+  }
+
+  function roleThemeStyle(theme) {
+    const safeTheme = theme || { bg: 'var(--surface-1)', border: 'var(--border)', text: 'var(--text)' };
+    return `--role-bg:${safeTheme.bg}; --role-border:${safeTheme.border}; --role-text:${safeTheme.text};`;
+  }
+
+  const isUserApproved = (user) => user?.permissions?.includes('CAN_SEE_ROUTES');
+
+  function resetUserFilters() {
+    userSearchQuery = '';
+    generalRoleFilter = 'all';
+    purchasingRoleFilter = 'all';
+    teamRoleFilter = 'all';
+    approvalFilter = 'all';
+  }
+
+  function setSaving(userId, isSaving) {
+    const next = new Set(savingRoleIds);
+    if (isSaving) {
+      next.add(userId);
+    } else {
+      next.delete(userId);
+    }
+    savingRoleIds = next;
+  }
 
   // Computed analytics
   $: approverStats = computeApproverStats(purchaseHistory, timePeriodDays, customStartDate, customEndDate);
@@ -178,14 +270,19 @@
     });
 
     const totalOrderSpending = filteredOrders.reduce((sum, o) => sum + (o.total_cost || 0) + (o.shipping_cost || 0), 0);
-    const totalShippingCost = filteredOrders.reduce((sum, o) => sum + (o.shipping_cost || 0), 0);
     const orderCount = filteredOrders.length;
 
     // Calculate spending on non-order items (approved but not in an order)
     const filteredPurchases = filterByTimePeriod(purchases, days, customStartDate, customEndDate);
-    const nonOrderSpending = filteredPurchases
-      .filter(p => !p.order_id && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted'))
+    const eligibleStatuses = new Set(['approved', 'ordered', 'delivered', 'kitted']);
+    const scopedPurchases = filteredPurchases.filter(p => eligibleStatuses.has(p.status));
+
+    const nonOrderSpending = scopedPurchases
+      .filter(p => !p.order_id)
       .reduce((sum, p) => sum + (p.final_price || p.price || 0) * (p.quantity || 1), 0);
+
+    const totalShippingCost = scopedPurchases
+      .reduce((sum, p) => sum + Number(p.shipping_cost_allocated || 0), 0);
 
     return {
       totalOrderSpending,
@@ -258,15 +355,215 @@
     }
   }
 
+  async function resolveActorId() {
+    let actorId = get(currentUser)?.id || getUserUUID();
+    if (!actorId) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        actorId = data?.session?.user?.id || actorId;
+      } catch (err) {
+        console.warn('Failed to resolve actor id from session', err);
+      }
+    }
+    return actorId;
+  }
+
+  async function performUserAction(targetId, action) {
+    const actorId = await resolveActorId();
+    if (!actorId) throw new Error('Unable to determine current user id; refresh and try again.');
+    const auth = await getAuthHeader();
+
+    const res = await fetch('/api/admin', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({ actor_id: actorId, target_id: targetId, action })
+    });
+
+    if (!res.ok) {
+      let body = {};
+      try {
+        body = await res.json();
+      } catch {
+        // ignore json parse errors
+      }
+      throw new Error(body.error || `Failed to ${action} user`);
+    }
+  }
+
   const currentUser = userStore;
 
   onMount(async () => {
     await loadUsers();
+    await loadRosters();
     if (activeTab === 'purchasing') {
       await loadVendors();
       await loadPurchaseHistory();
     }
   });
+
+  async function selectRoster(roster) {
+    selectedRoster = roster;
+    await Promise.all([loadRosterKeys(roster.id), loadRosterEntries(roster.id)]);
+  }
+
+  async function loadRosterKeys(rosterId) {
+    try {
+      const { data, error } = await supabase.from('roster_keys').select('*').eq('roster_id', rosterId).order('category').order('key_name');
+      if (error) throw error;
+      rosterKeys = data || [];
+    } catch (err) {
+      console.error('Failed to load roster keys', err);
+    }
+  }
+
+  async function loadRosterEntries(rosterId) {
+    try {
+      const { data, error } = await supabase.from('roster_entries').select('*, user:user_id(id, full_name, email), key:key_id(key_name)').eq('roster_id', rosterId);
+      if (error) throw error;
+      rosterEntries = data || [];
+    } catch (err) {
+      console.error('Failed to load roster entries', err);
+    }
+  }
+
+  async function createRoster() {
+    if (!newRosterName) return;
+    try {
+      const { data, error } = await supabase.from('rosters').insert([{
+        name: newRosterName,
+        type: newRosterType,
+        is_public: newRosterPublic,
+        is_admin_editable: newRosterAdmin,
+        created_by: await resolveActorId()
+      }]).select().single();
+      
+      if (error) throw error;
+      rosters = [...rosters, data];
+      showCreateRosterModal = false;
+      newRosterName = '';
+      toastActions.show('Roster created');
+    } catch (err) {
+      console.error('Failed to create roster', err);
+      toastActions.show('Failed to create roster');
+    }
+  }
+
+  async function addKeyToRoster() {
+    if (!selectedRoster || !newKeyName) return;
+    try {
+      const { data, error } = await supabase.from('roster_keys').insert([{
+        roster_id: selectedRoster.id,
+        key_name: newKeyName,
+        category: newKeyCategory
+      }]).select().single();
+      
+      if (error) throw error;
+      rosterKeys = [...rosterKeys, data];
+      newKeyName = '';
+      toastActions.show('Key added');
+    } catch (err) {
+      console.error('Failed to add key', err);
+      toastActions.show('Failed to add key');
+    }
+  }
+
+  async function deleteRosterKey(key) {
+    if (!selectedRoster) return;
+    try {
+      const { error } = await supabase.from('roster_keys').delete().eq('id', key.id);
+      if (error) throw error;
+      rosterKeys = rosterKeys.filter((k) => k.id !== key.id);
+      rosterEntries = rosterEntries.filter((entry) => entry.key_id !== key.id);
+      toastActions.show('Key removed');
+    } catch (err) {
+      console.error('Failed to remove key', err);
+      toastActions.show('Failed to remove key');
+    }
+  }
+
+  async function assignUserToRoster(user, key) {
+    if (!selectedRoster) return;
+    try {
+      // If single select, remove existing entry for this user in this roster
+      if (selectedRoster.type === 'single') {
+        const existing = rosterEntries.find(e => e.user_id === user.id);
+        if (existing) {
+          await supabase.from('roster_entries').delete().eq('id', existing.id);
+        }
+      }
+
+      const { data, error } = await supabase.from('roster_entries').insert([{
+        roster_id: selectedRoster.id,
+        user_id: user.id,
+        key_id: key.id
+      }]).select('*, user:user_id(id, full_name, email), key:key_id(key_name)').single();
+
+      if (error) throw error;
+      
+      // Update local state
+      if (selectedRoster.type === 'single') {
+        rosterEntries = rosterEntries.filter(e => e.user_id !== user.id);
+      }
+      rosterEntries = [...rosterEntries, data];
+      toastActions.show('User assigned');
+    } catch (err) {
+      console.error('Failed to assign user', err);
+      toastActions.show('Failed to assign user');
+    }
+  }
+
+  async function removeUserFromRoster(entryId) {
+    try {
+      const { error } = await supabase.from('roster_entries').delete().eq('id', entryId);
+      if (error) throw error;
+      rosterEntries = rosterEntries.filter(e => e.id !== entryId);
+      toastActions.show('User removed');
+    } catch (err) {
+      console.error('Failed to remove user', err);
+      toastActions.show('Failed to remove user');
+    }
+  }
+
+  async function updateUserRoles(user, roles) {
+    setSaving(user.id, true);
+    const optimisticUsers = users.map((u) => (u.id === user.id ? { ...u, ...roles } : u));
+    users = optimisticUsers;
+
+    try {
+      const res = await fetch('/api/admin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(await getAuthHeader()) },
+        body: JSON.stringify({
+          action: 'update-roles',
+          actor_id: await resolveActorId(),
+          target_id: user.id,
+          ...roles
+        })
+      });
+      if (!res.ok) throw new Error('Failed to update roles');
+
+      let updatedUser = optimisticUsers.find((u) => u.id === user.id) || user;
+      if (!isUserApproved(updatedUser)) {
+        try {
+          await performUserAction(updatedUser.id, 'approve');
+          const withPermission = new Set(updatedUser.permissions || []);
+          withPermission.add('CAN_SEE_ROUTES');
+          updatedUser = { ...updatedUser, permissions: Array.from(withPermission) };
+        } catch (approveErr) {
+          console.warn('Auto approval failed', approveErr);
+        }
+      }
+
+      users = optimisticUsers.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+      toastActions.show('Roles updated');
+    } catch (err) {
+      console.error('Failed to update roles', err);
+      toastActions.show('Failed to update roles');
+      await loadUsers();
+    } finally {
+      setSaving(user.id, false);
+    }
+  }
 
   async function loadVendors() {
     loadingVendors = true;
@@ -296,20 +593,34 @@
       if (err) throw err;
       purchaseHistory = data || [];
 
-      // Load orders with placed_by user email
       const { data: ordersData, error: ordersErr } = await supabase
         .from('orders')
-        .select(`
-          *,
-          placed_by_email:placed_by(email)
-        `)
+        .select('*')
         .order('placed_at', { ascending: false });
-      
       if (ordersErr) throw ordersErr;
-      orders = (ordersData || []).map(o => ({
-        ...o,
-        placed_by_email: o.placed_by_email?.email || 'Unknown'
-      }));
+
+      const userIds = Array.from(new Set((ordersData || [])
+        .map(o => o.placed_by)
+        .filter(Boolean)));
+
+      let userLookup = new Map();
+      if (userIds.length) {
+        const { data: profiles, error: profilesErr } = await supabase
+          .from('user_profiles')
+          .select('id, email, full_name')
+          .in('id', userIds);
+        if (profilesErr) throw profilesErr;
+        userLookup = new Map((profiles || []).map(profile => [profile.id, profile]));
+      }
+
+      orders = (ordersData || []).map((order) => {
+        const profile = order.placed_by ? userLookup.get(order.placed_by) : null;
+        return {
+          ...order,
+          placed_by_email: profile?.email || 'Unknown',
+          placed_by_name: profile?.full_name || null
+        };
+      });
     } catch (err) {
       console.error('Failed to load purchase history', err);
       toastActions.show('Failed to load purchase history');
@@ -416,6 +727,45 @@
     }
   }
 
+  $: filteredRosters = rosters.filter((r) => r.name.toLowerCase().includes(rosterSearchQuery.toLowerCase()));
+  $: filteredRosterMembers = users.filter((u) => (u.full_name || '').toLowerCase().includes(rosterMemberSearchQuery.toLowerCase()));
+  $: pendingApprovals = users.filter((u) => !isUserApproved(u));
+  $: hasActiveUserFilters = Boolean(
+    userSearchQuery.trim() ||
+    generalRoleFilter !== 'all' ||
+    purchasingRoleFilter !== 'all' ||
+    teamRoleFilter !== 'all' ||
+    approvalFilter !== 'all'
+  );
+
+  $: accessFilteredUsers = users
+    .filter((user) => {
+      const searchTerm = userSearchQuery.trim().toLowerCase();
+      const matchesSearch = !searchTerm ||
+        (user.full_name || '').toLowerCase().includes(searchTerm) ||
+        (user.email || '').toLowerCase().includes(searchTerm);
+      if (!matchesSearch) return false;
+
+      const userGeneralRole = user.general_role || defaultGeneralRole;
+      const userPurchasingRole = user.purchasing_role || defaultPurchasingRole;
+      const userTeamRole = user.team_role || defaultTeamRole;
+      const approved = isUserApproved(user);
+
+      if (generalRoleFilter !== 'all' && userGeneralRole !== generalRoleFilter) return false;
+      if (purchasingRoleFilter !== 'all' && userPurchasingRole !== purchasingRoleFilter) return false;
+      if (teamRoleFilter !== 'all' && userTeamRole !== teamRoleFilter) return false;
+      if (approvalFilter === 'pending' && approved) return false;
+      if (approvalFilter === 'approved' && !approved) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const approvedDiff = Number(isUserApproved(a)) - Number(isUserApproved(b));
+      if (approvedDiff !== 0) return approvedDiff;
+      const nameA = (a.full_name || a.email || '').toLowerCase();
+      const nameB = (b.full_name || b.email || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
   function togglePermission(user, perm) {
     if (!user.permissions) user.permissions = [];
     if (user.permissions.includes(perm)) {
@@ -435,16 +785,7 @@
   async function saveUser(u) {
     // Persist user changes (permissions/role) to the server.
     error = null;
-    // derive actor id
-    let actor_id = get(currentUser)?.id || getUserUUID();
-    if (!actor_id) {
-      try {
-        const { data } = await supabase.auth.getSession();
-        actor_id = data?.session?.user?.id || actor_id;
-      } catch (e) {
-        console.warn('Failed to read session for actor id', e);
-      }
-    }
+    const actor_id = await resolveActorId();
     if (!actor_id) {
       error = 'Unable to determine current user id; refresh and try again.';
       return;
@@ -469,133 +810,440 @@
   }
 
   // Actions for approve/ban/promote triggered by buttons in the table
-  async function doAction(u, act) {
-    error = null;
-    // derive actor id
-    let actor_id = get(currentUser)?.id || getUserUUID();
-    if (!actor_id) {
-      try {
-        const { data } = await supabase.auth.getSession();
-        actor_id = data?.session?.user?.id || actor_id;
-      } catch (e) {
-        console.warn('Failed to read session for actor id', e);
-      }
-    }
-    if (!actor_id) {
-      error = 'Unable to determine current user id; refresh and try again.';
-      return;
-    }
-
-    if (act === 'promote') {
-      import('$lib/toast.js').then((m) => m.toastActions.show('Promote feature is disabled'));
-      return;
-    }
-
+  // Roster Management functions
+  async function loadRosters() {
+    loadingRosters = true;
     try {
-      const auth = await getAuthHeader();
-      const res = await fetch('/api/admin', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...auth },
-        body: JSON.stringify({ actor_id, target_id: u.id, action: act })
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || JSON.stringify(body));
-      const msg = act === 'ban' ? 'User banned' : act === 'approve' ? 'User approved' : 'Action complete';
-      import('$lib/toast.js').then((m) => m.toastActions.show(msg));
-      await loadUsers();
+      const { data, error } = await supabase.from('rosters').select('*').order('name');
+      if (error) throw error;
+      rosters = data || [];
     } catch (err) {
-      error = err.message || String(err);
-      import('$lib/toast.js').then((m) => m.toastActions.show(error));
+      console.error('Failed to load rosters', err);
+      toastActions.show('Failed to load rosters');
+    } finally {
+      loadingRosters = false;
+    }
+  }
+
+  async function setActiveTab(tab) {
+    activeTab = tab;
+    if (tab === 'purchasing') {
+      if (vendors.length === 0) await loadVendors();
+      if (purchaseHistory.length === 0) await loadPurchaseHistory();
+    }
+    if (tab === 'rosters' && rosters.length === 0) {
+      await loadRosters();
+    }
+  }
+
+  onMount(async () => {
+    await loadUsers();
+    await loadRosters();
+  });
+
+
+  $: {
+    // Sync user list with permissions changes
+    if (users.length > 0 && users[0].permissions) {
+      const allPermissions = new Set();
+      users.forEach(u => {
+        if (Array.isArray(u.permissions)) {
+          u.permissions.forEach(p => allPermissions.add(p));
+        }
+      });
+      // Add default permissions for new users
+      if (!allPermissions.has('CAN_SEE_ROUTES')) {
+        users.forEach(u => {
+          if (!u.permissions.includes('CAN_SEE_ROUTES')) {
+            u.permissions.push('CAN_SEE_ROUTES');
+          }
+        });
+      }
     }
   }
 </script>
 
-<h2>Admin Panel</h2>
+<svelte:head>
+  <title>Admin Control Center</title>
+</svelte:head>
 
-<div class="tabs">
-  <button 
-    class="tab-button {activeTab === 'permissions' ? 'active' : ''}"
-    on:click={() => { activeTab = 'permissions'; }}
-  >
-    Permissions
-  </button>
-  <button 
-    class="tab-button {activeTab === 'purchasing' ? 'active' : ''}"
-    on:click={async () => { 
-      activeTab = 'purchasing'; 
-      if (vendors.length === 0) await loadVendors();
-      if (purchaseHistory.length === 0) await loadPurchaseHistory();
-    }}
-  >
-    Purchasing
-  </button>
-</div>
-
-{#if activeTab === 'permissions'}
-  <div class="tab-content">
-    {#if loading}
-      <p>Loading users…</p>
-    {:else}
-      {#if error}
-        <p class="error">{error}</p>
+<div class="container admin-page">
+  <div class="page-header">
+    <div>
+      <h1>Admin Control Center</h1>
+      <p class="text-muted">Manage permissions, curated rosters, and purchasing workflows from one cohesive surface.</p>
+    </div>
+    <div class="page-actions">
+      {#if activeTab === 'access'}
+        <button class="btn btn-secondary" on:click={loadUsers} disabled={loading}>Refresh Users</button>
+      {:else if activeTab === 'rosters'}
+        <button class="btn btn-secondary" on:click={loadRosters} disabled={loadingRosters}>Refresh Rosters</button>
+      {:else if activeTab === 'purchasing'}
+        <button class="btn btn-secondary" on:click={loadPurchaseHistory} disabled={loadingPurchases || loadingOrders}>Refresh Analytics</button>
       {/if}
-
-      <div class="table-container">
-        <table class="table admin-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Role</th>
-            <th>Permissions</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-      {#each users as u}
-            <tr>
-              <td>{u.full_name || u.id}</td>
-              <td>{u.email}</td>
-              <td>{u.role}</td>
-              <td>
-                <div class="perms">
-                  {#each PERMISSIONS as p}
-                    {#if p === 'CAN_SEE_ROUTES' || (u.permissions.includes('CAN_SEE_ROUTES') && ((p !== 'BAN_USERS' && p !== 'APPROVE_USERS') || u.permissions.includes('VIEW_ADMIN_PANEL')))}
-                      <label class="perm">
-                        <input type="checkbox" checked={u.permissions.includes(p)} on:change={() => togglePermission(u, p)} />
-                        <span>{p}</span>
-                      </label>
-                    {/if}
-                  {/each}
-                </div>
-              </td>
-                <td>
-                <button class="btn btn-secondary" on:click={() => saveUser(u)}>Save</button>
-                <!-- Promote feature removed from UI. Short-circuited in doAction as well. -->
-                {#if (!u.permissions || !u.permissions.includes('CAN_SEE_ROUTES')) && (hasPermission(get(currentUser), 'APPROVE_USERS') || get(currentUser)?.role === 'admin')}
-                  <button class="btn btn-secondary" on:click={() => doAction(u, 'approve')}>Approve</button>
-                {/if}
-                {#if enableBan && (hasPermission(get(currentUser), 'BAN_USERS') || get(currentUser)?.role === 'admin')}
-                  <button class="btn btn-danger" on:click={() => doAction(u, 'ban')}>Ban</button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      </div>
-    {/if}
+    </div>
   </div>
-{:else if activeTab === 'purchasing'}
-  <div class="tab-content">
-    <div class="purchasing-section">
-      <h3>Vendor Management</h3>
-      <button class="btn btn-primary" on:click={openAddVendorModal}>
-        <Plus size={16} /> Add Vendor
-      </button>
+
+  <nav class="tab-nav" role="tablist" aria-label="Admin sections">
+    <button type="button" class:active={activeTab === 'access'} on:click={() => setActiveTab('access')}>
+      Roles & Access
+    </button>
+    <button type="button" class:active={activeTab === 'rosters'} on:click={() => setActiveTab('rosters')}>
+      Roster Studio
+    </button>
+    <button type="button" class:active={activeTab === 'purchasing'} on:click={() => setActiveTab('purchasing')}>
+      Purchasing
+    </button>
+  </nav>
+
+  {#if activeTab === 'access'}
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Role Assignment</h3>
+          <p>Pending approvals: {pendingApprovals.length}</p>
+        </div>
+        <div class="section-actions">
+          <button class="btn btn-secondary" on:click={loadUsers} disabled={loading}>Reload</button>
+        </div>
+      </div>
+
+      {#if loading}
+        <div class="empty-state">Loading users…</div>
+      {:else if error}
+        <div class="empty-state">{error}</div>
+      {:else if accessFilteredUsers.length === 0}
+        <div class="empty-state">No users match your filters.</div>
+      {:else}
+        <div class="role-filters">
+          <input
+            class="form-input filter-input"
+            type="text"
+            placeholder="Search by name or email..."
+            bind:value={userSearchQuery}
+          />
+          <select class="form-select filter-input" bind:value={generalRoleFilter} aria-label="Filter by general role">
+            <option value="all">All General Roles</option>
+            {#each generalRoleOptions as roleValue}
+              <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+            {/each}
+          </select>
+          <select class="form-select filter-input" bind:value={purchasingRoleFilter} aria-label="Filter by purchasing role">
+            <option value="all">All Purchasing Roles</option>
+            {#each purchasingRoleOptions as roleValue}
+              <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+            {/each}
+          </select>
+          <select class="form-select filter-input" bind:value={teamRoleFilter} aria-label="Filter by team role">
+            <option value="all">All Team Roles</option>
+            {#each teamRoleOptions as roleValue}
+              <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+            {/each}
+          </select>
+          <select class="form-select filter-input" bind:value={approvalFilter} aria-label="Filter by approval status">
+            {#each approvalFilterOptions as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+          {#if hasActiveUserFilters}
+            <button type="button" class="btn btn-secondary btn-sm" on:click={resetUserFilters}>Clear Filters</button>
+          {/if}
+        </div>
+
+        <div class="table-container">
+          <table class="table admin-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>General Role</th>
+                <th>Purchasing Role</th>
+                <th>Team Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each accessFilteredUsers as user (user.id)}
+                <tr class:pending-row={!isUserApproved(user)}>
+                  <td>
+                    <div class="name-cell">
+                      <strong>{user.full_name || 'No Name'}</strong>
+                      {#if !isUserApproved(user)}
+                        <span class="chip chip-pill chip-soft status-chip status-chip--pending">Pending approval</span>
+                      {/if}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="email-cell">
+                      <span>{user.email || '—'}</span>
+                      {#if savingRoleIds.has(user.id)}
+                        <span class="saving-indicator">Saving…</span>
+                      {/if}
+                    </div>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
+                      value={user.general_role || defaultGeneralRole}
+                      disabled={savingRoleIds.has(user.id)}
+                      aria-label={`General role for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
+                    >
+                      {#each generalRoleOptions as roleValue}
+                        <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
+                      value={user.purchasing_role || defaultPurchasingRole}
+                      disabled={savingRoleIds.has(user.id)}
+                      aria-label={`Purchasing role for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
+                    >
+                      {#each purchasingRoleOptions as roleValue}
+                        <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
+                      value={user.team_role || defaultTeamRole}
+                      disabled={savingRoleIds.has(user.id)}
+                      aria-label={`Team role for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
+                    >
+                      {#each teamRoleOptions as roleValue}
+                        <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </section>
+
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Manufacturing Portal</h3>
+          <p>The manufacturing portal lives in its own tab so approvals stay cleanly separated.</p>
+        </div>
+        <div class="section-actions">
+          <a class="btn btn-secondary" href="/manufacture/portal" target="_blank" rel="noreferrer">
+            Open Portal
+          </a>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="stat-card">
+          <Package size={20} />
+          <div>
+            <div class="text-muted">Key Roles</div>
+            <strong>Subsystem & Manufacturing Leads</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <TrendingUp size={20} />
+          <div>
+            <div class="text-muted">Leaderboard</div>
+            <strong>Highlights recent completions</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <User size={20} />
+          <div>
+            <div class="text-muted">Roster Source</div>
+            <strong>Manufacturing Roles roster</strong>
+          </div>
+        </div>
+      </div>
+      <p class="text-muted">Use the Roster Studio tab to curate Manufacturing Roles, then assign parts directly inside the portal.</p>
+    </section>
+  {:else if activeTab === 'rosters'}
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Roster Studio</h3>
+          <p>Drag roster keys onto members to organize scouting, manufacturing, or leadership duties.</p>
+        </div>
+        <div class="section-actions">
+          <button class="btn btn-primary" on:click={() => showCreateRosterModal = true}>
+            <Plus size={16} /> New Roster
+          </button>
+        </div>
+      </div>
+
+      <div class="roster-selector-block">
+        <div class="selector-heading">
+          <div>
+            <strong>Rosters</strong>
+            <p class="text-muted">Pick a roster to edit.</p>
+          </div>
+        </div>
+        <input class="form-input" type="text" placeholder="Search rosters..." bind:value={rosterSearchQuery} />
+        {#if loadingRosters}
+          <div class="empty-state">Loading rosters…</div>
+        {:else if filteredRosters.length === 0}
+          <div class="empty-state">No rosters match.</div>
+        {:else}
+          <div class="roster-pill-row">
+            {#each filteredRosters as roster}
+              <button
+                type="button"
+                class="roster-pill {selectedRoster?.id === roster.id ? 'active' : ''}"
+                on:click={() => selectRoster(roster)}
+              >
+                <span>{roster.name}</span>
+                <small>{roster.type === 'single' ? 'Single' : 'Multi'}</small>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      {#if selectedRoster}
+        <div class="roster-main">
+          <div class="panel roster-meta">
+            <div class="panel-header">
+              <div>
+                <strong>{selectedRoster.name}</strong>
+                <div class="badge-row">
+                  <span class="badge-soft">{selectedRoster.is_public ? 'Public' : 'Private'}</span>
+                  <span class="badge-soft">{selectedRoster.is_admin_editable ? 'Admin only' : 'Open edit'}</span>
+                  <span class="badge-soft">{selectedRoster.type === 'single' ? 'Single select' : 'Multi select'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="roster-workspace">
+            <div class="keys-column">
+              <div class="list-card sticky-card">
+                <div class="section-header">
+                  <div>
+                    <h4>Keys</h4>
+                    <p>Drag a key onto a member.</p>
+                  </div>
+                </div>
+                <div class="add-key-form">
+                  <input class="form-input" type="text" placeholder="Key name" bind:value={newKeyName} />
+                  <input class="form-input" type="text" placeholder="Category" bind:value={newKeyCategory} />
+                  <button class="btn btn-secondary" on:click={addKeyToRoster}>Add</button>
+                </div>
+                <div class="list-card__items">
+                  {#if rosterKeys.length === 0}
+                    <div class="empty-state">No keys defined yet.</div>
+                  {:else}
+                    {#each rosterKeys as key}
+                      <div
+                        class="list-row key-row"
+                        draggable="true"
+                        on:dragstart={(e) => e.dataTransfer.setData('text/plain', JSON.stringify(key))}
+                      >
+                        <div>
+                          <strong>{key.key_name}</strong>
+                          <div class="text-muted">{key.category || 'Uncategorized'}</div>
+                        </div>
+                        <button class="btn btn-sm btn-danger" on:click={() => deleteRosterKey(key)}>Remove</button>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
+            </div>
+
+            <div class="members-column">
+              <div class="list-card">
+                <div class="section-header">
+                  <div>
+                    <h4>Members</h4>
+                    <p>Drop a key to assign responsibilities.</p>
+                  </div>
+                </div>
+                <input class="form-input" type="text" placeholder="Search members..." bind:value={rosterMemberSearchQuery} />
+                <div class="list-card__items member-list">
+                  {#if filteredRosterMembers.length === 0}
+                    <div class="empty-state">No members found.</div>
+                  {:else}
+                    {#each filteredRosterMembers as user}
+                      <div
+                        class="list-row member-row member-row--compact"
+                        on:dragover={(e) => e.preventDefault()}
+                        on:drop={async (e) => {
+                          e.preventDefault();
+                          const key = JSON.parse(e.dataTransfer.getData('text/plain'));
+                          await assignUserToRoster(user, key);
+                        }}
+                      >
+                        <div>
+                          <strong>{user.full_name}</strong>
+                          <div class="member-keys">
+                            {#each rosterEntries.filter((entry) => entry.user_id === user.id) as entry}
+                              <span class="chip chip-compact">
+                                {entry.key.key_name}
+                                <button class="chip-remove" on:click={() => removeUserFromRoster(entry.id)} aria-label={`Remove ${entry.key.key_name}`}>
+                                  ×
+                                </button>
+                              </span>
+                            {/each}
+                          </div>
+                        </div>
+                        {#if selectedRoster.type === 'single'}
+                          <select
+                            class="form-select"
+                            on:change={(e) => {
+                              const key = rosterKeys.find((k) => k.id === e.target.value);
+                              if (key) assignUserToRoster(user, key);
+                            }}
+                          >
+                            <option value="">Select key</option>
+                            {#each rosterKeys as key}
+                              <option value={key.id} selected={!!rosterEntries.find((entry) => entry.user_id === user.id && entry.key_id === key.id)}>
+                                {key.key_name}
+                              </option>
+                            {/each}
+                          </select>
+                        {/if}
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {:else}
+        <div class="panel roster-empty">
+          <div class="panel-body">
+            <div class="empty-state">Select a roster to begin editing.</div>
+          </div>
+        </div>
+      {/if}
+    </section>
+  {:else if activeTab === 'purchasing'}
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Vendor Directory</h3>
+          <p>Keep the approved vendor list tidy and consistent.</p>
+        </div>
+        <div class="section-actions">
+          <button class="btn btn-primary" on:click={openAddVendorModal}>
+            <Plus size={16} /> Add Vendor
+          </button>
+        </div>
+      </div>
 
       {#if loadingVendors}
-        <p>Loading vendors...</p>
+        <div class="empty-state">Loading vendors…</div>
       {:else}
         <div class="table-container">
           <table class="table admin-table">
@@ -614,30 +1262,37 @@
                   <td>{vendor.url_base}</td>
                   <td>{vendor.free_shipping ? 'Yes' : 'No'}</td>
                   <td>
-                    <button class="btn btn-sm btn-secondary" on:click={() => openEditVendorModal(vendor)}>
-                      <Edit size={14} /> Edit
-                    </button>
-                    <button class="btn btn-sm btn-danger" on:click={() => deleteVendor(vendor)}>
-                      <Trash2 size={14} /> Delete
-                    </button>
+                    <div class="section-actions">
+                      <button class="btn btn-sm btn-secondary" on:click={() => openEditVendorModal(vendor)}>
+                        <Edit size={14} /> Edit
+                      </button>
+                      <button class="btn btn-sm btn-danger" on:click={() => deleteVendor(vendor)}>
+                        <Trash2 size={14} /> Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               {/each}
               {#if vendors.length === 0}
                 <tr>
-                  <td colspan="4" style="text-align: center; color: var(--text-secondary);">No vendors added yet</td>
+                  <td colspan="4" style="text-align: center;" class="text-muted">No vendors added yet.</td>
                 </tr>
               {/if}
             </tbody>
           </table>
         </div>
       {/if}
-    </div>
+    </section>
 
-    <div class="purchasing-section">
-      <h3>Purchase Analytics</h3>
-      
-      <div class="analytics-filters">
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Purchasing Analytics</h3>
+          <p>Filter trends by rolling window or custom dates.</p>
+        </div>
+      </div>
+
+      <div class="grid-3">
         <div class="form-group">
           <label class="form-label">Time Period</label>
           <select class="form-select" bind:value={timePeriodDays} on:change={() => { customStartDate = ''; customEndDate = ''; }}>
@@ -658,9 +1313,8 @@
       </div>
 
       {#if loadingPurchases}
-        <p>Loading purchase data...</p>
+        <div class="empty-state">Loading purchase data…</div>
       {:else}
-        <!-- Total Spending Summary -->
         <div class="total-spending-card">
           <div class="total-spending-content">
             <div class="total-spending-icon">
@@ -696,7 +1350,7 @@
                   {/each}
                   {#if approverStats.length === 0}
                     <tr>
-                      <td colspan="3" style="text-align: center; color: var(--text-secondary);">No data</td>
+                      <td colspan="3" class="text-muted" style="text-align: center;">No data</td>
                     </tr>
                   {/if}
                 </tbody>
@@ -725,7 +1379,7 @@
                   {/each}
                   {#if ordererStats.length === 0}
                     <tr>
-                      <td colspan="3" style="text-align: center; color: var(--text-secondary);">No data</td>
+                      <td colspan="3" class="text-muted" style="text-align: center;">No data</td>
                     </tr>
                   {/if}
                 </tbody>
@@ -754,7 +1408,7 @@
                   {/each}
                   {#if projectStats.length === 0}
                     <tr>
-                      <td colspan="3" style="text-align: center; color: var(--text-secondary);">No data</td>
+                      <td colspan="3" class="text-muted" style="text-align: center;">No data</td>
                     </tr>
                   {/if}
                 </tbody>
@@ -783,7 +1437,7 @@
                   {/each}
                   {#if vendorStats.length === 0}
                     <tr>
-                      <td colspan="3" style="text-align: center; color: var(--text-secondary);">No data</td>
+                      <td colspan="3" class="text-muted" style="text-align: center;">No data</td>
                     </tr>
                   {/if}
                 </tbody>
@@ -820,13 +1474,11 @@
               </table>
             </div>
           </div>
-
-          <!-- Spending by Order Placer removed to simplify analytics -->
         </div>
       {/if}
-    </div>
-  </div>
-{/if}
+    </section>
+  {/if}
+</div>
 
 <!-- Add Vendor Modal -->
 {#if showAddVendorModal}
@@ -882,240 +1534,196 @@
   </div>
 {/if}
 
+<!-- Create Roster Modal -->
+{#if showCreateRosterModal}
+  <div class="modal-overlay" on:click={() => showCreateRosterModal = false}>
+    <div class="modal" on:click|stopPropagation>
+      <h3>Create Roster</h3>
+      <div class="form-group">
+        <label class="form-label">Roster Name</label>
+        <input type="text" class="form-input" bind:value={newRosterName} placeholder="e.g., Engineering Team" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Roster Type</label>
+        <select class="form-select" bind:value={newRosterType}>
+          <option value="multi">Multi-Select</option>
+          <option value="single">Single-Select</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-checkbox">
+          <input type="checkbox" bind:checked={newRosterPublic} />
+          <span>Public Roster</span>
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="form-checkbox">
+          <input type="checkbox" bind:checked={newRosterAdmin} />
+          <span>Admin Only</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" on:click={() => showCreateRosterModal = false}>Cancel</button>
+        <button class="btn btn-primary" on:click={createRoster}>Create Roster</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
-  .tabs {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    border-bottom: 2px solid var(--border);
-  }
-
-  .tab-button {
-    padding: 0.75rem 1.5rem;
-    background: transparent;
-    border: none;
-    border-bottom: 3px solid transparent;
-    cursor: pointer;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text);
-    transition: all 0.2s;
-  }
-
-  .tab-button:hover {
-    color: var(--secondary);
-    background: rgba(255, 193, 7, 0.1);
-  }
-
-  .tab-button.active {
-    color: var(--secondary);
-    border-bottom-color: var(--secondary);
-  }
-
-  .tab-content {
-    padding: 1rem 0;
-  }
-
-  .purchasing-section {
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    background: var(--primary);
-    border-radius: 8px;
-    border: 1px solid var(--border);
-  }
-
-  .purchasing-section h3 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-    color: var(--text);
-  }
-
-  .total-spending-card {
-    margin-bottom: 2rem;
-    padding: 1.25rem 1.5rem;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-
-  .total-spending-content {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-  }
-
-  .total-spending-icon {
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    padding: 0.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text);
-  }
-
-  .total-spending-details {
-    flex: 1;
-  }
-
-  .total-spending-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text);
-    opacity: 0.9;
-    text-transform: none;
-    letter-spacing: 0;
-  }
-
-  .total-spending-amount {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--text);
-    line-height: 1.2;
-    margin: 0.25rem 0;
-  }
-
-  .total-spending-items {
-    font-size: 0.95rem;
-    color: var(--text-secondary);
-  }
-
-  .analytics-filters {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
-  }
-
-  .analytics-filters .form-group {
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .analytics-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1.5rem;
-  }
-
-  .analytics-card {
-    padding: 1.5rem;
-    background: var(--primary);
-    border-radius: 8px;
-    border: 1px solid var(--border);
-  }
-
-  .analytics-card h4 {
-    margin: 0 0 1rem 0;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text);
-    font-size: 1.1rem;
-  }
-
-  .analytics-table {
-    max-height: 400px;
-    overflow-y: auto;
-    border-radius: 4px;
-  }
-
-  .analytics-table table {
-    font-size: 0.9rem;
-    width: 100%;
-  }
-
-  .analytics-table thead th {
-    position: sticky;
-    top: 0;
-    background: var(--primary);
-    z-index: 1;
-    padding: 0.75rem 0.5rem;
-    font-weight: 600;
-  }
-
-  .analytics-table tbody td {
-    padding: 0.75rem 0.5rem;
-  }
-
-  .analytics-table tbody tr:hover {
-    background: rgba(255, 193, 7, 0.05);
-  }
-
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: var(--primary);
-    padding: 2rem;
-    border-radius: 12px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--border);
-  }
-
-  .modal h3 {
-    margin-top: 0;
-    color: var(--text);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    margin-top: 1.5rem;
-  }
-
-  .form-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-  }
-
-  .form-checkbox input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-  }
-
-  .btn-sm {
-    padding: 0.35rem 0.75rem;
-    font-size: 0.85rem;
-  }
-  
-  /* Make admin table use global table tokens and card container */
-  .admin-table { width: 100%; border-collapse: collapse; }
-  .admin-table th, .admin-table td { padding: 0.6rem; border-bottom: 1px solid var(--border); text-align: left; }
-  .perms { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-  .perm { display: inline-flex; align-items: center; gap: 0.4rem; background: var(--primary); border: 1px solid var(--border); padding: 0.25rem 0.5rem; border-radius: 6px; font-size: 0.85rem; }
-  .perm input { width: 14px; height: 14px; }
-  .perm span { font-weight: 600; color: var(--secondary); font-size: 0.78rem; }
   .error { color: var(--danger); font-weight: 600; }
-
-  /* Make action buttons align and smaller inside table */
-  td > .btn { margin-right: 0.35rem; font-size: 0.85rem; }
-
-  /* Slightly narrow email column for better layout */
   .admin-table td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* Subnav to reach Gantt subroute */
-  .subnav { margin: 0.5rem 0 1rem; }
-  .subnav .btn { font-size: 0.9rem; }
+  .role-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    align-items: center;
+  }
 
-  /* Spacing between Add Vendor button and table */
-  .purchasing-section > .btn { margin-bottom: 0.75rem; }
+  .filter-input {
+    flex: 1 1 160px;
+    min-width: 160px;
+  }
+
+  .role-select {
+    border-color: var(--role-border, var(--border));
+    background: var(--role-bg, var(--primary));
+    color: var(--role-text, var(--text));
+    font-weight: 600;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .role-select:disabled {
+    opacity: 0.7;
+    cursor: progress;
+  }
+
+  .role-select option {
+    color: var(--text);
+    background: var(--primary);
+    font-weight: 500;
+  }
+
+  .pending-row {
+    background: #fffaf0;
+  }
+
+  .name-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .email-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.95rem;
+  }
+
+  .status-chip {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.75rem;
+  }
+
+  .status-chip--pending {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fde68a;
+  }
+
+  .roster-selector-block {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    background: var(--surface-1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .roster-pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  .roster-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin-top: 1rem;
+  }
+
+  .roster-workspace {
+    display: grid;
+    grid-template-columns: minmax(220px, 300px) 1fr;
+    gap: 1.25rem;
+    align-items: flex-start;
+  }
+
+  .keys-column .sticky-card {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 140px);
+    overflow: hidden;
+  }
+
+  .keys-column .sticky-card .list-card__items {
+    max-height: calc(100vh - 320px);
+  }
+
+  .members-column .list-card__items {
+    max-height: none;
+  }
+
+  .member-list {
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+    padding-right: 0.35rem;
+  }
+
+  .member-row--compact {
+    padding: 0.4rem 0.5rem;
+    gap: 0.45rem;
+    align-items: flex-start;
+  }
+
+  .member-row--compact strong {
+    font-size: 0.9rem;
+  }
+
+  .chip-compact {
+    padding: 0.1rem 0.45rem;
+    font-size: 0.7rem;
+  }
+
+  .saving-indicator {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  @media (max-width: 900px) {
+    .admin-table td:nth-child(2) {
+      max-width: unset;
+      white-space: normal;
+    }
+
+    .roster-workspace {
+      grid-template-columns: 1fr;
+    }
+
+    .keys-column .sticky-card {
+      position: static;
+      max-height: none;
+    }
+  }
 </style>

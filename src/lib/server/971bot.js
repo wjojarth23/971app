@@ -358,6 +358,12 @@ export async function approvePurchaseInDb(purchaseId, approverName = 'Slack Appr
   try {
     const supa = getSupabase();
     await supa.from('purchasing').update({ approved: true, approver: approverName, status: 'approved' }).eq('id', purchaseId);
+    try {
+      const { notifyPurchaseApprovedById } = await import('$lib/server/slack_notifications.js');
+      await notifyPurchaseApprovedById(purchaseId);
+    } catch (notifyErr) {
+      console.warn('Failed to send purchase approval DM', notifyErr?.message || notifyErr);
+    }
     return true;
   } catch (e) {
     console.error('Error approving purchase in DB:', e);

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { userStore } from '$lib/stores/auth.js';
+  import { getAuthHeader } from '$lib/supabase.js';
   import notescoutConfig from '$lib/notescout.json';
   let user; userStore.subscribe(v=> user=v);
 
@@ -18,6 +19,14 @@
   let showModal = false;
   let modalContext = { match_key:'', team_key:'', team_number:'', robot_color:'', alliance_index:0 };
   let selectedUserId = '';
+
+  async function authFetch(url, options = {}) {
+    const headers = {
+      ...(options.headers || {}),
+      ...(await getAuthHeader())
+    };
+    return fetch(url, { ...options, headers });
+  }
 
   function canAdmin(){
     if(!user) return false;
@@ -37,7 +46,7 @@
 
   async function loadEligibleUsers(){
     try {
-      const res = await fetch('/api/admin?action=list-users');
+      const res = await authFetch('/api/admin?action=list-users');
       const data = await res.json();
       if(data?.success){
         // filter by memberPerm
@@ -71,7 +80,7 @@
   async function loadAssignments(){
     try {
       const qs = new URLSearchParams({ scouting_type: scoutingType });
-      const res = await fetch(`/api/scout-assignments?${qs}`);
+      const res = await authFetch(`/api/scout-assignments?${qs}`);
       const data = await res.json();
       if(data?.success){
         assignments = {};
@@ -108,14 +117,14 @@
           alert('No matches found for that robot');
         } else {
           const body = { action: 'bulk-assign', scouting_type: scoutingType, items };
-          const res = await fetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+          const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
           const data = await res.json();
           if(!data?.success){ alert('Save failed: '+(data?.error||'unknown')); }
           else { await loadAssignments(); showModal=false; }
         }
       } else {
         const body={ action: 'assign-single', scouting_type: scoutingType, match_key: modalContext.match_key, team_key: modalContext.team_key, user_id: selectedUserId };
-        const res = await fetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+  const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
         if(!data?.success){ alert('Save failed: '+(data?.error||'unknown')); }
         else { await loadAssignments(); showModal=false; }
@@ -155,7 +164,7 @@
         }
       }
       const body={ action:'bulk-assign', scouting_type: scoutingType, items:list };
-      const res = await fetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+  const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if(!data?.success){ alert('Bulk save failed: '+(data?.error||'unknown')); }
       else { await loadAssignments(); }

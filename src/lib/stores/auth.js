@@ -22,7 +22,7 @@ export async function fetchUserProfile(userId) {
   try {
     const { data, error } = await supabase
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned')
+      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, notification_settings, slack_user_id, slack_dm_channel')
       .eq('id', userId)
       .single();
 
@@ -56,12 +56,18 @@ export async function fetchUserProfile(userId) {
         : data.permissions
         ? [String(data.permissions)]
         : [],
+      general_role: data.general_role || 'member',
+      purchasing_role: data.purchasing_role || 'basic',
+      team_role: data.team_role || 'other',
       // new customization fields
       header_tabs: headerTabs,
       dashboard_layout: data.dashboard_layout || 'grid',
       created_at: data.created_at || '',
-      updated_at: data.updated_at || '',
-      banned: !!data.banned
+  updated_at: data.updated_at || '',
+  banned: !!data.banned,
+  notification_settings: data.notification_settings || null,
+  slack_user_id: data.slack_user_id || null,
+  slack_dm_channel: data.slack_dm_channel || null
     };
 
     userProfile.set(profile);

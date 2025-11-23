@@ -876,6 +876,19 @@ CREATE TABLE IF NOT EXISTS "public"."scout_notes" (
 ALTER TABLE "public"."scout_notes" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."user_notification_logs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL REFERENCES "public"."user_profiles"("id") ON DELETE CASCADE,
+    "event_type" "text" NOT NULL,
+    "entity_key" "text" NOT NULL,
+    "sent_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "user_notification_logs_pkey" PRIMARY KEY ("id")
+);
+
+
+ALTER TABLE "public"."user_notification_logs" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."subsystem_members" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "subsystem_id" "uuid",
@@ -928,7 +941,10 @@ CREATE TABLE IF NOT EXISTS "public"."user_profiles" (
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "banned" boolean DEFAULT false,
     "header_tabs" "jsonb",
-    "dashboard_layout" "text" DEFAULT 'grid'::"text"
+    "dashboard_layout" "text" DEFAULT 'grid'::"text",
+    "notification_settings" "jsonb" DEFAULT '{}'::"jsonb",
+    "slack_user_id" "text",
+    "slack_dm_channel" "text"
 );
 
 
@@ -1293,6 +1309,9 @@ CREATE INDEX "scout_match_assignments_user_idx" ON "public"."scout_match_assignm
 
 
 CREATE INDEX "scout_notes_match_key_idx" ON "public"."scout_notes" USING "btree" ("match_key");
+
+
+CREATE UNIQUE INDEX "user_notification_logs_key" ON "public"."user_notification_logs" USING "btree" ("user_id", "event_type", "entity_key");
 
 
 

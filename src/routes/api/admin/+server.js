@@ -18,7 +18,7 @@ export async function GET({ url, request }) {
     const supa = getClientFromRequest(request);
     const { data, error } = await supa
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, banned')
+      .select('id, email, full_name, role, permissions, banned, general_role, purchasing_role, team_role')
       .order('full_name', { ascending: true });
 
     if (error) return json({ error: error.message }, { status: 500 });
@@ -104,7 +104,20 @@ export async function POST({ request }) {
 
       const { error } = await supa
         .from('user_profiles')
-        .update({ role: 'member', banned: false, permissions: normalized })
+        .update({ role: 'member', banned: false, permissions: normalized, general_role: 'member' })
+        .eq('id', target_id);
+      if (error) return json({ error: error.message }, { status: 500 });
+      return json({ success: true });
+    }
+
+    if (action === 'update-roles') {
+      const { general_role, purchasing_role, team_role } = body;
+      if (!isActorAdmin && !actorPerms.includes('EDIT_PERMISSIONS')) {
+        return json({ error: 'Not authorized' }, { status: 403 });
+      }
+      const { error } = await supa
+        .from('user_profiles')
+        .update({ general_role, purchasing_role, team_role })
         .eq('id', target_id);
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true });

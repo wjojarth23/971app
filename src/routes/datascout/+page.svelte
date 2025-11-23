@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { userStore } from '$lib/stores/auth.js';
+  import { getAuthHeader } from '$lib/supabase.js';
   import { hasPermission } from '$lib/permissions.js';
   import notescoutConfig from '$lib/notescout.json';
   import ScoutAssignmentPanel from '$lib/components/ScoutAssignmentPanel.svelte';
@@ -135,7 +136,8 @@
   async function loadMyAssignments(){
     if(!user?.id) return;
     try {
-      const res = await fetch(`/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`);
+      const res = await fetch(`/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`,
+        { headers: await getAuthHeader() });
       const js = await res.json();
       if(js?.success){
         myAssignments = (js.data||[]).filter(r=> !r.completed_at);

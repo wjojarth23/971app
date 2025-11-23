@@ -96,6 +96,22 @@
   let saving = false;
   let showNotesModal = false;
   let notesModalPart = null;
+  async function sendNotification(type, payload = {}) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ type, ...payload })
+      });
+    } catch (err) {
+      console.warn('Notification request failed', err);
+    }
+  }
 
   // Vendor management
   let vendors = [];
@@ -612,6 +628,7 @@
   .eq('id', part.id);
 
       if (error) throw error;
+      await sendNotification('purchase-approved', { purchase_id: part.id });
       await loadParts();
     } catch (err) {
       console.error('Failed to approve part', err);

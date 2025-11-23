@@ -1,5 +1,5 @@
 <script>  import { onMount } from 'svelte';
-  import { supabase } from '$lib/supabase.js';
+  import { supabase, getAuthHeader } from '$lib/supabase.js';
   import { initAuth, userStore, signOut } from '$lib/stores/auth.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
   
   let user = null;
@@ -36,10 +36,15 @@
   async function loadScoutAssignments(){
     if(!user?.id) return;
     try {
+      const authHeaders = await getAuthHeader();
       // Fetch both types
-      const res1 = await fetch(`/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`);
+      const res1 = await fetch(`/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`, {
+        headers: authHeaders
+      });
       const js1 = await res1.json();
-      const res2 = await fetch(`/api/scout-assignments?scouting_type=note&mine=1&user_id=${encodeURIComponent(user.id)}`);
+      const res2 = await fetch(`/api/scout-assignments?scouting_type=note&mine=1&user_id=${encodeURIComponent(user.id)}`, {
+        headers: authHeaders
+      });
       const js2 = await res2.json();
       const rows = [].concat(js1?.data||[], js2?.data||[]);
       // Filter incomplete

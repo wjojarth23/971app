@@ -1399,7 +1399,7 @@
                         </select>
                       </td>                      <td>
                         {#if item.part_type === 'COTS'}
-                          <span class="workflow-badge workflow-purchase">
+                          <span class="tag workflow-tag tag-workflow-purchase">
                             Purchase
                           </span>
                         {:else}
@@ -1775,15 +1775,6 @@
     font-size: 0.75rem;
     color: var(--secondary);
     margin-top: 0.25rem;
-  }
-  
-  .workflow-badge {
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    display: inline-block;
-    text-transform: uppercase;
   }
   
   .workflow-mill {

@@ -5,7 +5,11 @@
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
-import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X } from 'lucide-svelte';
+  import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users } from 'lucide-svelte';
+  import ROUTER_FLOW from '$lib/router_flow.json';
+  import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
+  import { TEAM_ROLES } from '$lib/permissions.js';
+  import stockData from '$lib/stock.json';
   
   let parts = [];
   let filteredParts = [];
@@ -20,6 +24,16 @@ import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText,
   // Kitting bins
   let bins = [];
   let selectedBinMap = {}; // per-part selected bin_id
+  let assignedUserNames = {};
+  
+  // Assign Mode State
+  let assignMode = false;
+  let rosterMembers = [];
+  let draggingUser = null;
+  $: canUseAssignMode = (user?.team_role === TEAM_ROLES.MANUFACTURING_LEAD);
+  $: if (!canUseAssignMode && assignMode) {
+    assignMode = false;
+  }
   
   const workflows = [
     { value: 'laser-cut', label: 'Laser Cut', icon: Zap },
@@ -39,10 +53,10 @@ import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText,
     { value: 'complete', label: 'Complete' }
   ];
 
-import ROUTER_FLOW from '$lib/router_flow.json';
-import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
-
-  import stockData from '$lib/stock.json';
+  function getWorkflowClass(workflow) {
+    if (!workflow) return 'tag-workflow-default';
+    return `tag-workflow-${workflow.toLowerCase().replace(/_/g, '-')}`;
+  }
   let showEditModal = false;
   let editPart = null;
   let editStatus = '';
@@ -74,21 +88,11 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
       await loadUserFromUUID(supabase);
     }
 
-  await loadParts();
-  await loadBins();
+    await loadParts();
+    await loadBins();
+
     loading = false;
   });
-
-  // Fixed drag and drop handlers for better Vercel compatibility (kept for potential future use)
-  function handleDragOver(event) {
-    event.preventDefault();
-    event.currentTarget.classList.add('active');
-  }
-
-  function handleDragLeave(event) {
-    event.preventDefault();
-    event.currentTarget.classList.remove('active');
-  }
 
   async function loadParts() {
     try {
@@ -106,8 +110,9 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
         source_type: part.is_onshape_part ? 'onshape_api' : 'file_upload'
       }));
       
-      parts = transformedData || [];
-      // Prefill selected bin dropdowns from current values
+  parts = transformedData || [];
+  await loadAssignedUserNames(parts);
+  // Prefill selected bin dropdowns from current values
       for (const p of parts) {
         if (p.kitting_bin) selectedBinMap[p.id] = p.kitting_bin;
       }
@@ -118,6 +123,154 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
       loading = false;
     }
   }
+
+  async function sendNotification(type, payload = {}) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ type, ...payload })
+      });
+    } catch (err) {
+      console.warn('Notification request failed', err);
+    }
+  }
+
+  async function loadAssignedUserNames(partList) {
+    const ids = [...new Set(partList.map(part => part.assigned_to).filter(Boolean))];
+    if (ids.length === 0) {
+      assignedUserNames = {};
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('id, full_name, email')
+        .in('id', ids);
+
+      if (error) throw error;
+
+      assignedUserNames = (data || []).reduce((acc, profile) => {
+        acc[profile.id] = profile.full_name || profile.email || 'Assigned';
+        return acc;
+      }, {});
+    } catch (error) {
+      console.error('Error loading assigned user names:', error);
+      assignedUserNames = {};
+    }
+  }
+
+  async function loadRosterMembers() {
+    try {
+      // Load members from "Manufacturing Roles" roster
+      // First find the roster
+      const { data: rosters } = await supabase
+        .from('rosters')
+        .select('id')
+        .ilike('name', '%Manufacturing Roles%')
+        .limit(1);
+      
+      if (!rosters || rosters.length === 0) return;
+      
+      const rosterId = rosters[0].id;
+      
+      // Get entries with user details and keys (roles)
+      const { data: entries, error } = await supabase
+        .from('roster_entries')
+        .select('*, user:user_id(id, full_name, email), key:key_id(key_name, category)')
+        .eq('roster_id', rosterId);
+        
+      if (error) throw error;
+      
+      rosterMembers = entries || [];
+    } catch (err) {
+      console.error('Failed to load roster members', err);
+    }
+  }
+
+  function toggleAssignMode() {
+    if (!canUseAssignMode) return;
+    assignMode = !assignMode;
+    if (assignMode && rosterMembers.length === 0) {
+      loadRosterMembers();
+    }
+  }
+
+  function handleDragStart(e, user) {
+    draggingUser = user;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('text/plain', JSON.stringify(user));
+  }
+
+  function handleDragOver(e) {
+    if (!assignMode || !canUseAssignMode) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }
+
+  async function handleDrop(e, part) {
+    if (!assignMode || !canUseAssignMode) return;
+    e.preventDefault();
+    if (!draggingUser) return;
+    
+    try {
+      const { error } = await supabase
+        .from('parts')
+        .update({ assigned_to: draggingUser.user_id, updated_at: new Date().toISOString() })
+        .eq('id', part.id);
+        
+      if (error) throw error;
+      
+      const updatedParts = parts.map(p => {
+        if (p.id === part.id) {
+          return { ...p, assigned_to: draggingUser.user_id };
+        }
+        return p;
+      });
+      parts = updatedParts;
+      
+      assignedUserNames = {
+        ...assignedUserNames,
+        [draggingUser.user_id]: draggingUser.user.full_name || draggingUser.user.email
+      };
+      
+      showToastMessage(`Assigned to ${draggingUser.user.full_name || draggingUser.user.email}`);
+      await sendNotification('part-assigned', { part_id: part.id });
+    } catch (err) {
+      console.error('Failed to assign user', err);
+      showToastMessage('Failed to assign user');
+    } finally {
+      draggingUser = null;
+    }
+  }
+
+  $: filteredRosterMembers = rosterMembers.filter(m => {
+    // Filter by workflow tag if selected
+    if (!filterWorkflow) return true;
+    // Assuming key category or name matches workflow
+    // Map workflow values to potential key names/categories
+    const workflowMap = {
+      'laser-cut': ['laser', 'laser cutter'],
+      'router': ['router', 'cnc router'],
+      'lathe': ['lathe'],
+      'mill': ['mill', 'cnc mill'],
+      '3d-print': ['3d print', 'printer']
+    };
+    
+    const keywords = workflowMap[filterWorkflow] || [];
+    if (keywords.length === 0) return true;
+    
+    const keyName = m.key?.key_name?.toLowerCase() || '';
+    const category = m.key?.category?.toLowerCase() || '';
+    
+    return keywords.some(k => keyName.includes(k) || category.includes(k));
+  });
 
   async function downloadFile(part, currentStatus) {
     try {
@@ -242,6 +395,9 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
         .eq('id', partId);
       
       if (error) throw error;
+      if (newStatus === 'complete') {
+        await sendNotification('part-complete', { part_id: partId });
+      }
       await loadParts();
     } catch (error) {
       console.error('Error updating part status:', error);
@@ -764,17 +920,26 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
   <title>Parts List - Manufacturing Management</title>
 </svelte:head>
 
+<div class="manufacture-page-container">
 <div class="page-header">
   <h1>Parts List</h1>
   <div class="page-actions">
-    <a href="/manufacture/create" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
+    {#if canUseAssignMode}
+      <button 
+        class="btn {assignMode ? 'btn-primary' : 'btn-secondary'}"
+        on:click={toggleAssignMode}
+      >
+        <Users size={16} />
+        {assignMode ? 'Exit Assign Mode' : 'Assign Mode'}
+      </button>
+    {/if}
+    <a href="/manufacture/create" class="btn btn-primary">
       <Upload size={16} />
       Create New Part
     </a>
     <button
       class="btn btn-secondary"
       on:click={exportToCSV}
-      style="display: inline-flex; align-items: center; gap: 8px;"
     >
       <Download size={16} />
       Export CSV
@@ -855,63 +1020,96 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
     <p>No parts found. {parts.length === 0 ? 'Create your first part!' : 'Try adjusting your filters.'}</p>
   </div>
 {:else}
-  <div class="table-container">
+  <div class="content-layout">
+    {#if assignMode}
+      <aside class="assign-sidebar">
+        <h3>Roster</h3>
+        <div class="roster-list">
+          {#each filteredRosterMembers as member}
+            <div 
+              class="roster-member" 
+              draggable="true" 
+              role="button"
+              tabindex="0"
+              on:dragstart={(e) => handleDragStart(e, member)}
+            >
+              <div class="member-name">{member.user?.full_name || member.user?.email}</div>
+              <div class="member-role">{member.key?.key_name}</div>
+            </div>
+          {/each}
+          {#if filteredRosterMembers.length === 0}
+            <p class="text-muted">No members found for this workflow.</p>
+          {/if}
+        </div>
+      </aside>
+    {/if}
+  <div class="table-container" class:assign-mode={assignMode}>
     <table class="table">
       <thead>
         <tr>
           <th class="name-col">Name</th>
           <th>Workflow</th>
-          <th class="mono">Project ID</th>
-          <th>Qty</th>
-          <th>Stock</th>
-          <th class="source-col">Source</th>
+          <th class="mono" class:hidden={assignMode}>Project ID</th>
+          <th class:hidden={assignMode}>Qty</th>
+          <th class:hidden={assignMode}>Stock</th>
+          <th class="source-col" class:hidden={assignMode}>Source</th>
           <th>Status</th>
-          <th>Created</th>
-          <th>Actions</th>
+          <th class:hidden={assignMode}>Created</th>
+          <th class:hidden={assignMode}>Actions</th>
         </tr>
       </thead>
       <tbody>
         {#each filteredParts as part (part.id)}
           <tr
+            class="parts-row"
             on:click={(e) => onRowClick(e, part)}
             on:keydown={(e) => onRowKeyDown(e, part)}
+            on:dragover={handleDragOver}
+            on:drop={(e) => handleDrop(e, part)}
             role="button"
             tabindex="0"
-            style="cursor: pointer;"
+            class:droppable={assignMode}
           >
-            <td class="name-col"><strong>{part.name}</strong></td>
-            <td>
-              <div class="workflow-badge workflow-{part.workflow || 'mill'}">
-                {getWorkflowLabel(part.workflow)}
-              </div>
+            <td class="name-col">
+              <strong>{part.name}</strong>
+              {#if part.assigned_to}
+                 <span class="assigned-user-badge pill pill-soft pill-assigned">
+                   {assignedUserNames[part.assigned_to] || 'Assigned'}
+                 </span>
+              {/if}
             </td>
-            <td class="mono">{part.project_id}</td>
-            <td>{part.quantity || 1}</td>
-            <td class="text-muted">{part.stock_assignment || '-'}</td>
-            <td class="source-col">
+            <td>
+              <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
+                {getWorkflowLabel(part.workflow)}
+              </span>
+            </td>
+            <td class="mono" class:hidden={assignMode}>{part.project_id}</td>
+            <td class:hidden={assignMode}>{part.quantity || 1}</td>
+            <td class="text-muted" class:hidden={assignMode}>{part.stock_assignment || '-'}</td>
+            <td class="source-col" class:hidden={assignMode}>
               {#if part.source_type === 'onshape_api'}
                 <div class="source-cell">
                   {#if part.workflow === 'laser-cut'}
-                    <span class="source-tag">SVG</span>
+                    <span class="tag tag-source">SVG</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
                       <Download size={16} />
                     </button>
                   {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
-                    <span class="source-tag">PDF</span>
+                    <span class="tag tag-source">PDF</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Open document" title="Open document" on:click={() => openSubsystemDocument(part)}>
                       <ExternalLink size={16} />
                     </button>
                   {:else if part.workflow === 'router'}
-                    <span class="source-tag">STEP</span>
+                    <span class="tag tag-source">STEP</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadStepFromOnshape(part)}>
                       <Download size={16} />
                     </button>
-                    <span class="source-tag">DXF</span>
+                    <span class="tag tag-source">DXF</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadDXFFromOnshape(part)}>
                       <Download size={16} />
                     </button>
                   {:else}
-                    <span class="source-tag">{part.file_format === 'stl' ? 'STL' : 'STEP'}</span>
+                    <span class="tag tag-source">{part.file_format === 'stl' ? 'STL' : 'STEP'}</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
                       <Download size={16} />
                     </button>
@@ -921,13 +1119,13 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
                 {#await Promise.resolve((() => { try { return JSON.parse(part.file_url || '{}') } catch { return {} } })()) then meta}
                   <div class="source-cell">
                     {#if meta.step_file}
-                      <span class="source-tag">STEP</span>
+                      <span class="tag tag-source">STEP</span>
                       <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadFromStorage(meta.step_file, part.id)}>
                         <Download size={16} />
                       </button>
                     {/if}
                     {#if meta.dxf_file}
-                      <span class="source-tag">DXF</span>
+                      <span class="tag tag-source">DXF</span>
                       <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadFromStorage(meta.dxf_file, part.id)}>
                         <Download size={16} />
                       </button>
@@ -954,8 +1152,8 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
             <td>
               <span class="status-badge {getBadgeClass(part.status, getRouterMeta(part))} status-table status-fade">{getStatusDisplay(part)}</span>
             </td>
-            <td>{formatDate(part.created_at)}</td>
-            <td>
+            <td class:hidden={assignMode}>{formatDate(part.created_at)}</td>
+            <td class:hidden={assignMode}>
               <div class="row-actions">
               </div>
               {#if part.status === 'pending'}
@@ -993,111 +1191,7 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
                     </button>
                   </div>
                   {/if}
-                {:else if part.workflow === '3d-print' || part.workflow === 'laser-cut'}
-                  <!-- 3D prints and Laser cut: dropdown + Kit (completes) -->
-                  <div class="actions-col">
-                    <div class="kitting-inline">
-                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
-                        <option value="">Select bin…</option>
-                        {#each bins as b}
-                          <option value={b.bin_id}>{b.bin_id}</option>
-                        {/each}
-                      </select>
-                      <button
-                        class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
-                        disabled={!selectedBinMap[part.id]}
-                        title="Kit and Finish"
-                      >
-                        <Package size={14} />
-                        Kit
-                      </button>
-                    </div>
-                  </div>
-                {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
-                  <!-- Mill/Lathe: dropdown + Kit (finish workflow directly) -->
-                  <div class="actions-col">
-                    <div class="kitting-inline">
-                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
-                        <option value="">Select bin…</option>
-                        {#each bins as b}
-                          <option value={b.bin_id}>{b.bin_id}</option>
-                        {/each}
-                      </select>
-                      <button
-                        class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
-                        disabled={!selectedBinMap[part.id]}
-                        title="Kit and Finish"
-                      >
-                        <Package size={14} />
-                        Kit
-                      </button>
-                    </div>
-                  </div>
-                {:else}
-                  <!-- Fallback: dropdown + Kit -->
-                  <div class="actions-col">
-                    <div class="kitting-inline">
-                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
-                        <option value="">Select bin…</option>
-                        {#each bins as b}
-                          <option value={b.bin_id}>{b.bin_id}</option>
-                        {/each}
-                      </select>
-                      <button
-                        class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
-                        disabled={!selectedBinMap[part.id]}
-                        title="Kit and Finish"
-                      >
-                        <Package size={14} />
-                        Kit
-                      </button>
-                    </div>
-                  </div>
                 {/if}
-
-              
-
-              {:else if part.workflow === 'router' && part.status === 'cammed'}
-                <!-- Router after Cammed per new flow: layout -> TProged -> queued -> Cut -> Bin/Kit -->
-                  {#if getRouterMeta(part).step === 'layout'}
-                                  <div class="actions-col">
-                                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>{BUTTONS.TRAVIS}</button>
-                                  </div>
-                  {:else if getRouterMeta(part).step === 'queued'}
-                      <div class="actions-col">
-                    <!-- Per-row Cut removed: only header/group-level Cut allowed -->
-                    <!-- Travis-progged items: intentionally leave actions column empty (no flag) -->
-                      </div>
-        {:else if getRouterMeta(part).step === 'cut'}
-                  <div class="actions-col">
-                    <div class="kitting-inline">
-                      <select class="form-select kitting-input" bind:value={selectedBinMap[part.id]}>
-                        <option value="">Select bin…</option>
-                        {#each bins as b}
-                          <option value={b.bin_id}>{b.bin_id}</option>
-                        {/each}
-                      </select>
-                      <button
-                        class="btn btn-secondary btn-sm btn-nowrap"
-                        on:click={() => { const v = (selectedBinMap[part.id] || '').trim(); if (v) completePart(part.id, 'kitting-bin', v); }}
-                        disabled={!selectedBinMap[part.id]}
-                        title="Kit and Finish"
-                      >
-                        <Package size={14} />
-                        Kit
-                      </button>
-                    </div>
-                  </div>
-                {:else}
-                  <!-- Fallback: if no step set, begin at Layout -->
-                  <div class="actions-col">
-                    <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { step: 'layout' })}>Start Layout</button>
-                  </div>
-                {/if}
-
               {/if}
             </td>
           </tr>
@@ -1105,7 +1199,9 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
       </tbody>
     </table>
   </div>
+  </div>
 {/if}
+</div>
 
 <!-- Edit Part Modal -->
 {#if showEditModal}
@@ -1119,7 +1215,9 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-header">
         <h3>Edit Part{editPart ? `: ${editPart.name}` : ''}</h3>
-        <button class="btn btn-icon" aria-label="Close" on:click={closeEditModal}><X size={16} /></button>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeEditModal}>
+          <X size={18} />
+        </button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -1249,8 +1347,6 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
     text-overflow: ellipsis;
   }
 
-  .btn-icon { border: 1px solid var(--border); background: var(--background); }
-
   .version-text {
     font-size: 0.75rem;
     color: #666;
@@ -1285,77 +1381,6 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
     /* sizing/padding/radius inherited from centralized controls */
   }
 
-  /* Workflow / tag styles (match BOM muted-outline look) */
-  .workflow-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    text-transform: uppercase;
-    border: 1px solid;
-  }
-
-  /* Hyphenated and non-hyphenated variants to cover both class conventions used across the app */
-  .workflow-mill {
-    background: #e3f2fd;
-    color: #1976d2;
-    border-color: #bbdefb;
-  }
-
-  .workflow-laser-cut,
-  .workflow-lasercut {
-    background: #fff3e0;
-    color: #f57c00;
-    border-color: #ffcc02;
-  }
-
-  .workflow-3d-print,
-  .workflow-3dprint {
-    background: #f3e5f5;
-    color: #7b1fa2;
-    border-color: #ce93d8;
-  }
-
-  .workflow-router {
-    background: #e8f5e8;
-    color: #388e3c;
-    border-color: #a5d6a7;
-  }
-
-  .workflow-purchase {
-    background: #e8f5e8;
-    color: #2e7d32;
-    border-color: #4caf50;
-  }
-
-  .workflow-lathe {
-    background: #fce4ec;
-    color: #c2185b;
-    border-color: #f48fb1;
-  }
-
-  /* Make sure badges that include both classes pick up the colors */
-  .workflow-badge.workflow-mill { background: #e3f2fd; color: #1976d2; border-color: #bbdefb; }
-  .workflow-badge.workflow-laser-cut { background: #fff3e0; color: #f57c00; border-color: #ffcc02; }
-  .workflow-badge.workflow-lasercut { background: #fff3e0; color: #f57c00; border-color: #ffcc02; }
-  .workflow-badge.workflow-3d-print { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
-  .workflow-badge.workflow-3dprint { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
-  .workflow-badge.workflow-router { background: #e8f5e8; color: #388e3c; border-color: #a5d6a7; }
-  .workflow-badge.workflow-purchase { background: #e8f5e8; color: #2e7d32; border-color: #4caf50; }
-  .workflow-badge.workflow-lathe { background: #fce4ec; color: #c2185b; border-color: #f48fb1; }
-
-  /* Source tag: use muted-outline variant to match BOM tags */
-  .source-tag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    color: var(--secondary);
-    border: 1px solid var(--border);
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    margin-right: 0.25rem;
-  }
-
   /* Status badges: keep compact row height */
   .status-badge.status-table {
     display: inline-flex;
@@ -1376,44 +1401,13 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
   .status-badge.status-table.status-complete { --badge-bg: #e8f5e8; background: #e8f5e8; color: var(--success); border-color: #a5d6a7; }
   .status-badge.status-table.status-travis { --badge-bg: #e6ffed; background: #e6ffed; color: #0b6623; border-color: rgba(11,102,35,0.12); }
 
-  /* Unified tag/button sizing to keep consistent height, padding and corner radius (BOM-like) */
-  .workflow-badge,
-  .source-tag,
-  .status-badge.status-table,
-  .btn-icon {
-    height: 32px;
-    min-height: 32px;
-    padding: 0 0.75rem;
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    line-height: 1;
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
+  .parts-row {
+    cursor: pointer;
   }
 
-  /* Make Kit/Bin controls match badge sizing and corner radius */
-  .kitting-inline .btn,
-  .kitting-inline .btn.btn-sm,
-  .actions-col .btn,
-  .actions-col .btn.btn-sm {
-    height: 32px;
-    min-height: 32px;
-    padding: 0 0.75rem;
-    border-radius: 4px;
+  .assigned-user-badge {
     display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    font-size: 0.8125rem;
-    box-sizing: border-box;
-  }
-
-  /* Prevent workflow labels from wrapping */
-  .workflow-badge {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    margin-top: 0.3rem;
   }
 
   /* Make source button icons larger */
@@ -1508,13 +1502,165 @@ import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
       display: none;
     }
   }
-  /* Edit modal styles */
-  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display:flex; align-items: center; justify-content: center; z-index: 1000; }
-  .modal { background: var(--primary); border: 1px solid var(--border); border-radius: 8px; width: min(520px, 95vw); max-height: 90vh; overflow: auto; box-shadow: var(--shadow-md); }
-  .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
-  .modal-body { padding: 1rem; display: grid; gap: 0.75rem; }
-  .modal-footer { padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--border); }
-  .modal .btn-danger { background: #dc2626; color: #fff; }
-  .modal .btn-danger:hover { background: #b91c1c; }
-  .row-actions { margin-bottom: 0.25rem; }
+
+  /* Assign Mode Styles */
+  .content-layout {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .assign-sidebar {
+    width: 250px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+
+  .assign-sidebar h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+  }
+
+  .roster-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .roster-member {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 0.5rem;
+    border-radius: 4px;
+    cursor: grab;
+    user-select: none;
+  }
+
+  .roster-member:active {
+    cursor: grabbing;
+  }
+
+  .member-name {
+    font-weight: 500;
+  }
+
+  .member-role {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  .table-container.assign-mode {
+    flex: 1;
+  }
+
+  .hidden {
+    display: none !important;
+  }
+
+  tr.droppable {
+    transition: background-color 0.2s;
+  }
+
+  tr.droppable:hover {
+    background-color: var(--surface-2);
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    z-index: 2000;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    font-size: 1.15rem;
+  }
+
+  .modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .modal-footer {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .modal-footer .spacer {
+    flex: 1 1 auto;
+  }
+
+  .modal-footer button {
+    flex-shrink: 0;
+  }
+
+  .modal-close-button {
+    border: none;
+    background: transparent;
+    color: var(--text, #111);
+    padding: 0.25rem;
+    border-radius: var(--radius-sm);
+    line-height: 0;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .modal-close-button:hover,
+  .modal-close-button:focus-visible {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text, #111);
+    outline: none;
+  }
+
+  .modal-close-button:focus-visible {
+    box-shadow: 0 0 0 2px rgba(15, 111, 213, 0.4);
+  }
+
+  .modal-close-button :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  @media (max-width: 640px) {
+    .modal-footer {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .modal-footer .spacer {
+      display: none;
+    }
+
+    .modal-footer button {
+      width: 100%;
+    }
+  }
 </style>

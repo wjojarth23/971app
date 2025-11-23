@@ -281,6 +281,9 @@ CREATE TABLE public.user_profiles (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   banned boolean DEFAULT false,
+  notification_settings jsonb DEFAULT '{}'::jsonb,
+  slack_user_id text,
+  slack_dm_channel text,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
@@ -316,3 +319,14 @@ CREATE TABLE public.scout_notes (
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT scout_notes_pkey PRIMARY KEY (id)
 );
+
+CREATE TABLE public.user_notification_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+  event_type text NOT NULL,
+  entity_key text NOT NULL,
+  sent_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT user_notification_logs_pkey PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX user_notification_logs_key ON public.user_notification_logs (user_id, event_type, entity_key);

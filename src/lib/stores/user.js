@@ -52,6 +52,9 @@ function normalizeProfile(row) {
     full_name: row.full_name || '',
     role: row.role || 'member',
     permissions: normalizePermissions(row.permissions),
+    general_role: row.general_role || 'member',
+    purchasing_role: row.purchasing_role || 'basic',
+    team_role: row.team_role || 'other',
     // New customization fields - ensure header_tabs is an array or null
     header_tabs: (function() {
       let h = row.header_tabs ?? null;
@@ -63,8 +66,11 @@ function normalizeProfile(row) {
     })(),
     dashboard_layout: row.dashboard_layout || 'grid',
     created_at: row.created_at || '',
-    updated_at: row.updated_at || '',
-    banned: !!row.banned
+      updated_at: row.updated_at || '',
+      banned: !!row.banned,
+      notification_settings: row.notification_settings || null,
+      slack_user_id: row.slack_user_id || null,
+      slack_dm_channel: row.slack_dm_channel || null
   };
 }
 
@@ -78,9 +84,9 @@ export async function fetchUserProfileByUUID(supabase, uuid) {
     return null;
   }
   try {
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned')
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, notification_settings, slack_user_id, slack_dm_channel')
       .eq('id', uuid)
       .single();
 
