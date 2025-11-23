@@ -1100,14 +1100,16 @@
                       <ExternalLink size={16} />
                     </button>
                   {:else if part.workflow === 'router'}
-                    <span class="tag tag-source">STEP</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadStepFromOnshape(part)}>
-                      <Download size={16} />
-                    </button>
-                    <span class="tag tag-source">DXF</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadDXFFromOnshape(part)}>
-                      <Download size={16} />
-                    </button>
+                    <div class="source-cell multi-files">
+                      <span class="tag tag-source">STEP</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadStepFromOnshape(part)}>
+                        <Download size={16} />
+                      </button>
+                      <span class="tag tag-source">DXF</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadDXFFromOnshape(part)}>
+                        <Download size={16} />
+                      </button>
+                    </div>
                   {:else}
                     <span class="tag tag-source">{part.file_format === 'stl' ? 'STL' : 'STEP'}</span>
                     <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
@@ -1117,7 +1119,7 @@
                 </div>
               {:else if part.workflow === 'router'}
                 {#await Promise.resolve((() => { try { return JSON.parse(part.file_url || '{}') } catch { return {} } })()) then meta}
-                  <div class="source-cell">
+                  <div class="source-cell multi-files">
                     {#if meta.step_file}
                       <span class="tag tag-source">STEP</span>
                       <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadFromStorage(meta.step_file, part.id)}>
@@ -1336,15 +1338,29 @@
   }
 
   .source-cell {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
     min-width: 0;
-    /* Allow enough room for tag + button; keep ellipsis on overflow */
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  }
+
+  .source-cell .tag,
+  .source-cell .file-label {
+    grid-column: 1 / 2;
+  }
+
+  .source-cell .btn {
+    grid-column: 2 / 3;
+  }
+
+  .source-cell.multi-files {
+    grid-template-columns: repeat(3, auto);
+  }
+
+  .source-cell.multi-files .tag,
+  .source-cell.multi-files .btn {
+    grid-column: auto;
   }
 
   .version-text {
@@ -1353,12 +1369,11 @@
   }
 
   .file-label {
-    max-width: 160px;
-    display: inline-block;
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    vertical-align: bottom;
+    min-width: 0;
   }
 
   .actions-col {
@@ -1519,7 +1534,11 @@
     position: sticky;
     top: 1rem;
     max-height: calc(100vh - 2rem);
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow: hidden;
+    overscroll-behavior: contain;
     flex-shrink: 0;
   }
 
@@ -1535,6 +1554,12 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    max-height: calc(100vh - 6rem);
+    overscroll-behavior: contain;
+    padding-right: 0.25rem;
   }
 
   .roster-member {

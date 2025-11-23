@@ -1680,13 +1680,16 @@
   }
 
   .members-column .list-card__items {
-    max-height: none;
+    max-height: calc(100vh - 320px);
+    overscroll-behavior: contain;
+    overflow-y: auto;
   }
 
   .member-list {
     max-height: calc(100vh - 220px);
     overflow-y: auto;
     padding-right: 0.35rem;
+    overscroll-behavior: contain;
   }
 
   .member-row--compact {
