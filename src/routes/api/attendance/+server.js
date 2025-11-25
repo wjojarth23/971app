@@ -97,19 +97,103 @@ export async function GET({ url, getClientAddress, request }) {
     if (action === 'leaderboard' || action === 'attendance-stats') {
       const search = url.searchParams.get('q') || '';
       const limit = Number(url.searchParams.get('limit') || '200');
-      let query = supa
-        .from('attendance_leaderboard_30_days')
-        .select('*')
-        .order('days_attended', { ascending: false })
-        .limit(limit);
+      const daysParam = url.searchParams.get('days');
+      const startParam = url.searchParams.get('start');
+      const endParam = url.searchParams.get('end');
 
-      if (search) {
-        query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+      // Default behavior: return the existing 30-day leaderboard view,
+      // but strip emails before returning (privacy improvement).
+      if (!daysParam && !startParam && !endParam) {
+        let query = supa
+          .from('attendance_leaderboard_30_days')
+          .select('*')
+          .order('days_attended', { ascending: false })
+          .limit(limit);
+
+        if (search) {
+          query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        const safe = (data || []).map((row) => ({ ...row, email: null }));
+        return json({ success: true, data: safe });
       }
-      
-      const { data, error } = await query;
-      if (error) throw error;
-      return json({ success: true, data });
+
+      // Custom date range or days-based leaderboard: aggregate from logs
+      // Parse date range
+      let startDate;
+      let endDate;
+      if (startParam || endParam) {
+        startDate = startParam ? new Date(startParam) : new Date(0);
+        endDate = endParam ? new Date(endParam) : new Date();
+      } else {
+        const days = Number(daysParam) || 30;
+        endDate = new Date();
+        startDate = new Date(endDate);
+        startDate.setDate(endDate.getDate() - days);
+      }
+
+      // Fetch logs in the requested range
+      const { data: logs, error: logsError } = await supa
+        .from('user_attendance_logs')
+        .select('id, user_id, recorded_at')
+        .gte('recorded_at', startDate.toISOString())
+        .lte('recorded_at', endDate.toISOString())
+        .order('recorded_at', { ascending: false })
+        .limit(10000);
+
+      if (logsError) throw logsError;
+
+      // Aggregate per-user: distinct PST dates attended, total check-ins, last attended
+      const agg = new Map();
+      for (const row of logs || []) {
+        const uid = row.user_id;
+        const existing = agg.get(uid) || { user_id: uid, daysSet: new Set(), total_check_ins: 0, last_attended_at: null };
+        const d = new Date(row.recorded_at);
+        // Convert to PST date string (YYYY-MM-DD) to count distinct days in Pacific time
+        const pstDate = d.toLocaleString('en-CA', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
+        existing.daysSet.add(pstDate);
+        existing.total_check_ins += 1;
+        if (!existing.last_attended_at || new Date(row.recorded_at) > new Date(existing.last_attended_at)) {
+          existing.last_attended_at = row.recorded_at;
+        }
+        agg.set(uid, existing);
+      }
+
+      const userIds = Array.from(agg.keys());
+      let users = [];
+      if (userIds.length) {
+        const { data: ups, error: upsError } = await supa
+          .from('user_profiles')
+          .select('id, full_name')
+          .in('id', userIds)
+          .limit(10000);
+        if (upsError) throw upsError;
+        users = ups || [];
+      }
+
+      const entries = (users || []).map((u) => {
+        const a = agg.get(u.id) || { daysSet: new Set(), total_check_ins: 0, last_attended_at: null };
+        return {
+          user_id: u.id,
+          full_name: u.full_name,
+          email: null,
+          days_attended: a.daysSet.size,
+          total_check_ins: a.total_check_ins,
+          last_attended_at: a.last_attended_at
+        };
+      });
+
+      entries.sort((a, b) => {
+        if (b.days_attended !== a.days_attended) return b.days_attended - a.days_attended;
+        const la = a.last_attended_at ? new Date(a.last_attended_at).getTime() : 0;
+        const lb = b.last_attended_at ? new Date(b.last_attended_at).getTime() : 0;
+        return lb - la;
+      });
+
+      return json({ success: true, data: entries.slice(0, limit) });
     }
 
     if (action === 'locations') {

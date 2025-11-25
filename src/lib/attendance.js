@@ -133,7 +133,7 @@ export async function getRecentAttendanceActivity(limit = 10) {
       .from('user_attendance_logs')
       .select(`
         recorded_at,
-        user_profiles!inner(id, full_name, email),
+        user_profiles!inner(id, full_name),
         attendance_locations ( id, name )
       `)
       .order('recorded_at', { ascending: false })
@@ -152,19 +152,32 @@ export async function getRecentAttendanceActivity(limit = 10) {
   }
 }
 
-export async function fetchAttendanceLeaderboard({ search = '', limit = 200 } = {}) {
+export async function fetchAttendanceLeaderboard({ search = '', limit = 200, days = 30, start, end } = {}) {
   try {
-    let query = supabase
-      .from('attendance_leaderboard_30_days')
-      .select('*')
-      .order('days_attended', { ascending: false })
-      .limit(limit);
-    if (search) {
-      query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    const params = new URLSearchParams();
+    params.set('action', 'leaderboard');
+    params.set('limit', String(limit));
+    if (search) params.set('q', search);
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    else if (days) params.set('days', String(days));
+
+    const res = await fetch(`/api/attendance?${params.toString()}`);
+    const payload = await res.json();
+    if (!res.ok) {
+      console.error('Error loading attendance leaderboard:', payload?.error || res.statusText);
+      return [];
     }
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
+
+    return (payload.data || []).map((row) => ({
+      // ensure email is not exposed
+      user_id: row.user_id,
+      full_name: row.full_name,
+      email: null,
+      days_attended: row.days_attended,
+      total_check_ins: row.total_check_ins,
+      last_attended_at: row.last_attended_at
+    }));
   } catch (error) {
     console.error('Error loading attendance leaderboard:', error);
     return [];
