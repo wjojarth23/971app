@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { userStore, getUserUUID } from '$lib/stores/user.js';
+  import { fetchUserProfile } from '$lib/stores/auth.js';
   import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
@@ -577,9 +578,10 @@
           ...roles
         })
       });
-      if (!res.ok) throw new Error('Failed to update roles');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Failed to update roles');
 
-      let updatedUser = optimisticUsers.find((u) => u.id === user.id) || user;
+      let updatedUser = body?.data ? { ...user, ...body.data } : (optimisticUsers.find((u) => u.id === user.id) || user);
       if (!isUserApproved(updatedUser)) {
         try {
           await performUserAction(updatedUser.id, 'approve');
@@ -591,7 +593,11 @@
         }
       }
 
-      users = optimisticUsers.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+      users = optimisticUsers.map((u) => (u.id === updatedUser.id ? { ...u, ...updatedUser } : u));
+
+      if (get(currentUser)?.id === updatedUser.id) {
+        await fetchUserProfile(updatedUser.id);
+      }
       toastActions.show('Roles updated');
     } catch (err) {
       console.error('Failed to update roles', err);

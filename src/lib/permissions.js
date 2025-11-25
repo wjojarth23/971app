@@ -46,14 +46,14 @@ export const TEAM_ROLES = {
   OTHER: 'Other'
 };
 
-const GENERAL_ROLE_PERMISSIONS = {
+export const GENERAL_ROLE_PERMISSIONS = {
   [GENERAL_ROLES.NONE]: [],
   [GENERAL_ROLES.MEMBER]: ['CAN_SEE_ROUTES', 'PLACE_ORDERS_MISC'],
   [GENERAL_ROLES.SUBSYSTEM_LEAD]: ['CAN_SEE_ROUTES', 'PLACE_ORDERS_MISC', 'CREATE_BUILDS', 'CREATE_SUBSYSTEMS'],
   [GENERAL_ROLES.LEAD]: ['CAN_SEE_ROUTES', 'PLACE_ORDERS_MISC', 'CREATE_BUILDS', 'CREATE_SUBSYSTEMS', 'VIEW_ADMIN_PANEL', 'PROMOTE_USERS', 'APPROVE_USERS', 'EDIT_PERMISSIONS']
 };
 
-const PURCHASING_ROLE_PERMISSIONS = {
+export const PURCHASING_ROLE_PERMISSIONS = {
   [PURCHASING_ROLES.BASIC]: ['PLACE_ORDERS_MISC'],
   [PURCHASING_ROLES.APPROVER]: ['PLACE_ORDERS_MISC', 'APPROVE_PURCHASES'],
   [PURCHASING_ROLES.LEAD]: ['PLACE_ORDERS_MISC', 'APPROVE_PURCHASES', 'VIEW_PURCHASING_ADMIN', 'ADD_VENDORS'],
@@ -66,6 +66,20 @@ const ROSTER_KEY_PERMISSIONS = {
   'Video Scout Lead': [], // Add if needed
   'Data Scout Lead': ['DATA_SCOUT_ADMIN', 'NOTE_SCOUT_ADMIN']
 };
+
+export function getRoleDerivedPermissions({ general_role = GENERAL_ROLES.NONE, purchasing_role = PURCHASING_ROLES.BASIC, roster_keys = [] } = {}) {
+  const derived = new Set();
+  (GENERAL_ROLE_PERMISSIONS[general_role] || []).forEach((perm) => derived.add(perm));
+  (PURCHASING_ROLE_PERMISSIONS[purchasing_role] || []).forEach((perm) => derived.add(perm));
+
+  if (Array.isArray(roster_keys)) {
+    for (const key of roster_keys) {
+      (ROSTER_KEY_PERMISSIONS[key] || []).forEach((perm) => derived.add(perm));
+    }
+  }
+
+  return derived;
+}
 
 export function hasPermission(user, perm) {
   if (!user) return false;

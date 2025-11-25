@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
-import { PERMISSIONS } from '$lib/permissions.js';
+import { PERMISSIONS, getRoleDerivedPermissions, normalizePermissions } from '$lib/permissions.js';
 
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
@@ -115,12 +115,33 @@ export async function POST({ request }) {
       if (!isActorAdmin && !actorPerms.includes('EDIT_PERMISSIONS')) {
         return json({ error: 'Not authorized' }, { status: 403 });
       }
-      const { error } = await supa
+
+      const { data: targetRow, error: targetErr } = await supa
         .from('user_profiles')
-        .update({ general_role, purchasing_role, team_role })
-        .eq('id', target_id);
+        .select('id, email, full_name, permissions, general_role, purchasing_role, team_role, role, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
+        .eq('id', target_id)
+        .single();
+      if (targetErr) return json({ error: targetErr.message }, { status: 500 });
+
+      const existingPerms = normalizePermissions(targetRow.permissions);
+      const prevRolePerms = getRoleDerivedPermissions({ general_role: targetRow.general_role, purchasing_role: targetRow.purchasing_role });
+      const manualExtras = existingPerms.filter((perm) => !prevRolePerms.has(perm));
+
+      const nextRolePerms = getRoleDerivedPermissions({ general_role, purchasing_role });
+      let merged = Array.from(new Set([...nextRolePerms, ...manualExtras])).filter((perm) => PERMISSIONS.includes(perm));
+
+      if (!merged.includes('VIEW_ADMIN_PANEL')) {
+        merged = merged.filter((perm) => perm !== 'BAN_USERS' && perm !== 'APPROVE_USERS');
+      }
+
+      const { data: updatedRow, error } = await supa
+        .from('user_profiles')
+        .update({ general_role, purchasing_role, team_role, permissions: merged })
+        .eq('id', target_id)
+        .select('id, email, full_name, role, permissions, general_role, purchasing_role, team_role, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
+        .single();
       if (error) return json({ error: error.message }, { status: 500 });
-      return json({ success: true });
+      return json({ success: true, data: updatedRow });
     }
 
     // Default to editing permissions

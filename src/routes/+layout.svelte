@@ -2,6 +2,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { initAuth, user as authUserStore, userStore, signOut } from '$lib/stores/auth.js';
+  import { hasPermission } from '$lib/permissions.js';
   import notescoutConfig from '$lib/notescout.json';
   import navConfig from '$lib/navigation.json';
   import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown } from 'lucide-svelte';
@@ -19,9 +20,7 @@
 
   // Use the fetched profile (user_profiles) for role/permission checks
   function can(perm) {
-    if (!activeProfile) return false;
-    if (activeProfile.role === 'admin') return true;
-    return Array.isArray(activeProfile.permissions) && activeProfile.permissions.includes(perm);
+    return hasPermission(activeProfile, perm);
   }
 
   async function maybeCheckAttendance(currentProfile) {

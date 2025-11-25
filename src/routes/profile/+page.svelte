@@ -275,6 +275,14 @@
       resettingNav = false;
     }
   }
+
+  function formatRoleLabel(value) {
+    if (!value) return 'Unassigned';
+    return String(value)
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase())
+      .trim();
+  }
 </script>
 
 <svelte:head>
@@ -299,30 +307,20 @@
     </section>
 
     <section class="card">
-      <h3>Change password</h3>
-      <label>New password
-        <input type="password" bind:value={newPassword} />
-      </label>
-      <label>Confirm password
-        <input type="password" bind:value={passwordConfirm} />
-      </label>
-      <div class="actions">
-        <button class="btn" on:click={changePassword} disabled={changingPassword}>{changingPassword ? 'Changing...' : 'Change Password'}</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h3>Permissions</h3>
-      <div class="permissions">
-        {#if Array.isArray(user.permissions) && user.permissions.length > 0}
-          <ul>
-            {#each user.permissions as p}
-              <li>{p}</li>
-            {/each}
-          </ul>
-        {:else}
-          <div>No extra permissions (role: {user.role})</div>
-        {/if}
+      <h3>Your Roles</h3>
+      <div class="roles-grid">
+        <div class="role-box">
+          <div class="role-label">General Role</div>
+          <div class="role-value">{formatRoleLabel(user.general_role || user.role || 'Unassigned')}</div>
+        </div>
+        <div class="role-box">
+          <div class="role-label">Purchasing Role</div>
+          <div class="role-value">{formatRoleLabel(user.purchasing_role || 'Unassigned')}</div>
+        </div>
+        <div class="role-box">
+          <div class="role-label">Team / Other Role</div>
+          <div class="role-value">{formatRoleLabel(user.team_role || (Array.isArray(user.roster_keys) && user.roster_keys[0]) || 'Unassigned')}</div>
+        </div>
       </div>
     </section>
 
@@ -366,6 +364,19 @@
           {/if}
         </div>
       {/if}
+    </section>
+
+    <section class="card">
+      <h3>Change Password</h3>
+      <label>New password
+        <input type="password" bind:value={newPassword} />
+      </label>
+      <label>Confirm password
+        <input type="password" bind:value={passwordConfirm} />
+      </label>
+      <div class="actions">
+        <button class="btn" on:click={changePassword} disabled={changingPassword}>{changingPassword ? 'Changing...' : 'Change Password'}</button>
+      </div>
     </section>
 
     <section class="card">
@@ -512,8 +523,13 @@
   input:focus, select:focus { outline: none; border-color: var(--accent); }
   
   .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
-  .permissions ul { margin: 0; padding-left: 1.5rem; }
-  .permissions li { margin: 0.25rem 0; }
+  
+  /* Roles Grid */
+  .roles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+  .role-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; }
+  .role-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 0.5rem; }
+  .role-value { font-size: 1.1rem; font-weight: 600; color: var(--text); }
+  
   .muted { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
   .attendance-card-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .attendance-stats { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
