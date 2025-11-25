@@ -7,6 +7,7 @@
   import HeaderPreview from '$lib/components/HeaderPreview.svelte';
   import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
   import { mergeNotificationSettings } from '$lib/notifications/settings.js';
+  import { getUserAttendanceStats, getUserAttendanceHistory } from '$lib/attendance.js';
 
   let user = null;
   let unsub;
@@ -28,6 +29,48 @@
   let targetFolderIdx = '';
   let resettingNav = false;
   let notificationSettings = mergeNotificationSettings();
+  let attendanceStats = null;
+  let attendanceHistory = [];
+  let attendanceLoading = false;
+  let attendanceUserId = null;
+
+  function formatAttendanceMoment(value) {
+    if (!value) return '—';
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      }).format(new Date(value));
+    } catch {
+      return value;
+    }
+  }
+
+  async function loadAttendanceSummary(force = false) {
+    if (!user?.id) {
+      attendanceStats = null;
+      attendanceHistory = [];
+      return;
+    }
+    if (!force && attendanceUserId === user.id && attendanceStats) return;
+    attendanceLoading = true;
+    attendanceUserId = user.id;
+    try {
+      const [stats, history] = await Promise.all([
+        getUserAttendanceStats(user.id),
+        getUserAttendanceHistory(user.id, 12)
+      ]);
+      attendanceStats = stats;
+      attendanceHistory = history;
+    } catch (err) {
+      console.error('Failed to load attendance summary', err);
+      toastActions.show('Unable to load attendance');
+    } finally {
+      attendanceLoading = false;
+    }
+  }
 
   // Basic tab manipulation helpers (in-memory; saved when profile saved)
   function ensureHeaderTabs() {
@@ -137,6 +180,7 @@
         header_tabs = user.header_tabs || null;
         dashboard_layout = user.dashboard_layout || 'grid';
         notificationSettings = mergeNotificationSettings(user.notification_settings);
+        void loadAttendanceSummary(true);
       }
     });
     return () => unsub?.();
@@ -280,6 +324,48 @@
           <div>No extra permissions (role: {user.role})</div>
         {/if}
       </div>
+    </section>
+
+    <section class="card">
+      <div class="attendance-card-header">
+        <h3>Your Attendance</h3>
+        <button type="button" class="btn btn-sm" on:click={() => loadAttendanceSummary(true)} disabled={attendanceLoading}>
+          {attendanceLoading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+      <p class="muted">Attendance is captured automatically when you join during an active schedule from an approved network.</p>
+      {#if attendanceLoading}
+        <div class="empty-state">Loading attendance…</div>
+      {:else}
+        <div class="attendance-stats">
+          <div class="stat-block">
+            <span class="stat-label">Days in the last 30 days</span>
+            <strong class="stat-value">{attendanceStats?.days_attended ?? 0}</strong>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">Last check-in</span>
+            <strong class="stat-value">{formatAttendanceMoment(attendanceStats?.last_attended_at)}</strong>
+          </div>
+        </div>
+        <div class="attendance-history">
+          <h4>Recent check-ins</h4>
+          {#if attendanceHistory.length === 0}
+            <div class="empty-state">No recorded attendance yet.</div>
+          {:else}
+            <ul>
+              {#each attendanceHistory as entry (entry.id)}
+                <li>
+                  <div>
+                    <strong>{entry.schedule?.label || 'Attendance window'}</strong>
+                    <div class="muted">{entry.location?.name || 'Unknown location'}</div>
+                  </div>
+                  <span>{formatAttendanceMoment(entry.recorded_at)}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
     </section>
 
     <section class="card">
@@ -429,6 +515,15 @@
   .permissions ul { margin: 0; padding-left: 1.5rem; }
   .permissions li { margin: 0.25rem 0; }
   .muted { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
+  .attendance-card-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .attendance-stats { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+  .stat-block { flex: 1 1 220px; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; background: var(--surface-1); }
+  .stat-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .stat-value { font-size: 1.5rem; margin-top: 0.35rem; display: block; }
+  .attendance-history h4 { margin-top: 0; margin-bottom: 0.5rem; }
+  .attendance-history ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+  .attendance-history li { display: flex; justify-content: space-between; gap: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+  .attendance-history li:last-child { border-bottom: none; padding-bottom: 0; }
 
   /* Preview */
   .preview-container { margin: 1.5rem 0; padding: 1rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }

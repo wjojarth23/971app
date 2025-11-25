@@ -8,10 +8,13 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
+  import { trackUserAttendance } from '$lib/attendance.js';
+  import { toastActions } from '$lib/toast.js';
 
   let authUser = null;
   let profile = null;
   let lastProfile = null;
+  let attendanceChecked = false;
   $: activeProfile = profile ?? lastProfile;
 
   // Use the fetched profile (user_profiles) for role/permission checks
@@ -21,9 +24,33 @@
     return Array.isArray(activeProfile.permissions) && activeProfile.permissions.includes(perm);
   }
 
+  async function maybeCheckAttendance(currentProfile) {
+    if (attendanceChecked || typeof window === 'undefined') return;
+    if (!currentProfile?.id) return;
+    attendanceChecked = true;
+    try {
+      const result = await trackUserAttendance(currentProfile.id);
+      if (result?.recorded) {
+        const locationName = result.record?.location?.name;
+        const suffix = locationName ? ` at ${locationName}` : '';
+        toastActions.show(`Attendance recorded${suffix}!`);
+      }
+    } catch (err) {
+      console.warn('Attendance auto-check failed', err);
+    }
+  }
+
   onMount(() => {
     const unsubAuth = authUserStore.subscribe((v) => { authUser = v; });
-    const unsubProfile = userStore.subscribe((v) => { profile = v; if (v) lastProfile = v; });
+    const unsubProfile = userStore.subscribe((v) => {
+      profile = v;
+      if (v) {
+        lastProfile = v;
+        void maybeCheckAttendance(v);
+      } else {
+        attendanceChecked = false;
+      }
+    });
     const uninit = initAuth();
     return () => { unsubAuth?.(); unsubProfile?.(); uninit?.(); };
   });

@@ -17,7 +17,8 @@ export const PERMISSIONS = [
   'NOTE_SCOUT_ADMIN', // can manage note scouting assignments
   'DATA_SCOUT_ADMIN', // can manage data scouting assignments
   'DATA_SCOUT_MEMBER', // eligible to be assigned to data scouting
-  'VIDEO_SCOUT_MEMBER' // eligible for future video scouting workflows
+  'VIDEO_SCOUT_MEMBER', // eligible for future video scouting workflows
+  'MANAGE_ATTENDANCE'
 ];
 
 export const GENERAL_ROLES = {

@@ -9,6 +9,7 @@ A comprehensive manufacturing management system built with SvelteKit, featuring 
 - **Stock Management**: Track and assign stock materials to parts
 - **Build Management**: Create and manage manufacturing builds
 - **User Authentication**: Secure user management with Supabase
+- **Attendance Tracking**: Define on-site schedules and trusted locations, automatically log attendance, and review leaderboards
 
 ## Setup
 
@@ -52,6 +53,7 @@ A comprehensive manufacturing management system built with SvelteKit, featuring 
    ```
 
 4. Set up the database (run in Supabase SQL Editor, in this order):
+   - `20251125_attendance_overhaul.sql`
    - `migration_add_build_system.sql`
    - `migration_add_other_category.sql`
    - `migration_add_drawing_support.sql`
@@ -94,6 +96,15 @@ npm run preview
   - `/api/chatgpt/` - Server-side ChatGPT API endpoint
   - `/cad/` - CAD management pages
 - `/static/` - Static assets
+
+## Attendance Tracking
+
+- Grant the `MANAGE_ATTENDANCE` permission to trusted admins. They will see a new Attendance tab under `/admin` with:
+   - **Trusted Locations** – capture the current network's public IP (or paste a CIDR) to define on-site Wi-Fi/LANs.
+   - **Schedules** – build recurring day/time windows and assign one or more locations.
+   - **Leaderboard** – review a 30-day rolling leaderboard with search/filter.
+- Whenever a signed-in user loads the app, the client pings `/api/attendance`. If they have not checked in today and are inside an active schedule window on a trusted network, attendance is logged automatically and they receive a toast confirmation.
+- Users can review their personal attendance stats and recent check-ins on the Profile page.
 
 ## Documentation
 

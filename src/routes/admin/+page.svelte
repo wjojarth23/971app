@@ -6,6 +6,18 @@
   import { get } from 'svelte/store';
   import { ShoppingCart, DollarSign, TrendingUp, Package, Plus, Edit, Trash2, User } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
+  import {
+    fetchAttendanceLocations,
+    fetchAttendanceSchedules,
+    fetchAttendanceLeaderboard,
+    createAttendanceLocation,
+    updateAttendanceLocation,
+    deleteAttendanceLocation,
+    createAttendanceSchedule,
+    updateAttendanceSchedule,
+    deleteAttendanceSchedule,
+    getCurrentNetworkFingerprint
+  } from '$lib/attendance.js';
   const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
 
   // Tab management
@@ -62,6 +74,28 @@
   let vendorName = '';
   let vendorUrlBase = '';
   let vendorFreeShipping = false;
+  
+  // Attendance admin state
+  const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  let attendanceLocations = [];
+  let attendanceSchedules = [];
+  let attendanceLeaderboard = [];
+  let attendanceSearch = '';
+  let attendanceLocationsLoading = false;
+  let attendanceSchedulesLoading = false;
+  let attendanceLeaderboardLoading = false;
+  let savingLocation = false;
+  let savingSchedule = false;
+  let capturingNetwork = false;
+  let showLocationForm = false;
+  let showScheduleForm = false;
+  let editingLocation = null;
+  let editingSchedule = null;
+  const defaultLocationForm = { name: '', network_cidr: '', description: '', active: true };
+  const defaultScheduleForm = { label: '', day_of_week: 1, start_time: '19:00', end_time: '21:00', location_ids: [], active: true };
+  let locationForm = { ...defaultLocationForm };
+  let scheduleForm = { ...defaultScheduleForm };
+  let attendanceSearchTimeout;
   
   // Analytics filters
   let timePeriodDays = 30;
@@ -398,6 +432,9 @@
     if (activeTab === 'purchasing') {
       await loadVendors();
       await loadPurchaseHistory();
+    }
+    if (activeTab === 'attendance') {
+      await loadAttendanceTab(true);
     }
   });
 
@@ -825,6 +862,273 @@
     }
   }
 
+  async function loadAttendanceLocations() {
+    attendanceLocationsLoading = true;
+    try {
+      attendanceLocations = await fetchAttendanceLocations();
+    } catch (err) {
+      console.error('Failed to load attendance locations', err);
+      toastActions.show('Unable to load locations');
+    } finally {
+      attendanceLocationsLoading = false;
+    }
+  }
+
+  async function loadAttendanceSchedules() {
+    attendanceSchedulesLoading = true;
+    try {
+      attendanceSchedules = await fetchAttendanceSchedules();
+    } catch (err) {
+      console.error('Failed to load attendance schedules', err);
+      toastActions.show('Unable to load schedules');
+    } finally {
+      attendanceSchedulesLoading = false;
+    }
+  }
+
+  async function loadAttendanceLeaderboard() {
+    attendanceLeaderboardLoading = true;
+    try {
+      attendanceLeaderboard = await fetchAttendanceLeaderboard({ search: attendanceSearch.trim() });
+    } catch (err) {
+      console.error('Failed to load attendance leaderboard', err);
+      toastActions.show('Unable to load leaderboard');
+    } finally {
+      attendanceLeaderboardLoading = false;
+    }
+  }
+
+  async function loadAttendanceTab(force = false) {
+    if (!hasPermission(get(currentUser), 'MANAGE_ATTENDANCE')) return;
+    if (!force && attendanceLocations.length && attendanceSchedules.length && attendanceLeaderboard.length) return;
+    await Promise.all([
+      loadAttendanceLocations(),
+      loadAttendanceSchedules(),
+      loadAttendanceLeaderboard()
+    ]);
+  }
+
+  function resetLocationForm() {
+    editingLocation = null;
+    locationForm = { ...defaultLocationForm };
+    showLocationForm = false;
+  }
+
+  function openLocationForm(location = null) {
+    if (location) {
+      editingLocation = location;
+      locationForm = {
+        name: location.name || '',
+        network_cidr: location.network_cidr || '',
+        description: location.description || '',
+        active: location.active ?? true
+      };
+    } else {
+      editingLocation = null;
+      locationForm = { ...defaultLocationForm };
+    }
+    showLocationForm = true;
+  }
+
+  async function captureNetwork() {
+    capturingNetwork = true;
+    try {
+      const ip = await getCurrentNetworkFingerprint();
+      if (ip) {
+        // Use a single-address mask appropriate to the IP version:
+        // - IPv4 single address -> /32
+        // - IPv6 single address -> /128
+        const cidr = ip.includes('/')
+          ? ip
+          : ip.includes(':')
+          ? `${ip}/128`
+          : `${ip}/32`;
+        locationForm = { ...locationForm, network_cidr: cidr };
+        toastActions.show('Captured current network');
+      } else {
+        toastActions.show('Unable to capture network');
+      }
+    } catch (err) {
+      console.error('Failed to capture network', err);
+      toastActions.show('Unable to capture network');
+    } finally {
+      capturingNetwork = false;
+    }
+  }
+
+  async function saveLocation() {
+    if (!locationForm.name?.trim()) {
+      toastActions.show('Location name required');
+      return;
+    }
+    if (!locationForm.network_cidr?.trim()) {
+      toastActions.show('Network CIDR required');
+      return;
+    }
+    savingLocation = true;
+    try {
+      if (editingLocation) {
+        await updateAttendanceLocation(editingLocation.id, locationForm);
+        toastActions.show('Location updated');
+      } else {
+        await createAttendanceLocation({ ...locationForm, created_by: get(currentUser)?.id });
+        toastActions.show('Location created');
+      }
+      await loadAttendanceLocations();
+      resetLocationForm();
+    } catch (err) {
+      console.error('Failed to save location', err);
+      toastActions.show(err?.message || 'Unable to save location');
+    } finally {
+      savingLocation = false;
+    }
+  }
+
+  async function toggleLocationActive(loc) {
+    try {
+      await updateAttendanceLocation(loc.id, {
+        name: loc.name,
+        network_cidr: loc.network_cidr,
+        description: loc.description,
+        active: !loc.active
+      });
+      attendanceLocations = attendanceLocations.map((entry) => entry.id === loc.id ? { ...entry, active: !entry.active } : entry);
+    } catch (err) {
+      console.error('Failed to toggle location', err);
+      toastActions.show('Unable to update location');
+    }
+  }
+
+  async function removeLocation(loc) {
+    if (!loc?.id) return;
+    if (!confirm(`Remove ${loc.name}? Existing schedules will need to be updated.`)) return;
+    try {
+      const success = await deleteAttendanceLocation(loc.id);
+      if (success) {
+        attendanceLocations = attendanceLocations.filter((entry) => entry.id !== loc.id);
+        toastActions.show('Location removed');
+        await loadAttendanceSchedules();
+      } else {
+        toastActions.show('Unable to remove location');
+      }
+    } catch (err) {
+      console.error('Failed to delete location', err);
+      toastActions.show(err?.message || 'Unable to remove location');
+    }
+  }
+
+  function resetScheduleForm() {
+    editingSchedule = null;
+    scheduleForm = { ...defaultScheduleForm };
+    showScheduleForm = false;
+  }
+
+  function openScheduleForm(schedule = null) {
+    if (schedule) {
+      editingSchedule = schedule;
+      scheduleForm = {
+        label: schedule.label || '',
+        day_of_week: schedule.day_of_week ?? 0,
+        start_time: schedule.start_time?.slice(0, 5) || '19:00',
+        end_time: schedule.end_time?.slice(0, 5) || '21:00',
+        location_ids: schedule.location_ids || [],
+        active: schedule.active ?? true
+      };
+    } else {
+      editingSchedule = null;
+      scheduleForm = { ...defaultScheduleForm };
+    }
+    showScheduleForm = true;
+  }
+
+  function toggleScheduleLocation(id) {
+    const next = new Set(scheduleForm.location_ids || []);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    scheduleForm = { ...scheduleForm, location_ids: Array.from(next) };
+  }
+
+  async function saveSchedule() {
+    if (!scheduleForm.label?.trim()) {
+      toastActions.show('Schedule label required');
+      return;
+    }
+    if (!scheduleForm.start_time || !scheduleForm.end_time) {
+      toastActions.show('Start and end times required');
+      return;
+    }
+    if (scheduleForm.start_time >= scheduleForm.end_time) {
+      toastActions.show('End time must be after start time');
+      return;
+    }
+    if (!scheduleForm.location_ids?.length) {
+      toastActions.show('Select at least one location');
+      return;
+    }
+    savingSchedule = true;
+    try {
+      const payload = {
+        ...scheduleForm,
+        day_of_week: Number(scheduleForm.day_of_week),
+        location_ids: [...(scheduleForm.location_ids || [])]
+      };
+      if (editingSchedule) {
+        await updateAttendanceSchedule(editingSchedule.id, payload);
+        toastActions.show('Schedule updated');
+      } else {
+        await createAttendanceSchedule({ ...payload, created_by: get(currentUser)?.id });
+        toastActions.show('Schedule created');
+      }
+      await loadAttendanceSchedules();
+      resetScheduleForm();
+    } catch (err) {
+      console.error('Failed to save schedule', err);
+      toastActions.show(err?.message || 'Unable to save schedule');
+    } finally {
+      savingSchedule = false;
+    }
+  }
+
+  async function removeSchedule(schedule) {
+    if (!schedule?.id) return;
+    if (!confirm(`Delete "${schedule.label}"?`)) return;
+    try {
+      const success = await deleteAttendanceSchedule(schedule.id);
+      if (success) {
+        attendanceSchedules = attendanceSchedules.filter((entry) => entry.id !== schedule.id);
+        toastActions.show('Schedule removed');
+      }
+    } catch (err) {
+      console.error('Failed to delete schedule', err);
+      toastActions.show(err?.message || 'Unable to remove schedule');
+    }
+  }
+
+  function formatAttendanceTimestamp(ts) {
+    if (!ts) return '—';
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      }).format(new Date(ts));
+    } catch {
+      return ts;
+    }
+  }
+
+  function handleAttendanceSearch(event) {
+    attendanceSearch = event.currentTarget?.value || '';
+    if (attendanceSearchTimeout) clearTimeout(attendanceSearchTimeout);
+    attendanceSearchTimeout = setTimeout(() => {
+      loadAttendanceLeaderboard();
+    }, 300);
+  }
+
   async function setActiveTab(tab) {
     activeTab = tab;
     if (tab === 'purchasing') {
@@ -834,13 +1138,10 @@
     if (tab === 'rosters' && rosters.length === 0) {
       await loadRosters();
     }
+    if (tab === 'attendance') {
+      await loadAttendanceTab();
+    }
   }
-
-  onMount(async () => {
-    await loadUsers();
-    await loadRosters();
-  });
-
 
   $: {
     // Sync user list with permissions changes
@@ -880,6 +1181,10 @@
         <button class="btn btn-secondary" on:click={loadRosters} disabled={loadingRosters}>Refresh Rosters</button>
       {:else if activeTab === 'purchasing'}
         <button class="btn btn-secondary" on:click={loadPurchaseHistory} disabled={loadingPurchases || loadingOrders}>Refresh Analytics</button>
+      {:else if activeTab === 'attendance'}
+        <button class="btn btn-secondary" on:click={() => loadAttendanceTab(true)} disabled={attendanceLocationsLoading || attendanceSchedulesLoading || attendanceLeaderboardLoading}>
+          Refresh Attendance
+        </button>
       {/if}
     </div>
   </div>
@@ -894,6 +1199,11 @@
     <button type="button" class:active={activeTab === 'purchasing'} on:click={() => setActiveTab('purchasing')}>
       Purchasing
     </button>
+    {#if hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
+      <button type="button" class:active={activeTab === 'attendance'} on:click={() => setActiveTab('attendance')}>
+        Attendance
+      </button>
+    {/if}
   </nav>
 
   {#if activeTab === 'access'}
@@ -1225,6 +1535,247 @@
           <div class="panel-body">
             <div class="empty-state">Select a roster to begin editing.</div>
           </div>
+        </div>
+      {/if}
+    </section>
+  {:else if activeTab === 'attendance' && hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Attendance Leaderboard</h3>
+          <p class="text-muted">Rolling 30-day window based on verified on-site check-ins.</p>
+        </div>
+        <div class="section-actions attendance-search">
+          <label class="sr-only" for="attendance-search">Search attendance</label>
+          <input
+            id="attendance-search"
+            class="form-input"
+            type="search"
+            placeholder="Search by name or email"
+            value={attendanceSearch}
+            on:input={handleAttendanceSearch}
+          />
+        </div>
+      </div>
+      {#if attendanceLeaderboardLoading}
+        <div class="empty-state">Loading leaderboard…</div>
+      {:else if attendanceLeaderboard.length === 0}
+        <div class="empty-state">No attendance activity yet.</div>
+      {:else}
+        <div class="table-container">
+          <table class="table admin-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Days Present (30d)</th>
+                <th>Total Check-Ins</th>
+                <th>Last Check-In</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each attendanceLeaderboard as entry (entry.user_id)}
+                <tr>
+                  <td>
+                    <div class="leader-name">{entry.full_name || 'Unknown'}</div>
+                    <div class="leader-email">{entry.email || '—'}</div>
+                  </td>
+                  <td>{entry.days_attended || 0}</td>
+                  <td>{entry.total_check_ins || 0}</td>
+                  <td>{formatAttendanceTimestamp(entry.last_attended_at)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </section>
+
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Locations</h3>
+          <p class="text-muted">Capture trusted networks that count as in-person attendance.</p>
+        </div>
+        <div class="section-actions">
+          {#if showLocationForm}
+            <button type="button" class="btn btn-outline" on:click={resetLocationForm} disabled={savingLocation}>Cancel</button>
+          {/if}
+          <button type="button" class="btn btn-primary" on:click={() => openLocationForm()}>
+            <Plus size={16} /> New Location
+          </button>
+        </div>
+      </div>
+
+      {#if showLocationForm}
+        <div class="attendance-form">
+          <label>
+            <span class="form-label">Location Name</span>
+            <input class="form-input" type="text" placeholder="Shop" bind:value={locationForm.name} />
+          </label>
+          <label>
+            <span class="form-label">Network CIDR</span>
+            <div class="input-row">
+              <input class="form-input" type="text" placeholder="203.0.113.5/32" bind:value={locationForm.network_cidr} />
+              <button type="button" class="btn btn-secondary btn-sm" on:click={captureNetwork} disabled={capturingNetwork}>
+                {capturingNetwork ? 'Detecting…' : 'Use My Network'}
+              </button>
+            </div>
+          </label>
+          <label>
+            <span class="form-label">Description</span>
+            <textarea class="form-input" rows="2" placeholder="Optional notes" bind:value={locationForm.description}></textarea>
+          </label>
+          <label class="toggle-input">
+            <input type="checkbox" bind:checked={locationForm.active} />
+            <span>Active</span>
+          </label>
+          <div class="form-actions">
+            <button type="button" class="btn" on:click={saveLocation} disabled={savingLocation}>
+              {savingLocation ? 'Saving…' : editingLocation ? 'Update Location' : 'Create Location'}
+            </button>
+            <button type="button" class="btn btn-outline" on:click={resetLocationForm} disabled={savingLocation}>Close</button>
+          </div>
+        </div>
+      {/if}
+
+      {#if attendanceLocationsLoading}
+        <div class="empty-state">Loading locations…</div>
+      {:else if attendanceLocations.length === 0}
+        <div class="empty-state">No locations configured.</div>
+      {:else}
+        <div class="list-table">
+          {#each attendanceLocations as loc (loc.id)}
+            <div class="list-row">
+              <div>
+                <div class="list-title">{loc.name}</div>
+                <div class="list-subtitle">{loc.network_cidr}</div>
+                {#if loc.description}
+                  <div class="list-description">{loc.description}</div>
+                {/if}
+              </div>
+              <div class="row-actions">
+                <label class="toggle-input">
+                  <input type="checkbox" checked={loc.active} on:change={() => toggleLocationActive(loc)} />
+                  <span>{loc.active ? 'Active' : 'Paused'}</span>
+                </label>
+                <button type="button" class="icon-button" on:click={() => openLocationForm(loc)} aria-label={`Edit ${loc.name}`}>
+                  <Edit size={16} />
+                </button>
+                <button type="button" class="icon-button danger" on:click={() => removeLocation(loc)} aria-label={`Delete ${loc.name}`}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Schedules</h3>
+          <p class="text-muted">Define recurring windows and tie them to one or more locations.</p>
+        </div>
+        <div class="section-actions">
+          {#if showScheduleForm}
+            <button type="button" class="btn btn-outline" on:click={resetScheduleForm} disabled={savingSchedule}>Cancel</button>
+          {/if}
+          <button type="button" class="btn btn-primary" on:click={() => openScheduleForm()}>
+            <Plus size={16} /> New Schedule
+          </button>
+        </div>
+      </div>
+
+      {#if showScheduleForm}
+        <div class="attendance-form">
+          <label>
+            <span class="form-label">Schedule Name</span>
+            <input class="form-input" type="text" placeholder="Wednesday Build" bind:value={scheduleForm.label} />
+          </label>
+          <label>
+            <span class="form-label">Day of Week</span>
+            <select class="form-select" bind:value={scheduleForm.day_of_week}>
+              {#each DAY_LABELS as day, index}
+                <option value={index}>{day}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            <span class="form-label">Start Time</span>
+            <input class="form-input" type="time" bind:value={scheduleForm.start_time} />
+          </label>
+          <label>
+            <span class="form-label">End Time</span>
+            <input class="form-input" type="time" bind:value={scheduleForm.end_time} />
+          </label>
+          <div>
+            <span class="form-label">Locations</span>
+            <div class="pill-grid">
+              {#if attendanceLocations.length === 0}
+                <div class="text-muted">Add a location first.</div>
+              {:else}
+                {#each attendanceLocations as loc}
+                  <label class="pill-option">
+                    <input
+                      type="checkbox"
+                      checked={scheduleForm.location_ids?.includes(loc.id)}
+                      on:change={() => toggleScheduleLocation(loc.id)}
+                    />
+                    <span>{loc.name}</span>
+                  </label>
+                {/each}
+              {/if}
+            </div>
+            <small class="text-muted">Attendance only records when users are on one of these networks.</small>
+          </div>
+          <label class="toggle-input">
+            <input type="checkbox" bind:checked={scheduleForm.active} />
+            <span>Active</span>
+          </label>
+          <div class="form-actions">
+            <button type="button" class="btn" on:click={saveSchedule} disabled={savingSchedule}>
+              {savingSchedule ? 'Saving…' : editingSchedule ? 'Update Schedule' : 'Create Schedule'}
+            </button>
+            <button type="button" class="btn btn-outline" on:click={resetScheduleForm} disabled={savingSchedule}>Close</button>
+          </div>
+        </div>
+      {/if}
+
+      {#if attendanceSchedulesLoading}
+        <div class="empty-state">Loading schedules…</div>
+      {:else if attendanceSchedules.length === 0}
+        <div class="empty-state">No schedules configured.</div>
+      {:else}
+        <div class="list-table">
+          {#each attendanceSchedules as schedule (schedule.id)}
+            <div class="list-row">
+              <div>
+                <div class="list-title">{schedule.label}</div>
+                <div class="list-subtitle">
+                  {DAY_LABELS[schedule.day_of_week] || '—'} · {schedule.start_time?.slice(0, 5)} – {schedule.end_time?.slice(0, 5)} PT
+                </div>
+                <div class="badge-row">
+                  {#if schedule.locations.length === 0}
+                    <span class="text-muted">No linked locations</span>
+                  {:else}
+                    {#each schedule.locations as loc}
+                      <span class="badge-soft">{loc.name}</span>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
+              <div class="row-actions">
+                <span class={`status-dot ${schedule.active ? 'success' : 'muted'}`}>{schedule.active ? 'Active' : 'Paused'}</span>
+                <button type="button" class="icon-button" on:click={() => openScheduleForm(schedule)} aria-label={`Edit ${schedule.label}`}>
+                  <Edit size={16} />
+                </button>
+                <button type="button" class="icon-button danger" on:click={() => removeSchedule(schedule)} aria-label={`Delete ${schedule.label}`}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          {/each}
         </div>
       {/if}
     </section>
@@ -1712,6 +2263,139 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+
+  .attendance-search {
+    min-width: 240px;
+  }
+
+  .attendance-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    background: var(--surface-1);
+    margin-bottom: 1.25rem;
+  }
+
+  .attendance-form .form-label {
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .attendance-form textarea {
+    resize: vertical;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .pill-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+  }
+
+  .pill-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.9rem;
+    background: var(--surface-2, #f8fafc);
+  }
+
+  .pill-option input {
+    margin: 0;
+  }
+
+  .toggle-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 600;
+  }
+
+  .attendance-form .form-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .leader-name {
+    font-weight: 600;
+  }
+
+  .leader-email {
+    font-size: 0.9rem;
+    color: var(--muted-text, #6b7280);
+  }
+
+  .list-description {
+    font-size: 0.9rem;
+    color: var(--muted-text, #6b7280);
+    margin-top: 0.25rem;
+  }
+
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text);
+  }
+
+  .icon-button.danger {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .status-dot {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+  }
+
+  .status-dot.success {
+    color: #166534;
+    background: #dcfce7;
+  }
+
+  .status-dot.muted {
+    color: #6b7280;
+    background: #e5e7eb;
   }
 
   @media (max-width: 900px) {
