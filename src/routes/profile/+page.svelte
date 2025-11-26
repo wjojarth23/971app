@@ -8,6 +8,7 @@
   import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
   import { mergeNotificationSettings } from '$lib/notifications/settings.js';
   import { getUserAttendanceStats, getUserAttendanceHistory } from '$lib/attendance.js';
+  import { FRC_TEAMS } from '$lib/permissions.js';
 
   let user = null;
   let unsub;
@@ -15,6 +16,7 @@
   // Editable fields
   let full_name = '';
   let email = '';
+  let frc_team = '';
   let currentPassword = '';
   let newPassword = '';
   let passwordConfirm = '';
@@ -33,6 +35,14 @@
   let attendanceHistory = [];
   let attendanceLoading = false;
   let attendanceUserId = null;
+
+  const frcTeamOptions = Object.values(FRC_TEAMS);
+
+  function formatFrcTeamLabel(value) {
+    if (!value) return 'Not Set';
+    if (value === 'Mentor') return 'Mentor';
+    return `Team ${value}`;
+  }
 
   function formatAttendanceMoment(value) {
     if (!value) return '—';
@@ -176,6 +186,7 @@
       if (user) {
         full_name = user.full_name || '';
         email = user.email || '';
+        frc_team = user.frc_team || '';
         // load appearance settings if present
         header_tabs = user.header_tabs || null;
         dashboard_layout = user.dashboard_layout || 'grid';
@@ -201,6 +212,7 @@
       const payload = {
         full_name: full_name,
         email: email,
+        frc_team: frc_team || null,
         dashboard_layout: dashboard_layout,
         header_tabs: header_tabs,
         notification_settings: notificationSettings
@@ -301,6 +313,15 @@
       <label>Email
         <input type="email" bind:value={email} />
       </label>
+      <label>FRC Team Affiliation
+        <select bind:value={frc_team}>
+          <option value="">Not Set</option>
+          {#each frcTeamOptions as teamValue}
+            <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
+          {/each}
+        </select>
+        <small class="form-help">Which FRC team are you affiliated with?</small>
+      </label>
       <div class="actions">
         <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save'}</button>
       </div>
@@ -309,6 +330,10 @@
     <section class="card">
       <h3>Your Roles</h3>
       <div class="roles-grid">
+        <div class="role-box">
+          <div class="role-label">FRC Team</div>
+          <div class="role-value">{formatFrcTeamLabel(user.frc_team)}</div>
+        </div>
         <div class="role-box">
           <div class="role-label">General Role</div>
           <div class="role-value">{formatRoleLabel(user.general_role || user.role || 'Unassigned')}</div>

@@ -18,7 +18,7 @@ export async function GET({ url, request }) {
     const supa = getClientFromRequest(request);
     const { data, error } = await supa
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, banned, general_role, purchasing_role, team_role')
+      .select('id, email, full_name, role, permissions, banned, general_role, purchasing_role, team_role, frc_team')
       .order('full_name', { ascending: true });
 
     if (error) return json({ error: error.message }, { status: 500 });
@@ -111,14 +111,14 @@ export async function POST({ request }) {
     }
 
     if (action === 'update-roles') {
-      const { general_role, purchasing_role, team_role } = body;
+      const { general_role, purchasing_role, team_role, frc_team } = body;
       if (!isActorAdmin && !actorPerms.includes('EDIT_PERMISSIONS')) {
         return json({ error: 'Not authorized' }, { status: 403 });
       }
 
       const { data: targetRow, error: targetErr } = await supa
         .from('user_profiles')
-        .select('id, email, full_name, permissions, general_role, purchasing_role, team_role, role, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
+        .select('id, email, full_name, permissions, general_role, purchasing_role, team_role, frc_team, role, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
         .eq('id', target_id)
         .single();
       if (targetErr) return json({ error: targetErr.message }, { status: 500 });
@@ -134,11 +134,18 @@ export async function POST({ request }) {
         merged = merged.filter((perm) => perm !== 'BAN_USERS' && perm !== 'APPROVE_USERS');
       }
 
+      // Build update payload - only include fields that were passed
+      const updatePayload = { permissions: merged };
+      if (general_role !== undefined) updatePayload.general_role = general_role;
+      if (purchasing_role !== undefined) updatePayload.purchasing_role = purchasing_role;
+      if (team_role !== undefined) updatePayload.team_role = team_role;
+      if (frc_team !== undefined) updatePayload.frc_team = frc_team;
+
       const { data: updatedRow, error } = await supa
         .from('user_profiles')
-        .update({ general_role, purchasing_role, team_role, permissions: merged })
+        .update(updatePayload)
         .eq('id', target_id)
-        .select('id, email, full_name, role, permissions, general_role, purchasing_role, team_role, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
+        .select('id, email, full_name, role, permissions, general_role, purchasing_role, team_role, frc_team, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
         .single();
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data: updatedRow });

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { userStore, getUserUUID } from '$lib/stores/user.js';
   import { fetchUserProfile } from '$lib/stores/auth.js';
-  import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES } from '$lib/permissions.js';
+  import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES, FRC_TEAMS } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
   import { ShoppingCart, DollarSign, TrendingUp, Package, Plus, Edit, Trash2, User } from 'lucide-svelte';
@@ -43,6 +43,7 @@
   let generalRoleFilter = 'all';
   let purchasingRoleFilter = 'all';
   let teamRoleFilter = 'all';
+  let frcTeamFilter = 'all';
   let approvalFilter = 'all';
   let savingRoleIds = new Set();
 
@@ -57,6 +58,7 @@
   let newRosterType = 'multi';
   let newRosterPublic = false;
   let newRosterAdmin = false;
+  let newRosterTargetFrcTeam = 'all'; // all, students, 971, 9584
   let newKeyName = '';
   let newKeyCategory = 'General';
   let rosterSearchQuery = '';
@@ -106,6 +108,14 @@
   const defaultGeneralRole = GENERAL_ROLES.NONE;
   const defaultPurchasingRole = PURCHASING_ROLES.BASIC;
   const defaultTeamRole = TEAM_ROLES.OTHER;
+  const defaultFrcTeam = null; // No default FRC team
+
+  const frcTeamThemes = {
+    '971': { bg: '#dbeafe', border: '#bfdbfe', text: '#1e3a8a' },
+    '9584': { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' },
+    'Mentor': { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
+    null: { bg: 'var(--muted-bg)', border: '#e5e7eb', text: '#6b7280' }
+  };
 
   const generalRoleThemes = {
     [GENERAL_ROLES.NONE]: { bg: 'var(--muted-bg)', border: '#e5e7eb', text: '#6b7280' },
@@ -141,6 +151,7 @@
   const generalRoleOptions = Object.values(GENERAL_ROLES);
   const purchasingRoleOptions = Object.values(PURCHASING_ROLES);
   const teamRoleOptions = Array.from(new Set(Object.values(TEAM_ROLES)));
+  const frcTeamOptions = Object.values(FRC_TEAMS);
 
   function formatRoleLabel(value) {
     if (!value) return 'Unassigned';
@@ -148,6 +159,12 @@
       .replace(/[_-]+/g, ' ')
       .replace(/\b\w/g, (char) => char.toUpperCase())
       .trim();
+  }
+
+  function formatFrcTeamLabel(value) {
+    if (!value) return 'Not Set';
+    if (value === 'Mentor') return 'Mentor';
+    return `Team ${value}`;
   }
 
   function roleThemeStyle(theme) {
@@ -162,6 +179,7 @@
     generalRoleFilter = 'all';
     purchasingRoleFilter = 'all';
     teamRoleFilter = 'all';
+    frcTeamFilter = 'all';
     approvalFilter = 'all';
   }
 
@@ -472,6 +490,7 @@
         type: newRosterType,
         is_public: newRosterPublic,
         is_admin_editable: newRosterAdmin,
+        target_frc_team: newRosterTargetFrcTeam,
         created_by: await resolveActorId()
       }]).select().single();
       
@@ -479,6 +498,7 @@
       rosters = [...rosters, data];
       showCreateRosterModal = false;
       newRosterName = '';
+      newRosterTargetFrcTeam = 'all';
       toastActions.show('Roster created');
     } catch (err) {
       console.error('Failed to create roster', err);
@@ -771,13 +791,32 @@
   }
 
   $: filteredRosters = rosters.filter((r) => r.name.toLowerCase().includes(rosterSearchQuery.toLowerCase()));
-  $: filteredRosterMembers = users.filter((u) => (u.full_name || '').toLowerCase().includes(rosterMemberSearchQuery.toLowerCase()));
+  $: filteredRosterMembers = users.filter((u) => {
+    // First filter by search query
+    const matchesSearch = (u.full_name || '').toLowerCase().includes(rosterMemberSearchQuery.toLowerCase());
+    if (!matchesSearch) return false;
+    
+    // Then filter by roster's target_frc_team
+    if (!selectedRoster || !selectedRoster.target_frc_team || selectedRoster.target_frc_team === 'all') {
+      return true;
+    }
+    
+    const userFrcTeam = u.frc_team || null;
+    if (selectedRoster.target_frc_team === 'students') {
+      // Students = 971 or 9584 (not mentors, not null)
+      return userFrcTeam === '971' || userFrcTeam === '9584';
+    }
+    
+    // Specific team filter (971 or 9584)
+    return userFrcTeam === selectedRoster.target_frc_team;
+  });
   $: pendingApprovals = users.filter((u) => !isUserApproved(u));
   $: hasActiveUserFilters = Boolean(
     userSearchQuery.trim() ||
     generalRoleFilter !== 'all' ||
     purchasingRoleFilter !== 'all' ||
     teamRoleFilter !== 'all' ||
+    frcTeamFilter !== 'all' ||
     approvalFilter !== 'all'
   );
 
@@ -792,11 +831,13 @@
       const userGeneralRole = user.general_role || defaultGeneralRole;
       const userPurchasingRole = user.purchasing_role || defaultPurchasingRole;
       const userTeamRole = user.team_role || defaultTeamRole;
+      const userFrcTeam = user.frc_team || null;
       const approved = isUserApproved(user);
 
       if (generalRoleFilter !== 'all' && userGeneralRole !== generalRoleFilter) return false;
       if (purchasingRoleFilter !== 'all' && userPurchasingRole !== purchasingRoleFilter) return false;
       if (teamRoleFilter !== 'all' && userTeamRole !== teamRoleFilter) return false;
+      if (frcTeamFilter !== 'all' && userFrcTeam !== frcTeamFilter) return false;
       if (approvalFilter === 'pending' && approved) return false;
       if (approvalFilter === 'approved' && !approved) return false;
       return true;
@@ -1256,6 +1297,12 @@
               <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
             {/each}
           </select>
+          <select class="form-select filter-input" bind:value={frcTeamFilter} aria-label="Filter by FRC team">
+            <option value="all">All FRC Teams</option>
+            {#each frcTeamOptions as teamValue}
+              <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
+            {/each}
+          </select>
           <select class="form-select filter-input" bind:value={approvalFilter} aria-label="Filter by approval status">
             {#each approvalFilterOptions as option}
               <option value={option.value}>{option.label}</option>
@@ -1272,6 +1319,7 @@
               <tr>
                 <th>Name</th>
                 <th>Email</th>
+                <th>FRC Team</th>
                 <th>General Role</th>
                 <th>Purchasing Role</th>
                 <th>Team Role</th>
@@ -1295,6 +1343,21 @@
                         <span class="saving-indicator">Saving…</span>
                       {/if}
                     </div>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
+                      value={user.frc_team || ''}
+                      disabled={savingRoleIds.has(user.id)}
+                      aria-label={`FRC Team for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
+                    >
+                      <option value="">Not Set</option>
+                      {#each frcTeamOptions as teamValue}
+                        <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
+                      {/each}
+                    </select>
                   </td>
                   <td>
                     <select
@@ -1435,6 +1498,19 @@
                   <span class="badge-soft">{selectedRoster.is_public ? 'Public' : 'Private'}</span>
                   <span class="badge-soft">{selectedRoster.is_admin_editable ? 'Admin only' : 'Open edit'}</span>
                   <span class="badge-soft">{selectedRoster.type === 'single' ? 'Single select' : 'Multi select'}</span>
+                  <span class="badge-soft">
+                    {#if selectedRoster.target_frc_team === 'all'}
+                      All members
+                    {:else if selectedRoster.target_frc_team === 'students'}
+                      Students only
+                    {:else if selectedRoster.target_frc_team === '971'}
+                      Team 971 only
+                    {:else if selectedRoster.target_frc_team === '9584'}
+                      Team 9584 only
+                    {:else}
+                      All members
+                    {/if}
+                  </span>
                 </div>
               </div>
             </div>
@@ -2118,6 +2194,16 @@
           <input type="checkbox" bind:checked={newRosterAdmin} />
           <span>Admin Only</span>
         </label>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target FRC Team</label>
+        <select class="form-select" bind:value={newRosterTargetFrcTeam}>
+          <option value="all">All Members</option>
+          <option value="students">Students Only (971 + 9584)</option>
+          <option value="971">Team 971 Only</option>
+          <option value="9584">Team 9584 Only</option>
+        </select>
+        <small class="form-help">Filter which members can be assigned to this roster</small>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" on:click={() => showCreateRosterModal = false}>Cancel</button>

@@ -1,6 +1,7 @@
 <script>  import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { initAuth, userStore, signOut } from '$lib/stores/auth.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut } from 'lucide-svelte';  import { goto } from '$app/navigation';
+  import { initAuth, userStore, signOut } from '$lib/stores/auth.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users } from 'lucide-svelte';  import { goto } from '$app/navigation';
+  import { FRC_TEAMS } from '$lib/permissions.js';
   
   let user = null;
 
@@ -22,7 +23,8 @@
   let formData = {
     email: '',
     password: '',
-    name: ''
+    name: '',
+    frc_team: '' // 971, 9584, or Mentor
   };
   let authLoading = false;
   let authError = '';
@@ -180,11 +182,26 @@
           password: formData.password,
           options: {
             data: {
-              name: formData.name
+              name: formData.name,
+              frc_team: formData.frc_team || null
             }
           }
         });
         if (error) throw error;
+
+        // Update user_profiles with frc_team selection
+        const newUserId = data?.user?.id || data?.user?.user?.id || null;
+        if (newUserId && formData.frc_team) {
+          try {
+            await supabase
+              .from('user_profiles')
+              .update({ frc_team: formData.frc_team })
+              .eq('id', newUserId);
+          } catch (e) {
+            console.warn('Failed to update frc_team in profile:', e);
+          }
+        }
+
         // Notify approvers once when the user registers. This is triggered once per page session.
         try {
           if (!window.__notifiedUserRegistration) window.__notifiedUserRegistration = new Set();
@@ -222,7 +239,8 @@
     formData = {
       email: '',
       password: '',
-      name: ''
+      name: '',
+      frc_team: ''
     };
     authError = '';
     authSuccess = '';
@@ -407,6 +425,24 @@
                 bind:value={formData.name}
                 placeholder="Enter your full name"
                 required              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="frc_team">
+                <Users size={18} />
+                Team Affiliation
+              </label>
+              <select
+                id="frc_team"
+                class="form-input"
+                bind:value={formData.frc_team}
+                required
+              >
+                <option value="" disabled>Select your team...</option>
+                <option value={FRC_TEAMS.TEAM_971}>Team 971</option>
+                <option value={FRC_TEAMS.TEAM_9584}>Team 9584</option>
+                <option value={FRC_TEAMS.MENTOR}>Mentor</option>
+              </select>
+              <small class="form-help">Select which FRC team you are affiliated with</small>
             </div>
           {/if}
 

@@ -1,0 +1,42 @@
+{
+  "id": null,
+  "email": "your.email@example.com",
+  "full_name": "Full Access User",
+  "role": "admin",
+  "general_role": "lead",
+  "purchasing_role": "lead",
+  "team_role": "Competition Lead",
+  "frc_team": "971",
+  "roster_keys": [
+    "Data Scout Member",
+    "Video Scout Member",
+    "Data Scout Lead",
+    "Video Scout Lead"
+  ],
+  "permissions": [
+    "CREATE_SUBSYSTEMS",
+    "CREATE_BUILDS",
+    "APPROVE_PURCHASES",
+    "PLACE_ORDERS_MISC",
+    "BAN_USERS",
+    "PROMOTE_USERS",
+    "APPROVE_USERS",
+    "CAN_SEE_ROUTES",
+    "EDIT_PERMISSIONS",
+    "VIEW_ADMIN_PANEL",
+    "VIEW_PURCHASING_ADMIN",
+    "ADD_VENDORS",
+    "EDIT_BUDGETS",
+    "NOTE_SCOUT_ADMIN",
+    "DATA_SCOUT_ADMIN",
+    "DATA_SCOUT_MEMBER",
+    "VIDEO_SCOUT_MEMBER",
+    "MANAGE_ATTENDANCE"
+  ],
+  "header_tabs": ["admin","manufacture","purchasing"],
+  "dashboard_layout": null,
+  "banned": false,
+  "notification_settings": {},
+  "slack_user_id": null,
+  "slack_dm_channel": null
+}

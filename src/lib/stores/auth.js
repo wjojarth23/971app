@@ -22,7 +22,7 @@ export async function fetchUserProfile(userId) {
   try {
     const { data, error } = await supabase
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, notification_settings, slack_user_id, slack_dm_channel')
+      .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel')
       .eq('id', userId)
       .single();
 
@@ -59,6 +59,7 @@ export async function fetchUserProfile(userId) {
       general_role: data.general_role || 'member',
       purchasing_role: data.purchasing_role || 'basic',
       team_role: data.team_role || 'other',
+      frc_team: data.frc_team || null,
       // new customization fields
       header_tabs: headerTabs,
       dashboard_layout: data.dashboard_layout || 'grid',
