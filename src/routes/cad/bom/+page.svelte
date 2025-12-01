@@ -268,39 +268,8 @@
 </main>
 
 <style>
-  .bom-page {
-    padding: 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-
-  .loading-container, .redirect-container {
-    text-align: center;
-    padding: 3rem;
-  }
-
-  .loading-container h2, .redirect-container h2 {
-    color: var(--text);
-    margin-bottom: 1rem;
-  }
-
-  .loading-container p, .redirect-container p {
-    color: var(--text-secondary);
-    margin-bottom: 2rem;
-  }
-
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid var(--border);
-    border-top: 4px solid var(--primary);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin: 0 auto;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
+  .bom-page { padding: var(--space-7); max-width: 1200px; margin: 0 auto; }
+  .redirect-container { text-align: center; padding: var(--space-8); }
+  .redirect-container h2 { color: var(--text); margin-bottom: var(--space-4); }
+  .redirect-container p { color: var(--text-secondary); margin-bottom: var(--space-7); }
 </style>

@@ -774,96 +774,25 @@
 {/if}
 
 <style>
-  .subtabs { display:flex; gap:0.5rem; margin:0 0 1rem 0; }
-  .subtabs a { text-decoration:none; padding:0.5rem 0.85rem; background:var(--background); border:1px solid var(--border); border-radius:6px; font-size:0.85rem; color:var(--text); }
-  .subtabs a.active { background: var(--accent); color: var(--secondary); }
   .group-list { display:flex; flex-direction:column; gap:1.25rem; }
   .subheading { margin:0; font-size:1rem; font-weight:600; }
-
-  /* Group wrapper and header */
-  .group-table-wrapper { padding:0.6rem; border-radius:8px; background:var(--surface, #fff); border:1px solid rgba(0,0,0,0.03); }
+  .group-table-wrapper { padding:0.6rem; border-radius:8px; background:var(--surface, var(--color-white)); border:1px solid rgba(0,0,0,0.03); }
   .group-table-header { font-size:1.05rem; font-weight:600; margin:0 0 0.5rem 0; display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
   .group-name-btn { background:none; border:none; font:inherit; cursor:pointer; padding:0.15rem 0.35rem; border-radius:6px; }
-  .group-name-btn:hover { background: #f3f4f6; }
+  .group-name-btn:hover { background: var(--neutral-100); }
   .group-name-input { border:1px solid var(--border); padding:0.25rem 0.4rem; border-radius:6px; }
-
-  /* Buttons: consistent sizing/spacing used locally to avoid relying on global styles */
-  .btn { display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.6rem; border-radius:6px; border:1px solid var(--border); background:var(--background); color:var(--text); cursor:pointer; font-size:0.85rem; }
-  .btn-secondary { background:var(--background); }
-  .btn-primary { background:var(--accent); color:var(--secondary); border-color:transparent; }
-  .btn-warning { background:#f59e0b; color:#fff; border-color:transparent; }
-  .btn-sm { padding:0.2rem 0.45rem; font-size:0.78rem; border-radius:6px; }
-  .btn-icon { padding:0.25rem; width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; }
-  .btn-nowrap { white-space:nowrap; }
-
-  /* Remove button (×) styled as a small inline icon */
-  .remove-inline { background:transparent; border:none; color:var(--text-muted, #8b0000); font-size:1.1rem; padding:0.2rem 0.35rem; border-radius:6px; cursor:pointer; }
-
   :global(.router-table tr.drag-over), :global(.group-table tr.drag-over) { outline:2px dashed var(--accent); }
   .parts-table-wrapper { position:relative; }
-  .hint { font-size:0.8rem; color:#555; margin-top:0.5rem; }
-
-  /* Mirror CAD build table styles (canonical) */
-  .bom-table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
-  .bom-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-  .bom-table th, .bom-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
-  .bom-table th { background: var(--background); font-weight: 600; color: var(--text); }
-  .bom-table .table-row,
-  .bom-table tbody tr.row,
-  .bom-table tbody tr.row.even,
-  .bom-table tbody tr.row.odd {
-    background: #fff;
-  }
-  .bom-table tr:hover { background: #f8f9fa; }
-  .bom-table tbody tr:last-child td { border-bottom: none; }
-
-  /* Make first column wider for part names, and keep action/remove columns compact */
+  .hint { font-size:0.8rem; color:var(--neutral-500); margin-top:0.5rem; }
   .bom-table th:first-child, .bom-table td:first-child { min-width:220px; max-width:520px; }
   .bom-table th:nth-last-child(1), .bom-table td:nth-last-child(1) { width:56px; text-align:right; }
-
   .part-name { font-weight:500; color: var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  /* Use global .source-cell/.source-tag sizing from app.css so tags match other lists */
   .source-cell { display:inline-flex; align-items:center; gap:0.5rem; }
-  /* Match the exact parts-list tag/button sizing so STEP/DXF tags are visually identical:
-     - height: 32px
-     - font-size: 0.8125rem
-     - padding: 0 0.75rem
-     - border-radius: 4px
-  */
-  .source-tag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    color: var(--secondary);
-    border: 1px solid var(--border);
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    margin-right: 0.25rem;
-    height: 32px;
-    min-height: 32px;
-    padding: 0 0.75rem;
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    line-height: 1;
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-  }
-  /* End source-tag exact-match */
-  .btn-icon { padding:0; display:inline-flex; align-items:center; justify-content:center; height:32px; width:32px; }
+  .source-tag { display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--secondary); border: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.02em; margin-right: 0.25rem; height: var(--control-height); min-height: var(--control-height); padding: 0 0.75rem; border-radius: 4px; font-size: 0.8125rem; line-height: 1; box-sizing: border-box; gap: 0.375rem; }
   .file-label { max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.78rem; }
-
   .kitting-inline { display:flex; gap:0.5rem; align-items:center; }
   .kitting-input { padding:0.35rem; border:1px solid var(--border); border-radius:6px; min-width:110px; }
-
-  .status-badge { display:inline-block; padding:0.25rem 0.45rem; border-radius:6px; background:#eef2ff; color:#3730a3; font-weight:700; font-size:0.78rem; }
   .status-table { font-weight:700; }
-
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono','Courier New', monospace; font-size:0.75rem; }
-  /* Column sizing for action and remove columns */
   .bom-table th.action-col, .bom-table td.action-cell { width:110px; max-width:120px; white-space:nowrap; }
   .bom-table td.remove-col { width:36px; max-width:40px; text-align:center; }
-  .remove-inline { font-size:1rem; line-height:1; padding:0.15rem 0.35rem; }
 </style>

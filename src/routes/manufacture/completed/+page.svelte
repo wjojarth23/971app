@@ -63,7 +63,7 @@
 </div>
 
 <div class="card">
-  <div class="filters">
+  <div class="filters" style="--filters-columns: 2fr 1fr;">
     <div class="form-group">
       <label class="form-label" for="completed-search">Search</label>
       <input id="completed-search" class="form-input" placeholder="Search by name, requester, or project ID..." bind:value={searchTerm} />
@@ -114,9 +114,5 @@
 {/if}
 
 <style>
-  .subtabs { display:flex; gap:0.5rem; margin:0 0 1rem 0; }
-  .subtabs a { text-decoration:none; padding:0.5rem 0.85rem; background:var(--background); border:1px solid var(--border); border-radius:4px; font-size:0.85rem; color:var(--text); }
-  .subtabs a.active { background: var(--accent); color: var(--secondary); }
-  .filters { display:grid; grid-template-columns: 2fr 1fr; gap:1rem; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.85rem; }
+  /* Uses global .subtabs and .mono */
 </style>

@@ -3,6 +3,7 @@
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
+  import { isTeam9584 } from '$lib/frcTeams.js';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users } from 'lucide-svelte';
@@ -956,7 +957,7 @@
 </div>
 
 <div class="card">
-  <div class="filters">
+  <div class="filters" style="--filters-columns: 2fr 1fr 1fr 1fr;">
     <div class="form-group">
       <label class="form-label">
         <Search size={16} />
@@ -1043,7 +1044,121 @@
         </div>
       </aside>
     {/if}
-  <div class="table-container" class:assign-mode={assignMode}>
+
+  <!-- Mobile Card View -->
+  <div class="mobile-parts-list">
+    {#each filteredParts as part (part.id)}
+      <div 
+        class="part-card"
+        on:click={(e) => onRowClick(e, part)}
+        on:keydown={(e) => onRowKeyDown(e, part)}
+        role="button"
+        tabindex="0"
+      >
+        <div class="part-card-header">
+          <div class="part-card-title">
+            <strong>{part.name}</strong>
+            {#if isTeam9584(part.frc_team)}
+              <span class="tag team-tag tag-9584">9584</span>
+            {/if}
+          </div>
+          <span class="status-badge {getBadgeClass(part.status, getRouterMeta(part))}">{getStatusDisplay(part)}</span>
+        </div>
+        
+        <div class="part-card-meta">
+          <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
+            {getWorkflowLabel(part.workflow)}
+          </span>
+          {#if part.project_id}
+            <span class="part-card-project">{part.project_id}</span>
+          {/if}
+          {#if part.assigned_to}
+            <span class="pill pill-soft pill-assigned">
+              {assignedUserNames[part.assigned_to] || 'Assigned'}
+            </span>
+          {/if}
+        </div>
+        
+        <div class="part-card-details">
+          <div class="part-card-detail">
+            <span class="detail-label">Qty</span>
+            <span class="detail-value">{part.quantity || 1}</span>
+          </div>
+          {#if part.stock_assignment}
+            <div class="part-card-detail">
+              <span class="detail-label">Stock</span>
+              <span class="detail-value">{part.stock_assignment}</span>
+            </div>
+          {/if}
+          <div class="part-card-detail">
+            <span class="detail-label">Created</span>
+            <span class="detail-value">{formatDate(part.created_at)}</span>
+          </div>
+        </div>
+        
+        <div class="part-card-actions">
+          <!-- Source/Download buttons -->
+          {#if part.source_type === 'onshape_api'}
+            {#if part.workflow === 'laser-cut'}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFile(part, part.status)}>
+                <Download size={14} /> SVG
+              </button>
+            {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openSubsystemDocument(part)}>
+                <ExternalLink size={14} /> View
+              </button>
+            {:else if part.workflow === 'router'}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                <Download size={14} /> STEP
+              </button>
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadDXFFromOnshape(part)}>
+                <Download size={14} /> DXF
+              </button>
+            {:else}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFile(part, part.status)}>
+                <Download size={14} /> File
+              </button>
+            {/if}
+          {:else if part.file_name}
+            <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
+              <Download size={14} /> File
+            </button>
+          {/if}
+          
+          <!-- Status action buttons -->
+          {#if part.status === 'pending'}
+            {#if part.workflow === 'router'}
+              <button
+                class="btn btn-primary btn-sm"
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); }}
+              >
+                <Clock size={14} /> Start
+              </button>
+            {:else}
+              <button
+                class="btn btn-primary btn-sm"
+                on:click|stopPropagation={() => updatePartStatus(part.id, 'in-progress')}
+              >
+                <Clock size={14} /> Start
+              </button>
+            {/if}
+          {:else if part.status === 'in-progress'}
+            {#if part.workflow === 'router' && getRouterMeta(part).step === 'cam_ing'}
+              <button
+                class="btn btn-primary btn-sm"
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
+              >
+                {BUTTONS.CAM_REVIEWED}
+              </button>
+            {/if}
+          {/if}
+        </div>
+      </div>
+    {/each}
+  </div>
+
+  <!-- Desktop Table View -->
+  <div class="table-container desktop-table" class:assign-mode={assignMode}>
     <table class="table">
       <thead>
         <tr>
@@ -1071,7 +1186,12 @@
             class:droppable={assignMode}
           >
             <td class="name-col">
-              <strong>{part.name}</strong>
+              <div class="name-line">
+                <strong>{part.name}</strong>
+                {#if isTeam9584(part.frc_team)}
+                  <span class="tag team-tag tag-9584" title="Requested by Team 9584">9584</span>
+                {/if}
+              </div>
               {#if part.assigned_to}
                  <span class="assigned-user-badge pill pill-soft pill-assigned">
                    {assignedUserNames[part.assigned_to] || 'Assigned'}
@@ -1088,32 +1208,60 @@
             <td class="text-muted" class:hidden={assignMode}>{part.stock_assignment || '-'}</td>
             <td class="source-col" class:hidden={assignMode}>
               {#if part.source_type === 'onshape_api'}
-                <div class="source-cell">
+                <div class="source-cell" class:multi-files={part.workflow === 'router'}>
                   {#if part.workflow === 'laser-cut'}
-                    <span class="tag tag-source">SVG</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
-                      <Download size={16} />
+                    <button
+                      type="button"
+                      class="tag tag-source tag-action"
+                      aria-label="Download SVG"
+                      title="Download SVG"
+                      on:click|stopPropagation={() => downloadFile(part, part.status)}
+                    >
+                      <Download size={14} />
+                      SVG
                     </button>
                   {:else if part.workflow === 'lathe' || part.workflow === 'mill'}
-                    <span class="tag tag-source">PDF</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Open document" title="Open document" on:click={() => openSubsystemDocument(part)}>
-                      <ExternalLink size={16} />
+                    <button
+                      type="button"
+                      class="tag tag-source tag-action"
+                      aria-label="Open document"
+                      title="Open document"
+                      on:click|stopPropagation={() => openSubsystemDocument(part)}
+                    >
+                      <ExternalLink size={14} />
+                      PDF
                     </button>
                   {:else if part.workflow === 'router'}
-                    <div class="source-cell multi-files">
-                      <span class="tag tag-source">STEP</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadStepFromOnshape(part)}>
-                        <Download size={16} />
-                      </button>
-                      <span class="tag tag-source">DXF</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadDXFFromOnshape(part)}>
-                        <Download size={16} />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      class="tag tag-source tag-action"
+                      aria-label="Download STEP file"
+                      title="Download STEP"
+                      on:click|stopPropagation={() => downloadStepFromOnshape(part)}
+                    >
+                      <Download size={14} />
+                      STEP
+                    </button>
+                    <button
+                      type="button"
+                      class="tag tag-source tag-action"
+                      aria-label="Download DXF file"
+                      title="Download DXF"
+                      on:click|stopPropagation={() => downloadDXFFromOnshape(part)}
+                    >
+                      <Download size={14} />
+                      DXF
+                    </button>
                   {:else}
-                    <span class="tag tag-source">{part.file_format === 'stl' ? 'STL' : 'STEP'}</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFile(part, part.status)}>
-                      <Download size={16} />
+                    <button
+                      type="button"
+                      class="tag tag-source tag-action"
+                      aria-label={`Download ${part.file_format === 'stl' ? 'STL' : 'STEP'} file`}
+                      title="Download file"
+                      on:click|stopPropagation={() => downloadFile(part, part.status)}
+                    >
+                      <Download size={14} />
+                      {part.file_format === 'stl' ? 'STL' : 'STEP'}
                     </button>
                   {/if}
                 </div>
@@ -1121,20 +1269,32 @@
                 {#await Promise.resolve((() => { try { return JSON.parse(part.file_url || '{}') } catch { return {} } })()) then meta}
                   <div class="source-cell multi-files">
                     {#if meta.step_file}
-                      <span class="tag tag-source">STEP</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={() => downloadFromStorage(meta.step_file, part.id)}>
-                        <Download size={16} />
+                      <button
+                        type="button"
+                        class="tag tag-source tag-action"
+                        aria-label="Download STEP file"
+                        title="Download STEP"
+                        on:click|stopPropagation={() => downloadFromStorage(meta.step_file, part.id)}
+                      >
+                        <Download size={14} />
+                        STEP
                       </button>
                     {/if}
                     {#if meta.dxf_file}
-                      <span class="tag tag-source">DXF</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={() => downloadFromStorage(meta.dxf_file, part.id)}>
-                        <Download size={16} />
+                      <button
+                        type="button"
+                        class="tag tag-source tag-action"
+                        aria-label="Download DXF file"
+                        title="Download DXF"
+                        on:click|stopPropagation={() => downloadFromStorage(meta.dxf_file, part.id)}
+                      >
+                        <Download size={14} />
+                        DXF
                       </button>
                     {/if}
                     {#if !meta.step_file && !meta.dxf_file}
                       <span class="file-label">{part.file_name}</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFromStorage(part.file_name, part.id)}>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
                         <Download size={16} />
                       </button>
                     {/if}
@@ -1143,7 +1303,7 @@
               {:else if part.file_name}
                 <div class="source-cell">
                   <span class="file-label">{part.file_name}</span>
-                  <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={() => downloadFromStorage(part.file_name, part.id)}>
+                  <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
                     <Download size={16} />
                   </button>
                 </div>
@@ -1275,41 +1435,14 @@
 {/if}
 
 <style>
-  /* Uses global .page-header and .page-actions from app.css */
-
-  .filters {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr;
-    gap: 1rem;
-    margin-bottom: 0.25rem;
+  .manufacture-page-container {
+    max-width: 1400px;
+    margin: 0 auto;
   }
-
-  /* Sub tabs */
-  .subtabs {
-    display: flex;
-    gap: 0.5rem;
-    margin: 0 0 1rem 0;
-  }
-  .subtabs a {
-    text-decoration: none;
-    padding: 0.5rem 0.85rem;
-    background: var(--background);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: 0.85rem;
-    color: var(--text);
-  }
-  .subtabs a.active {
-    background: var(--accent);
-    color: var(--secondary);
-  }
-
-  /* --- BOM-style Table Styling --- */
-  /* Tables: rely on global .table/.table-container styles */
+  
   .table tr { background: white; }
-  .table tbody tr:nth-child(even) { background: #fcfcfc; }
+  .table tbody tr:nth-child(even) { background: var(--color-white); }
 
-  /* Skinnier columns for Name and Source */
   .table th.name-col,
   .table td.name-col {
     min-width: 144px;
@@ -1321,51 +1454,40 @@
   }
   .table th.source-col,
   .table td.source-col {
-  /* Narrower to reduce wasted space; keep tag + button visible */
-  /* slightly wider so source tag + action fit comfortably */
-  min-width: 140px;
-  max-width: 200px;
-  width: 1%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+    min-width: 140px;
+    max-width: 200px;
+    width: 1%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    font-size: 0.9rem;
-    overflow-wrap: anywhere;
+  .name-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
   }
 
   .source-cell {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--gap-2);
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .source-cell .file-label {
+    flex: 1 1 140px;
     min-width: 0;
   }
 
-  .source-cell .tag,
-  .source-cell .file-label {
-    grid-column: 1 / 2;
-  }
-
-  .source-cell .btn {
-    grid-column: 2 / 3;
-  }
-
   .source-cell.multi-files {
-    grid-template-columns: repeat(3, auto);
-  }
-
-  .source-cell.multi-files .tag,
-  .source-cell.multi-files .btn {
-    grid-column: auto;
+    justify-content: flex-start;
   }
 
   .version-text {
     font-size: 0.75rem;
-    color: #666;
+    color: var(--neutral-500);
   }
 
   .file-label {
@@ -1380,7 +1502,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    min-width: 110px; /* make actions column skinnier */
+    min-width: 110px;
   }
 
   .kitting-inline {
@@ -1393,10 +1515,8 @@
     min-width: 120px;
     margin: 0;
     box-sizing: border-box;
-    /* sizing/padding/radius inherited from centralized controls */
   }
 
-  /* Status badges: keep compact row height */
   .status-badge.status-table {
     display: inline-flex;
     align-items: center;
@@ -1410,11 +1530,11 @@
     color: var(--secondary);
   }
 
-  .status-badge.status-table.status-pending { --badge-bg: #fff3e0; background: #fff3e0; color: #f57c00; border-color: #ffcc02; }
-  .status-badge.status-table.status-progress { --badge-bg: #e3f2fd; background: #e3f2fd; color: #1976d2; border-color: #bbdefb; }
-  .status-badge.status-table.status-cammed { --badge-bg: #f3e5f5; background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
-  .status-badge.status-table.status-complete { --badge-bg: #e8f5e8; background: #e8f5e8; color: var(--success); border-color: #a5d6a7; }
-  .status-badge.status-table.status-travis { --badge-bg: #e6ffed; background: #e6ffed; color: #0b6623; border-color: rgba(11,102,35,0.12); }
+  .status-badge.status-table.status-pending { --badge-bg: var(--brand-gold-soft); background: var(--brand-gold-soft); color: var(--orange-strong); border-color: var(--brand-gold-base); }
+  .status-badge.status-table.status-progress { --badge-bg: var(--blue-soft); background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-soft); }
+  .status-badge.status-table.status-cammed { --badge-bg: var(--purple-soft); background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-soft); }
+  .status-badge.status-table.status-complete { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--success); border-color: var(--green-soft); }
+  .status-badge.status-table.status-travis { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--green-strong); border-color: rgba(11,102,35,0.12); }
 
   .parts-row {
     cursor: pointer;
@@ -1425,267 +1545,237 @@
     margin-top: 0.3rem;
   }
 
-  /* Make source button icons larger */
   :global(.btn-icon svg) {
     width: 16px;
     height: 16px;
   }
 
-  /* Force icon size in source cell buttons in case of global overrides */
   .source-col .source-cell .btn.btn-icon :global(svg) {
     width: 16px !important;
     height: 16px !important;
-    min-width: 16px;
-    min-height: 16px;
-    transform: none !important;
-    flex: 0 0 auto;
+    min-width: 16px; min-height: 16px; transform: none !important; flex: 0 0 auto;
   }
+  :global(.actions-col .btn svg), :global(.kitting-inline .btn svg) { width: 18px; height: 18px; }
+  .file-input-hidden { display: none; }
+  .table thead th { background: var(--background); color: var(--text); font-weight: 600; border-bottom: none; }
 
-  /* And make the small action icons (Kit/Inspection/etc.) match the same visual size */
-  :global(.actions-col .btn svg),
-  :global(.kitting-inline .btn svg) {
-    width: 18px;
-    height: 18px;
-  }
+  .content-layout { display: flex; gap: 1rem; align-items: flex-start; }
+  .assign-sidebar { width: 250px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); display: flex; flex-direction: column; gap: 0.5rem; overflow: hidden; overscroll-behavior: contain; flex-shrink: 0; }
+  .assign-sidebar h3 { margin-top: 0; margin-bottom: 1rem; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+  .roster-list { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-height: 0; overflow-y: auto; max-height: calc(100vh - 6rem); overscroll-behavior: contain; padding-right: 0.25rem; }
+  .roster-member { background: var(--surface-2); border: 1px solid var(--border); padding: 0.5rem; border-radius: 4px; cursor: grab; user-select: none; }
+  .roster-member:active { cursor: grabbing; }
+  .member-name { font-weight: 500; }
+  .member-role { font-size: 0.8rem; color: var(--text-muted); }
+  .table-container.assign-mode { flex: 1; }
+  .hidden { display: none !important; }
+  tr.droppable { transition: background-color 0.2s; }
+  tr.droppable:hover { background-color: var(--surface-2); }
 
-  .text-muted { color: #6b7280; }
-
-  .file-input-hidden {
-    display: none;
-  }
-
-  /* Toast Notification Styles */
+  /* Toast notification */
   .toast {
     position: fixed;
-    bottom: 20px;
+    bottom: var(--space-4);
     left: 50%;
     transform: translateX(-50%);
     background: var(--secondary);
     color: var(--primary);
-    padding: 12px 24px;
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
+    padding: var(--space-3) var(--space-6);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
     z-index: 1000;
-    font-weight: 500;
-    animation: slideUp 0.3s ease-out;
   }
 
-  /* Table header: slight dark gray background like BOM and remove thick separator */
-  .table thead th {
+  /* Mobile Responsive Styles */
+  
+  /* Mobile Parts Card List - Hidden on desktop */
+  .mobile-parts-list {
+    display: none;
+  }
+  
+  .part-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s;
+  }
+  
+  .part-card:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+  }
+  
+  .part-card:active {
+    background: var(--surface-2);
+  }
+  
+  .part-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--gap-3);
+    margin-bottom: var(--space-3);
+  }
+  
+  .part-card-title {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .part-card-title strong {
+    font-size: 1rem;
+    color: var(--secondary);
+    word-break: break-word;
+  }
+  
+  .part-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+    margin-bottom: var(--space-3);
+  }
+  
+  .part-card-project {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  
+  .part-card-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: var(--gap-3);
+    padding: var(--space-3);
     background: var(--background);
-    color: var(--text);
-    font-weight: 600;
-    border-bottom: none;
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-3);
   }
-
-  @keyframes slideUp {
-    from {
-      opacity: 0;
-      transform: translateX(-50%) translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
+  
+  .part-card-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  
+  .detail-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+  
+  .detail-value {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  
+  .part-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+  
+  .part-card-actions .btn {
+    flex: 1 1 auto;
+    min-width: 80px;
+    justify-content: center;
   }
 
   @media (max-width: 900px) {
-    .filters {
-      grid-template-columns: 1fr;
-    }
-    .actions-col {
-      min-width: auto;
-    }
-    .table th.name-col,
-    .table td.name-col {
-      min-width: 80px;
-      max-width: 100px;
-    }
-    .table th.source-col,
-    .table td.source-col {
-      min-width: 70px;
-      max-width: 100px;
-    }
-  /* Hide Stock column on small screens (5th) */
-    .table thead th:nth-child(5),
-    .table tbody td:nth-child(5) {
-      display: none;
-    }
-    /* Hide Created column on small screens (8th) */
-    .table thead th:nth-child(8),
-    .table tbody td:nth-child(8) {
-      display: none;
-    }
-  }
-
-  /* Assign Mode Styles */
-  .content-layout {
-    display: flex;
-    gap: 1rem;
-    align-items: flex-start;
-  }
-
-  .assign-sidebar {
-    width: 250px;
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-    position: sticky;
-    top: 1rem;
-    max-height: calc(100vh - 2rem);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    overflow: hidden;
-    overscroll-behavior: contain;
-    flex-shrink: 0;
-  }
-
-  .assign-sidebar h3 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-    font-size: 1.1rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  }
-
-  .roster-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    max-height: calc(100vh - 6rem);
-    overscroll-behavior: contain;
-    padding-right: 0.25rem;
-  }
-
-  .roster-member {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    padding: 0.5rem;
-    border-radius: 4px;
-    cursor: grab;
-    user-select: none;
-  }
-
-  .roster-member:active {
-    cursor: grabbing;
-  }
-
-  .member-name {
-    font-weight: 500;
-  }
-
-  .member-role {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-
-  .table-container.assign-mode {
-    flex: 1;
-  }
-
-  .hidden {
-    display: none !important;
-  }
-
-  tr.droppable {
-    transition: background-color 0.2s;
-  }
-
-  tr.droppable:hover {
-    background-color: var(--surface-2);
-  }
-
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-    z-index: 2000;
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 1.15rem;
-  }
-
-  .modal-body {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .modal-footer {
-    margin-top: 1.5rem;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: center;
-    justify-content: flex-end;
-  }
-
-  .modal-footer .spacer {
-    flex: 1 1 auto;
-  }
-
-  .modal-footer button {
-    flex-shrink: 0;
-  }
-
-  .modal-close-button {
-    border: none;
-    background: transparent;
-    color: var(--text, #111);
-    padding: 0.25rem;
-    border-radius: var(--radius-sm);
-    line-height: 0;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-  }
-
-  .modal-close-button:hover,
-  .modal-close-button:focus-visible {
-    background: rgba(0, 0, 0, 0.05);
-    color: var(--text, #111);
-    outline: none;
-  }
-
-  .modal-close-button:focus-visible {
-    box-shadow: 0 0 0 2px rgba(15, 111, 213, 0.4);
-  }
-
-  .modal-close-button :global(svg) {
-    width: 18px;
-    height: 18px;
-  }
-
-  @media (max-width: 640px) {
-    .modal-footer {
+    .actions-col { min-width: auto; }
+    .table th.name-col, .table td.name-col { min-width: 80px; max-width: 100px; }
+    .table th.source-col, .table td.source-col { min-width: 70px; max-width: 100px; }
+    
+    .content-layout {
       flex-direction: column;
-      align-items: stretch;
     }
+    
+    .assign-sidebar {
+      width: 100%;
+      position: static;
+      max-height: none;
+    }
+    
+    .roster-list {
+      max-height: 200px;
+    }
+  }
 
-    .modal-footer .spacer {
+  @media (max-width: 768px) {
+    .manufacture-page-container {
+      padding: 0;
+    }
+    
+    /* Hide desktop table, show mobile cards */
+    .desktop-table {
       display: none;
     }
-
-    .modal-footer button {
+    
+    .mobile-parts-list {
+      display: block;
+    }
+    
+    /* Compact filters */
+    .filter-card {
+      padding: var(--space-3);
+    }
+    
+    .filter-grid {
+      grid-template-columns: 1fr;
+      gap: var(--gap-3);
+    }
+    
+    .page-header {
+      padding: var(--space-3);
+    }
+    
+    .page-header h1 {
+      font-size: 1.25rem;
+    }
+    
+    .page-actions {
+      flex-direction: column;
       width: 100%;
+    }
+    
+    .page-actions .btn {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .part-card {
+      padding: var(--space-3);
+    }
+    
+    .part-card-title strong {
+      font-size: 0.9rem;
+    }
+    
+    .part-card-details {
+      grid-template-columns: 1fr 1fr;
+      padding: var(--space-2);
+    }
+    
+    .part-card-actions .btn {
+      font-size: 0.75rem;
+      padding: var(--space-2);
+    }
+    
+    .status-badge {
+      font-size: 0.65rem;
+      padding: var(--space-1) var(--space-2);
     }
   }
 </style>

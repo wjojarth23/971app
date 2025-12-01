@@ -30,6 +30,7 @@ export async function addOnshapePart(supabase, partData, onshapeData) {
                 material: partData.material,
                 quantity: partData.quantity || 1,
                 status: 'pending',
+                frc_team: partData.frc_team || null,
                 // Onshape fields
                 onshape_document_id: onshapeData.document_id,
                 onshape_wvm: onshapeData.wvm,
@@ -71,6 +72,7 @@ export async function addTraditionalPart(supabase, partData, fileName, fileUrl) 
                 material: partData.material,
                 quantity: partData.quantity || 1,
                 status: 'pending',
+                frc_team: partData.frc_team || null,
                 file_name: fileName,
                 file_url: fileUrl,
                 // Onshape fields - leave empty for traditional parts

@@ -358,8 +358,75 @@
 {/if}
 
 <style>
-  .empty { color: var(--secondary); padding: 0.5rem; }
-  .btn-row { display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem; }
-  .btn-group { display:flex; gap:0.25rem; }
-  .section { margin-bottom:1rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border); }
+  .btn-group { display: flex; gap: 0.25rem; }
+  .section { margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+  
+  /* Mobile Responsive Styles */
+  @media (max-width: 768px) {
+    .page-header.card {
+      flex-direction: column;
+      gap: var(--gap-3);
+    }
+    
+    .page-actions {
+      flex-direction: column;
+      width: 100%;
+    }
+    
+    .page-actions .form-group {
+      min-width: unset !important;
+      width: 100%;
+    }
+    
+    .grid.grid-2 {
+      grid-template-columns: 1fr;
+    }
+    
+    .btn-row {
+      flex-wrap: wrap;
+    }
+    
+    .btn-group {
+      flex-direction: column;
+      width: 100%;
+    }
+    
+    .btn-group .btn {
+      width: 100%;
+    }
+    
+    .section h4 {
+      font-size: 0.9rem;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .page-header h2 {
+      font-size: 1.25rem;
+    }
+    
+    .page-actions {
+      gap: var(--gap-2);
+    }
+    
+    .page-actions .form-group div {
+      flex-direction: column;
+      gap: var(--gap-2) !important;
+    }
+    
+    .page-actions .form-group div .btn {
+      width: 100%;
+    }
+    
+    .btn-row .btn {
+      flex: 1 1 calc(50% - 0.25rem);
+      min-width: 0;
+      font-size: 0.75rem;
+      padding: var(--space-2);
+    }
+    
+    .section {
+      margin-bottom: 0.75rem;
+    }
+  }
 </style>

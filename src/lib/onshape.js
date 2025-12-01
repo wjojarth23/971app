@@ -399,6 +399,7 @@ class OnShapeAPI {
                 let boundingBox = null;
                 let boundingBoxX = null;
                 let boundingBoxY = null;
+                let boundingBoxZ = null;
 
                 if (ENABLE_BBOX) {
                     // Bounding box fetch logic would go here

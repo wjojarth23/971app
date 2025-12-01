@@ -194,25 +194,11 @@
   </div>
 {/if}
 
-<style>
-  .create-bin { display: flex; gap: 0.5rem; }
-  /* Keep layout constraint but avoid forcing control sizing; use max-width */
-  .create-bin .form-input { max-width: 200px; }
-  .parts-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
-  .parts-list li { display: inline-flex; align-items: center; gap: 0.5rem; }
-  .tag { border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.85rem; }
-  .text-muted { color: #6b7280; }
 
-  /* Subtabs styling to match other manufacture pages */
-  .subtabs { display: flex; gap: 0.5rem; margin: 0 0 1rem 0; }
-  .subtabs a { text-decoration: none; padding: 0.5rem 0.85rem; background: var(--background); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; color: var(--text); }
-  .subtabs a.active { background: var(--accent); color: var(--secondary); }
-</style>
 
 {#if editingBin}
   <div class="modal-backdrop" role="button" tabindex="0" aria-label="Close dialog" on:click={closeEdit} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar' || e.key === 'Escape') closeEdit(); }}>
-  <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') closeEdit(); }}>
+  <div class="modal" role="dialog" aria-modal="true" tabindex="0" style="--modal-width: 420px;" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') closeEdit(); }}>
       <h3>Edit Bin</h3>
       <div style="display:flex;flex-direction:column;gap:0.5rem;">
         <label>Bin Name
@@ -229,9 +215,13 @@
       </div>
     </div>
   </div>
-  <style>
-    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:60; }
-    .modal { background:var(--surface); padding:1rem; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.3); width:360px; max-width:calc(100% - 32px); }
-  .btn-danger { background:#ef4444; color:white; border:none; }
-  </style>
+  
 {/if}
+
+<style>
+  .create-bin { display: flex; gap: 0.5rem; }
+  .create-bin .form-input { max-width: 200px; }
+  .parts-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
+  .parts-list li { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .tag { border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; }
+</style>

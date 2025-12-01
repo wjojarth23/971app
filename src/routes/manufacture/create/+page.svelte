@@ -2,6 +2,8 @@
   import { goto } from '$app/navigation';
   import { supabase } from '$lib/supabase.js';
   import { Upload, FileText, Wrench, Zap } from 'lucide-svelte';
+  import { onMount } from 'svelte';
+  import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
   
   let partName = '';
   let requesterName = '';
@@ -14,6 +16,18 @@
   let uploadedStepFile = null;
   let uploadedDXFFile = null;
   let isSubmitting = false;
+  let user = null;
+
+  onMount(() => {
+    const unsubscribe = userStore.subscribe((value) => {
+      user = value;
+      if (!requesterName && value?.full_name) {
+        requesterName = value.full_name;
+      }
+    });
+    loadUserFromUUID(supabase);
+    return () => unsubscribe();
+  });
 
   // Router: if selected stock is tube, DXF not required
   $: stockIsTube = (() => {
@@ -168,7 +182,8 @@
           stock_assignment: effectiveStock,
           file_name: fileName,
           file_url: fileName,
-          status: 'pending'
+          status: 'pending',
+          frc_team: user?.frc_team || null
         }]);
       if (insertError) throw insertError;
 
@@ -240,7 +255,8 @@
           stock_assignment: effectiveStock,
           file_name: stepName, // keep for backward compat
           file_url: JSON.stringify(fileMeta),
-          status: 'pending'
+          status: 'pending',
+          frc_team: user?.frc_team || null
         }]);
       if (insertError) throw insertError;
 
@@ -515,188 +531,35 @@
 </div>
 
 <style>
-  .header {
-    margin-bottom: 2rem;
-  }
-
-  .header h1 {
-    margin-bottom: 0.5rem;
-  }
-
-  .header p {
-    color: #666;
-    margin-bottom: 0;
-  }
-
-  .form-container {
-    background: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-  }
-
-  /* .manufacturing-form wrapper uses container padding; no extra rules needed */
-
-  .form-section {
-    margin-bottom: 2rem;
-  }
-
-  .form-section h2 {
-    margin-bottom: 1rem;
-    font-size: 1.25rem;
-    font-weight: 600;
-  }
-
-  .form-group {
-    margin-bottom: 1rem;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-  }
-
-  /* Control sizing/padding/radius handled globally in src/app.css */
-  .form-group input,
-  .form-group select {
-    width: 100%;
-    border: 1px solid var(--border);
-  }
-
-  .form-group input:focus,
-  .form-group select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .workflow-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
-  }
-
-  .workflow-card {
-    display: block;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    position: relative;
-    background: var(--primary);
-  }
-
-  .workflow-card input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .workflow-card:hover {
-    border-color: var(--accent);
-  }
-
-  .workflow-card.selected {
-    border-color: var(--accent);
-    background-color: rgba(241, 195, 49, 0.1);
-  }
-
-  .workflow-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .workflow-name {
-    font-weight: 600;
-  }
-
-  .workflow-file-type {
-    font-size: 0.875rem;
-    color: #666;
-    background: var(--background);
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-  }
-
-  .upload-container {
-    margin-top: 1rem;
-  }
-
-  .file-drop-zone {
-    border: 1px dashed var(--border);
-    border-radius: 4px;
-    padding: 2rem;
-    text-align: center;
-    cursor: pointer;
-    background: var(--background);
-  }
-
-  .file-drop-zone:hover,
-  .file-drop-zone.active {
-    border-color: var(--accent);
-  }
-
-  .file-drop-zone.has-file {
-    border-color: var(--success);
-  }
-
-  .upload-prompt,
-  .uploaded-file {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .upload-text {
-    font-weight: 500;
-  }
-
-  .upload-subtext {
-    font-size: 0.875rem;
-    color: #666;
-  }
-
-  .file-name {
-    font-weight: 600;
-    color: var(--success);
-  }
-
-  .file-size {
-    font-size: 0.875rem;
-    color: #666;
-  }
-
-  .form-actions {
-    margin-top: 2rem;
-    text-align: center;
-  }
-
-  /* Keep color and semantics, sizing comes from global .btn tokens when markup uses .btn
-     (we intentionally avoid local padding/border-radius here). */
-  .submit-btn {
-    background: var(--accent);
-    color: var(--secondary);
-    border: none;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .submit-btn:hover:not(:disabled) {
-    opacity: 0.9;
-  }
-
-  .submit-btn:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-  }
-
-  @media (max-width: 640px) {
-    .workflow-grid {
-      grid-template-columns: 1fr;
-    }
-  }
+  .header { margin-bottom: 2rem; }
+  .header h1 { margin-bottom: 0.5rem; }
+  .header p { color: var(--neutral-500); margin-bottom: 0; }
+  .form-container { background: var(--primary); border: 1px solid var(--border); border-radius: 4px; padding: 1.5rem; margin-bottom: 1rem; }
+  .form-section { margin-bottom: 2rem; }
+  .form-section h2 { margin-bottom: 1rem; font-size: 1.25rem; font-weight: 600; }
+  .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+  .form-group input, .form-group select { width: 100%; border: 1px solid var(--border); }
+  .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
+  .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
+  .workflow-card { display: block; padding: 1rem; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; position: relative; background: var(--primary); }
+  .workflow-card input { position: absolute; opacity: 0; pointer-events: none; }
+  .workflow-card:hover { border-color: var(--accent); }
+  .workflow-card.selected { border-color: var(--accent); background-color: rgba(241, 195, 49, 0.1); }
+  .workflow-content { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+  .workflow-name { font-weight: 600; }
+  .workflow-file-type { font-size: 0.875rem; color: var(--neutral-500); background: var(--background); padding: 0.25rem 0.5rem; border-radius: 4px; }
+  .upload-container { margin-top: 1rem; }
+  .file-drop-zone { border: 1px dashed var(--border); border-radius: 4px; padding: 2rem; text-align: center; cursor: pointer; background: var(--background); }
+  .file-drop-zone:hover, .file-drop-zone.active { border-color: var(--accent); }
+  .file-drop-zone.has-file { border-color: var(--success); }
+  .upload-prompt, .uploaded-file { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+  .upload-text { font-weight: 500; }
+  .upload-subtext { font-size: 0.875rem; color: var(--neutral-500); }
+  .file-name { font-weight: 600; color: var(--success); }
+  .file-size { font-size: 0.875rem; color: var(--neutral-500); }
+  .form-actions { margin-top: 2rem; text-align: center; }
+  .submit-btn { background: var(--accent); color: var(--secondary); border: none; font-weight: 600; cursor: pointer; }
+  .submit-btn:hover:not(:disabled) { opacity: 0.9; }
+  .submit-btn:disabled { background: var(--neutral-300); cursor: not-allowed; }
+  @media (max-width: 640px) { .workflow-grid { grid-template-columns: 1fr; } }
 </style>

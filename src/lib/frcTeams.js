@@ -1,0 +1,38 @@
+import { FRC_TEAMS } from '$lib/permissions.js';
+
+const TEAM_971 = FRC_TEAMS?.TEAM_971 ?? '971';
+const TEAM_9584 = FRC_TEAMS?.TEAM_9584 ?? '9584';
+const TEAM_MENTOR = FRC_TEAMS?.MENTOR ?? 'Mentor';
+
+export const FRC_TEAM_META = {
+  [TEAM_971]: {
+    label: 'Team 971',
+    shortLabel: '971',
+    tagClass: 'tag-971'
+  },
+  [TEAM_9584]: {
+    label: 'Team 9584',
+    shortLabel: '9584',
+    tagClass: 'tag-9584'
+  },
+  [TEAM_MENTOR]: {
+    label: 'Mentor',
+    shortLabel: 'Mentor',
+    tagClass: 'tag-mentor'
+  }
+};
+
+export function getFrcTeamMeta(team) {
+  if (!team) return null;
+  const meta = FRC_TEAM_META[team];
+  if (meta) return meta;
+  return {
+    label: team,
+    shortLabel: team,
+    tagClass: 'tag-tonal'
+  };
+}
+
+export function isTeam9584(team) {
+  return Boolean(team) && team === TEAM_9584;
+}

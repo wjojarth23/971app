@@ -97,17 +97,5 @@
 {/if}
 
 <style>
-  .text-error { color: #b91c1c; }
-  .strong { font-weight: 600; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.9rem; }
-  .subtabs { display: flex; gap: 0.5rem; margin: 0 0 1rem 0; }
-  .subtabs a { text-decoration: none; padding: 0.5rem 0.85rem; background: var(--background); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; color: var(--text); }
-  .subtabs a.active { background: var(--accent); color: var(--secondary); }
-
-  .table-container { overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
-  .table { width: 100%; border-collapse: collapse; }
-  .table th, .table td { padding: 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
-  .table thead th { background: var(--background); }
-
-  .page-header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.75rem; }
+  /* Uses global .subtabs, .mono, .text-error, .strong, .page-header, .table styles */
 </style>

@@ -277,126 +277,24 @@
 </div>
 
 <style>
-  .container {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-  
-  .page-header {
-    margin-bottom: 2rem;
-  }
-
-  .grid-layout {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 2rem;
-  }
-
-  .card {
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .card-header {
-    padding: 1rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
-  }
-
-  .card-header h2 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 0;
-    font-size: 1.25rem;
-  }
-
-  .roster-controls {
-    padding: 1rem;
-    display: flex;
-    gap: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .key-selector {
-    flex: 1;
-  }
-
-  .user-search {
-    flex: 1;
-  }
-
-  .roster-content {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    flex: 1;
-    min-height: 500px;
-  }
-
-  .available-users, .current-roster {
-    padding: 1rem;
-    overflow-y: auto;
-  }
-
-  .available-users {
-    border-right: 1px solid var(--border);
-  }
-
-  .user-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .user-item {
-    justify-content: flex-start;
-  }
-
-  .roster-groups {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .roster-group h4 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .assigned-users {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .assigned-user {
-    font-size: 0.85rem;
-  }
-
-  .icon-btn {
-    color: var(--text-muted);
-  }
-
-  .icon-btn:hover {
-    color: var(--danger);
-  }
-
-  .empty-text {
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
-  @media (max-width: 1024px) {
-    .grid-layout {
-      grid-template-columns: 1fr;
-    }
-  }
+  .container { padding: 2rem; max-width: 1400px; }
+  .page-header { margin-bottom: 2rem; }
+  .grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; }
+  .card { overflow: hidden; display: flex; flex-direction: column; background: var(--surface-1); }
+  .card-header { padding: 1rem; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .card-header h2 { display: flex; align-items: center; gap: 0.5rem; margin: 0; font-size: 1.25rem; }
+  .roster-controls { padding: 1rem; display: flex; gap: 1rem; border-bottom: 1px solid var(--border); }
+  .key-selector { flex: 1; }
+  .user-search { flex: 1; }
+  .roster-content { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 500px; }
+  .available-users, .current-roster { padding: 1rem; overflow-y: auto; }
+  .available-users { border-right: 1px solid var(--border); }
+  .user-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .user-item { justify-content: flex-start; }
+  .roster-groups { display: flex; flex-direction: column; gap: 1rem; }
+  .roster-group h4 { margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .assigned-users { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .assigned-user { font-size: 0.85rem; }
+  .empty-text { color: var(--text-muted); font-style: italic; }
+  @media (max-width: 1024px) { .grid-layout { grid-template-columns: 1fr; } }
 </style>

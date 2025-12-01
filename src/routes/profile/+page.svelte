@@ -307,14 +307,14 @@
 
     <section class="card">
       <h3>Account</h3>
-      <label>Full name
-        <input type="text" bind:value={full_name} />
+      <label class="form-label">Full name
+        <input class="form-input" type="text" bind:value={full_name} />
       </label>
-      <label>Email
-        <input type="email" bind:value={email} />
+      <label class="form-label">Email
+        <input class="form-input" type="email" bind:value={email} />
       </label>
-      <label>FRC Team Affiliation
-        <select bind:value={frc_team}>
+      <label class="form-label">FRC Team Affiliation
+        <select class="form-select" bind:value={frc_team}>
           <option value="">Not Set</option>
           {#each frcTeamOptions as teamValue}
             <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
@@ -352,7 +352,7 @@
     <section class="card">
       <div class="attendance-card-header">
         <h3>Your Attendance</h3>
-        <button type="button" class="btn btn-sm" on:click={() => loadAttendanceSummary(true)} disabled={attendanceLoading}>
+        <button type="button" class="btn btn-sm btn-nowrap" on:click={() => loadAttendanceSummary(true)} disabled={attendanceLoading}>
           {attendanceLoading ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
@@ -393,11 +393,11 @@
 
     <section class="card">
       <h3>Change Password</h3>
-      <label>New password
-        <input type="password" bind:value={newPassword} />
+      <label class="form-label">New password
+        <input class="form-input" type="password" bind:value={newPassword} />
       </label>
-      <label>Confirm password
-        <input type="password" bind:value={passwordConfirm} />
+      <label class="form-label">Confirm password
+        <input class="form-input" type="password" bind:value={passwordConfirm} />
       </label>
       <div class="actions">
         <button class="btn" on:click={changePassword} disabled={changingPassword}>{changingPassword ? 'Changing...' : 'Change Password'}</button>
@@ -440,24 +440,24 @@
       <!-- Quick Actions -->
       <div class="quick-actions">
         <div class="action-group">
-          <label for="new-folder-name">Create folder</label>
+          <label class="form-label" for="new-folder-name">Create folder</label>
           <div class="input-group">
-            <input id="new-folder-name" placeholder="Folder name" bind:value={newFolderName} />
-            <button class="btn btn-sm" on:click={createFolder} disabled={!newFolderName.trim()}>Create</button>
+            <input class="form-input" id="new-folder-name" placeholder="Folder name" bind:value={newFolderName} />
+            <button class="btn btn-sm btn-nowrap" on:click={createFolder} disabled={!newFolderName.trim()}>Create</button>
           </div>
         </div>
 
         <div class="action-group">
-          <label for="add-tab-select">Add tab</label>
+          <label class="form-label" for="add-tab-select">Add tab</label>
           <div class="input-group">
-            <select id="add-tab-select" bind:value={addTabKey}>
+            <select class="form-select" id="add-tab-select" bind:value={addTabKey}>
               <option value="">-- Select tab --</option>
               {#each Object.keys(navigation.tabs) as key}
                 <option value={key}>{key}</option>
               {/each}
             </select>
 
-            <select id="target-folder-select" title="Add to">
+            <select class="form-select" id="target-folder-select" title="Add to">
               <option value="">Top level</option>
               {#each (header_tabs && Array.isArray(header_tabs) ? header_tabs : []) as it, i}
                 {#if it.type === 'folder'}
@@ -466,7 +466,7 @@
               {/each}
             </select>
 
-            <button class="btn btn-sm" on:click={addTab} disabled={!addTabKey}>Add</button>
+            <button class="btn btn-sm btn-nowrap" on:click={addTab} disabled={!addTabKey}>Add</button>
           </div>
         </div>
       </div>
@@ -516,8 +516,8 @@
 
     <section class="card">
       <h3>Dashboard Layout</h3>
-      <label for="dashboard-layout">Layout style</label>
-      <select id="dashboard-layout" bind:value={dashboard_layout}>
+      <label class="form-label" for="dashboard-layout">Layout style</label>
+      <select class="form-select" id="dashboard-layout" bind:value={dashboard_layout}>
         <option value="grid">Grid</option>
         <option value="compact">Compact</option>
         <option value="detailed">Detailed</option>
@@ -537,70 +537,153 @@
 {/if}
 
 <style>
-  .profile-page { max-width: 860px; margin: 0 auto; padding: 1rem; }
-  .card { background: var(--card); padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid var(--border); border-radius: 8px; }
-  .card h3 { margin-top: 0; margin-bottom: 1rem; font-size: 1.25rem; }
-  .card h4 { margin: 1rem 0 0.5rem; font-size: 1rem; font-weight: 600; }
-  
-  label { display: block; margin-bottom: 0.35rem; font-weight: 500; font-size: 0.95rem; }
-  /* Inputs/selects sizing controlled globally in src/app.css */
-  input, select { width: 100%; border: 1px solid var(--border); }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
-  
-  .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
-  
-  /* Roles Grid */
-  .roles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
-  .role-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; }
-  .role-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 0.5rem; }
+  .profile-page { max-width: 860px; margin: 0 auto; padding: var(--space-4); }
+  .profile-page :global(.card) { padding: var(--space-6); margin-bottom: var(--space-6); }
+  .profile-page :global(.card h3) { margin-top: 0; margin-bottom: var(--space-4); font-size: 1.25rem; }
+  .profile-page :global(.card h4) { margin: var(--space-4) 0 var(--space-2); font-size: 1rem; font-weight: 600; }
+  .profile-page :global(.actions) { margin-top: var(--space-4); }
+
+  .roles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--gap-4); }
+  .role-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); text-align: center; }
+  .role-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: var(--space-2); }
   .role-value { font-size: 1.1rem; font-weight: 600; color: var(--text); }
-  
-  .muted { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
-  .attendance-card-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .attendance-stats { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
-  .stat-block { flex: 1 1 220px; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; background: var(--surface-1); }
+
+  .muted { color: var(--muted); font-size: 0.9rem; margin-bottom: var(--space-4); }
+  .attendance-card-header { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-4); }
+  .attendance-stats { display: flex; flex-wrap: wrap; gap: var(--gap-4); margin-bottom: var(--space-4); }
+  .stat-block { flex: 1 1 220px; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); background: var(--surface-1); }
   .stat-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   .stat-value { font-size: 1.5rem; margin-top: 0.35rem; display: block; }
-  .attendance-history h4 { margin-top: 0; margin-bottom: 0.5rem; }
-  .attendance-history ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.75rem; }
-  .attendance-history li { display: flex; justify-content: space-between; gap: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+  .attendance-history h4 { margin-top: 0; margin-bottom: var(--space-2); }
+  .attendance-history ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+  .attendance-history li { display: flex; justify-content: space-between; gap: var(--gap-4); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
   .attendance-history li:last-child { border-bottom: none; padding-bottom: 0; }
 
-  /* Preview */
-  .preview-container { margin: 1.5rem 0; padding: 1rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
-  .preview-container h4 { margin-top: 0; margin-bottom: 0.75rem; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
-  .notification-grid { display: flex; flex-direction: column; gap: 0.75rem; }
-  .notify-row { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+  .preview-container { margin: var(--space-6) 0; padding: var(--space-4); background: var(--background); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .preview-container h4 { margin-top: 0; margin-bottom: var(--space-3); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .notification-grid { display: flex; flex-direction: column; gap: var(--space-3); }
+  .notify-row { display: flex; gap: var(--gap-3); align-items: flex-start; padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
   .notify-row:last-child { border-bottom: none; }
   .notify-label { font-weight: 600; }
   .notify-desc { color: var(--muted); font-size: 0.85rem; }
 
-  /* Quick Actions */
-  .quick-actions { display: flex; flex-direction: column; gap: 1rem; margin: 1.5rem 0; }
-  .action-group { display: flex; flex-direction: column; gap: 0.5rem; }
-  .action-group label { margin-bottom: 0.25rem; }
-  .input-group { display: flex; gap: 0.5rem; }
-  .input-group input, .input-group select { flex: 1; min-width: 0; }
-  /* Compact button sizing handled by global .btn-sm tokens */
-  .btn-sm { white-space: nowrap; }
+  .quick-actions { display: flex; flex-direction: column; gap: var(--gap-4); margin: var(--space-6) 0; }
+  .action-group { display: flex; flex-direction: column; gap: var(--gap-2); }
+  .action-group :global(.form-label) { margin-bottom: var(--space-1); }
+  .input-group { display: flex; gap: var(--gap-2); }
+  .input-group :global(.form-input), .input-group :global(.form-select) { flex: 1; min-width: 0; }
 
-  /* Manage Items */
-  .manage-section { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
-  .items-list { display: flex; flex-direction: column; gap: 0.5rem; }
-  .item-row { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
-  .item-row.child { margin-left: 2rem; padding: 0.5rem 0.75rem; background: transparent; border: 1px dashed var(--border); }
-  .item-info { display: flex; align-items: center; gap: 0.5rem; flex: 1; }
+  .manage-section { margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--border); }
+  .items-list { display: flex; flex-direction: column; gap: var(--gap-2); }
+  .item-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .item-row.child { margin-left: 2rem; padding: var(--space-2) var(--space-3); background: transparent; border: 1px dashed var(--border); }
+  .item-info { display: flex; align-items: center; gap: var(--gap-2); flex: 1; }
   .item-label { font-weight: 500; }
   .item-meta { font-size: 0.85rem; color: var(--muted); }
-  .badge { background: var(--accent); color: var(--text); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
   .badge-tab { background: var(--muted-bg); color: var(--muted); }
-  .btn-remove { background: transparent; border: 1px solid #f5c6c6; color: #b33; cursor: pointer; }
-  /* small variant sizing provided globally */
-  .btn-remove:hover { background: #ffecec; }
-  .folder-items { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
+  .folder-items { display: flex; flex-direction: column; gap: 0.35rem; margin-top: var(--space-2); }
+
+  /* Mobile Responsive Styles */
+  @media (max-width: 768px) {
+    .profile-page {
+      padding: var(--space-3);
+    }
+    
+    .profile-page :global(.card) {
+      padding: var(--space-4);
+      margin-bottom: var(--space-4);
+    }
+    
+    .profile-page :global(.card h3) {
+      font-size: 1.1rem;
+    }
+    
+    .roles-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--gap-2);
+    }
+    
+    .role-box {
+      padding: var(--space-3);
+    }
+    
+    .role-label {
+      font-size: 0.7rem;
+    }
+    
+    .role-value {
+      font-size: 0.9rem;
+    }
+    
+    .attendance-card-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--gap-2);
+    }
+    
+    .attendance-stats {
+      flex-direction: column;
+    }
+    
+    .stat-block {
+      flex: 1 1 100%;
+    }
+    
+    .stat-value {
+      font-size: 1.25rem;
+    }
+    
+    .attendance-history li {
+      flex-direction: column;
+      gap: var(--gap-2);
+    }
+    
+    .input-group {
+      flex-direction: column;
+    }
+    
+    .input-group :global(.form-input), 
+    .input-group :global(.form-select) {
+      width: 100%;
+    }
+    
+    .item-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--gap-2);
+    }
+    
+    .item-row.child {
+      margin-left: 1rem;
+    }
+    
+    .notify-row {
+      flex-direction: column;
+      gap: var(--gap-2);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .profile-page {
+      padding: var(--space-2);
+    }
+    
+    .profile-page :global(.card) {
+      padding: var(--space-3);
+    }
+    
+    .roles-grid {
+      grid-template-columns: 1fr;
+    }
+    
+    .preview-container {
+      padding: var(--space-3);
+      margin: var(--space-4) 0;
+    }
+  }
 
   @media (max-width: 640px) {
     .input-group { flex-direction: column; }
-    .input-group input, .input-group select { width: 100%; }
+    .input-group :global(.form-input), .input-group :global(.form-select) { width: 100%; }
   }
 </style>

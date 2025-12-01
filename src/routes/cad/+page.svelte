@@ -3,6 +3,7 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { hasPermission } from '$lib/permissions.js';
+  import { isTeam9584 } from '$lib/frcTeams.js';
   import { onShapeAPI } from '$lib/onshape.js';
   import stockData from '$lib/stock.json';
   import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download } from 'lucide-svelte';
@@ -187,6 +188,10 @@
         description: newSubsystem.description,
         lead_user_id: user.id
       };
+
+      if (!editingSubsystemId) {
+        insertData.frc_team = user?.frc_team || null;
+      }
 
       // If user provided an OnShape URL in the create modal, try to parse and persist it now
       if (newSubsystem.onshape_url && newSubsystem.onshape_url.trim()) {
@@ -430,7 +435,8 @@
           release_id: release.id,
           release_name: release.name,
           build_hash: buildHash,
-          created_by: user.id
+          created_by: user.id,
+          frc_team: user?.frc_team || null
         }])
         .select()
         .single();
@@ -668,7 +674,8 @@
           release_name: `Current State - ${new Date().toLocaleDateString()}`,
           build_hash: buildHash,
           created_by: user.id,
-          status: 'pending'
+          status: 'pending',
+          frc_team: user?.frc_team || null
         }])
         .select()
         .single();
@@ -768,8 +775,13 @@
           on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && subsystem.onshape_url && goto(`/cad/${subsystem.id}`)}
         >
           <div class="subsystem-header">
-            <h3>{subsystem.name}</h3>
-            <div style="display:flex;align-items:center;gap:0.5rem;">
+            <div class="subsystem-title">
+              <h3>{subsystem.name}</h3>
+              {#if isTeam9584(subsystem.frc_team)}
+                <span class="tag team-tag tag-9584" title="Team 9584">9584</span>
+              {/if}
+            </div>
+            <div class="subsystem-toolbar">
               <button
                 class="btn btn-outline btn-small"
                 on:click|stopPropagation={() => openEditModal(subsystem)}
@@ -897,9 +909,20 @@
         <h2>All Builds</h2>
         <div class="builds-grid">
           {#each builds as build}
-            <div class="build-card">
+            <div 
+              class="surface-card build-card-clickable"
+              on:click={() => goto(`/cad/build/${build.id}`)}
+              on:keydown={(e) => e.key === 'Enter' && goto(`/cad/build/${build.id}`)}
+              role="button"
+              tabindex="0"
+            >
               <div class="build-header">
-                <h3>{build.subsystems?.name || 'Unknown'} - {build.release_name}</h3>
+                <div class="build-title">
+                  <h3>{build.subsystems?.name || 'Unknown'} - {build.release_name}</h3>
+                  {#if isTeam9584(build.frc_team)}
+                    <span class="tag team-tag tag-9584" title="Team 9584">9584</span>
+                  {/if}
+                </div>
                 <span class="build-status status-{build.status}">
                   {build.status.replace('_', ' ')}
                 </span>
@@ -928,7 +951,7 @@
               </div>
               <div class="build-actions">
                 {#if build.status === 'ready_to_assemble'}
-                  <button class="btn btn-primary btn-sm" on:click={() => markAsAssembled(build.id)}>
+                  <button class="btn btn-primary btn-sm" on:click|stopPropagation={() => markAsAssembled(build.id)}>
                     Mark as Assembled
                   </button>
                 {/if}
@@ -942,11 +965,25 @@
 
   <!-- Create Subsystem Modal -->
   {#if showCreateModal}
-    <div class="modal-overlay" role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && (showCreateModal = false)} on:click={() => showCreateModal = false}>
-  <div class="modal" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close subsystem dialog"
+      on:click|self={() => { showCreateModal = false; editingSubsystemId = null; }}
+      on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showCreateModal = false; editingSubsystemId = null; } }}
+    >
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showCreateModal = false; editingSubsystemId = null; } }}
+      >
         <div class="modal-header">
           <h2>{editingSubsystemId ? 'Edit Subsystem' : 'Create New Subsystem'}</h2>
-          <button class="close-btn" on:click={() => { showCreateModal = false; editingSubsystemId = null; }}>×</button>
+          <button type="button" class="modal-close-button" aria-label="Close subsystem dialog" on:click={() => { showCreateModal = false; editingSubsystemId = null; }}>×</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -994,11 +1031,25 @@
 
   <!-- Link OnShape Modal -->
   {#if showLinkModal}
-    <div class="modal-overlay" role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && (showLinkModal = false)} on:click={() => showLinkModal = false}>
-  <div class="modal" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close OnShape dialog"
+      on:click|self={() => showLinkModal = false}
+      on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showLinkModal = false; } }}
+    >
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showLinkModal = false; } }}
+      >
         <div class="modal-header">
           <h2>Link OnShape Document</h2>
-          <button class="close-btn" on:click={() => showLinkModal = false}>×</button>
+          <button type="button" class="modal-close-button" aria-label="Close OnShape dialog" on:click={() => showLinkModal = false}>×</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -1034,11 +1085,26 @@
 
   <!-- Build BOM Modal -->
   {#if showBuildModal}
-    <div class="modal-overlay" role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && (showBuildModal = false)} on:click={() => showBuildModal = false}>
-  <div class="modal modal-large" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close build BOM dialog"
+      on:click|self={() => showBuildModal = false}
+      on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showBuildModal = false; } }}
+    >
+      <div
+        class="modal modal-large"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        style="--modal-width: 1050px;"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showBuildModal = false; } }}
+      >
         <div class="modal-header">
           <h2>Build BOM - {selectedRelease?.name}</h2>
-          <button class="close-btn" on:click={() => showBuildModal = false}>×</button>
+          <button type="button" class="modal-close-button" aria-label="Close build BOM dialog" on:click={() => showBuildModal = false}>×</button>
         </div>
         <div class="modal-body">
           <div class="bom-actions">
@@ -1120,583 +1186,167 @@
 {/if}
 
 <style>
-  :global(body) {
-    margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--background);
-    color: var(--text);
-  }
+  .cad-container { max-width: 1200px; margin: var(--space-7) auto; padding: 0 var(--space-4); }
+  .header-content h1 { font-size: var(--font-2xl); }
+  .header-content p { margin: var(--space-2) 0 0 0; font-size: var(--font-md); }
 
-  :root {
-    --primary: #ffffff;
-    --secondary: #1a1a1a;
-    --accent: #f1c40f;
-    --background: #f8f9fa;
-    --border: #e1e5e9;
-    --text: #2c3e50;
-    --success: #27ae60;
-    --warning: #f39c12;
-    --danger: #e74c3c;
-  }
+  .subsystems-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: var(--gap-6); }
+  .subsystem-card { background: var(--primary); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: var(--space-6); margin-bottom: var(--space-4); transition: all 0.2s ease; }
+  .subsystem-card.clickable { cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+  .subsystem-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); border-color: var(--primary); }
+  .subsystem-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+  .subsystem-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-4); }
+  .subsystem-title, .build-title { display: flex; align-items: center; gap: var(--gap-1); }
+  .subsystem-toolbar { display: flex; align-items: center; gap: var(--gap-2); }
+  .subsystem-header h3 { margin: 0; color: var(--secondary); font-size: 1.3rem; line-height: 24px; }
+  .subsystem-badges { display: flex; align-items: center; gap: var(--gap-2); }
+  .badge { display: inline-flex; align-items: center; justify-content: center; height: var(--control-height) !important; padding: 0 var(--space-3) !important; border-radius: var(--radius-sm); font-size: var(--font-xs); font-weight: 600; text-transform: uppercase; line-height: 1; box-sizing: border-box; }
+  .subsystem-header .btn-outline.btn-small { display: inline-flex; align-items: center; justify-content: center; height: var(--control-height) !important; width: var(--control-height) !important; padding: 0 !important; font-size: var(--font-xs); border-radius: var(--radius-sm); box-sizing: border-box; }
+  .badge-lead { background: var(--accent); color: var(--color-white); }
+  .badge-member { background: var(--green-base); color: var(--color-white); }
+  .subsystem-description { color: var(--neutral-500); margin-bottom: var(--space-4); line-height: 1.5; }
+  .subsystem-info { display: flex; flex-direction: column; gap: var(--gap-2); margin-bottom: var(--space-4); }
+  .lead-label { font-weight: 500; color: var(--secondary); }
+  .onshape-section { background: var(--background); border-radius: var(--radius-sm); border: 1px solid var(--border); padding: var(--space-4); margin-bottom: var(--space-4); }
+  .onshape-header { display: flex; align-items: center; gap: var(--gap-2); color: var(--secondary); font-weight: 500; }
+  .external-link { color: var(--accent); text-decoration: none; margin-left: auto; }
+  .external-link:hover { color: var(--secondary); }
+  .btn-small { font-size: var(--font-xs); padding: 0 var(--space-2); height: 24px; line-height: 1; }
+  .builds-section { margin-top: var(--space-7); background: var(--primary); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: var(--space-6); margin-bottom: var(--space-4); }
+  .builds-section h2 { margin: 0 0 var(--space-6) 0; color: var(--secondary); font-size: var(--font-xl); }
+  .builds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: var(--gap-6); }
+  .build-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-4); }
+  .build-header h3 { margin: 0; color: var(--secondary); font-size: var(--font-md); }
+  .build-status { display: inline-flex; align-items: center; height: var(--control-height); padding: 0 var(--space-3); border-radius: var(--radius-sm); font-size: var(--font-xs); font-weight: 600; text-transform: capitalize; }
+  .build-card-clickable { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease; }
+  .build-card-clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); border-color: var(--accent); }
+  .build-info { display: flex; flex-direction: column; gap: var(--gap-2); margin-bottom: var(--space-4); }
+  .build-info .info-item { display: flex; justify-content: space-between; align-items: center; font-size: var(--font-xs); }
+  .build-info .info-item span:first-child { font-weight: 500; color: var(--secondary); }
+  .build-info code { background: var(--primary); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-family: monospace; font-size: var(--font-xs); }
+  .build-actions { display: flex; gap: var(--gap-3); }
+  .document-info { display: flex; flex-direction: column; gap: var(--gap-1); padding: var(--space-3); background: var(--background); border-radius: var(--radius-lg); border: 1px solid var(--border); }
+  .doc-name { font-weight: 500; color: var(--text); font-size: var(--font-xs); }
+  .click-hint { margin-top: var(--space-2); }
+  .click-hint span { font-size: var(--font-xs); color: var(--secondary); font-style: italic; }
 
-  .loading-container {
+  /* Subsystem actions buttons */
+  .subsystem-actions {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 60vh;
-    gap: 1rem;
-  }
-
-  .loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid var(--border);
-    border-top: 3px solid var(--accent);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  .spinner-small {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--border);
-    border-top: 2px solid var(--primary);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-
-  .cad-container {
-    max-width: 1200px;
-    margin: 2rem auto;
-    padding: 0 1rem;
-  }  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--background);
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .header-content {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .header-content h1 {
-    margin: 0;
-    color: var(--secondary);
-    font-size: 2rem;
-  }
-
-  .header-content p {
-    margin: 0.5rem 0 0 0;
-    color: #666;
-    font-size: 1.1rem;
-  }
-
-  .subsystems-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-    gap: 1.5rem;
-  }
-  .subsystem-card {
-    background: var(--primary);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-    transition: all 0.2s ease;
-  }
-
-  .subsystem-card.clickable {
-    cursor: pointer;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .subsystem-card.clickable:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    border-color: var(--primary);
-  }
-
-  .subsystem-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  .subsystem-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1rem;
-  }
-
-  .subsystem-header h3 {
-    margin: 0;
-    color: var(--secondary);
-    font-size: 1.3rem;
-  }
-
-  .subsystem-badges {
-    display: flex;
-    gap: 0.5rem;
-  }
-  .badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: var(--radius-sm);
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  /* Make the small outline edit button match the badges height and alignment */
-  .subsystem-header .btn-outline.btn-small {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 32px; /* match other badge heights used across the app */
-    padding: 0 0.75rem; /* left/right similar to .badge */
-    font-size: 0.875rem; /* match badge text size */
-    border-radius: var(--radius-sm);
-    box-sizing: border-box;
-  }
-
-  .badge-lead {
-    background: var(--accent);
-    color: var(--secondary);
-  }
-
-  .badge-member {
-    background: var(--success);
-    color: var(--primary);
-  }
-
-  .subsystem-description {
-    color: #666;
-    margin-bottom: 1rem;
-    line-height: 1.5;
-  }
-
-  .subsystem-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .info-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: #666;
-    font-size: 0.9rem;
-  }
-
-  .lead-label {
-    font-weight: 500;
-    color: var(--secondary);
-  }
-  .onshape-section {
-    background: var(--background);
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .onshape-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--secondary);
-    font-weight: 500;
-  }
-
-  .external-link {
-    color: var(--accent);
-    text-decoration: none;
-    margin-left: auto;
-  }
-
-  .external-link:hover {
-    color: var(--secondary);
-  }
-
-  .releases-section {
-    margin-top: 1rem;
-  }
-
-  /* .releases-section h4 removed (unused) */
-
-  .releases-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .release-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-  }
-
-  .release-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .release-name {
-    font-weight: 500;
-    color: var(--secondary);
-  }
-
-  .release-date {
-    font-size: 0.85rem;
-    color: #666;
-  }
-
-  .btn-build {
-    background: var(--success);
-    color: var(--primary);
-    border-color: var(--success);
-    font-size: 0.8rem;
-    padding: 0.5rem 0.75rem;
-  }
-
-  .btn-build:hover:not(:disabled) {
-    background: #229954;
-    border-color: #229954;
-  }
-
-  .btn-small {
-    font-size: 0.75rem;
-    padding: 0.25rem 0.5rem;
-  }
-  .builds-section {
-    margin-top: 2rem;
-    background: var(--primary);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .builds-section h2 {
-    margin: 0 0 1.5rem 0;
-    color: var(--secondary);
-    font-size: 1.5rem;
-  }
-
-  .builds-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-    gap: 1.5rem;
-  }
-  .build-card {
-    background: var(--primary);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-    transition: all 0.2s ease;
-  }
-
-  .build-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  .build-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1rem;
-  }
-
-  .build-header h3 {
-    margin: 0;
-    color: var(--secondary);
-    font-size: 1.1rem;
-  }
-  .build-status {
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: capitalize;
-  }
-
-  .build-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .build-info .info-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.9rem;
-  }
-
-  .build-info .info-item span:first-child {
-    font-weight: 500;
-    color: var(--secondary);
-  }
-
-  .build-info code {
-    background: var(--primary);
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 0.8rem;
-  }
-
-  .build-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  .modal-large {
-    max-width: 90%;
-    width: 1000px;
-  }
-
-  .bom-actions {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
     flex-wrap: wrap;
+    gap: var(--gap-2);
+    margin-top: var(--space-4);
   }
 
-  .bom-table {
-    overflow-x: auto;
+  /* Mobile Responsive Styles */
+  @media (max-width: 768px) {
+    .cad-container {
+      margin: var(--space-4) auto;
+      padding: 0 var(--space-3);
+    }
+    
+    .header-content h1 {
+      font-size: var(--font-xl);
+    }
+    
+    .header-content p {
+      font-size: var(--font-xs);
+    }
+    
+    .subsystems-grid {
+      grid-template-columns: 1fr;
+      gap: var(--gap-4);
+    }
+    
+    .subsystem-card {
+      padding: var(--space-4);
+    }
+    
+    .subsystem-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--gap-2);
+    }
+    
+    .subsystem-header h3 {
+      font-size: 1.1rem;
+    }
+    
+    .subsystem-toolbar {
+      width: 100%;
+      justify-content: space-between;
+    }
+    
+    .subsystem-actions {
+      flex-direction: column;
+    }
+    
+    .subsystem-actions .btn {
+      width: 100%;
+      justify-content: center;
+    }
+    
+    .builds-section {
+      padding: var(--space-4);
+      margin-top: var(--space-4);
+    }
+    
+    .builds-section h2 {
+      font-size: var(--font-md);
+    }
+    
+    .builds-grid {
+      grid-template-columns: 1fr;
+    }
+    
+    .build-header {
+      flex-direction: column;
+      gap: var(--gap-2);
+    }
+    
+    .build-header h3 {
+      font-size: var(--font-base);
+    }
+    
+    .build-actions {
+      flex-direction: column;
+    }
+    
+    .build-actions .btn {
+      width: 100%;
+    }
   }
 
-  .bom-table table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
+  @media (max-width: 480px) {
+    .cad-container {
+      padding: 0 var(--space-2);
+    }
+    
+    .subsystem-card {
+      padding: var(--space-3);
+    }
+    
+    .subsystem-header h3 {
+      font-size: 1rem;
+    }
+    
+    .subsystem-description {
+      font-size: var(--font-xs);
+    }
+    
+    .onshape-section {
+      padding: var(--space-3);
+    }
+    
+    .build-info .info-item {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+    }
+    
+    .build-info code {
+      word-break: break-all;
+      max-width: 100%;
+    }
   }
-
-  .bom-table th,
-  .bom-table td {
-    padding: 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .bom-table th {
-    background: var(--background);
-    font-weight: 500;
-    color: var(--secondary);
-  }
-  .type-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .type-cots {
-    background: var(--warning);
-    color: var(--secondary);
-  }
-
-  .type-manufactured {
-    background: var(--success);
-    color: var(--primary);
-  }
-
-  .status-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: capitalize;
-  }
-
-  .status-pending {
-    background: #f39c12;
-    color: var(--primary);
-  }
-
-  .status-delivered {
-    background: var(--success);
-    color: var(--primary);
-  }
-
-  .status-manufactured {
-    background: var(--success);
-    color: var(--primary);
-  }
-
-  .status-ordered {
-    background: #3498db;
-    color: var(--primary);
-  }
-
-  .onshape-actions {
-    margin-top: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .document-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.75rem;
-    background: var(--background);
-    border-radius: 8px;
-    border: 1px solid var(--border);
-  }
-
-  .doc-name {
-    font-weight: 500;
-    color: var(--text);
-    font-size: 0.875rem;
-  }
-
-  .doc-date {
-    font-size: 0.875rem;
-    color: var(--secondary);
-  }
-
-  .onshape-buttons {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .btn-sm {
-    padding: 0.5rem 0.75rem;
-    font-size: 0.875rem;
-  }
-
-  .btn-outline {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
-
-  .btn-outline:hover {
-    background: var(--background);
-    border-color: var(--primary);
-  }
-
-  .click-hint {
-    margin-top: 0.5rem;
-  }
-
-  .click-hint span {
-    font-size: 0.75rem;
-    color: var(--secondary);
-    font-style: italic;
-  }
-  /* Modal styling (ensure modals appear fixed & centered) */
-  .modal-overlay {
-    position: fixed;
-    inset: 0; /* top:0; right:0; bottom:0; left:0; */
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1.5rem;
-  }
-
-  .modal {
-    background: var(--primary);
-    border-radius: 12px;
-    max-width: 720px;
-    width: 100%;
-    max-height: 90vh;
-    overflow: auto;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-    border: 1px solid var(--border);
-  }
-
-  .modal.modal-large {
-    max-width: 1100px;
-    width: 98%;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .modal-body {
-    padding: 1rem 1.25rem;
-    overflow: auto;
-  }
-
-  .modal-footer {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.75rem 1.25rem;
-    border-top: 1px solid var(--border);
-    justify-content: flex-end;
-  }
-
-  .close-btn {
-    background: transparent;
-    border: none;
-    font-size: 1.25rem;
-    line-height: 1;
-    cursor: pointer;
-    color: var(--secondary);
-    padding: 0.25rem 0.5rem;
-    border-radius: 6px;
-  }
-
-  .close-btn:hover {
-    background: rgba(0,0,0,0.04);
-  }
-
-  .form-group {
-    margin-bottom: 0.75rem;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 0.25rem;
-    font-weight: 600;
-    color: var(--secondary);
-  }
-
-  /* Control sizing/padding/radius handled globally in src/app.css */
-  .form-group input,
-  .form-group textarea {
-    width: 100%;
-    border: 1px solid var(--border);
-    background: var(--primary);
-    color: var(--text);
-  }
-
-  /* ...existing styles... */
 </style>

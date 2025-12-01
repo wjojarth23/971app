@@ -622,7 +622,8 @@
           release_name: selectedVersion.name,
           build_hash: buildHash,
           created_by: user.id,
-          status: 'pending'
+          status: 'pending',
+          frc_team: user?.frc_team || null
         }])
         .select()
         .single();
@@ -715,7 +716,8 @@
         url: purchaseModalUrl && purchaseModalUrl.trim() !== '' ? purchaseModalUrl.trim() : null,
         price: purchaseModalPrice && purchaseModalPrice !== '' ? Number(purchaseModalPrice) : null,
         workflow: 'purchase',
-        purchaser: user.id
+        purchaser: user.id,
+        frc_team: user?.frc_team || null
       };
       const { data, error } = await supabase.from('purchasing').insert([queued]).select();
       if (error) throw error;
@@ -987,7 +989,8 @@
                 release_name: selectedVersion.name,
                 build_hash: buildHash,
                 status: 'pending',
-                created_by: user.id
+                created_by: user.id,
+                frc_team: user?.frc_team || null
               }])
               .select()
               .single();
@@ -1023,7 +1026,8 @@
             url: rawUrl || null,
             price: null,
             workflow: 'purchase',
-            purchaser: user.id
+            purchaser: user.id,
+            frc_team: user?.frc_team || null
           };
           const { data: purchasingData, error: purchasingError } = await supabase.from('purchasing').insert([purchasingInsertData]).select();
           if (purchasingError) throw purchasingError;
@@ -1099,7 +1103,8 @@
           file_name,
           file_url: file_url || '', // OnShape URL or empty if not available
           quantity: item.quantity || 1,
-          material: item.material || ''
+          material: item.material || '',
+          frc_team: user?.frc_team || null
         }])
         .select();
 
@@ -1136,7 +1141,8 @@
             release_name: selectedVersion.name,
             build_hash: buildHash,
             status: 'pending',
-            created_by: user.id
+            created_by: user.id,
+            frc_team: user?.frc_team || null
           }])
           .select()
           .single();
@@ -1335,13 +1341,28 @@
 
   <!-- Build Modal -->
   {#if showBuildModal}
-    <div class="modal-overlay">
-      <div class="modal modal-large">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close build BOM dialog"
+      on:click|self={() => showBuildModal = false}
+      on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showBuildModal = false; } }}
+    >
+      <div
+        class="modal modal-large"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        style="--modal-width: 1200px;"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showBuildModal = false; } }}
+      >
         <div class="modal-header">
           <h2>Build BOM - {selectedVersion?.name}</h2>
-          <button class="close-btn" on:click={() => showBuildModal = false}>×</button>
+          <button type="button" class="modal-close-button" aria-label="Close build BOM dialog" on:click={() => showBuildModal = false}>×</button>
         </div>
-        
+
         <div class="modal-content">
           {#if loadingBOM}
             <div class="loading-container">
@@ -1491,11 +1512,26 @@
   {/if}
   <!-- Purchase Link/Price Modal (queue-only) -->
   {#if showPurchaseModal}
-    <div class="modal-overlay" role="button" tabindex="0" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { showPurchaseModal = false; purchaseModalItem = null; } }}>
-      <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }} style="max-width:560px;">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close purchase dialog"
+      on:click|self={() => { showPurchaseModal = false; purchaseModalItem = null; }}
+      on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPurchaseModal = false; purchaseModalItem = null; } }}
+    >
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        style="--modal-width: 560px;"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showPurchaseModal = false; purchaseModalItem = null; } }}
+      >
         <div class="modal-header">
           <h3>Provide vendor link and unit price</h3>
-          <button class="close-btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>×</button>
+          <button type="button" class="modal-close-button" aria-label="Close purchase dialog" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>×</button>
         </div>
         <div class="modal-content">
           <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
@@ -1532,12 +1568,6 @@
 
   .page-header {
     margin-bottom: 2rem;
-  }
-
-  .header-content {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
   }
 
   .back-button {
@@ -1664,69 +1694,6 @@
     color: var(--secondary);
   }
 
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: var(--surface);
-    border-radius: 12px;
-    max-width: 90vw;
-    max-height: 90vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .modal-large {
-    width: 98vw;
-    max-width: 1800px;
-    min-width: 1200px;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .modal-header h2 {
-    margin: 0;
-    color: var(--text);
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    color: var(--secondary);
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-  }
-
-  .close-btn:hover {
-    background: var(--background);
-    color: var(--text);
-  }
-
-  .modal-content {
-    padding: 1.5rem;
-    overflow-y: auto;
-    flex: 1;
-  }
-
   .bom-actions {
     display: flex;
     gap: 1rem;
@@ -1735,303 +1702,67 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .bom-table-container {
-    overflow-x: auto;
-    margin-bottom: 1.5rem;
-  }
+  .bom-table-container { margin-bottom: 1.5rem; }
+  .bom-table { table-layout: auto; font-size: 0.85rem; }
+  .bom-table th, .bom-table td { padding: 0.35rem 0.5rem; min-width: 80px; max-width: 350px; white-space: nowrap; vertical-align: middle; }
+  .bom-table th { font-size: 0.95rem; font-weight: 600; }
+  .bom-table td { font-size: 0.85rem; vertical-align: top; padding: 0.75rem 0.5rem; }
 
-  .bom-table {
-    width: 100%;
-    table-layout: auto;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-  }
+  .part-name { font-weight: 500; }
+  .part-description { font-size: 0.75rem; color: var(--secondary); margin-top: 0.25rem; }
 
-  .bom-table th,
-  .bom-table td {
-    padding: 0.35rem 0.5rem;
-    min-width: 80px;
-    max-width: 350px;
-    white-space: nowrap;
-    vertical-align: middle;
-    border-bottom: 1px solid var(--border);
-  }
+  .workflow-mill { background: var(--blue-soft); color: var(--blue-base); border: 1px solid var(--blue-soft); }
+  .workflow-lasercut { background: var(--brand-gold-soft); color: var(--orange-strong); border: 1px solid var(--brand-gold-base); }
+  .workflow-3dprint { background: var(--purple-soft); color: var(--purple-strong); border: 1px solid var(--purple-soft); }
+  .workflow-router { background: var(--green-soft); color: var(--green-base); border: 1px solid var(--green-soft); }
+  .workflow-purchase { background: var(--green-soft); color: var(--green-base); border: 1px solid var(--green-base); }
+  .workflow-lathe { background: var(--red-soft); color: var(--red-base); border: 1px solid var(--red-base); }
 
-  .bom-table th {
-    font-size: 0.95rem;
-    font-weight: 600;
-  }
-
-  .bom-table td {
-    font-size: 0.85rem;
-  }
-
-  /* AI-Enhanced BOM Table Styles */
-  .part-name {
-    font-weight: 500;
-  }
-  
-  .part-description {
-    font-size: 0.75rem;
-    color: var(--secondary);
-    margin-top: 0.25rem;
-  }
-  
-  .workflow-mill {
-    background: #e3f2fd;
-    color: #1976d2;
-    border: 1px solid #bbdefb;
-  }
-  
-  .workflow-lasercut {
-    background: #fff3e0;
-    color: #f57c00;
-    border: 1px solid #ffcc02;
-  }
-  
-  .workflow-3dprint {
-    background: #f3e5f5;
-    color: #7b1fa2;
-    border: 1px solid #ce93d8;
-  }
-  .workflow-router {
-    background: #e8f5e8;
-    color: #388e3c;
-    border: 1px solid #a5d6a7;
-  }
-  
-  .workflow-purchase {
-    background: #e8f5e8;
-    color: #2e7d32;
-    border: 1px solid #4caf50;
-  }
-  
-  .workflow-lathe {
-    background: #fce4ec;
-    color: #c2185b;
-    border: 1px solid #f48fb1;
-  }
-  
-  /* Color-coded dropdown styles */
   .workflow-dropdown {
-    padding: 0.375rem 0.75rem;
+    padding: 0.25rem 0.5rem;
     border-radius: 4px;
     font-size: 0.75rem;
     font-weight: 500;
     text-transform: uppercase;
-    border: 1px solid;
-    background: var(--surface);
-  }
-  
-  .workflow-dropdown.workflow-mill {
-    background: #e3f2fd;
-    color: #1976d2;
-    border-color: #bbdefb;
-  }
-  
-  .workflow-dropdown.workflow-laser-cut {
-    background: #fff3e0;
-    color: #f57c00;
-    border-color: #ffcc02;
-  }
-  
-  .workflow-dropdown.workflow-3d-print {
-    background: #f3e5f5;
-    color: #7b1fa2;
-    border-color: #ce93d8;
-  }
-  
-  .workflow-dropdown.workflow-router {
-    background: #e8f5e8;
-    color: #388e3c;
-    border-color: #a5d6a7;
-  }
-  
-  .workflow-dropdown.workflow-lathe {
-    background: #fce4ec;
-    color: #c2185b;
-    border-color: #f48fb1;
-  }
-  
-  .workflow-dropdown.workflow-purchase {
-    background: #e8f5e8;
-    color: #2e7d32;
-    border-color: #4caf50;
-  }
-  
-  .type-badge {
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    display: inline-block;
-    text-transform: uppercase;
-  }
-  
-  .type-cots {
-    background: #fff8e1;
-    color: #f57f17;
-    border: 1px solid #ffcc02;
-  }
-  
-  .type-manufactured {
-    background: #e1f5fe;
-    color: #0277bd;
-    border: 1px solid #81d4fa;
-  }
-  
-  .bounding-box {
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: var(--secondary);
-  }
-  
-  .ai-reasoning {
-    font-size: 0.8rem;
-    color: var(--secondary);
-    max-width: 200px;
-    cursor: help;
-  }
-  
-  .fallback-indicator {
-    font-size: 0.75rem;
-    color: var(--warning);
-    font-style: italic;
-  }
-  
-  .confidence-bar {
-    position: relative;
-    width: 60px;
-    height: 16px;
-    background: #f0f0f0;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  
-  .confidence-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #ff5722 0%, #ff9800 50%, #4caf50 100%);
-    transition: width 0.3s ease;
-  }
-  
-  .confidence-text {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-    font-weight: 500;
-    color: #333;
-  }
-  
-  .bom-table th {
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-  
-  .bom-table td {
-    vertical-align: top;
-    padding: 0.75rem 0.5rem;
-  }
-
-  .loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem;
-    color: var(--secondary);
-  }
-
-  .loading-spinner {
-    width: 2rem;
-    height: 2rem;
-    border: 2px solid var(--border);
-    border-top: 2px solid var(--primary);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-bottom: 1rem;
-  }
-
-  .spinner-small {
-    width: 1rem;
-    height: 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-top: 1px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-
-  .error-container {
-    text-align: center;
-    padding: 3rem;
-  }
-
-  .error-container h2 {
-    color: var(--text);
-    margin-bottom: 1rem;
-  }
-
-  .error-container p {
-    color: var(--secondary);
-    margin-bottom: 2rem;
-  }
-
-  select {
-    padding: 0.375rem 0.75rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
     background: var(--surface);
     color: var(--text);
-    font-size: 0.875rem;
-  }
-
-  .workflow-dropdown {
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--surface);
-    color: var(--text);
-    font-size: 0.75rem;
     min-width: 100px;
   }
-  
+
   .workflow-dropdown:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
   }
 
-  .no-data {
-    color: var(--secondary);
-    font-style: italic;
-    font-size: 0.75rem;
-  }
+  .workflow-dropdown.workflow-mill { background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-soft); }
+  .workflow-dropdown.workflow-laser-cut { background: var(--brand-gold-soft); color: var(--orange-strong); border-color: var(--brand-gold-base); }
+  .workflow-dropdown.workflow-3d-print { background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-soft); }
+  .workflow-dropdown.workflow-router { background: var(--green-soft); color: var(--green-base); border-color: var(--green-soft); }
+  .workflow-dropdown.workflow-lathe { background: var(--red-soft); color: var(--red-base); border-color: var(--red-base); }
+  .workflow-dropdown.workflow-purchase { background: var(--green-soft); color: var(--green-base); border-color: var(--green-base); }
 
-  .empty-timeline {
-    text-align: center;
-    padding: 2rem;
-    color: var(--text-muted);
-  }
+  .type-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; display: inline-block; text-transform: uppercase; }
+  .type-cots { background: var(--brand-gold-soft); color: var(--orange-strong); border: 1px solid var(--brand-gold-base); }
+  .type-manufactured { background: var(--blue-soft); color: var(--blue-base); border: 1px solid var(--blue-base); }
 
-  .empty-timeline p {
-    margin: 0.5rem 0;
-  }
+  .bounding-box { font-family: monospace; font-size: 0.75rem; color: var(--secondary); }
+  .ai-reasoning { font-size: 0.8rem; color: var(--secondary); max-width: 200px; cursor: help; }
+  .fallback-indicator { font-size: 0.75rem; color: var(--warning); font-style: italic; }
 
-  /* Fix ADD button style: visible, blue background, white text, clear hover/disabled */
+  .confidence-bar { position: relative; width: 60px; height: 16px; background: var(--neutral-100); border-radius: 8px; overflow: hidden; }
+  .confidence-fill { height: 100%; background: linear-gradient(90deg, var(--orange-strong) 0%, var(--orange-strong) 50%, var(--green-base) 100%); transition: width 0.3s ease; }
+  .confidence-text { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 500; color: var(--neutral-500); }
+
+  .no-data { color: var(--secondary); font-style: italic; font-size: 0.75rem; }
+  .empty-timeline { text-align: center; padding: 2rem; color: var(--text-muted); }
+  .empty-timeline p { margin: 0.5rem 0; }
+
   .btn-add-part {
-    background: #1976d2;
-    color: #fff;
-    border: 1px solid #1976d2;
+    background: var(--blue-base);
+    color: var(--color-white);
+    border: 1px solid var(--blue-base);
     border-radius: 6px;
     padding: 0.3rem 0.9rem;
     font-size: 0.9rem;
@@ -2039,28 +1770,14 @@
     cursor: pointer;
     transition: background 0.2s, color 0.2s;
   }
-  .btn-add-part:hover:not(:disabled) {
-    background: #1565c0;
-    color: #fff;
-    border-color: #1565c0;
-  }
-  .btn-add-part:disabled {
-    background: #e8f5e8;
-    color: #388e3c;
-    border: 1px solid #a5d6a7;
-    cursor: not-allowed;
-  }
+  .btn-add-part:hover:not(:disabled) { background: var(--blue-base); color: var(--color-white); border-color: var(--blue-base); }
+  .btn-add-part:disabled { background: var(--green-soft); color: var(--green-base); border: 1px solid var(--green-soft); cursor: not-allowed; }
 
-  .download-buttons {
-    display: flex;
-    gap: 0.25rem;
-    flex-wrap: wrap;
-  }
-
+  .download-buttons { display: flex; gap: 0.25rem; flex-wrap: wrap; }
   .btn-download {
-    background: #757575;
-    color: #fff;
-    border: 1px solid #757575;
+    background: var(--neutral-500);
+    color: var(--color-white);
+    border: 1px solid var(--neutral-500);
     border-radius: 4px;
     padding: 0.2rem 0.5rem;
     font-size: 0.75rem;
@@ -2071,97 +1788,118 @@
     align-items: center;
     gap: 0.25rem;
   }
+  .btn-download:hover:not(:disabled) { background: var(--neutral-500); color: var(--color-white); border-color: var(--neutral-500); }
+  .btn-download:disabled { background: var(--neutral-300); color: var(--neutral-300); border: 1px solid var(--neutral-300); cursor: not-allowed; }
 
-  .btn-download:hover:not(:disabled) {
-    background: #616161;
-    color: #fff;
-    border-color: #616161;
+  .form-input { border: 1px solid var(--border); background: var(--background); color: var(--text); }
+  .form-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25); }
+
+  select { padding: 0.375rem 0.75rem; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font-size: 0.875rem; }
+
+  /* Mobile Responsive Styles */
+  @media (max-width: 768px) {
+    .main-content {
+      padding: var(--space-3);
+    }
+
+    .page-header {
+      margin-bottom: var(--space-3);
+    }
+
+    .header-info h1 {
+      font-size: 1.5rem;
+    }
+
+    .timeline-section {
+      padding: var(--space-3);
+    }
+
+    .timeline-section h2 {
+      font-size: 1.25rem;
+    }
+
+    .timeline-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+    }
+
+    .timeline-content {
+      padding: var(--space-3);
+    }
+
+    /* BOM Modal on mobile */
+    .modal-large {
+      width: 95vw !important;
+      max-width: 95vw !important;
+      max-height: 90vh;
+    }
+
+    .bom-actions {
+      flex-direction: column;
+      gap: var(--gap-2);
+    }
+
+    .bom-actions .btn {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .bom-table-container {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .bom-table {
+      min-width: 800px;
+    }
+
+    /* Hide less critical columns on mobile */
+    .bom-table th:nth-child(6),
+    .bom-table td:nth-child(6),
+    .bom-table th:nth-child(9),
+    .bom-table td:nth-child(9) {
+      display: none;
+    }
+
+    .download-buttons {
+      flex-direction: column;
+    }
   }
 
-  .btn-download:disabled {
-    background: #e0e0e0;
-    color: #9e9e9e;
-    border: 1px solid #e0e0e0;
-    cursor: not-allowed;
-  }
+  @media (max-width: 480px) {
+    .main-content {
+      padding: var(--space-2);
+    }
 
-  /* Modal Styles */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
+    .header-info h1 {
+      font-size: 1.25rem;
+    }
 
-  .modal {
-    background: var(--surface);
-    border-radius: 8px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    max-width: 90vw;
-    max-height: 90vh;
-    overflow: auto;
-  }
+    .back-button {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.8rem;
+    }
 
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
+    .timeline {
+      padding-left: 1.5rem;
+    }
 
-  .modal-header h3 {
-    margin: 0;
-    color: var(--text);
-  }
+    .timeline-item {
+      padding-left: 1rem;
+    }
 
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: var(--secondary);
-    padding: 0;
-    width: 2rem;
-    height: 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-  }
+    .timeline-name {
+      font-size: 0.9rem;
+    }
 
-  .close-btn:hover {
-    background: var(--background);
-    color: var(--text);
-  }
+    .timeline-date {
+      font-size: 0.75rem;
+    }
 
-  .modal-content {
-    padding: 1rem;
-  }
-
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 1rem;
-  }
-
-  /* Control sizing/padding/radius handled globally in src/app.css */
-  .form-input {
-    border: 1px solid var(--border);
-    background: var(--background);
-    color: var(--text);
-  }
-
-  .form-input:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+    .btn-sm {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+    }
   }
 </style>

@@ -3,6 +3,7 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { hasPermission } from '$lib/permissions.js';
+  import { isTeam9584 } from '$lib/frcTeams.js';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { goto } from '$app/navigation';
@@ -509,10 +510,11 @@
         vendor: miscVendor && miscVendor !== 'Other' ? miscVendor : null,
   requester: requesterName || 'Unknown',
   purchaser: user.id,
-        approved: false,
+          approved: false,
         status: 'pending'
   ,
-  notes: miscNotes && miscNotes.trim() !== '' ? miscNotes.trim() : null
+        notes: miscNotes && miscNotes.trim() !== '' ? miscNotes.trim() : null,
+          frc_team: user?.frc_team || null
       };
 
       const { data: inserted, error } = await supabase.from('purchasing').insert([payload]).select();
@@ -833,7 +835,12 @@
                   {part.project_id || '-'}
                 </td>
                 <td class="requester">
-                  {part.requester || 'Unknown'}
+                  <div class="requester-content">
+                    <span>{(part.requester || 'Unknown').split(' ')[0]}</span>
+                    {#if isTeam9584(part.frc_team)}
+                      <span class="tag team-tag tag-9584" title="Team 9584">9584</span>
+                    {/if}
+                  </div>
                 </td>
                 <td class="quantity">
                   {part.quantity || 1}
@@ -983,7 +990,7 @@
   <!-- Kitting modal removed; inline input used instead -->
   {#if showLinkModal}
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal" style="--modal-width: 460px;">
         <h3>Provide vendor link and unit price</h3>
         <div class="form-row">
           <label for="link-input">Link</label>
@@ -1017,7 +1024,7 @@
 
   {#if showEditModal}
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal" style="--modal-width: 460px;">
         <h3>Edit Purchasing Item</h3>
         <div class="form-row">
           <label for="edit-name">Name</label>
@@ -1083,7 +1090,7 @@
 
   {#if showAddMiscModal}
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal" style="--modal-width: 460px;">
         <h3>Add Misc Purchasing Item (not linked to a build)</h3>
         <div class="form-row">
           <label for="misc-project">Item name</label>
@@ -1144,7 +1151,7 @@
 
   {#if showNotesModal}
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal" style="--modal-width: 460px;">
         <h3>Notes</h3>
         <div class="form-row">
           <div style="white-space:pre-wrap; max-height:300px; overflow:auto;">{notesModalPart ? notesModalPart.notes || '' : ''}</div>
@@ -1165,7 +1172,7 @@
 
   {#if showOrderModal}
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal" style="--modal-width: 460px;">
         <h3>Confirm Order</h3>
         
         <div class="order-summary">
@@ -1245,13 +1252,6 @@
 {/if}
 
 <style>
-  :global(body) {
-    margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--background);
-    color: var(--text);
-  }
-
   .order-mode-banner {
     margin: 1rem 0;
     padding: 0.875rem 1rem;
@@ -1318,276 +1318,168 @@
     color: var(--secondary);
   }
 
-
-
-  .loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 60vh;
-    gap: 1rem;
-  }
-
-  .loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid var(--border);
-    border-top: 3px solid var(--accent);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-
   .parts-container {
     max-width: 1600px;
     margin: 2rem auto;
     padding: 0 1rem;
   }
 
-  .page-header {
-    background: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 2rem;
-    margin-bottom: 2rem;
-    box-shadow: var(--shadow-sm);
-  }
-
-  .header-content {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .header-content h1 {
-    margin: 0;
-    color: var(--secondary);
-    font-size: 2rem;
-  }
-
-  .header-content p {
-    margin: 0.5rem 0 0 0;
-    color: #666;
-    font-size: 1.1rem;
-  }
-
-  /* removed unused table CSS (relies on global) */
+  .page-header { padding: 2rem; margin-bottom: 2rem; box-shadow: var(--shadow-sm); }
+  .header-content h1 { font-size: 2rem; }
+  .header-content p { margin: 0.5rem 0 0 0; font-size: 1.1rem; }
 
   .part-name {
     font-weight: 500;
-    min-width: 200px;
+    max-width: 180px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .name-cell {
-    display: flex;
-    align-items: center;
+  .part-name .name-cell {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
     gap: 0.5rem;
+    flex-wrap: nowrap;
+    vertical-align: middle;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .part-name .name-cell .notes-badge {
+    flex-shrink: 0;
+    display: inline-flex !important;
+    vertical-align: middle;
   }
 
   .material {
-    color: #666;
+    color: var(--neutral-500);
   }
 
   .project-id {
     font-family: 'Monaco', 'Menlo', monospace;
     font-size: 0.8rem;
-    color: #666;
+    color: var(--neutral-500);
   }
 
   .requester {
-    color: #666;
+    color: var(--neutral-500);
+    vertical-align: middle;
+  }
+
+  .requester-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+  }
+
+  .requester-content span:first-child {
+    min-width: 0;
   }
 
   .download {
     text-align: center;
   }
 
-  /* Make the link button compact visually but sizing is driven from centralized tokens in app.css */
   .download .btn {
-    /* layout only; sizing (height/padding/radius) comes from centralized .btn tokens */
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
 
   .approved { text-align: center; }
-  .approved-info { display:flex; align-items:center; gap:0.375rem; justify-content:center; color:var(--text); }
-  .approver-name { font-size:0.9rem; color:#444; }
-
-  /* removed legacy download-btn styles */
+  .approved-info { display: flex; align-items: center; gap: 0.375rem; justify-content: center; color: var(--text); }
+  .approver-name { font-size: 0.9rem; color: var(--neutral-500); }
 
   .status-select {
-    border: 1px solid var(--border);
-    /* visual colors retained; sizing/padding/radius provided by centralized styles */
+    border: 1px solid rgba(0, 0, 0, 0.08);
     background: white;
     color: var(--text);
     min-width: 120px;
+    border-radius: 4px;
+    outline: 2px solid transparent;
+    outline-offset: 1px;
+    transition: border-color 0.15s ease, outline-color 0.15s ease;
   }
 
-  /* Approve button styling: muted yellow with yellow border, match dropdown radius */
+  .status-select:focus-visible {
+    outline-color: color-mix(in srgb, var(--focus-ring, var(--secondary)) 40%, transparent);
+  }
+
   .btn-approve {
-    background: #fff7cc; /* muted yellow */
-    color: #5a4300; /* darker yellow/brown text for contrast */
-    border: 1px solid #ffdf7a; /* yellow border */
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+    border: 1px solid var(--brand-gold-soft);
+    border-radius: 4px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    transition: outline-color 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);
   }
   .btn-approve:hover {
-    background: #fff2b8;
+    background: var(--brand-gold-soft);
+  }
+  .btn-approve:focus-visible {
+    outline-color: color-mix(in srgb, var(--brand-gold-strong) 35%, transparent);
   }
 
-  /* Make only the button text (not icons) non-bold */
   .btn-approve .approve-text { font-weight: 400; }
-
-  /* Rejected button: same sizing as approve but red */
-  .btn-rejected {
-    background: #ffecec; /* light red */
-    color: #7a0f0f; /* dark red text */
-    border: 1px solid #f5a5a5; /* red border */
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-  }
-  .btn-rejected:hover { background: #ffdede; }
   .btn-rejected .rejected-text { font-weight: 400; text-transform: lowercase; }
 
-  /* Selected value background by data-status */
+  .status-select.colorful {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  }
   .status-select.colorful[data-status="pending"] {
-    background: #fff3cd;
-    color: #8a6d3b;
-    border-color: #ffe69c;
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+    border-color: color-mix(in srgb, var(--brand-gold-strong) 35%, transparent);
   }
   .status-select.colorful[data-status="ordered"] {
-    background: #ede7f6;
-    color: #5e35b1;
-    border-color: #c5b3e6;
-  }
-  .status-select.colorful[data-status="ordered"] {
-    background: #ede7f6;
-    color: #5e35b1;
-    border-color: #c5b3e6;
+    background: var(--purple-soft);
+    color: var(--purple-strong);
+    border-color: color-mix(in srgb, var(--purple-strong) 35%, transparent);
   }
   .status-select.colorful[data-status="delivered"] {
-    background: #e8f5e9;
-    color: #2e7d32;
-    border-color: #a5d6a7;
+    background: var(--green-soft);
+    color: var(--green-base);
+    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
   }
   .status-select.colorful[data-status="kitted"] {
-    background: #e0f7fa;
-    color: #006064;
-    border-color: #80deea;
+    background: var(--green-soft);
+    color: var(--green-base);
+    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
   }
   .status-select.colorful[data-status="approved"] {
-    background: #e8fef1;
-    color: #1b5e20;
-    border-color: #a7e9b6;
+    background: var(--green-soft);
+    color: var(--green-strong);
+    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
   }
   .status-select.colorful[data-status="rejected"] {
-    background: #ffebee;
-    color: #c62828;
-    border-color: #ef9a9a;
+    background: var(--red-soft);
+    color: var(--red-strong);
+    border-color: color-mix(in srgb, var(--red-strong) 35%, transparent);
   }
 
-  /* Colorful dropdown options and selected background */
-  .status-select.colorful option[value="pending"] { background: #fff3cd; }
-  .status-select.colorful option[value="rejected"] { background: #ffebee; }
-  .status-select.colorful option[value="ordered"] { background: #ede7f6; }
-  .status-select.colorful option[value="delivered"] { background: #e8f5e9; }
-  .status-select.colorful option[value="kitted"] { background: #e0f7fa; }
+  .status-select.colorful option[value="pending"] { background: var(--brand-gold-soft); }
+  .status-select.colorful option[value="rejected"] { background: var(--red-soft); }
+  .status-select.colorful option[value="ordered"] { background: var(--purple-soft); }
+  .status-select.colorful option[value="delivered"] { background: var(--green-soft); }
+  .status-select.colorful option[value="kitted"] { background: var(--green-soft); }
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }
-  /* Keep min-width for layout only; sizing/padding/radius come from centralized tokens */
   .kit-input { min-width: 140px; }
 
-  /* Price input in table should be compact — sizing comes from app.css small tokens */
-  .price-input { }
-
-  /* removed unused states */
-
-  /* removed old kit button styles */
-
-  /* Modal Styles */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 60;
-  }
-
-  /* Match manufacture filters layout: inline grid of controls */
-  .filters {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-    align-items: end;
-  }
-
-  .form-group { display:flex; flex-direction:column; }
-  .form-label { font-size:0.9rem; margin-bottom:0.25rem; color:#333; }
-  .form-select { border:1px solid var(--border); }
-
-  .modal {
-    background: var(--primary);
-    border: 1px solid var(--border);
-    padding: 1.25rem;
-    border-radius: var(--radius-md);
-    width: 420px;
-    max-width: calc(100% - 2rem);
-    box-shadow: var(--shadow-lg);
-  }
-
-  .modal h3 { margin: 0 0 0.5rem 0; }
-  .modal .form-row { margin: 0.5rem 0; display:flex; flex-direction:column; }
-  .modal .form-row label { font-size: 0.9rem; margin-bottom: 0.25rem; }
-  .modal input[type="text"], .modal input[type="number"] { border: 1px solid var(--border); }
-  /* Make selects inside modal visually consistent with inputs; sizing via centralized styles */
-  .modal select, .modal .modal-select, .modal .combo-input { border: 1px solid var(--border); background: white; color: var(--text); width: auto; }
-  .modal .combo-input { border: 1px solid var(--border); width: 100%; }
-  .modal textarea { border: 1px solid var(--border); resize: vertical; }
-  .modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.75rem; }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem 2rem;
-    text-align: center;
-    background: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: #666;
-  }
-
-  .empty-state h3 {
-    margin: 1rem 0 0.5rem 0;
-    color: var(--secondary);
-  }
-
-  .empty-state p {
-    margin: 0.25rem 0;
-    color: #999;
-  }
-
-  /* removed unused .edit-cell styles */
-
   .notes-badge {
-    /* Paler red background with red outline to match danger button styling; size from centralized tokens */
-    background: #ffe6e6; /* pale red */
-    color: #7a0b0b; /* darker red text for contrast */
-    border: 1px solid #ffb3b3; /* red outline */
+    background: var(--red-soft);
+    color: var(--red-strong);
+    border: 1px solid var(--red-soft);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1595,7 +1487,6 @@
     font-weight: 700;
     cursor: pointer;
     padding: 0;
-    /* Force a perfect circle and clip any overflowed text */
     height: 20px;
     width: 20px;
     min-width: 20px;
@@ -1610,27 +1501,15 @@
     vertical-align: middle;
   }
 
-.notes-badge:hover {
-  background: #ffd6d6; /* slightly darker on hover */
-}
-
-  .btn-danger { background: #ffe6e6; color: #7a0b0b; border: 1px solid #ffb3b3; cursor: pointer; }
-  .btn-danger:hover { background: #ffd6d6; }
-
-  /* Control sizing now driven globally in src/app.css via centralized tokens. Keep modal textarea minimum height for usability. */
-  .modal textarea { min-height: 72px; }
-
-  .error-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 60vh;
-    text-align: center;
+  .notes-badge:hover {
+    background: var(--red-soft);
   }
 
-  @media (max-width: 1400px) { }
+  .modal textarea { min-height: 72px; }
 
-  @media (max-width: 1200px) { .parts-container { margin: 1rem; padding: 0; } .page-header { padding: 1.5rem; } .header-content { flex-direction: column; align-items: flex-start; } }
-
-  @media (max-width: 768px) { }
+  @media (max-width: 1200px) { 
+    .parts-container { margin: 1rem; padding: 0; } 
+    .page-header { padding: 1.5rem; } 
+    .header-content { flex-direction: column; align-items: flex-start; } 
+  }
 </style>

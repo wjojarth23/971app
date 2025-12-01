@@ -224,36 +224,41 @@
 {/if}
 
 {#if showModal}
-  <div class="modal-backdrop" role="button" tabindex="0" aria-label="Close assignment dialog" on:click={() => { if(!saving) showModal=false; }} on:keydown={(e)=> { if(e.key==='Escape' || e.key==='Enter' || e.key===' ') { e.preventDefault(); if(!saving) showModal=false; } }}></div>
-  <div class="modal">
-    <h4>Assign Scout – {modalContext.team_number}</h4>
-    <select class="form-select" bind:value={selectedUserId} disabled={saving}>
-      <option value="">-- choose user --</option>
-      {#each users as u}
-        <option value={u.id}>{u.full_name || u.email}</option>
-      {/each}
-    </select>
-    <div class="btn-row" style="margin-top:0.75rem">
-      <button class="btn btn-primary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
-      <button class="btn btn-secondary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
-      <button class="btn btn-outline" on:click={() => { if(!saving) showModal=false; }}>Close</button>
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close assignment dialog"
+    on:click|self={() => { if(!saving) showModal = false; }}
+    on:keydown={(e)=> { if(e.key==='Escape' || e.key==='Enter' || e.key===' ') { e.preventDefault(); if(!saving) showModal=false; } }}
+  >
+    <div class="modal" style="--modal-width: 360px;" on:click|stopPropagation>
+      <h4>Assign Scout – {modalContext.team_number}</h4>
+      <select class="form-select" bind:value={selectedUserId} disabled={saving}>
+        <option value="">-- choose user --</option>
+        {#each users as u}
+          <option value={u.id}>{u.full_name || u.email}</option>
+        {/each}
+      </select>
+      <div class="btn-row" style="margin-top:0.75rem">
+        <button class="btn btn-primary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
+        <button class="btn btn-secondary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
+        <button class="btn btn-outline" on:click={() => { if(!saving) showModal=false; }}>Close</button>
+      </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .panel-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; }
-  .actions{ display:flex; gap:0.5rem; }
-  .assignment-table{ border-collapse:separate; border-spacing:2px; }
-  .assignment-table th, .assignment-table td{ padding:0.4rem; font-size:0.75rem; text-align:center; background:#fff; border:1px solid var(--border); min-width:70px; cursor:pointer; }
-  .assignment-table th.alliance{ font-size:0.65rem; }
-  .assignment-table .blue{ background:#e6f0ff; }
-  .assignment-table .red{ background:#ffe6e6; }
-  .assignment-table .team{ font-weight:700; }
-  .assignment-table .scout{ font-size:0.6rem; margin-top:0.25rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .scroll-x{ overflow-x:auto; }
-  .empty{ color:var(--secondary); padding:0.5rem; }
-  .modal-backdrop{ position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.4); }
-  .modal{ position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:1rem; border-radius:8px; width:300px; box-shadow:0 4px 20px rgba(0,0,0,0.25); }
-  .btn-row{ display:flex; flex-wrap:wrap; gap:0.5rem; }
+  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2); }
+  .actions { display: flex; gap: var(--gap-2); }
+  .assignment-table { border-collapse: separate; border-spacing: 2px; }
+  .assignment-table th, .assignment-table td { padding: var(--space-1); font-size: var(--font-xs); text-align: center; background: var(--color-white); border: 1px solid var(--border); min-width: 70px; cursor: pointer; }
+  .assignment-table th.alliance { font-size: 0.65rem; }
+  .assignment-table .blue { background: var(--blue-soft); }
+  .assignment-table .red { background: var(--red-soft); }
+  .assignment-table .team { font-weight: 700; }
+  .assignment-table .scout { font-size: 0.6rem; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .scroll-x { overflow-x: auto; }
+  .empty { color: var(--secondary); padding: var(--space-2); }
 </style>

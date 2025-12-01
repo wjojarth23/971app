@@ -183,11 +183,11 @@
   .header-preview { 
     display: flex; 
     align-items: stretch; 
-    gap: 0.5rem; 
-    padding: 0.75rem 1rem; 
+    gap: var(--gap-2); 
+    padding: var(--space-3) var(--space-4); 
     background: var(--primary); 
     border: 1px solid var(--border); 
-    border-radius: 6px; 
+    border-radius: var(--radius-lg); 
     min-height: 56px;
     overflow-x: auto;
   }
@@ -195,10 +195,10 @@
   .preview-brand {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--gap-2);
     color: var(--secondary);
     font-weight: 700;
-    padding: 0.5rem 0.75rem;
+    padding: var(--space-2) var(--space-3);
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -206,19 +206,19 @@
   .preview-home {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 0.75rem;
+    gap: var(--gap-1);
+    padding: var(--space-2) var(--space-3);
     color: var(--secondary);
     background: transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     white-space: nowrap;
     flex-shrink: 0;
-    font-size: 0.95rem;
+    font-size: var(--font-xs);
   }
 
   .hp-list { 
     display: flex; 
-    gap: 0.35rem; 
+    gap: var(--gap-1); 
     align-items: stretch;
     flex: 1;
   }
@@ -235,10 +235,10 @@
   }
 
   .hp-main { 
-    padding: 0.5rem 0.75rem; 
+    padding: var(--space-2) var(--space-3); 
     background: var(--card); 
     border: 2px solid transparent; 
-    border-radius: 6px; 
+    border-radius: var(--radius-lg); 
     cursor: grab; 
     transition: all .15s ease;
     display: flex;
@@ -250,11 +250,6 @@
     cursor: grabbing;
   }
 
-  /* Default hover for tabs: subtle border change */
-  .hp-main:hover {
-    border-color: var(--border);
-  }
-
   .hp-main:focus { 
     outline: none; 
     border-color: var(--accent);
@@ -263,34 +258,24 @@
   .hp-tab, .hp-folder {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: var(--gap-1);
     white-space: nowrap;
   }
 
   .hp-label { 
     color: var(--secondary);
     font-weight: 500; 
-    font-size: 0.95rem;
+    font-size: var(--font-xs);
   }
 
   :global(.hp-caret) { 
     opacity: 0.6; 
-    margin-left: 0.15rem;
-    font-size: 0.85rem;
+    margin-left: var(--space-1);
+    font-size: var(--font-xs);
   }
 
-  /* folder label uses same text styling as tabs */
-  .hp-folder-label { color: var(--secondary); font-weight: 500; font-size: 0.95rem; }
+  .hp-folder-label { color: var(--secondary); font-weight: 500; font-size: var(--font-xs); }
 
-  /* Folder trigger hover: square light grey */
-  .hp-main.folder-main:hover {
-    background: var(--background);
-    border-radius: 0;
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
-
-  /* Dropdown card */
   .hp-dropdown { 
     display: none; 
     position: absolute; 
@@ -298,8 +283,8 @@
     left: 0; 
     background: var(--card); 
     border: 1px solid var(--border); 
-    padding: 0.35rem; 
-    border-radius: 6px; 
+    padding: var(--space-1); 
+    border-radius: var(--radius-lg); 
     z-index: 40; 
     min-width: 180px;
     box-shadow: 0 8px 20px rgba(0,0,0,0.06);
@@ -312,28 +297,21 @@
   .hp-dropdown-list {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: var(--gap-1);
   }
 
   .hp-child {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 0.75rem;
+    gap: var(--gap-1);
+    padding: var(--space-2) var(--space-3);
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: grab;
-    font-size: 0.95rem;
+    font-size: var(--font-xs);
     color: var(--text);
     font-weight: 500;
-    transition: background .12s ease;
-  }
-
-  /* Child items hover in dropdown: accent */
-  .hp-child:hover { 
-    background: var(--accent); 
-    color: var(--secondary); 
   }
 
   .hp-child:active {
@@ -341,12 +319,12 @@
   }
 
   .hp-folder-drop { 
-    margin-top: 6px; 
+    margin-top: var(--space-2); 
     text-align: center; 
-    font-size: 0.8rem; 
-    padding: 0.4rem 0.5rem; 
+    font-size: var(--font-xs); 
+    padding: var(--space-1) var(--space-2); 
     border: 2px dashed var(--border); 
-    border-radius: 6px;
+    border-radius: var(--radius-lg);
     background: var(--background);
     transition: all .15s ease;
     opacity: 0.6;
@@ -361,13 +339,13 @@
 
   .drop-hint {
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: var(--font-xs);
   }
 
-  .muted { 
+  .header-preview .muted { 
     color: var(--muted); 
-    font-size: 0.85rem;
-    padding: 0.5rem;
+    font-size: var(--font-xs);
+    padding: var(--space-2);
   }
 
   .no-custom {

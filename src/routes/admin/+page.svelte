@@ -1313,7 +1313,91 @@
           {/if}
         </div>
 
-        <div class="table-container">
+        <!-- Mobile User Cards -->
+        <div class="mobile-user-cards">
+          {#each accessFilteredUsers as user (user.id)}
+            <div class="user-card" class:pending-card={!isUserApproved(user)}>
+              <div class="user-card-header">
+                <div class="user-card-name">
+                  <strong>{user.full_name || 'No Name'}</strong>
+                  {#if !isUserApproved(user)}
+                    <span class="chip chip-pill chip-soft status-chip status-chip--pending">Pending</span>
+                  {/if}
+                </div>
+                <span class="user-card-email">{user.email || '—'}</span>
+                {#if savingRoleIds.has(user.id)}
+                  <span class="saving-indicator">Saving…</span>
+                {/if}
+              </div>
+              
+              <div class="user-card-roles">
+                <div class="user-card-role">
+                  <span class="role-label">FRC Team</span>
+                  <select
+                    class="form-select role-select"
+                    style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
+                    value={user.frc_team || ''}
+                    disabled={savingRoleIds.has(user.id)}
+                    on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
+                  >
+                    <option value="">Not Set</option>
+                    {#each frcTeamOptions as teamValue}
+                      <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
+                    {/each}
+                  </select>
+                </div>
+                
+                <div class="user-card-role">
+                  <span class="role-label">General</span>
+                  <select
+                    class="form-select role-select"
+                    style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
+                    value={user.general_role || defaultGeneralRole}
+                    disabled={savingRoleIds.has(user.id)}
+                    on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
+                  >
+                    {#each generalRoleOptions as roleValue}
+                      <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                    {/each}
+                  </select>
+                </div>
+                
+                <div class="user-card-role">
+                  <span class="role-label">Purchasing</span>
+                  <select
+                    class="form-select role-select"
+                    style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
+                    value={user.purchasing_role || defaultPurchasingRole}
+                    disabled={savingRoleIds.has(user.id)}
+                    on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
+                  >
+                    {#each purchasingRoleOptions as roleValue}
+                      <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                    {/each}
+                  </select>
+                </div>
+                
+                <div class="user-card-role">
+                  <span class="role-label">Team Role</span>
+                  <select
+                    class="form-select role-select"
+                    style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
+                    value={user.team_role || defaultTeamRole}
+                    disabled={savingRoleIds.has(user.id)}
+                    on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
+                  >
+                    {#each teamRoleOptions as roleValue}
+                      <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        <!-- Desktop Table -->
+        <div class="table-container desktop-admin-table">
           <table class="table admin-table">
             <thead>
               <tr>
@@ -2115,22 +2199,41 @@
 
 <!-- Add Vendor Modal -->
 {#if showAddVendorModal}
-  <div class="modal-overlay" on:click={() => showAddVendorModal = false}>
-    <div class="modal" on:click|stopPropagation>
-      <h3>Add Vendor</h3>
-      <div class="form-group">
-        <label class="form-label">Vendor Name</label>
-        <input type="text" class="form-input" bind:value={vendorName} placeholder="e.g., McMaster-Carr" />
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close add vendor dialog"
+    on:click|self={() => showAddVendorModal = false}
+    on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showAddVendorModal = false; } }}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="0"
+      on:click|stopPropagation
+      on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showAddVendorModal = false; } }}
+    >
+      <div class="modal-header">
+        <h3>Add Vendor</h3>
+        <button type="button" class="modal-close-button" aria-label="Close add vendor dialog" on:click={() => showAddVendorModal = false}>×</button>
       </div>
-      <div class="form-group">
-        <label class="form-label">URL Base</label>
-        <input type="text" class="form-input" bind:value={vendorUrlBase} placeholder="e.g., mcmaster.com" />
-      </div>
-      <div class="form-group">
-        <label class="form-checkbox">
-          <input type="checkbox" bind:checked={vendorFreeShipping} />
-          <span>Free Shipping</span>
-        </label>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Vendor Name</label>
+          <input type="text" class="form-input" bind:value={vendorName} placeholder="e.g., McMaster-Carr" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">URL Base</label>
+          <input type="text" class="form-input" bind:value={vendorUrlBase} placeholder="e.g., mcmaster.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-checkbox">
+            <input type="checkbox" bind:checked={vendorFreeShipping} />
+            <span>Free Shipping</span>
+          </label>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" on:click={() => showAddVendorModal = false}>Cancel</button>
@@ -2142,22 +2245,41 @@
 
 <!-- Edit Vendor Modal -->
 {#if showEditVendorModal}
-  <div class="modal-overlay" on:click={() => showEditVendorModal = false}>
-    <div class="modal" on:click|stopPropagation>
-      <h3>Edit Vendor</h3>
-      <div class="form-group">
-        <label class="form-label">Vendor Name</label>
-        <input type="text" class="form-input" bind:value={vendorName} />
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close edit vendor dialog"
+    on:click|self={() => { showEditVendorModal = false; editingVendor = null; }}
+    on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showEditVendorModal = false; editingVendor = null; } }}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="0"
+      on:click|stopPropagation
+      on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showEditVendorModal = false; editingVendor = null; } }}
+    >
+      <div class="modal-header">
+        <h3>Edit Vendor</h3>
+        <button type="button" class="modal-close-button" aria-label="Close edit vendor dialog" on:click={() => { showEditVendorModal = false; editingVendor = null; }}>×</button>
       </div>
-      <div class="form-group">
-        <label class="form-label">URL Base</label>
-        <input type="text" class="form-input" bind:value={vendorUrlBase} />
-      </div>
-      <div class="form-group">
-        <label class="form-checkbox">
-          <input type="checkbox" bind:checked={vendorFreeShipping} />
-          <span>Free Shipping</span>
-        </label>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Vendor Name</label>
+          <input type="text" class="form-input" bind:value={vendorName} />
+        </div>
+        <div class="form-group">
+          <label class="form-label">URL Base</label>
+          <input type="text" class="form-input" bind:value={vendorUrlBase} />
+        </div>
+        <div class="form-group">
+          <label class="form-checkbox">
+            <input type="checkbox" bind:checked={vendorFreeShipping} />
+            <span>Free Shipping</span>
+          </label>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" on:click={() => { showEditVendorModal = false; editingVendor = null; }}>Cancel</button>
@@ -2169,41 +2291,60 @@
 
 <!-- Create Roster Modal -->
 {#if showCreateRosterModal}
-  <div class="modal-overlay" on:click={() => showCreateRosterModal = false}>
-    <div class="modal" on:click|stopPropagation>
-      <h3>Create Roster</h3>
-      <div class="form-group">
-        <label class="form-label">Roster Name</label>
-        <input type="text" class="form-input" bind:value={newRosterName} placeholder="e.g., Engineering Team" />
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close roster dialog"
+    on:click|self={() => showCreateRosterModal = false}
+    on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showCreateRosterModal = false; } }}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="0"
+      on:click|stopPropagation
+      on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); showCreateRosterModal = false; } }}
+    >
+      <div class="modal-header">
+        <h3>Create Roster</h3>
+        <button type="button" class="modal-close-button" aria-label="Close roster dialog" on:click={() => showCreateRosterModal = false}>×</button>
       </div>
-      <div class="form-group">
-        <label class="form-label">Roster Type</label>
-        <select class="form-select" bind:value={newRosterType}>
-          <option value="multi">Multi-Select</option>
-          <option value="single">Single-Select</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-checkbox">
-          <input type="checkbox" bind:checked={newRosterPublic} />
-          <span>Public Roster</span>
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="form-checkbox">
-          <input type="checkbox" bind:checked={newRosterAdmin} />
-          <span>Admin Only</span>
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Target FRC Team</label>
-        <select class="form-select" bind:value={newRosterTargetFrcTeam}>
-          <option value="all">All Members</option>
-          <option value="students">Students Only (971 + 9584)</option>
-          <option value="971">Team 971 Only</option>
-          <option value="9584">Team 9584 Only</option>
-        </select>
-        <small class="form-help">Filter which members can be assigned to this roster</small>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Roster Name</label>
+          <input type="text" class="form-input" bind:value={newRosterName} placeholder="e.g., Engineering Team" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Roster Type</label>
+          <select class="form-select" bind:value={newRosterType}>
+            <option value="multi">Multi-Select</option>
+            <option value="single">Single-Select</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-checkbox">
+            <input type="checkbox" bind:checked={newRosterPublic} />
+            <span>Public Roster</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-checkbox">
+            <input type="checkbox" bind:checked={newRosterAdmin} />
+            <span>Admin Only</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target FRC Team</label>
+          <select class="form-select" bind:value={newRosterTargetFrcTeam}>
+            <option value="all">All Members</option>
+            <option value="students">Students Only (971 + 9584)</option>
+            <option value="971">Team 971 Only</option>
+            <option value="9584">Team 9584 Only</option>
+          </select>
+          <small class="form-help">Filter which members can be assigned to this roster</small>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" on:click={() => showCreateRosterModal = false}>Cancel</button>
@@ -2216,293 +2357,211 @@
 <style>
   .error { color: var(--danger); font-weight: 600; }
   .admin-table td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .role-filters { display: flex; flex-wrap: wrap; gap: var(--gap-3); margin-bottom: var(--space-3); align-items: center; }
+  .filter-input { flex: 1 1 160px; min-width: 160px; }
+  .role-select { border-color: var(--role-border, var(--border)); background: var(--role-bg, var(--primary)); color: var(--role-text, var(--text)); font-weight: 600; transition: border-color 0.2s ease, background 0.2s ease; }
+  .role-select:disabled { opacity: 0.7; cursor: progress; }
+  .role-select option { color: var(--text); background: var(--primary); font-weight: 500; }
+  .pending-row { background: var(--neutral-100); }
+  .name-cell { display: flex; flex-direction: column; gap: var(--gap-1); }
+  .email-cell { display: flex; flex-direction: column; gap: var(--gap-1); font-size: var(--font-xs); }
+  .status-chip { text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--font-xs); }
+  .status-chip--pending { background: var(--brand-gold-soft); color: var(--brand-gold-strong); border-color: var(--brand-gold-soft); }
+  .roster-selector-block { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-6); background: var(--surface-1); display: flex; flex-direction: column; gap: var(--gap-3); box-shadow: var(--shadow-sm); }
+  .roster-pill-row { display: flex; flex-wrap: wrap; gap: var(--gap-2); max-height: 240px; overflow-y: auto; }
+  .roster-main { display: flex; flex-direction: column; gap: var(--gap-6); margin-top: var(--space-4); }
+  .roster-workspace { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: var(--gap-6); align-items: flex-start; }
+  .keys-column .sticky-card { position: sticky; top: var(--space-4); max-height: calc(100vh - 140px); overflow: hidden; }
+  .keys-column .sticky-card .list-card__items { max-height: calc(100vh - 320px); }
+  .members-column .list-card__items { max-height: calc(100vh - 320px); overscroll-behavior: contain; overflow-y: auto; }
+  .member-list { max-height: calc(100vh - 220px); overflow-y: auto; padding-right: 0.35rem; overscroll-behavior: contain; }
+  .member-row--compact { padding: var(--space-1) var(--space-2); gap: var(--gap-2); align-items: flex-start; }
+  .member-row--compact strong { font-size: var(--font-xs); }
+  .chip-compact { padding: var(--space-1) var(--space-2); font-size: 0.7rem; }
+  .saving-indicator { font-size: var(--font-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .attendance-search { min-width: 240px; }
+  .attendance-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--gap-4); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); background: var(--surface-1); margin-bottom: var(--space-6); }
+  .attendance-form .form-label { font-weight: 600; display: block; margin-bottom: var(--space-1); }
+  .attendance-form textarea { resize: vertical; }
+  .input-row { display: flex; gap: var(--gap-2); align-items: center; }
+  .pill-grid { display: flex; flex-wrap: wrap; gap: var(--gap-2); margin: var(--space-2) 0; }
+  .pill-option { display: inline-flex; align-items: center; gap: var(--gap-1); border: 1px solid var(--border); border-radius: var(--radius-full); padding: var(--space-1) var(--space-3); font-size: var(--font-xs); background: var(--surface-2); }
+  .pill-option input { margin: 0; }
+  .toggle-input { display: inline-flex; align-items: center; gap: var(--gap-1); font-weight: 600; }
+  .attendance-form .form-actions { display: flex; gap: var(--gap-2); flex-wrap: wrap; }
+  .leader-name { font-weight: 600; }
+  .leader-email { font-size: var(--font-xs); color: var(--muted-text, var(--neutral-500)); }
+  .list-description { font-size: var(--font-xs); color: var(--muted-text, var(--neutral-500)); margin-top: var(--space-1); }
+  .row-actions { display: flex; align-items: center; gap: var(--gap-2); }
+  .status-dot { font-size: var(--font-xs); font-weight: 600; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); background: var(--surface-2); }
+  .status-dot.success { color: var(--green-strong); background: var(--green-soft); }
+  .status-dot.muted { color: var(--neutral-500); background: var(--neutral-300); }
 
-  .role-filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-bottom: 0.75rem;
-    align-items: center;
+  /* Mobile User Cards - Hidden on desktop */
+  .mobile-user-cards {
+    display: none;
   }
-
-  .filter-input {
-    flex: 1 1 160px;
-    min-width: 160px;
-  }
-
-  .role-select {
-    border-color: var(--role-border, var(--border));
-    background: var(--role-bg, var(--primary));
-    color: var(--role-text, var(--text));
-    font-weight: 600;
-    transition: border-color 0.2s ease, background 0.2s ease;
-  }
-
-  .role-select:disabled {
-    opacity: 0.7;
-    cursor: progress;
-  }
-
-  .role-select option {
-    color: var(--text);
-    background: var(--primary);
-    font-weight: 500;
-  }
-
-  .pending-row {
-    background: #fffaf0;
-  }
-
-  .name-cell {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .email-cell {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.95rem;
-  }
-
-  .status-chip {
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 0.75rem;
-  }
-
-  .status-chip--pending {
-    background: #fef3c7;
-    color: #92400e;
-    border-color: #fde68a;
-  }
-
-  .roster-selector-block {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 1rem 1.25rem;
+  
+  .user-card {
     background: var(--surface-1);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
   }
-
-  .roster-pill-row {
+  
+  .user-card.pending-card {
+    background: var(--neutral-100);
+    border-color: var(--brand-gold-soft);
+  }
+  
+  .user-card-header {
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
+  }
+  
+  .user-card-name {
     display: flex;
+    align-items: center;
+    gap: var(--gap-2);
     flex-wrap: wrap;
-    gap: 0.5rem;
-    max-height: 240px;
-    overflow-y: auto;
+    margin-bottom: var(--space-1);
   }
-
-  .roster-main {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    margin-top: 1rem;
+  
+  .user-card-name strong {
+    font-size: 1rem;
+    color: var(--secondary);
   }
-
-  .roster-workspace {
-    display: grid;
-    grid-template-columns: minmax(220px, 300px) 1fr;
-    gap: 1.25rem;
-    align-items: flex-start;
-  }
-
-  .keys-column .sticky-card {
-    position: sticky;
-    top: 1rem;
-    max-height: calc(100vh - 140px);
-    overflow: hidden;
-  }
-
-  .keys-column .sticky-card .list-card__items {
-    max-height: calc(100vh - 320px);
-  }
-
-  .members-column .list-card__items {
-    max-height: calc(100vh - 320px);
-    overscroll-behavior: contain;
-    overflow-y: auto;
-  }
-
-  .member-list {
-    max-height: calc(100vh - 220px);
-    overflow-y: auto;
-    padding-right: 0.35rem;
-    overscroll-behavior: contain;
-  }
-
-  .member-row--compact {
-    padding: 0.4rem 0.5rem;
-    gap: 0.45rem;
-    align-items: flex-start;
-  }
-
-  .member-row--compact strong {
-    font-size: 0.9rem;
-  }
-
-  .chip-compact {
-    padding: 0.1rem 0.45rem;
-    font-size: 0.7rem;
-  }
-
-  .saving-indicator {
-    font-size: 0.75rem;
+  
+  .user-card-email {
+    font-size: var(--font-xs);
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
   }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    border: 0;
-  }
-
-  .attendance-search {
-    min-width: 240px;
-  }
-
-  .attendance-form {
+  
+  .user-card-roles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 1rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 1rem;
-    background: var(--surface-1);
-    margin-bottom: 1.25rem;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--gap-3);
   }
-
-  .attendance-form .form-label {
-    font-weight: 600;
-    display: block;
-    margin-bottom: 0.35rem;
-  }
-
-  .attendance-form textarea {
-    resize: vertical;
-  }
-
-  .input-row {
+  
+  .user-card-role {
     display: flex;
-    gap: 0.5rem;
-    align-items: center;
+    flex-direction: column;
+    gap: var(--space-1);
   }
-
-  .pill-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin: 0.5rem 0;
-  }
-
-  .pill-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.25rem 0.75rem;
-    font-size: 0.9rem;
-    background: var(--surface-2, #f8fafc);
-  }
-
-  .pill-option input {
-    margin: 0;
-  }
-
-  .toggle-input {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
+  
+  .user-card-role .role-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
     font-weight: 600;
   }
-
-  .attendance-form .form-actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+  
+  .user-card-role .form-select {
+    font-size: 0.8rem;
+    padding: var(--space-2);
   }
 
-  .leader-name {
-    font-weight: 600;
-  }
-
-  .leader-email {
-    font-size: 0.9rem;
-    color: var(--muted-text, #6b7280);
-  }
-
-  .list-description {
-    font-size: 0.9rem;
-    color: var(--muted-text, #6b7280);
-    margin-top: 0.25rem;
-  }
-
-  .row-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .icon-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    color: var(--text);
-  }
-
-  .icon-button.danger {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
-
-  .status-dot {
-    font-size: 0.85rem;
-    font-weight: 600;
-    padding: 0.15rem 0.5rem;
-    border-radius: 999px;
-    background: var(--surface-2);
-  }
-
-  .status-dot.success {
-    color: #166534;
-    background: #dcfce7;
-  }
-
-  .status-dot.muted {
-    color: #6b7280;
-    background: #e5e7eb;
-  }
-
+  /* Mobile Responsive - Tablet */
   @media (max-width: 900px) {
-    .admin-table td:nth-child(2) {
-      max-width: unset;
-      white-space: normal;
-    }
+    .admin-table td:nth-child(2) { max-width: unset; white-space: normal; }
+    .roster-workspace { grid-template-columns: 1fr; }
+    .keys-column .sticky-card { position: static; max-height: none; }
+  }
 
-    .roster-workspace {
+  /* Mobile Responsive - Phone */
+  @media (max-width: 768px) {
+    .role-filters {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .filter-input {
+      flex: 1 1 100%;
+      min-width: unset;
+    }
+    
+    .roster-selector-block {
+      padding: var(--space-3);
+    }
+    
+    .roster-pill-row {
+      max-height: 180px;
+    }
+    
+    .attendance-search {
+      min-width: unset;
+      width: 100%;
+    }
+    
+    .attendance-form {
+      grid-template-columns: 1fr;
+      padding: var(--space-3);
+    }
+    
+    .input-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .row-actions {
+      flex-wrap: wrap;
+    }
+    
+    .member-list {
+      max-height: calc(100vh - 280px);
+    }
+    
+    /* Hide desktop table, show mobile cards */
+    .desktop-admin-table {
+      display: none;
+    }
+    
+    .mobile-user-cards {
+      display: block;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .roster-main {
+      gap: var(--gap-4);
+    }
+    
+    .roster-pill-row {
+      max-height: 140px;
+    }
+    
+    .pill-option {
+      padding: var(--space-1) var(--space-2);
+      font-size: 0.65rem;
+    }
+    
+    .chip-compact {
+      font-size: 0.6rem;
+      padding: 2px var(--space-1);
+    }
+    
+    .member-row--compact {
+      flex-direction: column;
+    }
+    
+    .attendance-form .form-actions {
+      flex-direction: column;
+    }
+    
+    .attendance-form .form-actions .btn {
+      width: 100%;
+    }
+    
+    /* Single column role cards on small phones */
+    .user-card-roles {
       grid-template-columns: 1fr;
     }
-
-    .keys-column .sticky-card {
-      position: static;
-      max-height: none;
+    
+    .user-card {
+      padding: var(--space-3);
     }
   }
 </style>

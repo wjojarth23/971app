@@ -425,7 +425,8 @@
             vendor: editTarget.vendor || null,
             url: null,
             price: null,
-            workflow: 'purchase'
+            workflow: 'purchase',
+            frc_team: user?.frc_team || null
           };
           const { data: pur, error: purErr } = await supabase.from('purchasing').insert([purchasingInsertData]).select();
           if (purErr) throw purErr;
@@ -452,7 +453,8 @@
             quantity: editQuantity || editTarget.quantity || 1,
             material: editMaterial || editTarget.material || '',
             file_name: '',
-            file_url: ''
+            file_url: '',
+            frc_team: user?.frc_team || null
           };
           const finalStock = (editStockChoice === '__other__') ? (editStockAssignmentCustom || editStockAssignment || null) : (editStockChoice || editStockAssignment || null);
           let partRow = null;
@@ -776,7 +778,8 @@
           vendor: vendor || null,
           url: rawUrl || null,
           price: null,
-          workflow: 'purchase'
+          workflow: 'purchase',
+          frc_team: user?.frc_team || null
         };
         const { data: pur, error: purErr } = await supabase
           .from('purchasing')
@@ -808,7 +811,8 @@
           quantity: item.quantity || 1,
           material: item.material || '',
           file_name: '',
-          file_url: ''
+          file_url: '',
+          frc_team: user?.frc_team || null
         };
 
         const stock_assignment_value = finalStockFromRow(item);
@@ -894,7 +898,8 @@
         vendor: purchaseModalItem.vendor || null,
         url: purchaseModalUrl && purchaseModalUrl.trim() !== '' ? purchaseModalUrl.trim() : null,
         price: purchaseModalPrice && purchaseModalPrice !== '' ? Number(purchaseModalPrice) : null,
-        workflow: 'purchase'
+        workflow: 'purchase',
+        frc_team: user?.frc_team || null
       };
       
       const { data: pur, error: purErr } = await supabase
@@ -1074,7 +1079,7 @@
       <div class="header-content">
         <div class="header-left">
           <div class="header-actions">
-            <button class="back-button" on:click={() => goto('/cad/build')}>
+            <button class="btn btn-secondary btn-sm" on:click={() => goto('/cad/build')}>
               <ArrowLeft size={16} />
               Back to Builds
             </button>
@@ -1165,10 +1170,6 @@
     <div class="bom-section">
       <div class="parts-header">
         <h2>Build Components (Added Parts)</h2>
-        <div class="legend">
-          <span class="legend-item"><span class="dot manufactured"></span>Manufactured</span>
-          <span class="legend-item"><span class="dot cots"></span>COTS</span>
-        </div>
       </div>
       {#if build.parts || build.purchasing}
         {@const allParts = [...(build.parts || []), ...(build.purchasing || []), ...(build.kitting || [])]}
@@ -1197,9 +1198,6 @@
                   >
                     <td class="part-name">
                       <div class="name-cell">
-                        <div class="avatar">
-                          <Package size={14} />
-                        </div>
                         <div class="name-wrap">
                           <div class="name">{part.name || part.part_name || 'Unnamed Part'}</div>
                           {#if part.part_number}
@@ -1220,33 +1218,20 @@
                     </td>
                     <td class="quantity">{part.quantity || 1}</td>
                     <td>
-                      {#if part.workflow === 'router' && part.status === 'pending'}
-                        <button
-                          class="btn btn-secondary btn-sm"
-                          on:click={async () => {
-                            await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
-                            await loadBuildDetails();
-                          }}
-                          title={BUTTONS.CAM_REVIEWED}
-                        >
-                          {BUTTONS.CAM_REVIEWED}
-                        </button>
-                      {:else}
-                        <span class="chip {part.status ? `chip-status-${part.status}` : 'chip-neutral'}">
-                          {#if part.status === 'pending'}
-                            <Clock size={12} />
-                          {:else if part.status === 'in-progress' || part.status === 'cammed'}
-                            <Wrench size={12} />
-                          {:else if part.status === 'ordered'}
-                            <Package size={12} />
-                          {:else if part.status === 'delivered' || part.status === 'complete' || part.status === 'manufactured' || part.status === 'kitted'}
-                            <CheckCircle size={12} />
-                          {:else}
-                            <Clock size={12} />
-                          {/if}
-                          <span>{part.status || 'unknown'}</span>
-                        </span>
-                      {/if}
+                      <span class="tag tag-status tag-status-{part.status || 'pending'}">
+                        {#if part.status === 'pending'}
+                          <Clock size={12} />
+                        {:else if part.status === 'in-progress' || part.status === 'cammed'}
+                          <Wrench size={12} />
+                        {:else if part.status === 'ordered'}
+                          <Package size={12} />
+                        {:else if part.status === 'delivered' || part.status === 'complete' || part.status === 'manufactured' || part.status === 'kitted'}
+                          <CheckCircle size={12} />
+                        {:else}
+                          <Clock size={12} />
+                        {/if}
+                        <span>{part.status || 'pending'}</span>
+                      </span>
                     </td>
                     <td class="kitting">
                       {#if part.kitting_bin}
@@ -1288,10 +1273,6 @@
             <Download size={16} />
             Change Version
           </button>
-          <div class="legend">
-            <span class="legend-item"><span class="dot manufactured"></span>Manufactured</span>
-            <span class="legend-item"><span class="dot cots"></span>COTS</span>
-          </div>
         </div>
       </div>
       {#if bomSnapshot && bomSnapshot.length > 0}
@@ -1315,9 +1296,6 @@
                 <tr class="row {i % 2 === 0 ? 'even' : 'odd'}">
                   <td class="part-name">
                     <div class="name-cell">
-                      <div class="avatar">
-                        <Package size={14} />
-                      </div>
                       <div class="name-wrap">
                         <div class="name">{item.part_name || 'Unnamed Part'}</div>
                         {#if item.part_number}
@@ -1428,15 +1406,20 @@
 </div>
 
 {#if showEditModal}
-  <div class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showEditModal = false; editTarget = null; }}></div>
   <div
-    class="modal"
-    role="dialog"
-    aria-modal="true"
-    tabindex="0"
-    on:click|stopPropagation
-    on:keydown={(e) => { if (e.key === 'Escape') { showEditModal = false; editTarget = null; } }}
+    class="modal-backdrop"
+    role="presentation"
+    tabindex="-1"
+    on:click|self={() => { showEditModal = false; editTarget = null; }}
   >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="0"
+      on:click|stopPropagation
+      on:keydown={(e) => { if (e.key === 'Escape') { showEditModal = false; editTarget = null; } }}
+    >
     <h3>Edit Build Item</h3>
     <div class="modal-row">
       <label for="edit-type">Type</label>
@@ -1492,288 +1475,527 @@
       <button class="btn" on:click={() => { showEditModal = false; editTarget = null; }}>Cancel</button>
       <button class="btn btn-yellow" on:click={saveEdit}>Save</button>
     </div>
+    </div>
   </div>
 {/if}
 
 <!-- Purchase Link/Price Modal (when auto-detect fails) -->
 {#if showPurchaseModal}
-  <div class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}></div>
-  <div class="modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }}>
-    <h3>Provide vendor link and unit price</h3>
-    <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
-    <div style="display:flex; flex-direction:column; gap:0.5rem;">
-      <label for="purchase-url">Vendor URL:</label>
-      <input id="purchase-url" class="form-input" type="url" placeholder="https://..." bind:value={purchaseModalUrl} />
+  <div
+    class="modal-backdrop"
+    role="presentation"
+    tabindex="-1"
+    on:click|self={() => { showPurchaseModal = false; purchaseModalItem = null; }}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="0"
+      on:click|stopPropagation
+      on:keydown={(e) => { if (e.key === 'Escape') { showPurchaseModal = false; purchaseModalItem = null; } }}
+    >
+      <h3>Provide vendor link and unit price</h3>
+      <p>Please supply a vendor URL and unit price for <strong>{purchaseModalItem?.part_name || purchaseModalItem?.part_number || 'this part'}</strong></p>
+      <div style="display:flex; flex-direction:column; gap:0.5rem;">
+        <label for="purchase-url">Vendor URL:</label>
+        <input id="purchase-url" class="form-input" type="url" placeholder="https://..." bind:value={purchaseModalUrl} />
 
-      <label for="purchase-price">Unit Price (optional):</label>
-      <input id="purchase-price" class="form-input" type="number" step="0.01" min="0" placeholder="0.00" bind:value={purchaseModalPrice} />
-    </div>
-    <div class="modal-actions">
-      <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
-      <button class="btn btn-yellow" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
+        <label for="purchase-price">Unit Price (optional):</label>
+        <input id="purchase-price" class="form-input" type="number" step="0.01" min="0" placeholder="0.00" bind:value={purchaseModalPrice} />
+      </div>
+      <div class="modal-actions">
+        <button class="btn" on:click={() => { showPurchaseModal = false; purchaseModalItem = null; }}>Cancel</button>
+        <button class="btn btn-yellow" on:click={confirmAddToPurchasingFromModal}>Add to Purchasing</button>
+      </div>
     </div>
   </div>
 {/if}
 
 <!-- Version Selector Modal -->
 {#if showVersionModal}
-  <div class="modal-backdrop" role="presentation" tabindex="-1" on:click={() => { showVersionModal = false; selectedVersionForRefetch = null; }}></div>
-  <div class="modal version-modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown={(e) => { if (e.key === 'Escape') { showVersionModal = false; selectedVersionForRefetch = null; } }}>
-    <h3>Select Version to Load BOM</h3>
-    <p style="color: #666; margin-bottom: 1rem;">Choose a version to fetch its BOM. Parts already added will be skipped.</p>
-    
-    {#if loadingVersions}
-      <div style="display: flex; flex-direction: column; align-items: center; padding: 2rem; gap: 1rem;">
-        <div class="loading-spinner"></div>
-        <p>Loading versions...</p>
-      </div>
-    {:else if versionTimeline.length > 0}
-      <div class="version-timeline" style="max-height: 400px; overflow-y: auto; margin-bottom: 1rem;">
-        {#each versionTimeline as version}
-          <div 
-            class="version-item {selectedVersionForRefetch?.id === version.id ? 'selected' : ''}"
-            on:click={() => selectedVersionForRefetch = version}
-            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedVersionForRefetch = version; } }}
-            role="button"
-            tabindex="0"
-          >
-            <div class="version-info">
-              <div class="version-name">{version.name || `Version ${version.id.substring(0, 8)}`}</div>
-              <div class="version-date">{new Date(version.date).toLocaleDateString()} at {new Date(version.date).toLocaleTimeString()}</div>
+  <div
+    class="modal-backdrop"
+    role="presentation"
+    tabindex="-1"
+    on:click|self={() => { showVersionModal = false; selectedVersionForRefetch = null; }}
+  >
+    <div
+      class="modal version-modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="0"
+      on:click|stopPropagation
+      on:keydown={(e) => { if (e.key === 'Escape') { showVersionModal = false; selectedVersionForRefetch = null; } }}
+      style="--modal-width: 900px;"
+    >
+      <h3>Select Version to Load BOM</h3>
+      <p style="color: #666; margin-bottom: 1rem;">Choose a version to fetch its BOM. Parts already added will be skipped.</p>
+      
+      {#if loadingVersions}
+        <div style="display: flex; flex-direction: column; align-items: center; padding: 2rem; gap: 1rem;">
+          <div class="loading-spinner"></div>
+          <p>Loading versions...</p>
+        </div>
+      {:else if versionTimeline.length > 0}
+        <div class="version-timeline" style="max-height: 400px; overflow-y: auto; margin-bottom: 1rem;">
+          {#each versionTimeline as version}
+            <div 
+              class="version-item {selectedVersionForRefetch?.id === version.id ? 'selected' : ''}"
+              on:click={() => selectedVersionForRefetch = version}
+              on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedVersionForRefetch = version; } }}
+              role="button"
+              tabindex="0"
+            >
+              <div class="version-info">
+                <div class="version-name">{version.name || `Version ${version.id.substring(0, 8)}`}</div>
+                <div class="version-date">{new Date(version.date).toLocaleDateString()} at {new Date(version.date).toLocaleTimeString()}</div>
+              </div>
+              {#if selectedVersionForRefetch?.id === version.id}
+                <div class="version-checkmark">✓</div>
+              {/if}
             </div>
-            {#if selectedVersionForRefetch?.id === version.id}
-              <div class="version-checkmark">✓</div>
-            {/if}
-          </div>
-        {/each}
+          {/each}
+        </div>
+      {:else}
+        <div style="padding: 2rem; text-align: center; color: #666;">
+          <p>No versions available</p>
+        </div>
+      {/if}
+      
+      <div class="modal-actions">
+        <button class="btn" on:click={() => { showVersionModal = false; selectedVersionForRefetch = null; }}>Cancel</button>
+        <button 
+          class="btn btn-yellow" 
+          on:click={refetchBOMFromVersion}
+          disabled={!selectedVersionForRefetch || loadingVersions}
+        >
+          {loadingVersions ? 'Loading...' : 'Load BOM from Version'}
+        </button>
       </div>
-    {:else}
-      <div style="padding: 2rem; text-align: center; color: #666;">
-        <p>No versions available</p>
-      </div>
-    {/if}
-    
-    <div class="modal-actions">
-      <button class="btn" on:click={() => { showVersionModal = false; selectedVersionForRefetch = null; }}>Cancel</button>
-      <button 
-        class="btn btn-yellow" 
-        on:click={refetchBOMFromVersion}
-        disabled={!selectedVersionForRefetch || loadingVersions}
-      >
-        {loadingVersions ? 'Loading...' : 'Load BOM from Version'}
-      </button>
     </div>
   </div>
 {/if}
 
 <style>
-  /* Make this section invisible (no padding/border), full width like BOM */
-  .bom-section { display: block; }
+  /* Issue 2: Fix the status card / progress section - remove yellow background */
+  .status-section {
+    margin-bottom: var(--space-4);
+  }
 
-  /* Modal styles (match BOM route) */
-  .modal-backdrop {
-    position: fixed !important;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.4);
-    z-index: 2147483646 !important;
-    display: block !important;
-    pointer-events: auto !important;
-  }
-  .modal {
-    position: fixed !important;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%) !important;
-    background: #fff;
+  .status-card {
+    background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-    width: min(560px, 92vw);
-    z-index: 2147483647 !important;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-    display: block !important;
-    pointer-events: auto !important;
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
   }
-  .modal-row {
-    display: grid;
-    grid-template-columns: 120px 1fr;
-    align-items: center;
-    gap: 0.75rem;
-    margin: 0.5rem 0;
-  }
-  /* Control sizing/padding/radius handled globally in src/app.css */
-  .form-input {
-    width: 100%;
-    border: 1px solid var(--border);
-  }
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-  }
-  .main-content { max-width: 1440px; margin: 0 auto; padding: 1.25rem; }
-  .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 1rem; }
-  .loading-spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top: 3px solid #FFD700; border-radius: 50%; animation: spin 1s linear infinite; }
-  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-  .page-header { margin-bottom: 1rem; }
-  .header-content { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-  .header-left { flex: 1; }
-  .header-right { display: flex; align-items: center; gap: 0.5rem; }
-  .header-actions { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-  .back-button { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0.75rem; background: var(--background); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem; }
-  .header-info h1 { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.5rem 0; color: var(--text); font-size: 1.6rem; font-weight: 600; }
-  .build-hash { margin: 0.25rem 0; color: var(--secondary); font-family: monospace; font-size: 0.9rem; }
-  .build-meta { display: flex; gap: 1rem; margin-top: 0.25rem; font-size: 0.85rem; color: var(--secondary); }
-  .project-banner { margin-top:0.5rem; background:#f8fafc; padding:0.5rem; border-radius:6px; display:flex; align-items:center; gap:1rem; }
-  .project-cost { color:#333; font-weight:600; }
-  .project-builds { margin-top:0.5rem; display:flex; flex-direction:column; gap:0.25rem; }
-  .project-build-row { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
-  .project-build-progress { display:flex; align-items:center; gap:0.5rem; }
-  .progress-bar.small { width:160px; height:8px; background:#eef2f7; border-radius:999px; overflow:hidden; }
-  .project-build-cost { font-family: ui-monospace, monospace; font-size:0.9rem; color:#444; }
-  .status-section { margin-bottom: 1rem; }
-  .status-card { background: white; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
-  .status-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
-  .status-title { font-size: 1.1rem; font-weight: 600; color: var(--text); }
-  .flag { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.375rem 0.75rem; height: 32px; border-radius: 4px; font-size: 0.8125rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; flex: 0 1 280px; box-sizing: border-box; min-width: 0; margin-left: auto; }
-  .flag.flag-pending { background: #fff8e6; color: #8f5f00; border-color: #ffe199; }
-  .flag.flag-manufacturing { background: #eaf3ff; color: #1e60d1; border-color: #b6d3ff; }
-  .flag.flag-ready_to_assemble { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
-  .flag.flag-assembled { background: #e8f6ef; color: #11642a; border-color: #a7e0c1; }
-  .progress-section { display: flex; flex-direction: column; gap: 0.5rem; }
-  .progress-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 0.5rem; }
-  .progress-label { font-size: 0.85rem; color: var(--secondary); }
-  .progress-count { font-size: 0.85rem; color: #666; }
-  .progress-bar { width: 100%; height: 10px; background: #f0f0f0; border-radius: 5px; overflow: hidden; }
-  .progress-fill { height: 100%; transition: width 0.3s ease; }
-  .progress-fill.mfg { background: linear-gradient(90deg, #27ae60, #2ecc71); }
-  .progress-fill.pur { background: linear-gradient(90deg, #ffd54f, #ffb300); }
-  .progress-fill.kit { background: linear-gradient(90deg, #9fa8da, #5c6bc0); }
-  .parts-section { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1.25rem; }
-  .parts-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
-  .legend { display: flex; gap: 1rem; color: #666; font-size: 0.85rem; }
-  .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.manufactured { background: #e3f2fd; border: 1px solid #90caf9; }
-  .dot.cots { background: #fff8e1; border: 1px solid #ffcc02; }
-  .dot.other { background: #f3f4f6; border: 1px solid #e5e7eb; }
-  /* removed unused .parts-table styles */
-  .part-name { font-weight: 500; }
-  .name-cell { display: flex; align-items: center; gap: 0.65rem; }
-  .avatar { width: 26px; height: 26px; border-radius: 6px; background: #f3f4f6; display: inline-flex; align-items: center; justify-content: center; color: #6b7280; border: 1px solid #e5e7eb; }
-  .name-wrap { display: flex; flex-direction: column; }
-  .name-cell .name { font-weight: 600; color: var(--text); }
-  .name-cell .part-number { font-size: 0.78rem; color: #6b7280; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
-  .chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.375rem 0.75rem; height: 32px; border-radius: 4px; font-size: 0.8125rem; font-weight: 500; border: 1px solid transparent; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  @media (max-width: 520px) { .flag { flex-basis: 200px; } }
-  .chip-mfg { background: #eaf3ff; color: #1e60d1; border-color: #b6d3ff; }
-  .chip-cots { background: #fff8e6; color: #8f5f00; border-color: #ffe199; }
-  .chip-neutral { background: #f3f4f6; color: #374151; border-color: #e5e7eb; }
-  .chip-status-pending { background: #fff8e6; color: #8f5f00; border-color: #ffe199; }
-  .chip-status-in-progress, .chip-status-cammed { background: #eaf3ff; color: #1e60d1; border-color: #b6d3ff; }
-  .chip-status-ordered { background: #eef7ff; color: #0f609b; border-color: #b6e0fe; }
-  .chip-status-delivered, .chip-status-complete, .chip-status-manufactured { background: #e8f6ef; color: #11642a; border-color: #a7e0c1; }
-  .quantity { text-align: center; font-weight: 600; color: #111827; }
-  .material { color: #4b5563; }
-  .kitting { color: #4b5563; }
-  .kitting-location { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--success); font-weight: 500; }
-  .no-kitting { color: #999; font-style: italic; }
-  .date { color: #6b7280; font-size: 0.85rem; }
-  .error-container { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; gap: 1rem; }
-  :root { --primary: #ffffff; --secondary: #6c757d; --accent: #FFD700; --background: #f8f9fa; --surface: #ffffff; --border: #e1e5e9; --text: #2c3e50; --success: #27ae60; --warning: #f39c12; --danger: #e74c3c; }
-  .bom-table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
-  .bom-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-  .bom-table th, .bom-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
-  .bom-table th { background: var(--background); font-weight: 600; color: var(--text); }
-  .bom-table .table-row,
-  .bom-table tbody tr.row,
-  .bom-table tbody tr.row.even,
-  .bom-table tbody tr.row.odd {
-    background: #fff;
-  }
-  .bom-table tr:hover { background: #f8f9fa; }
-  .bom-table tbody tr:last-child td {
-    border-bottom: none;
-  }
-  .part-description { font-size: 0.75rem; color: var(--secondary); margin-top: 0.25rem; }
-  .workflow-purchase { background: #fff8e1; color: #f57f17; border-color: #ffcc02; }
-  .no-data { color: var(--secondary); font-style: italic; }
-  .btn-yellow { background: #FFD700; color: #333; }
-  .btn-yellow:hover { background: #FFC107; }
-  .btn-outline-danger { background: #fff5f5; color: #e74c3c; border: 1px solid #e74c3c; }
-  .btn-outline-danger:hover { background: #ffe8e8; }
-  .add-btn { min-width: 80px; }
-  .type-dropdown { border: 1px solid var(--border); background: white; cursor: pointer; }
-  .type-cots { background: #fff8e1 !important; color: #f57f17 !important; border-color: #ffcc02 !important; }
-  .type-manufactured { background: #e1f5fe !important; color: #0277bd !important; border-color: #81d4fa !important; }
-  .bounding-box { font-family: monospace; font-size: 0.75rem; }
-  .no-stock { color: var(--secondary); font-style: italic; }
-  .workflow-dropdown { border: 1px solid var(--border); background: var(--background); color: var(--text); cursor: pointer; }
-  .workflow-dropdown.workflow-3d-print { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
-  .workflow-dropdown.workflow-laser-cut { background: #fff3e0; color: #ef6c00; border-color: #ffcc02; }
-  .workflow-dropdown.workflow-lathe { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
-  .workflow-dropdown.workflow-mill { background: #e8f5e8; color: #388e3c; border-color: #a5d6a7; }
-  .workflow-dropdown.workflow-router { background: #fce4ec; color: #c2185b; border-color: #f8bbd9; }
-  select { border: 1px solid var(--border); background: white; cursor: pointer; }
-  /* removed unused .chip-edit styles */
 
-  /* Version Modal Styles */
-  .version-modal {
-    width: min(650px, 92vw);
-    max-height: 90vh;
-    overflow-y: auto;
-  }
-  .version-timeline {
+  .status-header {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: #f8f9fa;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-  }
-  .version-item {
-    display: flex;
-    align-items: center;
     justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background: white;
-    border: 2px solid var(--border);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    align-items: center;
+    margin-bottom: var(--space-3);
   }
-  .version-item:hover {
-    border-color: #FFD700;
-    background: #fffef8;
-  }
-  .version-item.selected {
-    border-color: #FFD700;
-    background: #fff8e1;
-  }
-  .version-info {
-    flex: 1;
-  }
-  .version-name {
+
+  .status-title {
     font-weight: 600;
-    color: var(--text);
-    margin-bottom: 0.25rem;
-  }
-  .version-date {
-    font-size: 0.8rem;
+    font-size: var(--font-md);
     color: var(--secondary);
   }
-  .version-checkmark {
-    width: 24px;
-    height: 24px;
-    background: #FFD700;
-    border-radius: 50%;
-    display: flex;
+
+  .flag {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    color: #333;
+    gap: var(--gap-1);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    text-transform: uppercase;
   }
 
-  
+  .flag-pending {
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+  }
+
+  .flag-manufacturing {
+    background: var(--blue-soft);
+    color: var(--blue-base);
+  }
+
+  .flag-ready_to_assemble {
+    background: var(--green-soft);
+    color: var(--green-strong);
+  }
+
+  .flag-assembled {
+    background: var(--green-soft);
+    color: var(--green-strong);
+  }
+
+  .progress-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-3);
+  }
+
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+  }
+
+  .progress-label {
+    width: 120px;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .progress-count {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    min-width: 50px;
+    text-align: right;
+  }
+
+  /* Issue 10: Add gap/margin between parts header and table */
+  .bom-section {
+    margin-bottom: var(--space-6);
+  }
+
+  .parts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-4);
+    gap: var(--gap-4);
+    flex-wrap: wrap;
+  }
+
+  .parts-header h2 {
+    margin: 0;
+    font-size: var(--font-xl);
+    color: var(--secondary);
+  }
+
+  /* Issue 3: Fix tag heights to be consistent */
+  .tag, .chip {
+    height: var(--control-height-sm);
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* Issues 8 & 9: Style the dropdowns in the Full BOM table */
+  .type-dropdown,
+  .workflow-dropdown {
+    height: var(--control-height-sm);
+    padding: var(--control-padding-sm);
+    font-size: var(--control-font-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    color: var(--text);
+    cursor: pointer;
+    min-width: 120px;
+  }
+
+  .type-dropdown:focus,
+  .workflow-dropdown:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(241, 195, 49, 0.2);
+  }
+
+  /* Type dropdown colors */
+  .type-cots {
+    background: var(--green-soft);
+    color: var(--green-strong);
+    border-color: var(--green-base);
+  }
+
+  .type-manufactured {
+    background: var(--blue-soft);
+    color: var(--blue-base);
+    border-color: var(--blue-soft);
+  }
+
+  /* Workflow dropdown colors */
+  .workflow-purchase,
+  .workflow-kit {
+    background: var(--green-soft);
+    color: var(--green-strong);
+    border-color: var(--green-base);
+  }
+
+  .workflow-mill {
+    background: var(--blue-soft);
+    color: var(--blue-base);
+    border-color: var(--blue-soft);
+  }
+
+  .workflow-lathe {
+    background: var(--red-soft);
+    color: var(--red-base);
+    border-color: var(--red-base);
+  }
+
+  .workflow-3d-print {
+    background: var(--purple-soft);
+    color: var(--purple-strong);
+    border-color: var(--purple-soft);
+  }
+
+  .workflow-laser-cut {
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+    border-color: var(--brand-gold-base);
+  }
+
+  .workflow-router {
+    background: var(--green-soft);
+    color: var(--green-base);
+    border-color: var(--green-base);
+  }
+
+  /* Stock dropdown in material column */
+  .material select {
+    height: var(--control-height-sm);
+    padding: var(--control-padding-sm);
+    font-size: var(--control-font-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    color: var(--text);
+    cursor: pointer;
+    min-width: 140px;
+    width: 100%;
+  }
+
+  .material select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(241, 195, 49, 0.2);
+  }
+
+  .no-stock {
+    color: var(--text-muted);
+  }
+
+  /* Name cell styling */
+  .name-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+
+  .name-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .name {
+    font-weight: 500;
+    color: var(--secondary);
+  }
+
+  .part-number {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  /* Status tag styling */
+  .tag-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    text-transform: capitalize;
+    height: var(--control-height-sm);
+  }
+
+  .tag-status-pending {
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+  }
+
+  .tag-status-in-progress,
+  .tag-status-cammed {
+    background: var(--blue-soft);
+    color: var(--blue-base);
+  }
+
+  .tag-status-ordered {
+    background: var(--purple-soft);
+    color: var(--purple-strong);
+  }
+
+  .tag-status-delivered,
+  .tag-status-complete,
+  .tag-status-manufactured,
+  .tag-status-kitted {
+    background: var(--green-soft);
+    color: var(--green-strong);
+  }
+
+  .tag-status-needs_approval {
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+  }
+
+  /* Chip styling for Type and Workflow columns */
+  .chip-cots {
+    background: var(--green-soft);
+    color: var(--green-strong);
+    border-color: var(--green-base);
+  }
+
+  .chip-mfg {
+    background: var(--blue-soft);
+    color: var(--blue-base);
+    border-color: var(--blue-soft);
+  }
+
+  .chip-neutral {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border);
+    text-transform: capitalize;
+  }
+
+  /* Kitting column styling */
+  .kitting-location {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    color: var(--success);
+    font-weight: 500;
+  }
+
+  .no-kitting {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+  }
+
+  /* Header styling */
+  .header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    width: 100%;
+    gap: var(--gap-4);
+  }
+
+  .header-left {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-3);
+  }
+
+  .header-info h1 {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+    margin: 0;
+    font-size: var(--font-xl);
+  }
+
+  .build-hash {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+    margin: var(--space-1) 0 0 0;
+  }
+
+  .build-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-4);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+  }
+
+  /* Version modal styling */
+  .version-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-2);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .version-item:hover {
+    background: var(--surface-2);
+  }
+
+  .version-item.selected {
+    border-color: var(--accent);
+    background: var(--brand-gold-soft);
+  }
+
+  .version-name {
+    font-weight: 500;
+  }
+
+  .version-date {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+  }
+
+  .version-checkmark {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* Modal row for edit modal */
+  .modal-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-2);
+    margin-bottom: var(--space-3);
+  }
+
+  .modal-row label {
+    font-weight: 600;
+    color: var(--secondary);
+  }
+
+  /* Add button in Full BOM table */
+  .add-btn {
+    white-space: nowrap;
+  }
+
+  .btn-yellow {
+    --btn-bg: var(--accent);
+    --btn-color: var(--secondary);
+    --btn-border: var(--accent);
+    --btn-hover-bg: var(--brand-gold-base);
+    --btn-hover-color: var(--secondary);
+    --btn-hover-border: var(--brand-gold-base);
+  }
+
+  /* Responsive adjustments */
+  @media (max-width: 768px) {
+    .header-content {
+      flex-direction: column;
+    }
+
+    .parts-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .progress-label {
+      width: 80px;
+    }
+  }
 </style>

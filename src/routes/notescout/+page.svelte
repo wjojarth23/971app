@@ -257,5 +257,51 @@
 {/if}
 
 <style>
-  .empty { color:var(--secondary); padding:0.5rem }
+  /* Uses global .empty */
+  
+  /* Mobile Responsive Styles */
+  @media (max-width: 768px) {
+    .page-header.card {
+      flex-direction: column;
+      gap: var(--gap-3);
+    }
+    
+    .page-actions {
+      flex-direction: column;
+      width: 100%;
+    }
+    
+    .page-actions .form-group {
+      min-width: unset !important;
+      width: 100%;
+    }
+    
+    .grid.grid-2 {
+      grid-template-columns: 1fr;
+    }
+    
+    :global(.form-input[rows]),
+    textarea.form-input {
+      min-height: 150px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .page-header h2 {
+      font-size: 1.25rem;
+    }
+    
+    .page-actions {
+      gap: var(--gap-2);
+    }
+    
+    .page-actions .form-group div {
+      flex-direction: column;
+      gap: var(--gap-2) !important;
+    }
+    
+    .page-actions .form-group div .btn {
+      width: 100%;
+    }
+  }
 </style>

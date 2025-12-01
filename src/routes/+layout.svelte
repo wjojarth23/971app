@@ -5,7 +5,7 @@
   import { hasPermission } from '$lib/permissions.js';
   import notescoutConfig from '$lib/notescout.json';
   import navConfig from '$lib/navigation.json';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -16,7 +16,17 @@
   let profile = null;
   let lastProfile = null;
   let attendanceChecked = false;
+  let mobileMenuOpen = false;
   $: activeProfile = profile ?? lastProfile;
+
+  // Close mobile menu on route change
+  $: if ($page.url.pathname) {
+    mobileMenuOpen = false;
+  }
+
+  function toggleMobileMenu() {
+    mobileMenuOpen = !mobileMenuOpen;
+  }
 
   // Use the fetched profile (user_profiles) for role/permission checks
   function can(perm) {
@@ -62,6 +72,15 @@
   // Check if current route is active
   function isActive(path) {
     return $page.url.pathname === path;
+  }
+
+  // Check if any child route in a folder is active
+  function isFolderActive(folder) {
+    if (!folder?.children) return false;
+    return folder.children.some(child => {
+      const childRoute = routeForKey(child.key ?? inferKey(child));
+      return $page.url.pathname === childRoute;
+    });
   }
 
   // Map known tab keys to routes (extend as needed)
@@ -148,8 +167,17 @@
         <h1>971 Hub</h1>
       </div>
       
+      <!-- Mobile Menu Toggle -->
+      <button class="mobile-menu-toggle" on:click={toggleMobileMenu} aria-label="Toggle menu">
+        {#if mobileMenuOpen}
+          <X size={24} />
+        {:else}
+          <Menu size={24} />
+        {/if}
+      </button>
+      
       <!-- Desktop Navigation -->
-      <nav class="desktop-nav">
+      <nav class="desktop-nav" class:mobile-open={mobileMenuOpen}>
         <a href="/" class="nav-link" class:active={isActive('/') }>
           <Home size={18} />
           Home
@@ -159,14 +187,14 @@
           {#each customTabs as item}
             {#if item.type === 'folder'}
               <div class="nav-folder">
-                <button class="nav-link folder-trigger" aria-haspopup="true" aria-expanded="false">
+                <button class="nav-link folder-trigger" class:active={isFolderActive(item)} aria-haspopup="true" aria-expanded="false">
                   <span class="folder-label">{displayLabel(item)}</span>
                   <ChevronDown size={14} class="folder-caret" />
                 </button>
                 <div class="folder-menu">
                   {#each item.children ?? [] as child}
                     {#if child.key || child.label}
-                      <a href={routeForKey(child.key ?? inferKey(child))} class="nav-link" class:active={isActive(routeForKey(child.key ?? inferKey(child)))}>
+                      <a href={routeForKey(child.key ?? inferKey(child))} class="nav-link">
                         <svelte:component this={iconMap[child.key ?? inferKey(child)] ?? Home} size={18} />
                         {displayLabel(child)}
                       </a>
@@ -229,9 +257,15 @@
             Admin
           </a>
         {/if}
+        
+        <!-- Profile link in mobile menu -->
+        <a href="/profile" class="nav-link mobile-profile-link" class:active={isActive('/profile')}>
+          <User size={18} />
+          Profile
+        </a>
       </nav>
 
-      <!-- User Menu - Profile link -->
+      <!-- User Menu - Profile link (desktop only) -->
       <div class="user-menu">
           <a href="/profile" class="profile-link">
           <User size={18} />
@@ -240,6 +274,12 @@
       </div>
     </div>
   </header>
+  
+{/if}
+
+<!-- Mobile menu overlay - outside conditional to avoid nesting issues -->
+{#if mobileMenuOpen}
+  <button class="mobile-menu-overlay" on:click={() => mobileMenuOpen = false} aria-label="Close menu"></button>
 {/if}
 
 <main class="container page-container">
@@ -253,145 +293,363 @@
     background-color: var(--background);
   }
 
-  :global(body) {
-    margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--background);
-    color: var(--text);
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-  }
-
-
   /* Navigation Header Styles */
   .nav-header {
     background: var(--primary);
     border-bottom: 1px solid var(--border);
     width: 100%;
-    margin-bottom: 2rem;
+    margin-bottom: var(--space-7);
+    position: sticky;
+    top: 0;
+    z-index: 100;
   }
   .nav-container {
     display: flex;
     align-items: stretch;
     justify-content: space-between;
-    padding: 0 2rem; /* remove top padding so active background touches top */
+    padding: 0 var(--space-7);
     max-width: 1400px;
     margin: 0 auto;
-    min-height: 60px;
+    min-height: 64px;
+  }
+
+  .nav-container > .brand,
+  .nav-container > .desktop-nav,
+  .nav-container > .user-menu {
+    align-self: stretch;
   }
 
   .brand {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--gap-3);
     color: var(--secondary);
     flex-shrink: 0;
   }
 
   .brand h1 {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: var(--font-xl);
     font-weight: 700;
     white-space: nowrap;
+  }
+
+  /* Mobile Menu Toggle */
+  .mobile-menu-toggle {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--secondary);
+    cursor: pointer;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+
+  .mobile-menu-toggle:hover {
+    background: var(--background);
   }
 
   .desktop-nav {
     display: flex;
     align-items: stretch;
-    gap: 1rem;
+    gap: var(--gap-4);
     flex: 1;
     justify-content: center;
-    margin: 0 2rem;
+    margin: 0 var(--space-7);
   }
 
   .nav-link {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1.25rem;
+    gap: var(--gap-2);
+    padding: var(--space-3) var(--space-6);
     text-decoration: none;
     color: var(--secondary);
     font-weight: 500;
-    font-size: 0.95rem;
-    border-bottom: 3px solid transparent; /* legacy underline – kept neutral */
+    font-size: var(--font-xs);
+    border-bottom: none;
     height: 100%;
     white-space: nowrap;
+    position: relative;
   }
 
-  /* No hover state per request */
   .nav-link:hover {
     color: var(--secondary);
     background: transparent;
-    border-color: transparent;
+  }
+
+  .nav-link:focus-visible {
+    outline: 2px solid var(--accent-strong, var(--accent));
+    outline-offset: 2px;
   }
 
   .nav-link.active {
     color: var(--secondary);
-    background: var(--accent); /* full-height yellow box */
-    border-bottom-color: transparent; /* remove underline */
-    border-radius: 0; /* square edges */
+    background: var(--accent-subtle);
+    border-radius: 0;
   }
+
+  .nav-link::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 4px;
+    background: transparent;
+    transition: background 0.2s ease;
+  }
+
+  .nav-link.active::after,
+  .nav-link:focus-visible::after {
+    background: var(--accent, var(--accent));
+  }
+
   .user-menu {
     display: flex;
     align-items: center;
     flex-shrink: 0;
   }
-  .profile-link { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--secondary); text-decoration: none; padding: 0.25rem 0.5rem; }
-  .profile-name { margin-left: 0.25rem; font-weight: 600; }
+
+  .profile-link { 
+    display: inline-flex; 
+    align-items: center; 
+    gap: var(--gap-2); 
+    color: var(--secondary); 
+    text-decoration: none; 
+    padding: var(--space-1) var(--space-2); 
+  }
+
+  .profile-name { 
+    margin-left: var(--space-1); 
+    font-weight: 600; 
+  }
+
+  /* Mobile profile link in nav - hidden by default */
+  .mobile-profile-link {
+    display: none;
+  }
 
   /* Folder dropdown styles */
   .nav-folder { position: relative; }
-  .folder-trigger { background: transparent; border: none; cursor: pointer; color: var(--secondary); padding: 0.75rem 1.25rem; font-weight: 500; }
-  /* Folder-specific tweaks: bold label, caret */
-  .folder-trigger { display: inline-flex; align-items: center; gap: 0.35rem; }
-  :global(.folder-caret) { font-size: 0.85rem; opacity: 0.85; margin-left: 0.15rem; }
-  /* Make folder label text match nav-link text */
-  .folder-label { color: var(--secondary); font-weight: 500; font-size: 0.95rem; }
-  /* Ensure dropdown child links use the same weight/size */
-  .folder-menu .nav-link { font-weight: 500; font-size: 0.95rem; }
-  /* Folder hover: square light grey (no rounding or yellow) */
-  .nav-folder:hover > .folder-trigger { background: var(--background); color: var(--text); border-radius: 0; border: 1px solid var(--border); }
+  .folder-trigger { 
+    background: transparent; 
+    border: none; 
+    cursor: pointer; 
+    color: var(--secondary); 
+    padding: var(--space-3) var(--space-6); 
+    font-weight: 500; 
+    display: inline-flex; 
+    align-items: center; 
+    gap: var(--gap-1); 
+  }
 
-  /* Dropdown menu: styled as a subtle card; child items keep accent hover */
-  .folder-menu { display: none; position: absolute; top: 100%; left: 0; background: var(--card); border: 1px solid var(--border); min-width: 220px; z-index: 40; padding: 0.35rem; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
+  :global(.folder-caret) { 
+    font-size: var(--font-xs); 
+    opacity: 0.85; 
+    margin-left: var(--space-1); 
+  }
+
+  .folder-label { 
+      color: var(--secondary); 
+      font-weight: 600; /* Match nav-link weight for better visibility */
+      font-size: var(--font-xs); 
+    }
+
+  .folder-menu .nav-link { 
+    font-weight: 500; 
+    font-size: var(--font-xs); 
+  }
+
+  .folder-menu { 
+    display: none; 
+    position: absolute; 
+    top: 100%; 
+    left: 0; 
+    background: var(--card); 
+    border: 1px solid var(--border); 
+    min-width: 220px; 
+    z-index: 40; 
+    padding: var(--space-1); 
+    border-radius: var(--radius-lg); 
+    box-shadow: 0 8px 20px rgba(0,0,0,0.06); 
+  }
+
   .nav-folder:hover .folder-menu { display: block; }
-  .folder-menu .nav-link { display: block; padding: 0.5rem 0.9rem; border-radius: 4px; color: var(--text); }
-  .folder-menu .nav-link:hover { background: var(--accent); color: var(--secondary); }
+  .folder-menu .nav-link { 
+    display: block; 
+    padding: var(--space-2) var(--space-3); 
+    border-radius: var(--radius-sm); 
+    color: var(--text); 
+  }
 
-  /* Footer styles */
+  /* Mobile menu overlay */
+  .mobile-menu-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 90;
+    border: none;
+    cursor: pointer;
+  }
+
   :global(.site-footer) {
     width: 100%;
-    background: var(--primary); /* match site off-white */
-    border-top: 1px solid var(--border); /* only top border */
+    background: var(--primary);
+    border-top: 1px solid var(--border);
     color: var(--text);
-    padding: 2.5rem 0 1.25rem; /* larger top spacing so footer isn't immediately visible */
+    padding: var(--space-7) 0 var(--space-6);
   }
 
-  :global(.footer-container) {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 2rem;
-    display: flex;
-    gap: 1rem;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 0.9rem;
+  :global(.footer-container) { 
+    max-width: 1400px; 
+    margin: 0 auto; 
+    padding: 0 var(--space-7); 
+    display: flex; 
+    gap: var(--gap-4); 
+    align-items: center; 
+    justify-content: space-between; 
+    font-size: var(--font-xs); 
   }
 
-  :global(.footer-left), :global(.footer-center), :global(.footer-right) {
-    white-space: nowrap;
-    opacity: 0.95;
+  :global(.footer-left), :global(.footer-center), :global(.footer-right) { 
+    white-space: nowrap; 
+    opacity: 0.95; 
   }
 
-  /* Ensure main content area grows so footer is pushed below the fold for short pages */
-  main.container.page-container {
-    flex: 1 0 auto;
-    min-height: calc(100vh - 220px); /* header+footer buffer so footer isn't visible without scrolling on short pages */
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: 0 1rem;
+  main.container.page-container { 
+    flex: 1 0 auto; 
+    min-height: calc(100vh - 220px); 
+    max-width: 1440px; 
+    margin: 0 auto; 
+    padding: 0 var(--space-4); 
   }
 
-  /* Button styles use global tokens from app.css */
+  /* Mobile Responsive Styles */
+  @media (max-width: 900px) {
+    .nav-container {
+      padding: 0 var(--space-4);
+    }
+    
+    .desktop-nav {
+      margin: 0 var(--space-4);
+      gap: var(--gap-2);
+    }
+    
+    .nav-link {
+      padding: var(--space-3) var(--space-3);
+      font-size: 0.7rem;
+    }
+    
+    .folder-trigger {
+      padding: var(--space-3) var(--space-3);
+    }
+    
+    .profile-name {
+      display: none;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .nav-header {
+      margin-bottom: var(--space-4);
+    }
+    
+    .nav-container {
+      min-height: 56px;
+    }
+    
+    .brand h1 {
+      font-size: var(--font-md);
+    }
+    
+    .mobile-menu-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .user-menu {
+      display: none;
+    }
+    
+    .desktop-nav {
+      display: none;
+      position: fixed;
+      top: 56px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--primary);
+      flex-direction: column;
+      align-items: stretch;
+      padding: var(--space-4);
+      gap: var(--gap-2);
+      overflow-y: auto;
+      z-index: 95;
+      margin: 0;
+    }
+    
+    .desktop-nav.mobile-open {
+      display: flex;
+    }
+    
+    .nav-link {
+      padding: var(--space-4);
+      border-radius: var(--radius-sm);
+      border-bottom: none;
+      font-size: var(--font-base);
+      justify-content: flex-start;
+    }
+    
+    .nav-link.active {
+      border-radius: var(--radius-sm);
+    }
+    
+    .mobile-profile-link {
+      display: flex;
+      margin-top: auto;
+      padding-top: var(--space-4);
+      border-top: 1px solid var(--border);
+    }
+    
+    .nav-folder {
+      width: 100%;
+    }
+    
+    .folder-trigger {
+      width: 100%;
+      padding: var(--space-4);
+      justify-content: flex-start;
+      font-size: var(--font-base);
+    }
+    
+    .folder-menu {
+      position: static;
+      display: block;
+      border: none;
+      box-shadow: none;
+      padding-left: var(--space-6);
+      background: transparent;
+    }
+    
+    .folder-menu .nav-link {
+      padding: var(--space-3) var(--space-4);
+    }
+    
+    main.container.page-container {
+      padding: 0 var(--space-3);
+      min-height: calc(100vh - 160px);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .brand h1 {
+      font-size: var(--font-base);
+    }
+    
+    main.container.page-container {
+      padding: 0 var(--space-2);
+    }
+  }
 </style>

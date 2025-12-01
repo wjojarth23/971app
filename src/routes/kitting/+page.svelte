@@ -55,7 +55,30 @@
   {#if errorMsg}
     <div class="card"><p class="text-error">Error: {errorMsg}</p></div>
   {/if}
-  <div class="table-container">
+  
+  <!-- Mobile Card View -->
+  <div class="mobile-kitting-cards">
+    {#if (items || []).length === 0}
+      <div class="card"><p class="text-muted">No items to kit.</p></div>
+    {:else}
+      {#each items as it}
+        <div class="kitting-card">
+          <div class="kitting-card-header">
+            <strong class="kitting-card-name">{it.name}</strong>
+            <span class="kitting-card-qty">x{it.quantity || 1}</span>
+          </div>
+          <div class="kitting-card-meta">
+            <span class="kitting-card-project">{it.project_id}</span>
+            <span class="kitting-card-requester">by {it.requester}</span>
+          </div>
+          <button class="btn btn-primary" on:click={() => markKitted(it.id)}>Mark as Kitted</button>
+        </div>
+      {/each}
+    {/if}
+  </div>
+  
+  <!-- Desktop Table View -->
+  <div class="table-container desktop-kitting-table">
     <table class="table">
       <thead>
         <tr>
@@ -88,20 +111,68 @@
 {/if}
 
 <style>
-  .text-error { color: #b91c1c; }
-  .strong { font-weight: 600; }
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    font-size: 0.9rem;
+  /* Mobile Kitting Cards - Hidden on desktop */
+  .mobile-kitting-cards {
+    display: none;
+  }
+  
+  .kitting-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+  
+  .kitting-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--space-2);
+  }
+  
+  .kitting-card-name {
+    font-size: 1rem;
+    color: var(--secondary);
+    flex: 1;
+    word-break: break-word;
+  }
+  
+  .kitting-card-qty {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text);
+    background: var(--background);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+  
+  .kitting-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-3);
+    margin-bottom: var(--space-4);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+  }
+  
+  .kitting-card-project {
+    font-family: var(--font-mono);
+  }
+  
+  .kitting-card .btn {
+    width: 100%;
+    justify-content: center;
   }
 
-  .page-header {
-    display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.75rem;
+  @media (max-width: 768px) {
+    /* Hide desktop table, show mobile cards */
+    .desktop-kitting-table {
+      display: none;
+    }
+    
+    .mobile-kitting-cards {
+      display: block;
+    }
   }
-  .page-header h1 { margin: 0; }
-
-  .table-container { overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
-  .table { width: 100%; border-collapse: collapse; }
-  .table th, .table td { padding: 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
-  .table thead th { background: var(--background); }
 </style>

@@ -384,7 +384,7 @@
   </div>
 {:else}
   <!-- Authentication Forms -->
-  <div class="auth-container">
+  <div class="auth-container" style="min-height:60vh">
     <div class="auth-card">      <div class="auth-header">
         <div class="brand">
           <Briefcase size={32} />
@@ -523,63 +523,36 @@
 {/if}
 
 <style>
-  .loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 50vh;
-    gap: 1rem;
-  }
-
-  .loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid var(--border);
-    border-top: 4px solid var(--accent);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  .loading-spinner.small {
-    width: 20px;
-    height: 20px;
-    border-width: 2px;
-  }
-
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
   .auth-container {
     max-width: 500px;
-    margin: 4rem auto;
+    margin: var(--space-8) auto;
     display: flex;
     justify-content: center;
     align-items: center;
-    min-height: 60vh;
+    padding: 0 var(--space-4);
   }
 
   .auth-card {
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 2rem;
+    border-radius: var(--radius-lg);
+    padding: var(--space-7);
     box-shadow: var(--shadow-sm);
+    width: 100%;
   }
 
   .auth-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: var(--space-7);
   }
 
   .brand {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.75rem;
+    gap: var(--gap-3);
     color: var(--accent);
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-2);
   }
 
   .brand h1 {
@@ -590,28 +563,28 @@
   }
 
   .subtitle {
-    color: #666;
+    color: var(--neutral-500);
     margin: 0;
-    font-size: 0.95rem;
+    font-size: var(--font-xs);
   }
 
   .form-tabs {
     display: flex;
-    margin-bottom: 1.5rem;
+    margin-bottom: var(--space-6);
     border-bottom: 1px solid var(--border);
   }
 
   .tab-btn {
     flex: 1;
-    padding: 0.75rem 1rem;
+    padding: var(--space-3) var(--space-4);
     border: none;
     background: none;
-    color: #666;
+    color: var(--neutral-500);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
+    gap: var(--gap-2);
     font-weight: 500;
     border-bottom: 2px solid transparent;
     transition: all 0.2s;
@@ -627,33 +600,33 @@
   }
 
   .form-group {
-    margin-bottom: 1.25rem;
+    margin-bottom: var(--space-6);
   }
 
   .form-label {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    gap: var(--gap-2);
+    margin-bottom: var(--space-2);
     font-weight: 600;
     color: var(--secondary);
   }
 
   .form-help {
     display: block;
-    margin-top: 0.25rem;
-    font-size: 0.85rem;
-    color: #666;
+    margin-top: var(--space-1);
+    font-size: var(--font-xs);
+    color: var(--neutral-500);
   }
 
   .alert {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
+    gap: var(--gap-2);
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
-    margin-bottom: 1rem;
-    font-size: 0.9rem;
+    margin-bottom: var(--space-4);
+    font-size: var(--font-xs);
   }
 
   .alert-error {
@@ -668,38 +641,24 @@
     border: 1px solid rgba(40, 167, 69, 0.2);
   }
 
-  .btn-primary {
-    background: var(--accent);
-    color: var(--secondary);
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #d4a829;
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
   .auth-submit {
     width: 100%;
-    padding: 0.875rem;
-    font-size: 1rem;
+    padding: var(--space-3);
+    font-size: var(--font-base);
     font-weight: 600;
-    margin-bottom: 1rem;
+    margin-bottom: var(--space-4);
   }
 
   .auth-footer {
     text-align: center;
-    padding-top: 1rem;
+    padding-top: var(--space-4);
     border-top: 1px solid var(--border);
   }
 
   .auth-footer p {
     margin: 0;
-    color: #666;
-    font-size: 0.9rem;
+    color: var(--neutral-500);
+    font-size: var(--font-xs);
   }
 
   .link-btn {
@@ -710,64 +669,49 @@
     text-decoration: underline;
     font-size: inherit;
     padding: 0;
-    margin-left: 0.25rem;
+    margin-left: var(--space-1);
   }
 
-  .link-btn:hover {    color: #d4a829;
+  .link-btn:hover {
+    color: var(--brand-gold-base);
   }
 
-  @media (max-width: 768px) {
-    .auth-container {
-      margin: 2rem 1rem;
-    }    .auth-card {
-      padding: 1.5rem;
-    }
-
-    .brand h1 {
-      font-size: 1.5rem;
-    }
-  }
-
-  /* Dashboard Styles */
   .dashboard-container {
     max-width: 1200px;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    margin: var(--space-7) auto;
+    padding: 0 var(--space-4);
   }
-
 
   .user-welcome {
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 2rem;
-    margin-bottom: 2rem;
+    border-radius: var(--radius-lg);
+    padding: var(--space-7);
+    margin-bottom: var(--space-7);
   }
 
   .user-welcome h2 {
-    margin: 0 0 1.5rem 0;
+    margin: 0 0 var(--space-6) 0;
     color: var(--secondary);
-    font-size: 1.5rem;
+    font-size: var(--font-xl);
   }
-
-  /* streamlined dashboard styles - user-specific cards below */
 
   .pending-notice {
     display: flex;
     align-items: flex-start;
-    gap: 1rem;
-    background: #fef3c7;
-    border: 1px solid #f59e0b;
-    border-radius: var(--radius-md);
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-    color: #92400e;
+    gap: var(--gap-4);
+    background: var(--brand-gold-soft);
+    border: 1px solid var(--orange-soft);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    margin-bottom: var(--space-7);
+    color: var(--brand-gold-strong);
   }
 
   .pending-notice h3 {
-    margin: 0 0 0.5rem 0;
-    color: #92400e;
-    font-size: 1.1rem;
+    margin: 0 0 var(--space-2) 0;
+    color: var(--brand-gold-strong);
+    font-size: var(--font-md);
   }
 
   .pending-notice p {
@@ -776,27 +720,27 @@
   }
 
   .dashboard-actions {
-    margin-top: 2rem;
+    margin-top: var(--space-7);
   }
 
   .dashboard-actions h3 {
-    margin: 0 0 1rem 0;
+    margin: 0 0 var(--space-4) 0;
     color: var(--secondary);
-    font-size: 1.25rem;
+    font-size: var(--font-xl);
   }
 
   .action-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1.5rem;
+    gap: var(--gap-6);
   }
 
   .action-card {
     display: block;
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
     text-decoration: none;
     color: inherit;
     transition: all 0.2s ease;
@@ -810,69 +754,103 @@
   }
 
   .action-card h4 {
-    margin: 0.5rem 0;
+    margin: var(--space-2) 0;
     color: var(--secondary);
-    font-size: 1.1rem;
+    font-size: var(--font-md);
   }
 
   .action-card p {
     margin: 0;
-    color: #666;
-    font-size: 0.9rem;
+    color: var(--neutral-500);
+    font-size: var(--font-xs);
     line-height: 1.4;
   }
 
-  /* Card grid for subsystems and builds */
   .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-top: 0.5rem;
+    gap: var(--gap-4);
+    margin-top: var(--space-2);
   }
 
   .subsystem-card,
   .build-card {
     display: block;
-    padding: 1rem;
-    background: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
     text-decoration: none;
     color: inherit;
-    box-shadow: var(--shadow-sm);
-    transition: transform 0.12s ease, box-shadow 0.12s ease;
   }
 
   .subsystem-card:hover,
   .build-card:hover {
-    transform: translateY(-4px);
     box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-    border-color: var(--accent);
   }
 
   .subsystem-card h5,
-  .build-card h5 { margin: 0 0 0.25rem 0; color: var(--secondary); }
+  .build-card h5 { margin: 0 0 var(--space-1) 0; color: var(--secondary); }
   .subsystem-card p,
-  .build-card p { margin: 0; color: #666; font-size: 0.9rem; }
+  .build-card p { margin: 0; color: var(--neutral-500); font-size: var(--font-xs); }
 
+  /* Mobile Responsive Styles */
   @media (max-width: 768px) {
-    .dashboard-container {
-      margin: 1rem;
-      padding: 0;
+    .auth-container { 
+      margin: var(--space-4) auto; 
+      padding: 0 var(--space-3);
     }
-
-
-    .user-welcome {
-      padding: 1.5rem;
+    .auth-card { padding: var(--space-6); }
+    .brand h1 { font-size: var(--font-xl); }
+    .dashboard-container { margin: var(--space-4) 0; padding: 0 var(--space-3); }
+    .user-welcome { padding: var(--space-6); }
+    .user-welcome h2 { font-size: var(--font-md); margin-bottom: var(--space-3); }
+    .action-grid { grid-template-columns: 1fr; gap: var(--gap-4); }
+    .action-card { padding: var(--space-4); }
+    .pending-notice {
+      flex-direction: column;
+      gap: var(--gap-3);
+      padding: var(--space-4);
     }
-
-  /* responsive adjustments kept for action grid and user-welcome */
-
-    .action-grid {
+    .pending-notice h3 {
+      font-size: var(--font-base);
+    }
+    .card-grid {
       grid-template-columns: 1fr;
-      gap: 1rem;
-    }    .action-card {
-      padding: 1rem;
+    }
+    .table-container {
+      overflow-x: auto;
+      margin: 0 -var(--space-3);
+      padding: 0 var(--space-3);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .auth-container { margin: var(--space-2) auto; }
+    .auth-card { 
+      padding: var(--space-4); 
+      border-radius: var(--radius-sm);
+    }
+    .brand h1 { font-size: var(--font-md); }
+    .form-tabs {
+      flex-direction: column;
+      border-bottom: none;
+      gap: var(--space-2);
+    }
+    .tab-btn {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      border-bottom-width: 1px;
+    }
+    .tab-btn.active {
+      border-color: var(--accent);
+      background: var(--brand-gold-soft);
+    }
+    .user-welcome { 
+      padding: var(--space-4); 
+      margin-bottom: var(--space-4);
+    }
+    .dashboard-actions h3 {
+      font-size: var(--font-md);
+    }
+    .user-lists h4 {
+      font-size: var(--font-base);
     }
   }
 </style>
