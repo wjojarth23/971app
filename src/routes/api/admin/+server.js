@@ -1,7 +1,15 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
-import { PERMISSIONS, getRoleDerivedPermissions, normalizePermissions } from '$lib/permissions.js';
+import {
+  PERMISSIONS,
+  getRoleDerivedPermissions,
+  normalizePermissions,
+  hasPermission,
+  GENERAL_ROLES,
+  PURCHASING_ROLES
+} from '$lib/permissions.js';
+import { getSupabase } from '$lib/server/971bot.js';
 
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
@@ -15,8 +23,29 @@ export async function GET({ url, request }) {
   const action = url.searchParams.get('action');
 
   if (action === 'list-users') {
-    const supa = getClientFromRequest(request);
-    const { data, error } = await supa
+    // First, verify the caller has admin access using their auth token
+    const userSupa = getClientFromRequest(request);
+    const { data: { user: authUser } } = await userSupa.auth.getUser();
+
+    if (!authUser) {
+      return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Fetch caller's profile to check permissions
+    const { data: callerProfile } = await userSupa
+      .from('user_profiles')
+      .select('id, role, permissions, general_role, purchasing_role')
+      .eq('id', authUser.id)
+      .single();
+
+    // Check if caller has VIEW_ADMIN_PANEL permission (via hasPermission which checks roles too)
+    if (!callerProfile || !hasPermission(callerProfile, 'VIEW_ADMIN_PANEL')) {
+      return json({ error: 'Not authorized to view admin panel' }, { status: 403 });
+    }
+
+    // Use service role client to bypass RLS and get ALL users
+    const serviceSupa = getSupabase();
+    const { data, error } = await serviceSupa
       .from('user_profiles')
       .select('id, email, full_name, role, permissions, banned, general_role, purchasing_role, team_role, frc_team')
       .order('full_name', { ascending: true });
@@ -49,8 +78,8 @@ export async function POST({ request }) {
     const actorPerms = Array.isArray(actor?.permissions)
       ? actor.permissions.map(String)
       : actor?.permissions
-      ? [String(actor.permissions)]
-      : [];
+        ? [String(actor.permissions)]
+        : [];
 
     const isActorAdmin = actor?.role === 'admin';
 
@@ -95,8 +124,8 @@ export async function POST({ request }) {
       const currentPerms = Array.isArray(target?.permissions)
         ? target.permissions.map(String)
         : target?.permissions
-        ? [String(target.permissions)]
-        : [];
+          ? [String(target.permissions)]
+          : [];
 
       // Normalize and ensure only known permissions
       const normalized = currentPerms.filter((p) => PERMISSIONS.includes(p));
@@ -124,10 +153,19 @@ export async function POST({ request }) {
       if (targetErr) return json({ error: targetErr.message }, { status: 500 });
 
       const existingPerms = normalizePermissions(targetRow.permissions);
-      const prevRolePerms = getRoleDerivedPermissions({ general_role: targetRow.general_role, purchasing_role: targetRow.purchasing_role });
+      const prevRolePerms = getRoleDerivedPermissions({
+        general_role: targetRow.general_role,
+        purchasing_role: targetRow.purchasing_role
+      });
       const manualExtras = existingPerms.filter((perm) => !prevRolePerms.has(perm));
 
-      const nextRolePerms = getRoleDerivedPermissions({ general_role, purchasing_role });
+      const nextGeneralRole = general_role ?? targetRow.general_role ?? GENERAL_ROLES.NONE;
+      const nextPurchasingRole = purchasing_role ?? targetRow.purchasing_role ?? PURCHASING_ROLES.BASIC;
+
+      const nextRolePerms = getRoleDerivedPermissions({
+        general_role: nextGeneralRole,
+        purchasing_role: nextPurchasingRole
+      });
       let merged = Array.from(new Set([...nextRolePerms, ...manualExtras])).filter((perm) => PERMISSIONS.includes(perm));
 
       if (!merged.includes('VIEW_ADMIN_PANEL')) {

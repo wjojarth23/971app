@@ -32,7 +32,7 @@ export function getSupabase() {
   const SUPABASE_URL = env.SUPABASE_URL || publicEnv.PUBLIC_SUPABASE_URL;
   // The bot MUST use service_role key to bypass RLS and query all user_profiles for approvers
   const SUPABASE_SERVICE_KEY = env.SUPABASE_SERVICE_KEY;
-  
+
   if (!SUPABASE_URL) {
     throw new Error('Missing SUPABASE_URL in environment');
   }
@@ -101,20 +101,29 @@ function formatPriceLine(perUnitPrice, quantity = 1) {
 export async function listApproversFromDb() {
   const supa = getSupabase();
   try {
-    console.log('Querying user_profiles for approvers with APPROVE_PURCHASES permission...');
-    const { data, error } = await supa.from('user_profiles').select('id, email, full_name, permissions');
-    
+    console.log('Querying user_profiles for approvers...');
+    const { data, error } = await supa.from('user_profiles').select('id, email, full_name, permissions, purchasing_role');
+
     if (error) {
       console.error('Supabase query error:', error);
       throw error;
     }
-    
+
     const users = data || [];
     console.log(`Found ${users.length} total users in user_profiles`);
-    
-    const approvers = users.filter((u) => Array.isArray(u.permissions) && u.permissions.includes('APPROVE_PURCHASES'));
-    console.log(`Found ${approvers.length} users with APPROVE_PURCHASES permission:`, approvers.map(a => a.email));
-    
+
+    // Include users who have APPROVE_PURCHASES permission via:
+    // 1. Explicit permissions array, OR
+    // 2. purchasing_role = 'approver' or 'lead' (role-derived permissions)
+    const approvers = users.filter((u) => {
+      // Check explicit permissions array
+      const hasExplicitPerm = Array.isArray(u.permissions) && u.permissions.includes('APPROVE_PURCHASES');
+      // Check purchasing_role (approver and lead both grant APPROVE_PURCHASES)
+      const hasRolePerm = u.purchasing_role === 'approver' || u.purchasing_role === 'lead';
+      return hasExplicitPerm || hasRolePerm;
+    });
+    console.log(`Found ${approvers.length} approvers (explicit perm or purchasing_role):`, approvers.map(a => a.email));
+
     return approvers;
   } catch (e) {
     console.error('Error fetching approvers from Supabase:', e);
@@ -137,21 +146,21 @@ export async function slackUserIdForEmail(email) {
 
 export async function syncApprovers(force = false) {
   if (!force && Date.now() / 1000 - lastApproverSync < APPROVER_SYNC_TTL && approverSlackUserIds.length && approverDmChannelId) return;
-  
+
   console.log('Syncing approvers from database...');
   const approvers = await listApproversFromDb();
   let emails = approvers.map((a) => a.email).filter(Boolean);
-  
+
   if (!emails.length && FALLBACK_APPROVER_EMAILS.length) {
     console.log('No approvers found in DB, using fallback emails:', FALLBACK_APPROVER_EMAILS);
     emails = FALLBACK_APPROVER_EMAILS;
   }
-  
+
   if (!emails.length) {
     console.warn('No approver emails configured. Set FALLBACK_APPROVER_EMAILS or add users with APPROVE_PURCHASES permission.');
     return;
   }
-  
+
   const userIds = [];
   for (const email of emails) {
     const uid = await slackUserIdForEmail(email);
@@ -162,20 +171,20 @@ export async function syncApprovers(force = false) {
       console.warn(`Could not find Slack user ID for ${email}`);
     }
   }
-  
+
   approverSlackUserIds = Array.from(new Set(userIds)).sort();
   lastApproverSync = Date.now() / 1000;
-  
+
   if (!approverSlackUserIds.length) {
     console.warn('No Slack user IDs found for approvers. Check that approver emails match Slack workspace users.');
     return;
   }
-  
+
   console.log(`Found ${approverSlackUserIds.length} approver(s):`, approverSlackUserIds);
-  
+
   try {
     const client = getSlackClient();
-    
+
     // For a single approver, open a DM. For multiple, open a multi-party DM (MPIM).
     if (approverSlackUserIds.length === 1) {
       console.log('Opening 1-on-1 DM with single approver...');
@@ -190,7 +199,7 @@ export async function syncApprovers(force = false) {
       // For multiple users, we need to open an MPIM (multi-party instant message).
       // The conversations.open API with multiple users creates an MPIM.
       console.log('Opening MPIM with multiple approvers...');
-      const conv = await client.conversations.open({ 
+      const conv = await client.conversations.open({
         users: approverSlackUserIds.join(','),
         return_im: false // Ensure we get a proper MPIM
       });
@@ -212,11 +221,11 @@ export async function ensureApproverDmChannel() {
     console.log('No approver DM channel cached, syncing approvers...');
     await syncApprovers(true);
   }
-  
+
   if (!approverDmChannelId) {
     console.error('Failed to establish approver DM channel after sync');
   }
-  
+
   return approverDmChannelId;
 }
 
@@ -279,20 +288,20 @@ export async function postPurchaseRequestMessage(requester, itemName, projectId,
     const client = getSlackClient();
     console.log('Posting purchase message to channel:', channel);
     const resp = await client.chat.postMessage({ channel, text });
-    
+
     if (!resp.ok) {
       console.error('Slack API returned ok=false:', resp);
       return false;
     }
-    
+
     // Log message and response for debugging
-    console.log('Posted purchase message to Slack successfully', { 
-      channel, 
-      ts: resp?.ts, 
+    console.log('Posted purchase message to Slack successfully', {
+      channel,
+      ts: resp?.ts,
       purchaseId,
       textPreview: text.substring(0, 100)
     });
-    
+
     // If we posted successfully and have a purchaseId, record the mapping in memory
     if (resp && resp.ok && resp.ts && purchaseId) {
       try {

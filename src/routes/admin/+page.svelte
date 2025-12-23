@@ -19,6 +19,7 @@
     deleteAttendanceSchedule,
     getCurrentNetworkFingerprint
   } from '$lib/attendance.js';
+  import BudgetsTab from './BudgetsTab.svelte';
   const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
 
   // Tab management
@@ -172,7 +173,7 @@
     return `--role-bg:${safeTheme.bg}; --role-border:${safeTheme.border}; --role-text:${safeTheme.text};`;
   }
 
-  const isUserApproved = (user) => user?.permissions?.includes('CAN_SEE_ROUTES');
+  const isUserApproved = (user) => hasPermission(user, 'CAN_SEE_ROUTES');
 
   function resetUserFilters() {
     userSearchQuery = '';
@@ -777,7 +778,7 @@
       if (!window.__notifiedUsersForApproval) {
         window.__notifiedUsersForApproval = new Set();
       }
-      users.filter(u => !u.permissions.includes('CAN_SEE_ROUTES')).forEach(u => {
+      users.filter((u) => !isUserApproved(u)).forEach((u) => {
         if (!window.__notifiedUsersForApproval.has(u.id)) {
           window.__notifiedUsersForApproval.add(u.id);
           notifyUserNeedsApproval(u);
@@ -1190,25 +1191,10 @@
     }
   }
 
-  $: {
-    // Sync user list with permissions changes
-    if (users.length > 0 && users[0].permissions) {
-      const allPermissions = new Set();
-      users.forEach(u => {
-        if (Array.isArray(u.permissions)) {
-          u.permissions.forEach(p => allPermissions.add(p));
-        }
-      });
-      // Add default permissions for new users
-      if (!allPermissions.has('CAN_SEE_ROUTES')) {
-        users.forEach(u => {
-          if (!u.permissions.includes('CAN_SEE_ROUTES')) {
-            u.permissions.push('CAN_SEE_ROUTES');
-          }
-        });
-      }
-    }
-  }
+  // Note: User approval is checked via hasPermission() which considers
+  // both explicit permissions array AND role-derived permissions.
+  // Users with general_role 'none' are not approved until an admin
+  // assigns them a role or explicitly grants CAN_SEE_ROUTES.
 </script>
 
 <svelte:head>
@@ -1249,6 +1235,11 @@
     {#if hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
       <button type="button" class:active={activeTab === 'attendance'} on:click={() => setActiveTab('attendance')}>
         Attendance
+      </button>
+    {/if}
+    {#if ($currentUser?.purchasing_role === PURCHASING_ROLES.BUDGETING) || ($currentUser?.permissions?.includes('MANAGE_BUDGETS'))}
+      <button type="button" class:active={activeTab === 'budgets'} on:click={() => setActiveTab('budgets')}>
+        Budgets
       </button>
     {/if}
   </nav>
@@ -2194,6 +2185,8 @@
         </div>
       {/if}
     </section>
+  {:else if activeTab === 'budgets'}
+    <BudgetsTab />
   {/if}
 </div>
 

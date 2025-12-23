@@ -2,11 +2,11 @@
   import { onMount, tick } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { hasPermission } from '$lib/permissions.js';
+  import { hasPermission, GENERAL_ROLES } from '$lib/permissions.js';
   import { isTeam9584 } from '$lib/frcTeams.js';
   import { onShapeAPI } from '$lib/onshape.js';
   import stockData from '$lib/stock.json';
-  import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download } from 'lucide-svelte';
+  import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download, Trash2 } from 'lucide-svelte';
   import { goto } from '$app/navigation';  let user = null;
   let loading = true;
   let loadingStep = 'Initializing...';
@@ -127,10 +127,10 @@
         `);
 
       if (error) throw error;
-      subsystems = data || [];
+      let loadedSubsystems = data || [];
 
       // Get unique lead user IDs
-      const leadUserIds = [...new Set(subsystems
+      const leadUserIds = [...new Set(loadedSubsystems
         .map(s => s.lead_user_id)
         .filter(id => id)
       )];
@@ -146,18 +146,63 @@
         if (profileError) {
           console.error('Error loading user profiles:', profileError);
         } else {
-          // Create a lookup map
           profiles.forEach(profile => {
             userProfiles[profile.id] = profile;
           });
         }
       }
 
-      // Add lead user info to subsystems
-      subsystems = subsystems.map(subsystem => ({
+      // Fetch Project Budgets and Spending
+      let budgetMap = {};
+      try {
+        const subIds = loadedSubsystems.map(s => s.id);
+        
+        // 1. Fetch budgets for these projects
+        const { data: budgets, error: budgetErr } = await supabase
+          .from('purchasing_budgets')
+          .select('*')
+          .eq('scope_type', 'project')
+          .in('scope_value', subIds);
+        
+        if (!budgetErr && budgets) {
+          // Group budgets by project_id (scope_value)
+          // Taking the most recent active budget if multiple? Or sum them?
+          // For simplicity, let's take the first found or sum amounts if multiple exists.
+          budgets.forEach(b => {
+            if (!budgetMap[b.scope_value]) {
+              budgetMap[b.scope_value] = { amount: 0, spent: 0, hasBudget: true };
+            }
+            budgetMap[b.scope_value].amount += Number(b.amount);
+          });
+        }
+
+        // 2. Fetch purchasing items for these projects to calc spent
+        // Only fetch basics needed for cost
+        const { data: items, error: itemsErr } = await supabase
+          .from('purchasing')
+          .select('project_id, price, final_price, quantity, status')
+          .in('project_id', subIds);
+
+        if (!itemsErr && items) {
+          items.forEach(p => {
+             if (p.status === 'rejected') return;
+             if (budgetMap[p.project_id]) {
+               budgetMap[p.project_id].spent += ((p.final_price || p.price || 0) * (p.quantity || 1));
+             }
+          });
+        }
+      } catch (bErr) {
+        console.warn('Failed to load budgets for subsystems', bErr);
+      }
+
+      // Add lead user info and budget info to subsystems
+      subsystems = loadedSubsystems.map(subsystem => ({
         ...subsystem,
-        lead_user: subsystem.lead_user_id ? userProfiles[subsystem.lead_user_id] || null : null
-      }));      // Load OnShape data for subsystems with linked documents
+        lead_user: subsystem.lead_user_id ? userProfiles[subsystem.lead_user_id] || null : null,
+        budget: budgetMap[subsystem.id] || null
+      }));
+
+      // Load OnShape data for subsystems with linked documents
       for (const subsystem of subsystems) {
         if (subsystem.onshape_document_id && onShapeAPI.accessKey && onShapeAPI.secretKey) {
           try {
@@ -304,7 +349,7 @@
       }
 
       // Update subsystem with OnShape info
-      const { error } = await supabase
+      let updateQuery = supabase
         .from('subsystems')
         .update({
           onshape_url: onshapeUrl,
@@ -312,8 +357,13 @@
           onshape_workspace_id: parsedUrl.workspaceId,
           onshape_element_id: parsedUrl.elementId
         })
-        .eq('id', selectedSubsystem)
-        .eq('lead_user_id', user.id);
+        .eq('id', selectedSubsystem);
+
+      if (!isGeneralLead()) {
+        updateQuery = updateQuery.eq('lead_user_id', user.id);
+      }
+
+      const { error } = await updateQuery;
 
       if (error) throw error;
 
@@ -651,8 +701,97 @@
     return subsystem.subsystem_members.some(member => member.user_id === user?.id);
   }
 
+  function isGeneralLead() {
+    if (!user) return false;
+    return user.general_role === GENERAL_ROLES.LEAD || user.role === 'admin';
+  }
+
   function isSubsystemLead(subsystem) {
-    return subsystem.lead_user_id === user?.id;
+    if (!subsystem || !user) return false;
+    return subsystem.lead_user_id === user.id || isGeneralLead();
+  }
+
+  // Check if user can delete a build (must be lead of the subsystem the build belongs to)
+  function canDeleteBuild(build) {
+    const subsystem = subsystems.find(s => s.id === build.subsystem_id);
+    return subsystem && isSubsystemLead(subsystem);
+  }
+
+  async function deleteSubsystem(subsystemId) {
+    if (!confirm('Are you sure you want to delete this subsystem? This will also delete all associated builds and data. This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      // First delete all builds associated with this subsystem
+      const { error: buildsError } = await supabase
+        .from('builds')
+        .delete()
+        .eq('subsystem_id', subsystemId);
+
+      if (buildsError) {
+        console.warn('Error deleting builds:', buildsError);
+      }
+
+      // Delete subsystem members
+      const { error: membersError } = await supabase
+        .from('subsystem_members')
+        .delete()
+        .eq('subsystem_id', subsystemId);
+
+      if (membersError) {
+        console.warn('Error deleting subsystem members:', membersError);
+      }
+
+      // Delete the subsystem itself
+      const { error } = await supabase
+        .from('subsystems')
+        .delete()
+        .eq('id', subsystemId);
+
+      if (error) throw error;
+
+      // Refresh data
+      await loadSubsystems();
+      await loadBuilds();
+      alert('Subsystem deleted successfully');
+    } catch (error) {
+      console.error('Error deleting subsystem:', error);
+      alert('Failed to delete subsystem: ' + error.message);
+    }
+  }
+
+  async function deleteBuild(buildId) {
+    if (!confirm('Are you sure you want to delete this build? This will also delete all BOM data. This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      // First delete build BOM entries
+      const { error: bomError } = await supabase
+        .from('build_bom')
+        .delete()
+        .eq('build_id', buildId);
+
+      if (bomError) {
+        console.warn('Error deleting build BOM:', bomError);
+      }
+
+      // Delete the build itself
+      const { error } = await supabase
+        .from('builds')
+        .delete()
+        .eq('id', buildId);
+
+      if (error) throw error;
+
+      // Refresh data
+      await loadBuilds();
+      alert('Build deleted successfully');
+    } catch (error) {
+      console.error('Error deleting build:', error);
+      alert('Failed to delete build: ' + error.message);
+    }
   }
 
   async function createBuildFromDocument(subsystem) {
@@ -782,13 +921,15 @@
               {/if}
             </div>
             <div class="subsystem-toolbar">
-              <button
-                class="btn btn-outline btn-small"
-                on:click|stopPropagation={() => openEditModal(subsystem)}
-                aria-label="Edit subsystem"
-              >
-                <Edit size={14} />
-              </button>
+              {#if isSubsystemLead(subsystem)}
+                <button
+                  class="btn btn-outline btn-small"
+                  on:click|stopPropagation={() => openEditModal(subsystem)}
+                  aria-label="Edit subsystem"
+                >
+                  <Edit size={14} />
+                </button>
+              {/if}
               <div class="subsystem-badges">
               {#if isSubsystemLead(subsystem)}
                 <span class="badge badge-lead">Lead</span>
@@ -816,6 +957,24 @@
               </div>
             {/if}
           </div>
+
+          {#if subsystem.budget}
+            <div class="subsystem-budget">
+              <div class="budget-label">
+                <div class="budget-title">Budget</div>
+                <div class="budget-values" class:over-budget={subsystem.budget.spent > subsystem.budget.amount}>
+                   ${subsystem.budget.spent.toLocaleString()} / ${subsystem.budget.amount.toLocaleString()}
+                </div>
+              </div>
+              <div class="budget-progress-track">
+                <div 
+                   class="budget-progress-fill" 
+                   class:over={subsystem.budget.spent > subsystem.budget.amount}
+                   style="width: {Math.min((subsystem.budget.spent / subsystem.budget.amount) * 100, 100)}%"
+                ></div>
+              </div>
+            </div>
+          {/if}
 
           {#if subsystem.onshape_url}
             <div class="onshape-section">
@@ -1017,13 +1176,21 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary btn-sm" on:click={() => { showCreateModal = false; editingSubsystemId = null; }}>
-            Cancel
-          </button>
-          <button class="btn btn-primary btn-sm" on:click={createSubsystem}>
-            <Plus size={16} />
-            {editingSubsystemId ? 'Update Subsystem' : 'Create Subsystem'}
-          </button>
+          {#if editingSubsystemId}
+            <button class="btn btn-outline-danger btn-sm" on:click={() => { deleteSubsystem(editingSubsystemId); showCreateModal = false; editingSubsystemId = null; }}>
+              <Trash2 size={16} />
+              Delete Subsystem
+            </button>
+          {/if}
+          <div class="modal-footer-right">
+            <button class="btn btn-secondary btn-sm" on:click={() => { showCreateModal = false; editingSubsystemId = null; }}>
+              Cancel
+            </button>
+            <button class="btn btn-primary btn-sm" on:click={createSubsystem}>
+              <Plus size={16} />
+              {editingSubsystemId ? 'Update Subsystem' : 'Create Subsystem'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1348,5 +1515,31 @@
       word-break: break-all;
       max-width: 100%;
     }
+    .subsystem-budget {
+      margin-top: var(--space-3);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+    }
+    .budget-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: var(--font-xs);
+      font-weight: 600;
+      margin-bottom: var(--space-2);
+    }
+    .budget-title { color: var(--text-2); }
+    .budget-progress-track {
+      height: 6px;
+      background: var(--surface-2);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .budget-progress-fill {
+      height: 100%;
+      background: var(--brand-gold-strong);
+      border-radius: 99px;
+    }
+    .budget-progress-fill.over { background: var(--red-strong); }
+    .budget-values.over-budget { color: var(--red-strong); }
   }
 </style>

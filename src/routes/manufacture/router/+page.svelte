@@ -29,6 +29,29 @@
     });
   }
 
+  // Check if all parts in group are CAM Reviewed (status === 'cammed' without travis flag)
+  function groupIsAllCamReviewed(g) {
+    if (!g || !g.parts || g.parts.length === 0) return false;
+    return g.parts.every(p => {
+      const m = parseMeta(p);
+      // CAM Reviewed means status is 'cammed' and not travis_progged
+      const isTravis = m?.travis_progged || (m?.router_meta && m.router_meta.step === 'queued');
+      return p.status === 'cammed' && !isTravis;
+    });
+  }
+
+  // Get the current group-level status for display
+  function getGroupStatus(g) {
+    if (!g || !g.parts || g.parts.length === 0) return BUTTONS.PENDING;
+    if (groupIsCut(g)) return BUTTONS.MACHINED;
+    if (groupIsTravisProgged(g)) return BUTTONS.TRAVIS;
+    if (groupIsAllCamReviewed(g)) return BUTTONS.CAM_REVIEWED;
+    return BUTTONS.PENDING; // Mixed or still in progress
+  }
+
+  // Group status options after CAM Reviewed
+  const GROUP_STATUS_OPTIONS = [BUTTONS.CAM_REVIEWED, BUTTONS.TRAVIS, BUTTONS.MACHINED];
+
   let parts = [];
   let loading = true;
   let dragPart = null;
@@ -39,6 +62,7 @@
 
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
+  import RouterStatusSelector from '$lib/components/RouterStatusSelector.svelte';
 
   // We store grouping metadata inside file_url JSON under router_group_id
   function parseMeta(part) {
@@ -73,13 +97,39 @@
         }
         await updateRouterMeta(p, { travis_progged: true, step: 'queued' });
       }
-    } else if (action === 'cut') {
-      // Move to cut
+    } else if (action === 'cut' || action === 'machined') {
+      // Move to machined
       for (const p of group.parts) {
+        await supabase.from('parts').update({ status: 'machined', updated_at: new Date().toISOString() }).eq('id', p.id);
         await updateRouterMeta(p, { step: 'cut' });
       }
     }
     await loadParts();
+  }
+
+  // Handle group status dropdown change
+  async function handleGroupStatusChange(groupId, newStatus) {
+    const group = groupMap[groupId];
+    if (!group) return;
+    
+    if (newStatus === BUTTONS.TRAVIS) {
+      await applyGroupAction(groupId, 'tproged');
+    } else if (newStatus === BUTTONS.MACHINED) {
+      await applyGroupAction(groupId, 'machined');
+    } else if (newStatus === BUTTONS.CAM_REVIEWED) {
+      // Reset back to CAM Reviewed (remove travis flag)
+      for (const p of group.parts) {
+        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', p.id);
+        const m = parseMeta(p);
+        if (m.travis_progged) delete m.travis_progged;
+        if (m.router_meta) {
+          delete m.router_meta.travis_progged;
+          m.router_meta.step = 'cammed';
+        }
+        await supabase.from('parts').update({ file_url: JSON.stringify(m), updated_at: new Date().toISOString() }).eq('id', p.id);
+      }
+      await loadParts();
+    }
   }
 
   // Router helpers: compute next router step for a part and advance it
@@ -563,15 +613,22 @@
               <input class="group-name-input" bind:value={editingGroupName} on:keydown={(e)=>{ if(e.key==='Enter'){ saveGroupName(g.id); } else if (e.key==='Escape'){ editingGroupId=null; editingGroupName=''; } }} on:blur={()=>saveGroupName(g.id)} />
             {:else}
               <button class="group-name-btn" on:click={()=>{ editingGroupId=g.id; editingGroupName=g.name || g.id; }}>{g.name || g.id}</button>
-              {#if groupIsReadyForTProged(g)}
-                <button class="btn btn-primary btn-sm" on:click={() => applyGroupAction(g.id, 'tproged')}>{BUTTONS.TRAVIS}</button>
-              {:else if groupIsTravisProgged(g)}
-                <button class="btn btn-warning btn-sm" on:click={() => applyGroupAction(g.id, 'cut')}>Cut</button>
+              {#if groupIsAllCamReviewed(g) || groupIsTravisProgged(g)}
+                <!-- Group-level status dropdown when all parts are CAM Reviewed or beyond -->
+                <select 
+                  class="group-status-select {groupIsTravisProgged(g) ? 'status-travis' : 'status-cammed'}"
+                  value={getGroupStatus(g)}
+                  on:change={(e) => handleGroupStatusChange(g.id, e.target.value)}
+                >
+                  {#each GROUP_STATUS_OPTIONS as opt}
+                    <option value={opt}>{opt}</option>
+                  {/each}
+                </select>
               {/if}
             {/if}
           </div>
-          <div class="bom-table-container">
-          <table class="bom-table group-table">
+          <div class="table-container">
+          <table class="table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -579,14 +636,16 @@
                 <th>Project</th>
                 <th>Qty</th>
                 <th>Source</th>
-                <th class="action-col">Status</th>
-                <th class="remove-col"></th>
+                {#if !groupIsAllCamReviewed(g) && !groupIsTravisProgged(g)}
+                  <th>Status</th>
+                {/if}
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {#each g.parts as p, i}
-                <tr class="row {i % 2 === 0 ? 'even':'odd'}" draggable="true" on:dragstart={(e)=>handleDragStart(e,p)} on:drop={(e)=>handleDrop(e,p)} on:dragover={(e)=>handleDragOver(e,p)} on:dragleave={handleDragLeave}>
-                  <td class="part-name">{p.name}</td>
+                <tr draggable="true" on:dragstart={(e)=>handleDragStart(e,p)} on:drop={(e)=>handleDrop(e,p)} on:dragover={(e)=>handleDragOver(e,p)} on:dragleave={handleDragLeave}>
+                  <td><strong>{p.name}</strong></td>
                   <td>{getStock(p) || '-'}</td>
                   <td class="mono">{p.project_id}</td>
                   <td>{p.quantity || 1}</td>
@@ -619,51 +678,14 @@
                       {/await}
                     {/if}
                   </td>
-                  <td class="action-cell">
-                    {#key p.id}
-                      {#await Promise.resolve(parseMeta(p)) then meta}
-                        {#if groupIsTravisProgged(g)}
-                          <!-- When the whole group is Travis-progged, show a green TravisProgged tag in the status column -->
-                          <span class="status-badge {getBadgeClass(p.status, meta)} status-table">{getDisplayStatus(p.status, meta)}</span>
-                        {:else}
-                          {#if p.status === 'pending'}
-                            <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
-                          {:else if p.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                            <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', p.id); await updateRouterMeta(p, { step: 'cam_review' }); await loadParts(); }}>{BUTTONS.CAM_REVIEWED}</button>
-                          {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
-                            <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(p, { travis_progged: true, step: 'queued' })}>{BUTTONS.TRAVIS}</button>
-                          {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                            <!-- Per-row Cut button removed: only group header Cut is allowed. Show Travis tag in status column -->
-                            <span class="status-badge {getBadgeClass(p.status, meta)} status-table">{getDisplayStatus(p.status, meta)}</span>
-                          {:else if p.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
-                            <div class="kitting-inline">
-                              <select class="form-select kitting-input" bind:value={selectedBinMap[p.id]}>
-                                <option value="">Select bin…</option>
-                                {#each bins as b}
-                                  <option value={b.bin_id}>{b.bin_id}</option>
-                                {/each}
-                              </select>
-                              <button class="btn btn-secondary btn-sm btn-nowrap"
-                                on:click={async () => { const v = (selectedBinMap[p.id] || '').trim(); if (v) { await supabase.from('parts').update({ kitting_bin: v, updated_at: new Date().toISOString(), status: 'complete' }).eq('id', p.id); await loadParts(); } }}
-                                disabled={!selectedBinMap[p.id]}>
-                                <Package size={14} />
-                                Kit
-                              </button>
-                            </div>
-                          {:else}
-                            {#if getNextRouterStep(p) && getNextRouterStep(p) !== 'cut'}
-                              <button class="btn btn-secondary btn-sm" on:click={() => advanceRouterStep(p, getNextRouterStep(p))}>{ROUTER_FLOW.labels?.[getNextRouterStep(p)] || getNextRouterStep(p)}</button>
-                            {:else if getNextRouterStep(p) === 'cut'}
-                              <!-- Next step is cut (group-level) — leave per-row actions empty -->
-                            {:else}
-                              <span class="status-badge status-table">{getDisplayStatus(p.status, meta)}</span>
-                            {/if}
-                          {/if}
-                        {/if}
-                      {/await}
-                    {/key}
-                  </td>
-                  <td class="remove-col"><button class="remove-inline" on:click={()=>removeFromGroup(p)} title="Remove">×</button></td>
+                  {#if !groupIsAllCamReviewed(g) && !groupIsTravisProgged(g)}
+                    <td>
+                      {#key p.id}
+                        <RouterStatusSelector part={p} on:update={loadParts} />
+                      {/key}
+                    </td>
+                  {/if}
+                  <td><button class="remove-btn" on:click={()=>removeFromGroup(p)} title="Remove from group">×</button></td>
                 </tr>
               {/each}
             </tbody>
@@ -674,125 +696,277 @@
       {/each}
     {/if}
 
-  <h2 class="subheading">Ungrouped</h2>
-    <div class="parts-table-wrapper">
-      <div class="bom-table-container">
-      <table class="bom-table router-table">
-  <thead><tr><th>Name</th><th>Stock</th><th>Project</th><th>Qty</th><th>Source</th><th>Status</th></tr></thead>
-        <tbody>
-          {#each ungroupedParts as part, i (part.id)}
-            <tr class="row {i % 2 === 0 ? 'even':'odd'}"
-              draggable="true"
-              on:dragstart={(e)=>handleDragStart(e,part)}
-              on:dragover={(e)=>handleDragOver(e,part)}
-              on:dragleave={handleDragLeave}
-              on:drop={(e)=>handleDrop(e,part)}
-            >
-              <td class="part-name">{part.name}</td>
-              <td>{getStock(part) || '-'}</td>
-              <td class="mono">{part.project_id}</td>
-              <td>{part.quantity || 1}</td>
-              <td>
-                {#if part.source_type === 'onshape_api' || part.is_onshape_part}
-                  <div class="source-cell">
-                    <span class="source-tag">STEP</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(part)}><Download size={14} /></button>
-                    <span class="source-tag">DXF</span>
-                    <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(part)}><Download size={14} /></button>
-                  </div>
-                {:else}
-                    {#await Promise.resolve(parseMeta(part)) then meta}
-                    <div class="source-cell">
-                      {#if meta.step_file}
-                        <span class="source-tag">STEP</span>
-                        <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
-                      {/if}
-                      {#if meta.dxf_file}
-                        <span class="source-tag">DXF</span>
-                        <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadFromStorage(meta.dxf_file)}><Download size={14} /></button>
-                      {/if}
-                      {#if !meta.step_file && !meta.dxf_file}
-                        {#if part.file_name}
-                          <span class="file-label">{part.file_name}</span>
-                          <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(part.file_name)}><Download size={14} /></button>
-                        {:else}-{/if}
-                      {/if}
-                    </div>
-                  {/await}
-                {/if}
-              </td>
-              <td class="action-cell">
-                {#key part.id}
-                  {#await Promise.resolve(parseMeta(part)) then meta}
-                      {#if part.status === 'pending'}
-                      <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_ing' }); await loadParts(); }}>Start</button>
-                    {:else if part.status === 'in-progress' && (!meta.router_meta || meta.router_meta.step === 'cam_ing')}
-                      <button class="btn btn-secondary btn-sm" on:click={async () => { await supabase.from('parts').update({ status:'cammed', updated_at: new Date().toISOString() }).eq('id', part.id); await updateRouterMeta(part, { step: 'cam_review' }); await loadParts(); }}>{BUTTONS.CAM_REVIEWED}</button>
-                          {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cam_review'}
-                            <button class="btn btn-secondary btn-sm" on:click={() => updateRouterMeta(part, { travis_progged: true, step: 'queued' })}>{BUTTONS.TRAVIS}</button>
-                          {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'queued'}
-                          <!-- Next is cut (group-level) - leave actions empty -->
-                          {:else if part.status === 'cammed' && meta.router_meta && meta.router_meta.step === 'cut'}
-                      <div class="kitting-inline">
-                        <input type="text" placeholder="Bin ID" class="form-input kitting-input"
-                          on:keydown={async (e) => { if (e.key === 'Enter' && e.target.value.trim()) {
-                            await supabase.from('parts').update({ kitting_bin: e.target.value.trim(), updated_at: new Date().toISOString(), status: 'complete' }).eq('id', part.id);
-                            await loadParts();
-                          }}} />
-                        <button class="btn btn-secondary btn-sm btn-nowrap"
-                          on:click={async (e) => {
-                            const input = e.target.previousElementSibling;
-                            if (input && input.value.trim()) {
-                              await supabase.from('parts').update({ kitting_bin: input.value.trim(), updated_at: new Date().toISOString(), status: 'complete' }).eq('id', part.id);
-                              await loadParts();
-                            }
-                          }}>
-                          <Package size={14} />
-                          Kit
-                        </button>
-                      </div>
-                    {:else}
-                      {#if getNextRouterStep(part) && getNextRouterStep(part) !== 'cut'}
-                        <button class="btn btn-secondary btn-sm" on:click={() => advanceRouterStep(part, getNextRouterStep(part))}>{ROUTER_FLOW.labels?.[getNextRouterStep(part)] || getNextRouterStep(part)}</button>
-                      {:else if getNextRouterStep(part) === 'cut'}
-                        <!-- Next is cut (group-level) - leave actions empty -->
-                      {:else}
-                        <span class="status-badge {getBadgeClass(part.status, meta)} status-table">{getDisplayStatus(part.status, meta)}</span>
-                      {/if}
-                    {/if}
-                  {/await}
-                {/key}
-              </td>
+    <h2 class="subheading">Ungrouped</h2>
+    <div class="card">
+      <div class="table-container">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Stock</th>
+              <th>Project</th>
+              <th>Qty</th>
+              <th>Source</th>
+              <th>Status</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {#each ungroupedParts as part, i (part.id)}
+              <tr
+                draggable="true"
+                on:dragstart={(e)=>handleDragStart(e,part)}
+                on:dragover={(e)=>handleDragOver(e,part)}
+                on:dragleave={handleDragLeave}
+                on:drop={(e)=>handleDrop(e,part)}
+              >
+                <td><strong>{part.name}</strong></td>
+                <td>{getStock(part) || '-'}</td>
+                <td class="mono">{part.project_id}</td>
+                <td>{part.quantity || 1}</td>
+                <td>
+                  {#if part.source_type === 'onshape_api' || part.is_onshape_part}
+                    <div class="source-cell">
+                      <span class="source-tag">STEP</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(part)}><Download size={14} /></button>
+                      <span class="source-tag">DXF</span>
+                      <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(part)}><Download size={14} /></button>
+                    </div>
+                  {:else}
+                    {#await Promise.resolve(parseMeta(part)) then meta}
+                      <div class="source-cell">
+                        {#if meta.step_file}
+                          <span class="source-tag">STEP</span>
+                          <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
+                        {/if}
+                        {#if meta.dxf_file}
+                          <span class="source-tag">DXF</span>
+                          <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadFromStorage(meta.dxf_file)}><Download size={14} /></button>
+                        {/if}
+                        {#if !meta.step_file && !meta.dxf_file}
+                          {#if part.file_name}
+                            <span class="file-label">{part.file_name}</span>
+                            <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(part.file_name)}><Download size={14} /></button>
+                          {:else}-{/if}
+                        {/if}
+                      </div>
+                    {/await}
+                  {/if}
+                </td>
+                <td>
+                  {#key part.id}
+                    <RouterStatusSelector part={part} on:update={loadParts} />
+                  {/key}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
       <p class="hint">Drag one row onto another to create or add to a group. Drag grouped rows onto ungrouped rows to merge. Remove via ×.</p>
     </div>
   </div>
 {/if}
 
 <style>
-  .group-list { display:flex; flex-direction:column; gap:1.25rem; }
-  .subheading { margin:0; font-size:1rem; font-weight:600; }
-  .group-table-wrapper { padding:0.6rem; border-radius:8px; background:var(--surface, var(--color-white)); border:1px solid rgba(0,0,0,0.03); }
-  .group-table-header { font-size:1.05rem; font-weight:600; margin:0 0 0.5rem 0; display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
-  .group-name-btn { background:none; border:none; font:inherit; cursor:pointer; padding:0.15rem 0.35rem; border-radius:6px; }
-  .group-name-btn:hover { background: var(--neutral-100); }
-  .group-name-input { border:1px solid var(--border); padding:0.25rem 0.4rem; border-radius:6px; }
-  :global(.router-table tr.drag-over), :global(.group-table tr.drag-over) { outline:2px dashed var(--accent); }
-  .parts-table-wrapper { position:relative; }
-  .hint { font-size:0.8rem; color:var(--neutral-500); margin-top:0.5rem; }
-  .bom-table th:first-child, .bom-table td:first-child { min-width:220px; max-width:520px; }
-  .bom-table th:nth-last-child(1), .bom-table td:nth-last-child(1) { width:56px; text-align:right; }
-  .part-name { font-weight:500; color: var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .source-cell { display:inline-flex; align-items:center; gap:0.5rem; }
-  .source-tag { display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--secondary); border: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.02em; margin-right: 0.25rem; height: var(--control-height); min-height: var(--control-height); padding: 0 0.75rem; border-radius: 4px; font-size: 0.8125rem; line-height: 1; box-sizing: border-box; gap: 0.375rem; }
-  .file-label { max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.78rem; }
-  .kitting-inline { display:flex; gap:0.5rem; align-items:center; }
-  .kitting-input { padding:0.35rem; border:1px solid var(--border); border-radius:6px; min-width:110px; }
-  .status-table { font-weight:700; }
-  .bom-table th.action-col, .bom-table td.action-cell { width:110px; max-width:120px; white-space:nowrap; }
-  .bom-table td.remove-col { width:36px; max-width:40px; text-align:center; }
+  /* Main page layout */
+  .group-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+
+  /* Section headings */
+  .subheading {
+    margin: 0 0 var(--space-3) 0;
+    font-size: var(--font-md);
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  /* Group card wrapper */
+  .group-table-wrapper {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+  }
+
+  /* Group header with name + actions */
+  .group-table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    margin-bottom: var(--space-3);
+  }
+
+  .group-name-btn {
+    background: none;
+    border: none;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    transition: background 0.15s ease;
+  }
+
+  .group-name-btn:hover {
+    background: var(--neutral-100);
+  }
+
+  .group-name-input {
+    border: 1px solid var(--border);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: 1rem;
+    font-weight: 600;
+    min-width: 180px;
+  }
+
+  .group-name-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--btn-focus-ring);
+  }
+
+  /* Drag-over highlight for table rows */
+  :global(.table tr.drag-over) {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    background: var(--accent-subtle) !important;
+  }
+
+  /* Draggable row cursor */
+  .table tbody tr {
+    cursor: grab;
+  }
+
+  .table tbody tr:active {
+    cursor: grabbing;
+  }
+
+  /* Hint text */
+  .hint {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-3);
+  }
+
+  /* Source file display */
+  .source-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-2);
+    flex-wrap: wrap;
+  }
+
+  .source-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: var(--secondary);
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    height: var(--control-height);
+    min-height: var(--control-height);
+    padding: 0 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.8125rem;
+    line-height: 1;
+    box-sizing: border-box;
+  }
+
+  .file-label {
+    max-width: 140px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+  }
+
+  /* Remove button styling */
+  .remove-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--color-white);
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    font-weight: 400;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .remove-btn:hover {
+    background: var(--red-soft);
+    border-color: var(--red-base);
+    color: var(--red-base);
+  }
+
+  /* Mono text for project IDs */
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8125rem;
+  }
+
+  /* Group-level status dropdown */
+  .group-status-select {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 0 2rem 0 0.75rem;
+    height: var(--control-height, 32px);
+    min-width: 140px;
+    border-radius: var(--radius-sm, 4px);
+    border: 1px solid transparent;
+    margin-left: auto;
+    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23333%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 0.5em auto;
+    box-sizing: border-box;
+  }
+
+  .group-status-select.status-cammed {
+    background-color: var(--purple-soft, #ede7f6);
+    color: var(--purple-strong, #7b1fa2);
+    border-color: var(--purple-base, #9c27b0);
+  }
+
+  .group-status-select.status-travis {
+    background-color: var(--green-soft, #d1fae5);
+    color: var(--green-strong, #166534);
+    border-color: var(--green-base, #4ea953);
+  }
+
+  .group-status-select option {
+    background-color: white;
+    color: #1f2933;
+    font-weight: 500;
+  }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    .group-table-wrapper {
+      padding: var(--space-3);
+    }
+
+    .group-table-header {
+      flex-wrap: wrap;
+    }
+  }
 </style>

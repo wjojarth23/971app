@@ -1531,10 +1531,10 @@
   }
 
   .status-badge.status-table.status-pending { --badge-bg: var(--brand-gold-soft); background: var(--brand-gold-soft); color: var(--orange-strong); border-color: var(--brand-gold-base); }
-  .status-badge.status-table.status-progress { --badge-bg: var(--blue-soft); background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-soft); }
-  .status-badge.status-table.status-cammed { --badge-bg: var(--purple-soft); background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-soft); }
-  .status-badge.status-table.status-complete { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--success); border-color: var(--green-soft); }
-  .status-badge.status-table.status-travis { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--green-strong); border-color: rgba(11,102,35,0.12); }
+  .status-badge.status-table.status-progress { --badge-bg: var(--blue-soft); background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-base); }
+  .status-badge.status-table.status-cammed { --badge-bg: var(--purple-soft); background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-base); }
+  .status-badge.status-table.status-complete { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--success); border-color: var(--green-base); }
+  .status-badge.status-table.status-travis { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--green-strong); border-color: var(--green-base); }
 
   .parts-row {
     cursor: pointer;

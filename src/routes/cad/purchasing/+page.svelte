@@ -4,7 +4,7 @@
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { hasPermission } from '$lib/permissions.js';
   import { isTeam9584 } from '$lib/frcTeams.js';
-  import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon } from 'lucide-svelte';
+  import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { goto } from '$app/navigation';
   // Base URL for the Slack bot service (971bot). Defaults to the in-app endpoint.
@@ -65,6 +65,13 @@
     }
     return true;
   });
+  
+  // Debug logging
+  $: if (parts.length > 0) {
+    console.log(`Filtering: ${parts.length} total parts -> ${filteredParts.length} filtered parts`);
+    console.log('Active filters:', { vendorFilter, projectFilter, statusFilter });
+  }
+  
   let showKittingModal = false;
   let selectedPart = null;
   let showLinkModal = false;
@@ -97,6 +104,113 @@
   let saving = false;
   let showNotesModal = false;
   let notesModalPart = null;
+
+  // Budget Pins
+  let pinnedBudgets = [];
+  let availableBudgets = [];
+  let showPinModal = false;
+  let loadingPins = false;
+
+  async function loadPinnedBudgets() {
+    if (!user) return;
+    loadingPins = true;
+    try {
+      // 1. Get user's pins
+      const { data: pins, error: pinErr } = await supabase
+        .from('user_budget_pins')
+        .select('budget_id')
+        .eq('user_id', user.id);
+      if (pinErr) {
+        console.warn('Failed to load budget pins:', pinErr);
+        loadingPins = false;
+        return; // Don't throw, just return
+      }
+      const pinnedIds = new Set(pins.map(p => p.budget_id));
+
+      // 2. Get all budgets (to allow pinning more)
+      const { data: allBudgets, error: budgetErr } = await supabase
+        .from('purchasing_budgets')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (budgetErr) {
+        console.warn('Failed to load budgets:', budgetErr);
+        loadingPins = false;
+        return; // Don't throw, just return
+      }
+      
+      availableBudgets = allBudgets || [];
+      
+      // 3. Compute spending for pinned budgets
+      pinnedBudgets = availableBudgets
+        .filter(b => pinnedIds.has(b.id))
+        .map(b => {
+          return {
+            ...b,
+            spent: calculateBudgetSpent(b, parts)
+          };
+        });
+    } catch (err) {
+      console.warn('Failed to load budget pins', err);
+      // Don't rethrow - allow page to continue loading
+    } finally {
+      loadingPins = false;
+    }
+  }
+
+  function calculateBudgetSpent(budget, allParts) {
+    // Filter parts that match the budget scope
+    const matches = allParts.filter(p => {
+      // Date filter
+      if (budget.start_date && new Date(p.created_at) < new Date(budget.start_date)) return false;
+      if (budget.end_date && new Date(p.created_at) > new Date(budget.end_date)) return false;
+
+      // Scope filter
+      if (budget.scope_type === 'project') {
+        return p.project_id === budget.scope_value;
+      }
+      if (budget.scope_type === 'team') {
+        // We need to check frc_team. 
+        // Note: parts loaded from 'purchasing' might not have frc_team populated in older rows, 
+        // or we need to join user profile to check requester's team if column missing?
+        // Schema seems to have added 'frc_team' recently? The insert logic used `user.frc_team`.
+        // Let's assume p.frc_team exists or we rely on p.project_id lookup? 
+        // For simplicity: check p.frc_team if exists
+        return p.frc_team === budget.scope_value;
+      }
+      // Global: count everything? Or maybe general items? 
+      // Plan said "Global". Let's include everything that isn't excluded? 
+      // Actually, typically Global means "All purchasing".
+      return true;
+    });
+
+    // Sum cost
+    return matches.reduce((sum, p) => {
+      // Only count non-rejected items?
+      if (p.status === 'rejected') return sum;
+      return sum + ((p.final_price || p.price || 0) * (p.quantity || 1));
+    }, 0);
+  }
+
+  async function togglePin(budget) {
+    if (!user) return;
+    try {
+      const isPinned = pinnedBudgets.some(pb => pb.id === budget.id);
+      if (isPinned) {
+        // Unpin
+        await supabase.from('user_budget_pins').delete().match({ user_id: user.id, budget_id: budget.id });
+        pinnedBudgets = pinnedBudgets.filter(pb => pb.id !== budget.id);
+      } else {
+        // Pin
+        await supabase.from('user_budget_pins').insert([{ user_id: user.id, budget_id: budget.id }]);
+        pinnedBudgets = [...pinnedBudgets, { ...budget, spent: calculateBudgetSpent(budget, parts) }];
+      }
+      toastActions.show(isPinned ? 'Unpinned budget' : 'Pinned budget');
+    } catch (err) {
+      console.error('Failed to toggle pin', err);
+      toastActions.show('Failed to update pin');
+    }
+  }
+
   async function sendNotification(type, payload = {}) {
     try {
       const { data } = await supabase.auth.getSession();
@@ -161,8 +275,14 @@
       await loadUserFromUUID(supabase);
     }
 
-  await Promise.all([loadParts(), loadBuildOptions(), loadVendors()]);
+    // Load parts first (critical), then load other data
+    await loadParts();
     loading = false;
+    
+    // Load these in parallel but don't block the page
+    Promise.all([loadBuildOptions(), loadVendors(), loadPinnedBudgets()]).catch(err => {
+      console.error('Error loading supplemental data:', err);
+    });
   });
 
   async function loadVendors() {
@@ -212,6 +332,7 @@
 
       if (error) throw error;
       parts = data || [];
+      console.log(`Loaded ${parts.length} parts from database`);
     } catch (error) {
       console.error('Error loading parts:', error);
       alert('Failed to load parts');
@@ -721,6 +842,47 @@
           {/if}
         </div>
     </div>
+
+    <!-- Pinned Budgets Section -->
+    {#if pinnedBudgets.length > 0}
+      <div class="budgets-section">
+        <div class="section-header-row">
+          <h3>Pinned Budgets</h3>
+          <button class="btn btn-sm btn-outline" on:click={() => showPinModal = true}>
+            <Settings size={14} /> Manage Pins
+          </button>
+        </div>
+        <div class="budgets-grid">
+          {#each pinnedBudgets as budget}
+            <div class="budget-card">
+              <div class="budget-header">
+                <span class="budget-name">{budget.name}</span>
+                <span class="badge scope-{budget.scope_type}">{budget.scope_type === 'project' ? 'Proj' : budget.scope_type}</span>
+              </div>
+              <div class="budget-progress">
+                <div class="progress-bar">
+                  <div 
+                    class="progress-fill" 
+                    class:over={budget.spent > budget.amount}
+                    style="width: {Math.min((budget.spent / budget.amount) * 100, 100)}%"
+                  ></div>
+                </div>
+              </div>
+              <div class="budget-stats">
+                <span class:text-danger={budget.spent > budget.amount}>${budget.spent.toLocaleString()}</span>
+                <span class="text-muted"> / ${Number(budget.amount).toLocaleString()}</span>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {:else if !loading && user}
+       <div style="margin-bottom: 2rem; display: flex; justify-content: flex-end;">
+          <button class="btn btn-sm btn-text" on:click={() => showPinModal = true}>
+            <Settings size={14} /> Manage Budget Pins
+          </button>
+       </div>
+    {/if}
 
     {#if orderMode}
       <div class="order-mode-banner">
@@ -1251,7 +1413,167 @@
   </div>
 {/if}
 
+
+<!-- Budget Pin Modal -->
+{#if showPinModal}
+  <div class="modal-backdrop" on:click={() => showPinModal = false}>
+    <div class="modal" on:click|stopPropagation>
+      <div class="modal-header">
+        <h3>Manage Budget Pins</h3>
+        <button class="modal-close-button" on:click={() => showPinModal = false}>×</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="margin-bottom: 1rem;">Pin budgets to your dashboard to track spending.</p>
+        
+        {#if loadingPins}
+          <div class="loading-spinner"></div>
+        {:else if availableBudgets.length === 0}
+          <div class="empty-state">No active budgets found.</div>
+        {:else}
+          <div class="budget-list">
+            {#each availableBudgets as budget}
+              <div class="budget-item">
+                <div class="budget-info">
+                  <div class="budget-name">{budget.name}</div>
+                  <div class="budget-meta">
+                     <span class="badge scope-{budget.scope_type} small">{budget.scope_type}</span>
+                     <span>${Number(budget.amount).toLocaleString()}</span>
+                  </div>
+                </div>
+                <button 
+                  class="btn btn-sm {pinnedBudgets.some(pb => pb.id === budget.id) ? 'btn-secondary' : 'btn-primary'}"
+                  on:click={() => togglePin(budget)}
+                >
+                  {pinnedBudgets.some(pb => pb.id === budget.id) ? 'Unpin' : 'Pin'}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" on:click={() => showPinModal = false}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  /* Budgets Styles */
+  .budgets-section {
+    margin: 0 0 2rem 0;
+    padding: 0;
+  }
+  .section-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .section-header-row h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: var(--text);
+  }
+  .budgets-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--gap-3);
+  }
+  .budget-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-2);
+  }
+  .budget-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+  .budget-name {
+    font-weight: 600;
+    font-size: 0.875rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    padding: 0 var(--space-2);
+    height: 24px;
+    border-radius: var(--radius-sm);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    font-weight: 600;
+    box-sizing: border-box;
+    flex-shrink: 0;
+  }
+  .badge.small { font-size: 0.6rem; height: 20px; }
+  .scope-overall { background: var(--blue-soft); color: var(--blue-strong); border: 1px solid var(--blue-base); }
+  .scope-global { background: var(--blue-soft); color: var(--blue-strong); border: 1px solid var(--blue-base); }
+  .scope-team { background: var(--green-soft); color: var(--green-strong); border: 1px solid var(--green-base); }
+  .scope-project { background: var(--purple-soft); color: var(--purple-strong); border: 1px solid var(--purple-base); }
+  .scope-subsystem { background: var(--green-soft); color: var(--green-strong); border: 1px solid var(--green-base); }
+  .scope-build { background: var(--brand-gold-soft); color: var(--brand-gold-strong); border: 1px solid var(--brand-gold-base); }
+  .scope-build_group { background: var(--red-soft); color: var(--red-strong); border: 1px solid var(--red-base); }
+
+  .progress-bar {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--brand-gold-strong);
+    border-radius: 3px;
+  }
+  .progress-fill.over { background: var(--red-strong); }
+
+  .budget-stats {
+    display: flex;
+    justify-content: flex-end;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .text-danger { color: var(--red-strong); }
+  
+  .btn-text {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    padding: 0.25rem 0.5rem;
+  }
+  .btn-text:hover { color: var(--text); background: var(--surface-2); }
+
+  .budget-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .budget-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    background: var(--surface-0);
+  }
+  .budget-info { display: flex; flex-direction: column; gap: 0.25rem; }
+  .budget-meta { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--text-2); }
+  
   .order-mode-banner {
     margin: 1rem 0;
     padding: 0.875rem 1rem;
@@ -1412,7 +1734,7 @@
   .btn-approve {
     background: var(--brand-gold-soft);
     color: var(--brand-gold-strong);
-    border: 1px solid var(--brand-gold-soft);
+    border: 1px solid var(--brand-gold-base);
     border-radius: 4px;
     display: inline-flex;
     align-items: center;

@@ -6,7 +6,7 @@
   import notescoutConfig from '$lib/notescout.json';
   import navConfig from '$lib/navigation.json';
   import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X } from 'lucide-svelte';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
   import { trackUserAttendance } from '$lib/attendance.js';
@@ -15,9 +15,27 @@
   let authUser = null;
   let profile = null;
   let lastProfile = null;
-  let attendanceChecked = false;
   let mobileMenuOpen = false;
   $: activeProfile = profile ?? lastProfile;
+  
+  // Check if user is approved (has CAN_SEE_ROUTES permission)
+  $: isApproved = hasPermission(activeProfile, 'CAN_SEE_ROUTES');
+  
+  // Routes that unapproved users can access
+  const ALLOWED_UNAPPROVED_ROUTES = ['/', '/profile'];
+  
+  // Check if current route is allowed for unapproved users
+  function isRouteAllowedForUnapproved(pathname) {
+    return ALLOWED_UNAPPROVED_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+  }
+  
+  // Guard: redirect unapproved users away from protected routes
+  $: if (activeProfile && !isApproved && typeof window !== 'undefined') {
+    const currentPath = $page.url.pathname;
+    if (!isRouteAllowedForUnapproved(currentPath)) {
+      goto('/');
+    }
+  }
 
   // Close mobile menu on route change
   $: if ($page.url.pathname) {
@@ -33,10 +51,9 @@
     return hasPermission(activeProfile, perm);
   }
 
-  async function maybeCheckAttendance(currentProfile) {
-    if (attendanceChecked || typeof window === 'undefined') return;
+  async function checkAttendance(currentProfile) {
+    if (typeof window === 'undefined') return;
     if (!currentProfile?.id) return;
-    attendanceChecked = true;
     try {
       const result = await trackUserAttendance(currentProfile.id);
       if (result?.recorded) {
@@ -45,9 +62,15 @@
         toastActions.show(`Attendance recorded${suffix}!`);
       }
     } catch (err) {
-      console.warn('Attendance auto-check failed', err);
+      console.warn('Attendance check failed', err);
     }
   }
+
+  afterNavigate(() => {
+    if (profile) {
+      void checkAttendance(profile);
+    }
+  });
 
   onMount(() => {
     const unsubAuth = authUserStore.subscribe((v) => { authUser = v; });
@@ -55,9 +78,7 @@
       profile = v;
       if (v) {
         lastProfile = v;
-        void maybeCheckAttendance(v);
-      } else {
-        attendanceChecked = false;
+        void checkAttendance(v);
       }
     });
     const uninit = initAuth();
@@ -183,82 +204,84 @@
           Home
         </a>
 
-        {#if customTabs}
-          {#each customTabs as item}
-            {#if item.type === 'folder'}
-              <div class="nav-folder">
-                <button class="nav-link folder-trigger" class:active={isFolderActive(item)} aria-haspopup="true" aria-expanded="false">
-                  <span class="folder-label">{displayLabel(item)}</span>
-                  <ChevronDown size={14} class="folder-caret" />
-                </button>
-                <div class="folder-menu">
-                  {#each item.children ?? [] as child}
-                    {#if child.key || child.label}
-                      <a href={routeForKey(child.key ?? inferKey(child))} class="nav-link">
-                        <svelte:component this={iconMap[child.key ?? inferKey(child)] ?? Home} size={18} />
-                        {displayLabel(child)}
-                      </a>
-                    {:else}
-                      <span class="nav-link">{displayLabel(child)}</span>
-                    {/if}
-                  {/each}
+        {#if isApproved}
+          {#if customTabs}
+            {#each customTabs as item}
+              {#if item.type === 'folder'}
+                <div class="nav-folder">
+                  <button class="nav-link folder-trigger" class:active={isFolderActive(item)} aria-haspopup="true" aria-expanded="false">
+                    <span class="folder-label">{displayLabel(item)}</span>
+                    <ChevronDown size={14} class="folder-caret" />
+                  </button>
+                  <div class="folder-menu">
+                    {#each item.children ?? [] as child}
+                      {#if child.key || child.label}
+                        <a href={routeForKey(child.key ?? inferKey(child))} class="nav-link">
+                          <svelte:component this={iconMap[child.key ?? inferKey(child)] ?? Home} size={18} />
+                          {displayLabel(child)}
+                        </a>
+                      {:else}
+                        <span class="nav-link">{displayLabel(child)}</span>
+                      {/if}
+                    {/each}
+                  </div>
                 </div>
-              </div>
-            {:else}
-              <a href={routeForKey(item.key ?? inferKey(item))} class="nav-link" class:active={isActive(routeForKey(item.key ?? inferKey(item)))}>
-                <svelte:component this={iconMap[item.key ?? inferKey(item)] ?? Home} size={18} />
-                {displayLabel(item)}
+              {:else}
+                <a href={routeForKey(item.key ?? inferKey(item))} class="nav-link" class:active={isActive(routeForKey(item.key ?? inferKey(item)))}>
+                  <svelte:component this={iconMap[item.key ?? inferKey(item)] ?? Home} size={18} />
+                  {displayLabel(item)}
+                </a>
+              {/if}
+            {/each}
+          {:else}
+            <!-- Fallback: original static nav driven by navConfig -->
+            {#if navConfig?.tabs?.manufacture !== false}
+              <a href="/manufacture" class="nav-link" class:active={isActive('/manufacture')}>
+                  <svelte:component this={iconMap['manufacture'] ?? Hammer} size={18} />
+                  Manufacture
+                </a>
+            {/if}
+            {#if navConfig?.tabs?.kitting !== false}
+              <a href="/kitting" class="nav-link" class:active={isActive('/kitting')}>
+                <svelte:component this={iconMap['kitting'] ?? Package} size={18} />
+                Kitting
               </a>
             {/if}
-          {/each}
-        {:else}
-          <!-- Fallback: original static nav driven by navConfig -->
-          {#if navConfig?.tabs?.manufacture !== false}
-            <a href="/manufacture" class="nav-link" class:active={isActive('/manufacture')}>
-                <svelte:component this={iconMap['manufacture'] ?? Hammer} size={18} />
-                Manufacture
+            <a href="/cad" class="nav-link" class:active={isActive('/cad')}>
+              <svelte:component this={iconMap['cad'] ?? Move3d} size={18} />
+              CAD
+            </a>
+            {#if navConfig?.tabs?.build !== false}
+              <a href="/cad/build" class="nav-link" class:active={isActive('/cad/build')}>
+                <Wrench size={18} />
+                Build
               </a>
-          {/if}
-          {#if navConfig?.tabs?.kitting !== false}
-            <a href="/kitting" class="nav-link" class:active={isActive('/kitting')}>
-              <svelte:component this={iconMap['kitting'] ?? Package} size={18} />
-              Kitting
+            {/if}
+            <a href="/cad/purchasing" class="nav-link" class:active={isActive('/cad/purchasing')}>
+              <Receipt size={18} />
+              Purchasing
             </a>
+            {#if notescoutConfig?.event_key}
+              <a href="/notescout" class="nav-link" class:active={isActive('/notescout')}>
+                <svelte:component this={iconMap['notescout'] ?? Coins} size={18} />
+                Note Scouting
+              </a>
+              <a href="/datascout" class="nav-link" class:active={isActive('/datascout')}>
+                <svelte:component this={iconMap['datascout'] ?? Coins} size={18} />
+                Data Scouting
+              </a>
+            {/if}
           {/if}
-          <a href="/cad" class="nav-link" class:active={isActive('/cad')}>
-            <svelte:component this={iconMap['cad'] ?? Move3d} size={18} />
-            CAD
-          </a>
-          {#if navConfig?.tabs?.build !== false}
-            <a href="/cad/build" class="nav-link" class:active={isActive('/cad/build')}>
-              <Wrench size={18} />
-              Build
-            </a>
-          {/if}
-          <a href="/cad/purchasing" class="nav-link" class:active={isActive('/cad/purchasing')}>
-            <Receipt size={18} />
-            Purchasing
-          </a>
-          {#if notescoutConfig?.event_key}
-            <a href="/notescout" class="nav-link" class:active={isActive('/notescout')}>
-              <svelte:component this={iconMap['notescout'] ?? Coins} size={18} />
-              Note Scouting
-            </a>
-            <a href="/datascout" class="nav-link" class:active={isActive('/datascout')}>
-              <svelte:component this={iconMap['datascout'] ?? Coins} size={18} />
-              Data Scouting
-            </a>
-          {/if}
-        {/if}
 
-        {#if can('VIEW_ADMIN_PANEL')}
-          <a href="/admin" class="nav-link" class:active={isActive('/admin')}>
-            <Briefcase size={18} />
-            Admin
-          </a>
+          {#if can('VIEW_ADMIN_PANEL')}
+            <a href="/admin" class="nav-link" class:active={isActive('/admin')}>
+              <Briefcase size={18} />
+              Admin
+            </a>
+          {/if}
         {/if}
         
-        <!-- Profile link in mobile menu -->
+        <!-- Profile link in mobile menu - always visible -->
         <a href="/profile" class="nav-link mobile-profile-link" class:active={isActive('/profile')}>
           <User size={18} />
           Profile

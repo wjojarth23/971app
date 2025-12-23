@@ -1,14 +1,12 @@
 <script>  import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
   import { initAuth, userStore, signOut } from '$lib/stores/auth.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users } from 'lucide-svelte';  import { goto } from '$app/navigation';
-  import { FRC_TEAMS } from '$lib/permissions.js';
+  import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
   
   let user = null;
 
   function can(perm) {
-    if (!user) return false;
-    if (user.role === 'admin') return true;
-    return Array.isArray(user.permissions) && user.permissions.includes(perm);
+    return hasPermission(user, perm);
   }
   let loading = true;
   // New state for user-specific lists

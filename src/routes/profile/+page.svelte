@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { userStore, fetchUserProfile } from '$lib/stores/auth.js';
+  import { goto } from '$app/navigation';
+  import { userStore, fetchUserProfile, signOut } from '$lib/stores/auth.js';
   import { supabase } from '$lib/supabase.js';
   import { toastActions } from '$lib/toast.js';
   import navigation from '$lib/navigation.json';
@@ -23,6 +24,7 @@
 
   let savingProfile = false;
   let changingPassword = false;
+  let loggingOut = false;
   // Appearance / customization
   let header_tabs = null; // array structure stored in DB
   let dashboard_layout = 'grid';
@@ -42,6 +44,20 @@
     if (!value) return 'Not Set';
     if (value === 'Mentor') return 'Mentor';
     return `Team ${value}`;
+  }
+
+  async function logout() {
+    if (loggingOut) return;
+    loggingOut = true;
+    try {
+      await signOut();
+      goto('/');
+    } catch (e) {
+      console.error('logout error', e);
+      toastActions.show('Failed to sign out');
+    } finally {
+      loggingOut = false;
+    }
   }
 
   function formatAttendanceMoment(value) {
@@ -324,6 +340,7 @@
       </label>
       <div class="actions">
         <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save'}</button>
+        <button class="btn btn-outline" on:click={logout} disabled={loggingOut} style="margin-left:8px">{loggingOut ? 'Signing out...' : 'Sign Out'}</button>
       </div>
     </section>
 
@@ -406,7 +423,7 @@
 
     <section class="card">
       <h3>Notifications</h3>
-      <p class="muted">Choose which Slack DMs you want to receive.</p>
+      <p class="muted"><strong>New users:</strong> Choose which Slack DMs you want to receive.</p>
       <div class="notification-grid">
         {#each NOTIFICATION_UI_OPTIONS as option}
           <label class="notify-row">

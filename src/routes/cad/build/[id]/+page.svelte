@@ -4,10 +4,11 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus, Download } from 'lucide-svelte';
+  import { ArrowLeft, Package, CheckCircle, Clock, Wrench, ExternalLink, MapPin, Plus, Download, Trash2 } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
   import { BUTTONS } from '$lib/statuses.js';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
+  import { GENERAL_ROLES } from '$lib/permissions.js';
 
   let user = null;
   let loading = true;
@@ -81,7 +82,8 @@
             onshape_url,
             onshape_document_id,
             onshape_workspace_id,
-            onshape_element_id
+            onshape_element_id,
+            lead_user_id
           )
         `)
         .eq('id', buildId)
@@ -930,6 +932,50 @@
     }
   }
 
+  function isGeneralLead() {
+    if (!user) return false;
+    return user.general_role === GENERAL_ROLES.LEAD || user.role === 'admin';
+  }
+
+  // Check if current user is the lead of this build's subsystem
+  function isSubsystemLead() {
+    if (!build || !user) return false;
+    // Need to fetch the subsystem lead_user_id
+    return build.subsystems?.lead_user_id === user.id || isGeneralLead();
+  }
+
+  async function deleteBuild() {
+    if (!confirm('Are you sure you want to delete this build? This will also delete all BOM data. This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      // First delete build BOM entries
+      const { error: bomError } = await supabase
+        .from('build_bom')
+        .delete()
+        .eq('build_id', buildId);
+
+      if (bomError) {
+        console.warn('Error deleting build BOM:', bomError);
+      }
+
+      // Delete the build itself
+      const { error } = await supabase
+        .from('builds')
+        .delete()
+        .eq('id', buildId);
+
+      if (error) throw error;
+
+      alert('Build deleted successfully');
+      goto('/cad/build');
+    } catch (error) {
+      console.error('Error deleting build:', error);
+      alert('Failed to delete build: ' + error.message);
+    }
+  }
+
   // Version refetch functionality
   async function openVersionSelector() {
     if (!build?.subsystems?.onshape_document_id) {
@@ -1116,6 +1162,12 @@
                 Mark as Assembled
               </button>
             {/if}
+          {/if}
+          {#if isSubsystemLead()}
+            <button class="btn btn-outline-danger btn-sm" on:click={deleteBuild} title="Delete this build">
+              <Trash2 size={16} />
+              Delete Build
+            </button>
           {/if}
         </div>
       </div>
@@ -1744,7 +1796,7 @@
   .workflow-3d-print {
     background: var(--purple-soft);
     color: var(--purple-strong);
-    border-color: var(--purple-soft);
+    border-color: var(--purple-base);
   }
 
   .workflow-laser-cut {

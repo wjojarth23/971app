@@ -3,12 +3,12 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { hasPermission } from '$lib/permissions.js';
+  import { hasPermission, GENERAL_ROLES } from '$lib/permissions.js';
   import { onShapeAPI } from '$lib/onshape.js';  
   import { partClassificationService } from '$lib/bom_classify.js';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy } from 'lucide-svelte';
+  import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy, Trash2 } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
 
   // Slack bot base URL for purchase notifications (defaults to in-app endpoint)
@@ -144,6 +144,59 @@
     } catch (e) {
       console.warn('isSubsystemMember check failed:', e);
       return false;
+    }
+  }
+
+  function isGeneralLead() {
+    if (!user) return false;
+    return user.general_role === GENERAL_ROLES.LEAD || user.role === 'admin';
+  }
+
+  // Check if current user is the lead of this subsystem
+  function isSubsystemLead(subsystemParam = subsystem) {
+    if (!user || !subsystemParam) return false;
+    return subsystemParam.lead_user_id === user.id || isGeneralLead();
+  }
+
+  async function deleteSubsystem() {
+    if (!confirm('Are you sure you want to delete this subsystem? This will also delete all associated builds and data. This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      // First delete all builds associated with this subsystem
+      const { error: buildsError } = await supabase
+        .from('builds')
+        .delete()
+        .eq('subsystem_id', subsystemId);
+
+      if (buildsError) {
+        console.warn('Error deleting builds:', buildsError);
+      }
+
+      // Delete subsystem members
+      const { error: membersError } = await supabase
+        .from('subsystem_members')
+        .delete()
+        .eq('subsystem_id', subsystemId);
+
+      if (membersError) {
+        console.warn('Error deleting subsystem members:', membersError);
+      }
+
+      // Delete the subsystem itself
+      const { error } = await supabase
+        .from('subsystems')
+        .delete()
+        .eq('id', subsystemId);
+
+      if (error) throw error;
+
+      alert('Subsystem deleted successfully');
+      goto('/cad');
+    } catch (error) {
+      console.error('Error deleting subsystem:', error);
+      alert('Failed to delete subsystem: ' + error.message);
     }
   }
   async function loadTimeline() {
@@ -1711,10 +1764,10 @@
   .part-name { font-weight: 500; }
   .part-description { font-size: 0.75rem; color: var(--secondary); margin-top: 0.25rem; }
 
-  .workflow-mill { background: var(--blue-soft); color: var(--blue-base); border: 1px solid var(--blue-soft); }
+  .workflow-mill { background: var(--blue-soft); color: var(--blue-base); border: 1px solid var(--blue-base); }
   .workflow-lasercut { background: var(--brand-gold-soft); color: var(--orange-strong); border: 1px solid var(--brand-gold-base); }
-  .workflow-3dprint { background: var(--purple-soft); color: var(--purple-strong); border: 1px solid var(--purple-soft); }
-  .workflow-router { background: var(--green-soft); color: var(--green-base); border: 1px solid var(--green-soft); }
+  .workflow-3dprint { background: var(--purple-soft); color: var(--purple-strong); border: 1px solid var(--purple-base); }
+  .workflow-router { background: var(--green-soft); color: var(--green-base); border: 1px solid var(--green-base); }
   .workflow-purchase { background: var(--green-soft); color: var(--green-base); border: 1px solid var(--green-base); }
   .workflow-lathe { background: var(--red-soft); color: var(--red-base); border: 1px solid var(--red-base); }
 
@@ -1736,10 +1789,10 @@
     box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
   }
 
-  .workflow-dropdown.workflow-mill { background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-soft); }
+  .workflow-dropdown.workflow-mill { background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-base); }
   .workflow-dropdown.workflow-laser-cut { background: var(--brand-gold-soft); color: var(--orange-strong); border-color: var(--brand-gold-base); }
-  .workflow-dropdown.workflow-3d-print { background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-soft); }
-  .workflow-dropdown.workflow-router { background: var(--green-soft); color: var(--green-base); border-color: var(--green-soft); }
+  .workflow-dropdown.workflow-3d-print { background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-base); }
+  .workflow-dropdown.workflow-router { background: var(--green-soft); color: var(--green-base); border-color: var(--green-base); }
   .workflow-dropdown.workflow-lathe { background: var(--red-soft); color: var(--red-base); border-color: var(--red-base); }
   .workflow-dropdown.workflow-purchase { background: var(--green-soft); color: var(--green-base); border-color: var(--green-base); }
 

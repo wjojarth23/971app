@@ -54,16 +54,16 @@
   --info: var(--blue-base);
 
   --status-pending-bg: var(--brand-gold-soft);
-  --status-pending-border: var(--brand-gold-soft);
+  --status-pending-border: var(--brand-gold-base);
   --status-pending-text: var(--brand-gold-strong);
   --status-progress-bg: var(--blue-soft);
-  --status-progress-border: var(--blue-soft);
+  --status-progress-border: var(--blue-base);
   --status-progress-text: var(--blue-base);
   --status-ready-bg: var(--green-soft);
-  --status-ready-border: var(--green-soft);
+  --status-ready-border: var(--green-base);
   --status-ready-text: var(--green-strong);
   --status-risk-bg: var(--red-soft);
-  --status-risk-border: var(--red-soft);
+  --status-risk-border: var(--red-base);
   --status-risk-text: var(--red-strong);
 
   --modal-overlay: rgba(3, 7, 18, 0.65);
@@ -1183,7 +1183,7 @@ textarea:focus,
 .tag-workflow-mill {
   background: var(--blue-soft);
   color: var(--blue-base);
-  border-color: var(--blue-soft);
+  border-color: var(--blue-base);
 }
 
 .tag-workflow-3d,
@@ -1191,7 +1191,7 @@ textarea:focus,
 .tag-workflow-3dprint {
   background: var(--purple-soft);
   color: var(--purple-strong);
-  border-color: var(--purple-soft);
+  border-color: var(--purple-base);
 }
 
 .workflow-tag {
@@ -1469,6 +1469,12 @@ textarea:focus,
 
 .modal-footer .spacer {
   flex: 1 1 auto;
+}
+
+.modal-footer-right {
+  display: flex;
+  gap: var(--gap-3);
+  margin-left: auto;
 }
 
 .modal-footer button {

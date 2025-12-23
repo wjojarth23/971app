@@ -101,8 +101,8 @@ export function hasPermission(user, perm) {
   // role === 'admin' is a superuser (legacy support)
   if (user.role === 'admin') return true;
 
-  // Check General Role
-  const generalRole = user.general_role || GENERAL_ROLES.MEMBER; // Default to member if undefined? Or none?
+  // Check General Role - default to 'none' (pending approval) if not set
+  const generalRole = user.general_role || GENERAL_ROLES.NONE;
   if (GENERAL_ROLE_PERMISSIONS[generalRole]?.includes(perm)) return true;
 
   // Check Purchasing Role
