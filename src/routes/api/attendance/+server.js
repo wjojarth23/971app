@@ -34,7 +34,7 @@ export async function POST({ request, getClientAddress }) {
       // strip zone id (fe80::1%eth0)
       const noZone = ip.split('%')[0];
 
-      // IPv4: drop the final octet (treat as /24)
+      // IPv4: drop the final octet (e.g. 205.167.46)
       const ipv4Match = noZone.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/);
       if (ipv4Match) return ipv4Match[1];
 
@@ -53,6 +53,7 @@ export async function POST({ request, getClientAddress }) {
         }
         if (hextets.length === 0) return noZone;
         const first4 = hextets.slice(0, 4).map(h => h.replace(/^0+/, '') || '0');
+        // Return first 4 hextets only (e.g. 2001:db8:0:1)
         return first4.join(':');
       } catch (e) {
         return noZone;
@@ -63,7 +64,8 @@ export async function POST({ request, getClientAddress }) {
 
     console.log('Attendance check for user:', user_id, 'from IP:', clientIP, 'normalized:', clientIPNormalized);
 
-    // Call the database function to log attendance (pass normalized IP)
+    // Call the database function to log attendance using the NORMALIZED client IP
+    // (use first-three-octets for IPv4 and first-four-hextets for IPv6 per policy).
     const { data, error } = await supabase.rpc('log_user_attendance', {
       p_user_id: user_id,
       p_external_ip: clientIPNormalized
