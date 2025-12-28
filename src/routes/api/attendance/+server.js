@@ -27,13 +27,46 @@ export async function POST({ request, getClientAddress }) {
     
     // Get the client's IP address
     const clientIP = getClientAddress();
-    
-    console.log('Attendance check for user:', user_id, 'from IP:', clientIP);
-    
-    // Call the database function to log attendance
+
+    // Helper: normalize IP addresses
+    function normalizeClientIP(ip) {
+      if (!ip || typeof ip !== 'string') return ip;
+      // strip zone id (fe80::1%eth0)
+      const noZone = ip.split('%')[0];
+
+      // IPv4: drop the final octet (treat as /24)
+      const ipv4Match = noZone.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/);
+      if (ipv4Match) return ipv4Match[1];
+
+      // IPv6: normalize by truncating to /64 (keep first 4 hextets)
+      try {
+        // Expand '::' shorthand
+        const parts = noZone.split('::');
+        let hextets = [];
+        if (parts.length === 2) {
+          const left = parts[0] ? parts[0].split(':') : [];
+          const right = parts[1] ? parts[1].split(':') : [];
+          const missing = 8 - (left.filter(Boolean).length + right.filter(Boolean).length);
+          hextets = [...left.filter(Boolean), ...new Array(missing).fill('0'), ...right.filter(Boolean)];
+        } else {
+          hextets = noZone.split(':').filter(Boolean);
+        }
+        if (hextets.length === 0) return noZone;
+        const first4 = hextets.slice(0, 4).map(h => h.replace(/^0+/, '') || '0');
+        return first4.join(':');
+      } catch (e) {
+        return noZone;
+      }
+    }
+
+    const clientIPNormalized = normalizeClientIP(clientIP);
+
+    console.log('Attendance check for user:', user_id, 'from IP:', clientIP, 'normalized:', clientIPNormalized);
+
+    // Call the database function to log attendance (pass normalized IP)
     const { data, error } = await supabase.rpc('log_user_attendance', {
       p_user_id: user_id,
-      p_external_ip: clientIP
+      p_external_ip: clientIPNormalized
     });
     
     if (error) {
@@ -75,6 +108,7 @@ export async function POST({ request, getClientAddress }) {
       success: true, 
       attendance_logged: !!data,
       client_ip: clientIP,
+      client_ip_normalized: clientIPNormalized,
       record
     });
     

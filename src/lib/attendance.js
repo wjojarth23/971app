@@ -48,6 +48,7 @@ const mapLocation = (row = {}) => ({
 });
 
 export async function trackUserAttendance(userId) {
+  console.log('[attendance] trackUserAttendance called for userId:', userId);
   if (!userId) {
     console.warn('No user ID provided for attendance tracking');
     return { recorded: false };
@@ -61,6 +62,7 @@ export async function trackUserAttendance(userId) {
     });
 
     const result = await response.json();
+    console.log('[attendance] trackUserAttendance result for userId:', userId, result);
     if (!response.ok) {
       console.error('Attendance tracking error:', result?.error);
       return { recorded: false, error: result?.error };

@@ -44,7 +44,14 @@ export async function GET({ url, request }) {
     }
 
     // Use service role client to bypass RLS and get ALL users
-    const serviceSupa = getSupabase();
+    let serviceSupa;
+    try {
+      serviceSupa = getSupabase();
+    } catch (e) {
+      console.error('Failed to initialize service Supabase client for admin list-users:', e);
+      return json({ error: 'Server misconfigured: missing SUPABASE_SERVICE_KEY' }, { status: 500 });
+    }
+
     const { data, error } = await serviceSupa
       .from('user_profiles')
       .select('id, email, full_name, role, permissions, banned, general_role, purchasing_role, team_role, frc_team')

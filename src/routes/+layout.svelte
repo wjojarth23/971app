@@ -54,6 +54,7 @@
   async function checkAttendance(currentProfile) {
     if (typeof window === 'undefined') return;
     if (!currentProfile?.id) return;
+    console.log('[attendance] checkAttendance invoked for profile id:', currentProfile?.id, 'path:', $page.url.pathname);
     try {
       const result = await trackUserAttendance(currentProfile.id);
       if (result?.recorded) {
