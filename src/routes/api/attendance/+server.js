@@ -182,6 +182,8 @@ export async function GET({ url, getClientAddress, request }) {
 
       if (logsError) throw logsError;
 
+      console.log('attendance: fetched logs count=', (logs || []).length, 'start=', startDate.toISOString(), 'end=', endDate.toISOString());
+
       // Aggregate per-user: distinct PST dates attended, total check-ins, last attended
       const agg = new Map();
       for (const row of logs || []) {
@@ -189,7 +191,14 @@ export async function GET({ url, getClientAddress, request }) {
         const existing = agg.get(uid) || { user_id: uid, daysSet: new Set(), total_check_ins: 0, last_attended_at: null };
         const d = new Date(row.recorded_at);
         // Convert to PST date string (YYYY-MM-DD) to count distinct days in Pacific time
-        const pstDate = d.toLocaleString('en-CA', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
+        let pstDate;
+        try {
+          pstDate = d.toLocaleString('en-CA', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
+        } catch (e) {
+          // Fallback to UTC date if Intl/timeZone not available
+          pstDate = d.toISOString().slice(0, 10);
+          console.warn('attendance: PST conversion failed, falling back to UTC date for', row.recorded_at, e && e.message);
+        }
         existing.daysSet.add(pstDate);
         existing.total_check_ins += 1;
         if (!existing.last_attended_at || new Date(row.recorded_at) > new Date(existing.last_attended_at)) {
@@ -199,6 +208,7 @@ export async function GET({ url, getClientAddress, request }) {
       }
 
       const userIds = Array.from(agg.keys());
+      console.log('attendance: unique user ids in range=', userIds.length);
       let users = [];
       if (userIds.length) {
         const { data: ups, error: upsError } = await supa
