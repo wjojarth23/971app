@@ -100,11 +100,21 @@ npm run preview
 ## Attendance Tracking
 
 - Grant the `MANAGE_ATTENDANCE` permission to trusted admins. They will see a new Attendance tab under `/admin` with:
-   - **Trusted Locations** – capture the current network's public IP (or paste a CIDR) to define on-site Wi-Fi/LANs.
+   - **Trusted Locations** – capture the current network prefix (first 3 octets of IPv4, e.g., `205.167.46`) to define on-site Wi-Fi/LANs.
    - **Schedules** – build recurring day/time windows and assign one or more locations.
    - **Leaderboard** – review a 30-day rolling leaderboard with search/filter.
 - Whenever a signed-in user loads the app, the client pings `/api/attendance`. If they have not checked in today and are inside an active schedule window on a trusted network, attendance is logged automatically and they receive a toast confirmation.
 - Users can review their personal attendance stats and recent check-ins on the Profile page.
+
+### How Network Matching Works
+
+The system uses **network prefix matching** for privacy and flexibility:
+1. Client IP is normalized to first 3 octets (IPv4) or first 4 hextets (IPv6)
+2. Example: `205.167.46.123` → `205.167.46`
+3. Stored locations use the same prefix format (not CIDR notation)
+4. Matching is a simple string equality check
+
+This means all devices on the same /24 network will match automatically, and we never store complete IP addresses.
 
 ## Documentation
 

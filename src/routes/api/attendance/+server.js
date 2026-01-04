@@ -11,6 +11,75 @@ const getClientFromRequest = (request) => {
   });
 };
 
+/**
+ * ATTENDANCE IP MATCHING SYSTEM
+ * ==============================
+ * 
+ * The attendance system uses "network prefix" matching to identify trusted locations.
+ * This provides privacy (we don't store full IPs) and flexibility (allows for dynamic
+ * final octets on the same network).
+ * 
+ * HOW IT WORKS:
+ * 1. Client IP is normalized to its network prefix:
+ *    - IPv4: First 3 octets (e.g., 205.167.46.123 → "205.167.46")
+ *    - IPv6: First 4 hextets (e.g., 2001:db8:1234:5678::1 → "2001:db8:1234:5678")
+ * 
+ * 2. Trusted locations store the SAME normalized prefix format:
+ *    - IPv4: "205.167.46" (NOT "205.167.46.0/24" or "205.167.46.123/32")
+ *    - IPv6: "2001:db8:1234:5678"
+ * 
+ * 3. The database RPC function does a simple string equality match between
+ *    the normalized client IP and the stored network_cidr values.
+ * 
+ * IMPORTANT: The "network_cidr" column name is historical. It now stores
+ * normalized network prefixes, not CIDR notation.
+ */
+
+/**
+ * Normalize an IP address to its network prefix for matching.
+ * IPv4: Returns first 3 octets (e.g., "205.167.46")
+ * IPv6: Returns first 4 hextets (e.g., "2001:db8:1234:5678")
+ * 
+ * @param {string} ip - The full IP address
+ * @returns {string} The normalized network prefix
+ */
+function normalizeIPToPrefix(ip) {
+  if (!ip || typeof ip !== 'string') return ip;
+  
+  // Strip zone ID (e.g., fe80::1%eth0 → fe80::1)
+  const noZone = ip.split('%')[0];
+
+  // IPv4: Extract first 3 octets
+  const ipv4Match = noZone.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/);
+  if (ipv4Match) {
+    return ipv4Match[1];
+  }
+
+  // IPv6: Extract first 4 hextets
+  try {
+    let hextets;
+    
+    // Handle :: shorthand expansion
+    if (noZone.includes('::')) {
+      const parts = noZone.split('::');
+      const left = parts[0] ? parts[0].split(':').filter(Boolean) : [];
+      const right = parts[1] ? parts[1].split(':').filter(Boolean) : [];
+      const missing = 8 - (left.length + right.length);
+      hextets = [...left, ...new Array(missing).fill('0'), ...right];
+    } else {
+      hextets = noZone.split(':').filter(Boolean);
+    }
+    
+    if (hextets.length === 0) return noZone;
+    
+    // Normalize each hextet (remove leading zeros)
+    const first4 = hextets.slice(0, 4).map(h => h.replace(/^0+/, '') || '0');
+    return first4.join(':');
+  } catch (e) {
+    return noZone;
+  }
+}
+
 /** @type {import('./$types').RequestHandler} */
 export async function POST({ request, getClientAddress }) {
   try {
@@ -25,42 +94,9 @@ export async function POST({ request, getClientAddress }) {
       return json({ error: 'User ID is required' }, { status: 400 });
     }
     
-    // Get the client's IP address
+    // Get the client's IP address and normalize to network prefix
     const clientIP = getClientAddress();
-
-    // Helper: normalize IP addresses
-    function normalizeClientIP(ip) {
-      if (!ip || typeof ip !== 'string') return ip;
-      // strip zone id (fe80::1%eth0)
-      const noZone = ip.split('%')[0];
-
-      // IPv4: drop the final octet (e.g. 205.167.46)
-      const ipv4Match = noZone.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/);
-      if (ipv4Match) return ipv4Match[1];
-
-      // IPv6: normalize by truncating to /64 (keep first 4 hextets)
-      try {
-        // Expand '::' shorthand
-        const parts = noZone.split('::');
-        let hextets = [];
-        if (parts.length === 2) {
-          const left = parts[0] ? parts[0].split(':') : [];
-          const right = parts[1] ? parts[1].split(':') : [];
-          const missing = 8 - (left.filter(Boolean).length + right.filter(Boolean).length);
-          hextets = [...left.filter(Boolean), ...new Array(missing).fill('0'), ...right.filter(Boolean)];
-        } else {
-          hextets = noZone.split(':').filter(Boolean);
-        }
-        if (hextets.length === 0) return noZone;
-        const first4 = hextets.slice(0, 4).map(h => h.replace(/^0+/, '') || '0');
-        // Return first 4 hextets only (e.g. 2001:db8:0:1)
-        return first4.join(':');
-      } catch (e) {
-        return noZone;
-      }
-    }
-
-    const clientIPNormalized = normalizeClientIP(clientIP);
+    const clientIPNormalized = normalizeIPToPrefix(clientIP);
 
     console.log('Attendance check for user:', user_id, 'from IP:', clientIP, 'normalized:', clientIPNormalized);
 
@@ -127,7 +163,13 @@ export async function GET({ url, getClientAddress, request }) {
     const supa = getClientFromRequest(request);
     
     if (action === 'current-ip') {
-      return json({ success: true, client_ip: getClientAddress() });
+      const rawIP = getClientAddress();
+      const normalizedIP = normalizeIPToPrefix(rawIP);
+      return json({ 
+        success: true, 
+        client_ip: rawIP,
+        client_ip_normalized: normalizedIP
+      });
     }
     
     if (action === 'leaderboard' || action === 'attendance-stats') {

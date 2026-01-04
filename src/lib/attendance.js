@@ -1,3 +1,39 @@
+/**
+ * ATTENDANCE TRACKING SYSTEM
+ * ==========================
+ * 
+ * This module handles automatic attendance tracking for users based on their
+ * network location. Attendance is recorded when a user accesses the app from
+ * a trusted network during an active schedule window.
+ * 
+ * HOW NETWORK MATCHING WORKS:
+ * ---------------------------
+ * The system uses "network prefix" matching (first 3 octets of IPv4) to identify
+ * trusted locations. This approach:
+ * 
+ * 1. Provides privacy - we don't store or match on full IP addresses
+ * 2. Handles dynamic IPs - devices on the same /24 network match automatically
+ * 3. Simple to configure - just capture your current network prefix
+ * 
+ * EXAMPLE:
+ * - User connects from IP: 205.167.46.123
+ * - Normalized to prefix: "205.167.46"
+ * - Matches location with network_cidr: "205.167.46"
+ * - If inside an active schedule window → attendance logged!
+ * 
+ * For IPv6, the first 4 hextets are used (equivalent to /64 network).
+ * 
+ * DATABASE SCHEMA:
+ * ----------------
+ * - attendance_locations: Trusted networks (name, network_cidr as prefix, etc.)
+ * - attendance_schedules: Time windows (day_of_week, start_time, end_time)
+ * - attendance_schedule_locations: Links schedules to locations (many-to-many)
+ * - user_attendance_logs: Records of check-ins
+ * 
+ * The `log_user_attendance` RPC function handles the actual logging with
+ * duplicate prevention (one check-in per user per day per location).
+ */
+
 import { supabase } from './supabase.js';
 
 const scheduleSelection = `
@@ -23,7 +59,7 @@ const mapSchedule = (row = {}) => {
     .map((loc) => ({
       id: loc.id,
       name: loc.name,
-      network_cidr: loc.network_cidr,
+      network_cidr: loc.network_cidr, // This is actually the network prefix (e.g., "205.167.46")
       active: loc.active
     }));
   return {
@@ -41,7 +77,7 @@ const mapSchedule = (row = {}) => {
 const mapLocation = (row = {}) => ({
   id: row.id,
   name: row.name,
-  network_cidr: row.network_cidr,
+  network_cidr: row.network_cidr, // Network prefix (e.g., "205.167.46" for IPv4)
   description: row.description,
   active: row.active,
   created_at: row.created_at
@@ -186,12 +222,20 @@ export async function fetchAttendanceLeaderboard({ search = '', limit = 200, day
   }
 }
 
+/**
+ * Get the current network fingerprint for attendance location matching.
+ * Returns the NORMALIZED network prefix (first 3 octets for IPv4, first 4 hextets for IPv6)
+ * which should be stored in the attendance_locations.network_cidr field.
+ * 
+ * @returns {Promise<string|null>} The normalized network prefix
+ */
 export async function getCurrentNetworkFingerprint() {
   try {
     const response = await fetch('/api/attendance?action=current-ip');
     const payload = await response.json();
     if (!response.ok) throw new Error(payload?.error || 'Unable to fetch network info');
-    return payload.client_ip;
+    // Return the normalized IP prefix for storage (not the full IP)
+    return payload.client_ip_normalized || payload.client_ip;
   } catch (error) {
     console.error('Failed to capture network fingerprint:', error);
     return null;

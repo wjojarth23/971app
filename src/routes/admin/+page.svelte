@@ -981,17 +981,14 @@
   async function captureNetwork() {
     capturingNetwork = true;
     try {
-      const ip = await getCurrentNetworkFingerprint();
-      if (ip) {
-        // Use a single-address mask appropriate to the IP version:
-        // - IPv4 single address -> /32
-        // - IPv6 single address -> /128
-        const cidr = ip.includes('/')
-          ? ip
-          : ip.includes(':')
-          ? `${ip}/128`
-          : `${ip}/32`;
-        locationForm = { ...locationForm, network_cidr: cidr };
+      // getCurrentNetworkFingerprint now returns the normalized network prefix
+      // (first 3 octets for IPv4, e.g., "205.167.46")
+      // This is the format used for matching in the attendance system
+      const networkPrefix = await getCurrentNetworkFingerprint();
+      if (networkPrefix) {
+        // Store the normalized prefix directly - no CIDR suffix needed
+        // The attendance system does simple string matching on these prefixes
+        locationForm = { ...locationForm, network_cidr: networkPrefix };
         toastActions.show('Captured current network');
       } else {
         toastActions.show('Unable to capture network');
@@ -1770,13 +1767,14 @@
             <input class="form-input" type="text" placeholder="Shop" bind:value={locationForm.name} />
           </label>
           <label>
-            <span class="form-label">Network CIDR</span>
+            <span class="form-label">Network Prefix</span>
             <div class="input-row">
-              <input class="form-input" type="text" placeholder="203.0.113.5/32" bind:value={locationForm.network_cidr} />
+              <input class="form-input" type="text" placeholder="203.0.113" bind:value={locationForm.network_cidr} />
               <button type="button" class="btn btn-secondary btn-sm" on:click={captureNetwork} disabled={capturingNetwork}>
                 {capturingNetwork ? 'Detecting…' : 'Use My Network'}
               </button>
             </div>
+            <small class="text-muted">First 3 octets of IPv4 (e.g., 203.0.113) or first 4 hextets of IPv6</small>
           </label>
           <label>
             <span class="form-label">Description</span>
