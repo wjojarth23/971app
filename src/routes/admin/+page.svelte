@@ -205,7 +205,12 @@
   function computeApproverStats(purchases, days, startDate, endDate) {
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
     const stats = {};
+    const BUDGET_EXEMPT = 'Budget Exempt';
+
     filtered.forEach(p => {
+      // Completely ignore Budget Exempt items in analytics
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
+
       if (p.approver && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted')) {
         if (!stats[p.approver]) {
           stats[p.approver] = { count: 0, total: 0 };
@@ -224,7 +229,12 @@
   function computeOrdererStats(purchases, days, startDate, endDate) {
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
     const stats = {};
+    const BUDGET_EXEMPT = 'Budget Exempt';
+
     filtered.forEach(p => {
+      // Ignore budget-exempt items
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
+
       const ordererName = p.requester || 'Unknown';
       if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
         if (!stats[ordererName]) {
@@ -244,7 +254,12 @@
   function computeProjectStats(purchases, days, startDate, endDate) {
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
     const stats = {};
+    const BUDGET_EXEMPT = 'Budget Exempt';
+
     filtered.forEach(p => {
+      // Skip budget-exempt projects entirely
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
+
       if (p.project_id && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted')) {
         if (!stats[p.project_id]) {
           stats[p.project_id] = { count: 0, total: 0 };
@@ -264,8 +279,12 @@
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
     const vendorNames = new Set(vendorList.map(v => v.name.toLowerCase()));
     const stats = {};
-    
+    const BUDGET_EXEMPT = 'Budget Exempt';
+
     filtered.forEach(p => {
+      // Ignore budget-exempt items
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
+
       if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
         // Normalize vendor name for matching
         const rawVendor = p.vendor || '';
@@ -298,8 +317,12 @@
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
     let total = 0;
     let items = 0;
+    const BUDGET_EXEMPT = 'Budget Exempt';
 
     filtered.forEach(p => {
+      // Ignore budget-exempt items
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
+
       if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
         const qty = p.quantity || 1;
         const itemCost = (p.final_price || p.price || 0) * qty;
@@ -323,13 +346,23 @@
       }
     });
 
-    const totalOrderSpending = filteredOrders.reduce((sum, o) => sum + (o.total_cost || 0) + (o.shipping_cost || 0), 0);
-    const orderCount = filteredOrders.length;
-
-    // Calculate spending on non-order items (approved but not in an order)
-    const filteredPurchases = filterByTimePeriod(purchases, days, customStartDate, customEndDate);
     const eligibleStatuses = new Set(['approved', 'ordered', 'delivered', 'kitted']);
-    const scopedPurchases = filteredPurchases.filter(p => eligibleStatuses.has(p.status));
+    const BUDGET_EXEMPT = 'Budget Exempt';
+
+    // Compute order totals by summing their purchases (excluding Budget Exempt items)
+    const totalOrderSpending = filteredOrders.reduce((sum, o) => {
+      const orderPurchases = purchases.filter(p => p.order_id === o.id && eligibleStatuses.has(p.status) && (p.project_id || '').trim() !== BUDGET_EXEMPT);
+      const itemsSum = orderPurchases.reduce((s, p) => s + (p.final_price || p.price || 0) * (p.quantity || 1), 0);
+      const shippingSum = orderPurchases.reduce((s, p) => s + Number(p.shipping_cost_allocated || 0), 0);
+      return sum + itemsSum + shippingSum;
+    }, 0);
+
+    // Count only orders that have non-exempt purchases
+    const orderCount = filteredOrders.filter(o => purchases.some(p => p.order_id === o.id && eligibleStatuses.has(p.status) && (p.project_id || '').trim() !== BUDGET_EXEMPT)).length;
+
+    // Calculate spending on non-order items (approved but not in an order), excluding Budget Exempt
+    const filteredPurchases = filterByTimePeriod(purchases, days, customStartDate, customEndDate);
+    const scopedPurchases = filteredPurchases.filter(p => eligibleStatuses.has(p.status) && (p.project_id || '').trim() !== BUDGET_EXEMPT);
 
     const nonOrderSpending = scopedPurchases
       .filter(p => !p.order_id)

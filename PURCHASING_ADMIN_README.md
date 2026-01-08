@@ -93,6 +93,7 @@ Created migration file: `migrations/20251022_add_vendors_table.sql`
 **Project ID Options Added:**
 - Electrical Supply
 - Electrical Consumable
+- Budget Exempt (excluded from budget calculations)
 
 ### Edit Modal Updates
 **Changed Fields:**
@@ -118,7 +119,8 @@ The following project IDs are now available in all purchasing dropdowns:
 8. Software Supply
 9. Competition
 10. Outreach + Fundraising
-11. Other
+11. Budget Exempt (items excluded from budget calculations)
+12. Other
 
 ## Styling Updates
 Added new CSS classes in admin panel:

@@ -158,8 +158,13 @@
   }
 
   function calculateBudgetSpent(budget, allParts) {
+    const BUDGET_EXEMPT_PROJECT = 'Budget Exempt';
+
     // Filter parts that match the budget scope
     const matches = allParts.filter(p => {
+      // Exclude budget-exempt projects from any budget counts
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
+
       // Date filter
       if (budget.start_date && new Date(p.created_at) < new Date(budget.start_date)) return false;
       if (budget.end_date && new Date(p.created_at) > new Date(budget.end_date)) return false;
@@ -1218,8 +1223,10 @@
             <option value="Software Supply">Software Supply</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
+            <option value="Budget Exempt">Budget Exempt</option>
             <option value="Other">Other</option>
           </select>
+          <small style="color: var(--text-secondary); margin-top: 0.25rem;">Selecting "Budget Exempt" excludes this item from budget totals</small>
         </div>
         <div class="form-row">
           <label for="edit-qty">Quantity</label>
@@ -1275,8 +1282,10 @@
             <option value="Software Supply">Software Supply</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
+            <option value="Budget Exempt">Budget Exempt</option>
             <option value="Other">Other</option>
           </select>
+          <small style="color: var(--text-secondary); margin-top: 0.25rem;">Selecting "Budget Exempt" excludes this item from budget totals</small>
         </div>
         <div class="form-row">
           <label for="misc-qty">Quantity</label>
