@@ -16,7 +16,7 @@
  * @param {string} onshapeData.wvmid - The workspace/version/microversion ID
  * @param {string} onshapeData.element_id - Onshape element ID
  * @param {string} onshapeData.part_id - Onshape part ID
- * @param {string} onshapeData.file_format - File format ('stl' or 'parasolid')
+ * @param {string} onshapeData.file_format - File format ('step' or 'parasolid')
  */
 export async function addOnshapePart(supabase, partData, onshapeData) {
     try {
@@ -97,7 +97,7 @@ export async function addTraditionalPart(supabase, partData, fileName, fileUrl) 
 export function getFileFormatForWorkflow(workflow) {
     switch (workflow) {
         case '3d-print':
-            return 'stl';
+            return 'step';
         case 'router':
         case 'laser-cut':
         case 'mill':

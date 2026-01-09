@@ -48,7 +48,7 @@
     { id: 'router', name: 'Router', fileType: 'step', icon: Wrench, color: 'workflow-router' },
     { id: 'lathe', name: 'Lathe', fileType: 'pdf', icon: FileText, color: 'workflow-lathe' },
     { id: 'mill', name: 'Mill', fileType: 'pdf', icon: FileText, color: 'workflow-mill' },
-    { id: '3d-print', name: '3D Print', fileType: 'stl', icon: Upload, color: 'workflow-3d-print' }
+    { id: '3d-print', name: '3D Print', fileType: 'step', icon: Upload, color: 'workflow-3d-print' }
   ];
 
   $: selectedWorkflow = workflows.find(w => w.id === workflow);
@@ -62,8 +62,10 @@
     const file = event.target.files[0];
     if (file) {
       const fileExtension = file.name.split('.').pop().toLowerCase();
-      if (requiredFileType && fileExtension !== requiredFileType) {
-        alert(`Please upload a ${requiredFileType.toUpperCase()} file for ${selectedWorkflow.name} workflow.`);
+      const allowedExts = requiredFileType === 'step' ? ['step','stp'] : [requiredFileType];
+      if (requiredFileType && !allowedExts.includes(fileExtension)) {
+        const extMsg = requiredFileType === 'step' ? 'STEP (.step or .stp)' : requiredFileType.toUpperCase();
+        alert(`Please upload a ${extMsg} file for ${selectedWorkflow.name} workflow.`);
         event.target.value = '';
         return;
       }
@@ -90,8 +92,10 @@
     if (files.length > 0) {
       const file = files[0];
       const fileExtension = file.name.split('.').pop().toLowerCase();
-      if (requiredFileType && fileExtension !== requiredFileType) {
-        alert(`Please upload a ${requiredFileType.toUpperCase()} file for ${selectedWorkflow.name} workflow.`);
+      const allowedExts = requiredFileType === 'step' ? ['step','stp'] : [requiredFileType];
+      if (requiredFileType && !allowedExts.includes(fileExtension)) {
+        const extMsg = requiredFileType === 'step' ? 'STEP (.step or .stp)' : requiredFileType.toUpperCase();
+        alert(`Please upload a ${extMsg} file for ${selectedWorkflow.name} workflow.`);
         return;
       }
       uploadedFile = file;

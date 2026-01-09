@@ -801,7 +801,7 @@
         // Insert into parts (manufactured)
         const wf = item.workflow || 'mill';
         const file_format =
-          wf === '3d-print' ? 'stl' :
+          wf === '3d-print' ? 'step' :
           (wf === 'laser-cut' || wf === 'lathe' || wf === 'mill' || wf === 'router') ? 'step' : 'step';
 
         const baseInsert = {

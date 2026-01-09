@@ -699,7 +699,7 @@
         // try to preserve useful metadata for later promotion to manufacturing/purchasing
         const wvm = 'v';
         const wvmid = selectedVersion.id;
-        const file_format = item.workflow === '3d-print' ? 'stl' : 'step';
+        const file_format = 'step';
         return {
           build_id: build.id,
           part_name: item.part_name || item.part_number || 'Unknown Part',
@@ -1134,8 +1134,8 @@
         file_url = `/parts/d/${subsystem.onshape_document_id}/${wvm}/${wvmid}/e/${elementId}/partid/${partId}/step`;
         file_name = `${item.part_name || item.part_number || "Part"}.step`;
       } else if (workflow === '3d-print' && partId && elementId) {
-        file_url = `/parts/d/${subsystem.onshape_document_id}/${wvm}/${wvmid}/e/${elementId}/partid/${partId}/stl`;
-        file_name = `${item.part_name || item.part_number || "Part"}.stl`;
+        file_url = `/parts/d/${subsystem.onshape_document_id}/${wvm}/${wvmid}/e/${elementId}/partid/${partId}/step`;
+        file_name = `${item.part_name || item.part_number || "Part"}.step`;
       } else if ((workflow === 'laser-cut' || workflow === 'lathe' || workflow === 'mill') && partId && elementId) {
         // For now, use step files for other workflows as mentioned in requirements
         file_url = `/parts/d/${subsystem.onshape_document_id}/${wvm}/${wvmid}/e/${elementId}/partid/${partId}/step`;
@@ -1531,11 +1531,11 @@
                           <div class="download-buttons">
                             <button
                               class="btn btn-sm btn-download"
-                              on:click={() => downloadPartFile(item, 'stl')}
-                              title="Download STL for 3D printing"
+                              on:click={() => downloadPartFile(item, 'step')}
+                              title="Download STEP for 3D printing"
                             >
                               <Download size={12} />
-                              STL
+                              STEP
                             </button>
                             <button
                               class="btn btn-sm btn-download"                              on:click={() => downloadPartFile(item, 'step')}
