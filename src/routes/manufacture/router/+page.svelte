@@ -335,12 +335,13 @@
         partId: part.onshape_part_id,
         wvm: part.onshape_wvm || 'v',
         wvmId: part.onshape_wvmid,
-        format: part.file_format === 'stl' ? 'STL' : 'STEP'
+        // Prefer STEP for 3D prints
+        format: part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')
       });
       const resp = await fetch(`/api/onshape?${params}`);
       if (!resp.ok) throw new Error('Onshape download failed');
       const blob = await resp.blob();
-      const ext = part.file_format === 'stl' ? 'stl' : 'step';
+      const ext = part.workflow === '3d-print' ? 'step' : (part.file_format === 'stl' ? 'stl' : 'step');
       const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.${ext}`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);

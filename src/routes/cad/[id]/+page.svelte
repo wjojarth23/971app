@@ -1155,6 +1155,7 @@
           status: 'pending',
           file_name,
           file_url: file_url || '', // OnShape URL or empty if not available
+          file_format: workflow === '3d-print' ? 'step' : (workflow === 'laser-cut' || workflow === 'lathe' || workflow === 'mill' || workflow === 'router') ? 'step' : 'step',
           quantity: item.quantity || 1,
           material: item.material || '',
           frc_team: user?.frc_team || null

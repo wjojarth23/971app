@@ -310,7 +310,7 @@
       // Note: lathe/mill drawing PDF generation has been removed. Those parts should
       // open the subsystem/document page instead (handled earlier in downloadFile or via UI).
 
-      // Use the new translation workflow for both STL and STEP
+      // Use the new translation workflow for both STL and STEP (prefer STEP for 3D prints)
       const action = 'translate-part';
       
       // Build the API URL
@@ -321,7 +321,8 @@
         partId: part.onshape_part_id,
         wvm: part.onshape_wvm,
         wvmId: part.onshape_wvmid,
-        format: part.file_format === 'stl' ? 'STL' : 'STEP'
+        // Force STEP for 3D-print parts; otherwise fall back to part.file_format or STEP
+        format: part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')
       });
       
       showToastMessage('Download requested...');
@@ -335,7 +336,7 @@
 
       // Create blob and download
       const blob = await response.blob();
-      const fileExt = part.file_format === 'stl' ? 'stl' : 'step';
+      const fileExt = part.workflow === '3d-print' ? 'step' : (part.file_format === 'stl' ? 'stl' : 'step');
       const fileName = `${part.name.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExt}`;
       
       const url = window.URL.createObjectURL(blob);
@@ -1256,12 +1257,12 @@
                     <button
                       type="button"
                       class="tag tag-source tag-action"
-                      aria-label={`Download ${part.file_format === 'stl' ? 'STL' : 'STEP'} file`}
+                      aria-label={`Download ${part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')} file`}
                       title="Download file"
                       on:click|stopPropagation={() => downloadFile(part, part.status)}
                     >
                       <Download size={14} />
-                      {part.file_format === 'stl' ? 'STL' : 'STEP'}
+                      {part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')}
                     </button>
                   {/if}
                 </div>
