@@ -84,6 +84,35 @@
     }
   }
 
+  // CAM quick actions for convenience
+  async function handleCamDone() {
+    try {
+      // Mark CAM work done -> set step to cam_review while keeping status in-progress
+      await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+      await updateRouterStep(part, 'cam_review');
+      dispatch('update');
+    } catch (e) {
+      console.error('Failed to set CAM Review Ready', e);
+      alert('Failed to set CAM Review Ready');
+    }
+  }
+
+  async function handleCamReviewed() {
+    try {
+      // Mark reviewed -> status cammed and explicit step cammed, remove travis flag
+      await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+      const m = parseMeta(part);
+      if (m.travis_progged) delete m.travis_progged;
+      if (!m.router_meta) m.router_meta = {};
+      m.router_meta.step = 'cammed';
+      await supabase.from('parts').update({ file_url: JSON.stringify(m), updated_at: new Date().toISOString() }).eq('id', part.id);
+      dispatch('update');
+    } catch (e) {
+      console.error('Failed to set CAM Reviewed', e);
+      alert('Failed to set CAM Reviewed');
+    }
+  }
+
   async function updateRouterStep(p, step, extraMeta = {}) {
     let root = {};
     try { root = JSON.parse(p.file_url || '{}') || {}; } catch { root = {}; }
@@ -95,11 +124,19 @@
 </script>
 
 <div class="status-selector">
-  <select class="status-select {badgeClass}" value={currentDisplay} on:change={handleChange}>
-    {#each DISPLAY_ORDER as statusLabel}
-      <option value={statusLabel}>{statusLabel}</option>
-    {/each}
-  </select>
+  {#if (part.status === 'in-progress' || (meta?.router_meta && (meta.router_meta.step === 'cam_ing' || meta.router_meta.step === 'cam_review')))}
+    {#if meta?.router_meta && meta.router_meta.step === 'cam_review'}
+      <button class="btn btn-primary cam-btn" on:click={handleCamReviewed}>CAM Reviewed</button>
+    {:else}
+      <button class="btn btn-primary cam-btn" on:click={handleCamDone}>CAM Done</button>
+    {/if}
+  {:else}
+    <select class="status-select {badgeClass}" value={currentDisplay} on:change={handleChange}>
+      {#each DISPLAY_ORDER as statusLabel}
+        <option value={statusLabel}>{statusLabel}</option>
+      {/each}
+    </select>
+  {/if}
 </div>
 
 <style>
@@ -162,5 +199,16 @@
     background-color: white;
     color: #1f2933;
     font-weight: 500;
+  }
+
+  /* CAM action button styling */
+  .cam-btn {
+    height: var(--control-height, 32px);
+    min-width: 120px;
+    padding: 0 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: var(--radius-sm, 4px);
   }
 </style>

@@ -14,7 +14,6 @@
   let customStock = '';
   let uploadedFile = null;
   let uploadedStepFile = null;
-  let uploadedDXFFile = null;
   let isSubmitting = false;
   let user = null;
 
@@ -29,19 +28,8 @@
     return () => unsubscribe();
   });
 
-  // Router: if selected stock is tube, DXF not required
-  $: stockIsTube = (() => {
-    if (workflow === 'router' && stockAssignment && stockAssignment !== '__other__') {
-      const s = (stockOptions || []).find(s => s.description === stockAssignment);
-      return Boolean(s && s.isTube);
-    }
-    return false;
-  })();
-
-  // For non-router: need one file. For router: need STEP and DXF unless tube (DXF optional)
-  $: hasRequiredFiles = workflow === 'router'
-    ? (!!uploadedStepFile && (stockIsTube ? true : !!uploadedDXFFile))
-    : !!uploadedFile;
+  // For non-router: need one file. For router: need STEP
+  $: hasRequiredFiles = workflow === 'router' ? !!uploadedStepFile : !!uploadedFile;
 
   const workflows = [
     { id: 'laser-cut', name: 'Laser Cut', fileType: 'svg', icon: Zap, color: 'workflow-laser' },
@@ -102,7 +90,7 @@
     }
   }
 
-  // Router-specific STEP + DXF handlers
+  // Router-specific STEP handler
   function handleStepUpload(event) {
     const file = event.target.files[0];
     if (file) {
@@ -113,18 +101,6 @@
         return;
       }
       uploadedStepFile = file;
-    }
-  }
-  function handleDXFUpload(event) {
-    const file = event.target.files[0];
-    if (file) {
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (ext !== 'dxf') {
-        alert('Please upload a DXF (.dxf) file.');
-        event.target.value = '';
-        return;
-      }
-      uploadedDXFFile = file;
     }
   }
   // Handle drag-and-drop for STEP and DXF zones
@@ -140,20 +116,6 @@
         return;
       }
       uploadedStepFile = file;
-    }
-  }
-  function handleDropDXF(event) {
-    event.preventDefault();
-    event.currentTarget.classList.remove('active');
-    const files = event.dataTransfer?.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (ext !== 'dxf') {
-        alert('Please drop a DXF (.dxf) file.');
-        return;
-      }
-      uploadedDXFFile = file;
     }
   }
   function sanitizeName(n) { return (n || 'part').replace(/[^a-zA-Z0-9]/g, '_'); }
@@ -220,10 +182,6 @@
       alert('Router parts require a STEP file.');
       return;
     }
-    if (!stockIsTube && !uploadedDXFFile) {
-      alert('DXF file is required for non-tube router stock.');
-      return;
-    }
 
     isSubmitting = true;
     try {
@@ -236,18 +194,7 @@
         .upload(stepName, uploadedStepFile, { cacheControl: '3600', upsert: false });
       if (stepErr) throw stepErr;
 
-      // DXF (optional for tube)
-      let dxfName = null;
-      if (uploadedDXFFile) {
-        const dxfExt = uploadedDXFFile.name.split('.').pop();
-        dxfName = `${base}.${dxfExt}`;
-        const { error: dxfErr } = await supabase.storage
-          .from('manufacturing-files')
-          .upload(dxfName, uploadedDXFFile, { cacheControl: '3600', upsert: false });
-        if (dxfErr) throw dxfErr;
-      }
-
-      const fileMeta = { step_file: stepName, dxf_file: dxfName };
+      const fileMeta = { step_file: stepName };
   const { error: insertError } = await supabase
         .from('parts')
         .insert([{
@@ -273,7 +220,6 @@
   stockAssignment = '';
   customStock = '';
       uploadedStepFile = null;
-      uploadedDXFFile = null;
       uploadedFile = null;
 
       goto('/manufacture');
@@ -366,7 +312,7 @@
                 type="radio" 
                 bind:group={workflow} 
                 value={workflowOption.id}
-                on:change={() => { stockAssignment = ''; customStock = ''; uploadedFile = null; uploadedStepFile = null; uploadedDXFFile = null; }}
+                on:change={() => { stockAssignment = ''; customStock = ''; uploadedFile = null; uploadedStepFile = null; }}
               />
               <div class="workflow-content">
                 <svelte:component this={workflowOption.icon} size={24} />
@@ -438,41 +384,6 @@
                     <Upload size={48} />
                     <span class="upload-text">Drop STEP (.step/.stp) here or click to browse</span>
                     <span class="upload-subtext">Required</span>
-                  </div>
-                {/if}
-              </div>
-            </div>
-
-            <div class="upload-container" style="margin-top: 0.75rem;">
-              <div 
-                class="file-drop-zone {uploadedDXFFile ? 'has-file' : ''}"
-                role="button"
-                tabindex="0"
-                on:dragover={handleDragOver}
-                on:dragleave={handleDragLeave}
-                on:drop={handleDropDXF}
-                on:click={() => document.getElementById('dxf-input').click()}
-                on:keydown={(e) => e.key === 'Enter' && document.getElementById('dxf-input').click()}
-              >
-                <input 
-                  id="dxf-input"
-                  type="file" 
-                  accept=".dxf"
-                  on:change={handleDXFUpload}
-                  style="display: none;"
-                />
-                
-                {#if uploadedDXFFile}
-                  <div class="uploaded-file">
-                    <FileText size={48} />
-                    <span class="file-name">{uploadedDXFFile.name}</span>
-                    <span class="file-size">{(uploadedDXFFile.size / 1024 / 1024).toFixed(2)} MB</span>
-                  </div>
-                {:else}
-                  <div class="upload-prompt">
-                    <Upload size={48} />
-                    <span class="upload-text">Drop DXF (.dxf) here or click to browse</span>
-                    <span class="upload-subtext">{stockIsTube ? 'Optional for tube stock' : 'Required'}</span>
                   </div>
                 {/if}
               </div>

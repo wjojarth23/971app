@@ -531,30 +531,6 @@
     window.URL.revokeObjectURL(url); document.body.removeChild(a);
   }
 
-  async function downloadDXFFromOnshape(part) {
-    await ensureInProgress(part);
-    const params = new URLSearchParams({
-      action: 'convert-to-dxf',
-      documentId: part.onshape_document_id,
-      elementId: part.onshape_element_id,
-      partId: part.onshape_part_id,
-      wvm: part.onshape_wvm,
-      wvmId: part.onshape_wvmid
-    });
-    const response = await fetch(`/api/onshape?${params}`);
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-    const blob = await response.blob();
-    const fileName = `${(part.name || 'part').replace(/[^a-zA-Z0-9]/g, '_')}.dxf`;
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName;
-    document.body.appendChild(a); a.click();
-    window.URL.revokeObjectURL(url); document.body.removeChild(a);
-  }
-
   // Router flow helpers (new) - definitions moved earlier in file for JSON-based flow
 
   // Open the subsystem page or linked Onshape document for parts that require drawings
@@ -743,11 +719,32 @@
   // Edit modal handlers
   function openEditModal(part) {
     editPart = part;
-    editStatus = part.status || 'pending';
+    // If router part is in the CAM Review Ready pseudo-state, surface that value in the select
+    const meta = part.workflow === 'router' ? getRouterMeta(part) : {};
+    editStatus = (part.workflow === 'router' && meta.step === 'cam_review') ? 'cam_review' : (part.status || 'pending');
     editWorkflow = part.workflow || '';
     editStock = part.stock_assignment || '';
     editCustomStock = '';
     showEditModal = true;
+  }
+
+  // Local state helpers to avoid a full reload after button clicks
+  function setLocalRouterMeta(partId, updates) {
+    parts = parts.map((p) => {
+      if (p.id !== partId) return p;
+      let root = {};
+      try {
+        root = JSON.parse(p.file_url || '{}') || {};
+      } catch {
+        root = {};
+      }
+      root.router_meta = { ...(root.router_meta || {}), ...updates };
+      return { ...p, file_url: JSON.stringify(root) };
+    });
+  }
+
+  function setLocalStatus(partId, status) {
+    parts = parts.map((p) => (p.id === partId ? { ...p, status } : p));
   }
 
   // Row click handler: open edit modal when user clicks the row body
@@ -786,7 +783,10 @@
     // If the user selected the CAM review pseudo-status, store underlying 'cammed'
     // as the actual status and set router_meta.step = 'cam_review' separately.
     const update = {
-      status: editStatus === 'cam_review' ? 'cammed' : editStatus,
+      // If user picked the pseudo-status 'cam_review' (CAM Review Ready), keep underlying status as in-progress
+      // and set router_meta.step to 'cam_review' below. Previously this stored 'cammed' which caused it to appear
+      // immediately as CAM Reviewed; keep it as 'in-progress' instead.
+      status: editStatus === 'cam_review' ? 'in-progress' : editStatus,
       workflow: editWorkflow,
       updated_at: new Date().toISOString()
     };
@@ -857,7 +857,11 @@
       part.project_id.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesWorkflow = !filterWorkflow || part.workflow === filterWorkflow;
-    const matchesStatus = !filterStatus || part.status === filterStatus;
+    const meta = part.workflow === 'router' ? getRouterMeta(part) : {};
+    // Treat CAM Review Ready as a pseudo-status based on router_meta.step
+    const matchesStatus = !filterStatus ||
+      part.status === filterStatus ||
+      (filterStatus === 'cam_review' && meta.step === 'cam_review');
     const matchesProject = !filterProject || part.project_id === filterProject;
     const notCompleted = part.status !== 'complete';
     
@@ -1108,14 +1112,11 @@
               <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openSubsystemDocument(part)}>
                 <ExternalLink size={14} /> View
               </button>
-            {:else if part.workflow === 'router'}
-              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
-                <Download size={14} /> STEP
-              </button>
-              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadDXFFromOnshape(part)}>
-                <Download size={14} /> DXF
-              </button>
-            {:else}
+              {:else if part.workflow === 'router'}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                  <Download size={14} /> STEP
+                </button>
+              {:else}
               <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFile(part, part.status)}>
                 <Download size={14} /> File
               </button>
@@ -1131,7 +1132,7 @@
             {#if part.workflow === 'router'}
               <button
                 class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); }}
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); setLocalStatus(part.id, 'in-progress'); setLocalRouterMeta(part.id, { step: 'cam_ing' }); }}
               >
                 <Clock size={14} /> Start
               </button>
@@ -1144,20 +1145,22 @@
               </button>
             {/if}
           {:else if part.status === 'in-progress'}
-            {#if part.workflow === 'router' && getRouterMeta(part).step === 'cam_ing'}
-              <button
-                class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updateRouterMeta(part, { step: 'cam_review' }); }}
-              >
-                CAM Done
-              </button>
-            {:else if part.workflow === 'router' && getRouterMeta(part).step === 'cam_review'}
-              <button
-                class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); }}
-              >
-                {BUTTONS.CAM_REVIEWED}
-              </button>
+            {#if part.workflow === 'router'}
+              {#if !getRouterMeta(part).step || getRouterMeta(part).step === 'cam_ing'}
+                <button
+                  class="btn btn-primary btn-sm"
+                  on:click|stopPropagation={async () => { await updateRouterMeta(part, { step: 'cam_review' }); setLocalRouterMeta(part.id, { step: 'cam_review' }); }}
+                >
+                  CAM Done
+                </button>
+              {:else if getRouterMeta(part).step === 'cam_review'}
+                <button
+                  class="btn btn-primary btn-sm"
+                  on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
+                >
+                  {BUTTONS.CAM_REVIEWED}
+                </button>
+              {/if}
             {/if}
           {/if}
         </div>
@@ -1250,16 +1253,6 @@
                       <Download size={14} />
                       STEP
                     </button>
-                    <button
-                      type="button"
-                      class="tag tag-source tag-action"
-                      aria-label="Download DXF file"
-                      title="Download DXF"
-                      on:click|stopPropagation={() => downloadDXFFromOnshape(part)}
-                    >
-                      <Download size={14} />
-                      DXF
-                    </button>
                   {:else}
                     <button
                       type="button"
@@ -1288,19 +1281,7 @@
                         STEP
                       </button>
                     {/if}
-                    {#if meta.dxf_file}
-                      <button
-                        type="button"
-                        class="tag tag-source tag-action"
-                        aria-label="Download DXF file"
-                        title="Download DXF"
-                        on:click|stopPropagation={() => downloadFromStorage(meta.dxf_file, part.id)}
-                      >
-                        <Download size={14} />
-                        DXF
-                      </button>
-                    {/if}
-                    {#if !meta.step_file && !meta.dxf_file}
+                    {#if !meta.step_file}
                       <span class="file-label">{part.file_name}</span>
                       <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
                         <Download size={16} />
@@ -1349,8 +1330,8 @@
 
               {:else if part.status === 'in-progress'}
                 {#if part.workflow === 'router'}
-                  <!-- Router: CAM Done appears when in CAMing sub-step -->
-                  {#if getRouterMeta(part).step === 'cam_ing'}
+                  <!-- Router: CAM Done appears when in CAMing sub-step or no step set -->
+                  {#if !getRouterMeta(part).step || getRouterMeta(part).step === 'cam_ing'}
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
@@ -1360,11 +1341,11 @@
                       CAM Done
                     </button>
                   </div>
-                  {:else if getRouterMeta(part).step === 'cam_review'}
-                  <div class="actions-col">
+              {:else if getRouterMeta(part).step === 'cam_review'}
+              <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); }}
+                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
                       title={BUTTONS.CAM_REVIEWED}
                     >
                       {BUTTONS.CAM_REVIEWED}
