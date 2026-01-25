@@ -185,7 +185,9 @@
 
         if (!itemsErr && items) {
           items.forEach(p => {
+             // Exclude rejected items and Budget Exempt items
              if (p.status === 'rejected') return;
+             if ((p.project_id || '').trim() === 'Budget Exempt') return;
              if (budgetMap[p.project_id]) {
                budgetMap[p.project_id].spent += ((p.final_price || p.price || 0) * (p.quantity || 1));
              }
