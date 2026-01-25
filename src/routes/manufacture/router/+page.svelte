@@ -4,6 +4,25 @@
   import { page } from '$app/stores';
   import { Package, Group, GripVertical, Download } from 'lucide-svelte';
 
+  // Lightweight helpers borrowed from the manufacture list for mobile cards
+  function formatDate(dateString) {
+    return new Date(dateString).toLocaleDateString();
+  }
+
+  function getWorkflowLabel(workflow) {
+    // Router page only lists router parts, but keep a helper for consistency
+    return workflow ? workflow.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Router';
+  }
+
+  function getWorkflowClass(workflow) {
+    if (!workflow) return 'tag-workflow-default';
+    return `tag-workflow-${workflow.toLowerCase().replace(/_/g, '-')}`;
+  }
+
+  function getStatusDisplay(part) {
+    return getDisplayStatus(part.status, parseMeta(part));
+  }
+
   function groupIsCut(g) {
     if (!g || !g.parts || g.parts.length === 0) return false;
     return g.parts.every(p => {
@@ -186,14 +205,10 @@
   async function loadParts() {
     const { data, error } = await supabase.from('parts').select('*').eq('workflow','router').order('created_at', { ascending: false });
     if (!error) {
-      // Filter to only show router parts whose status is pending, cammed, or travis_progged (meta flag)
+      // Show all router parts except those fully completed/kitted (non-complete set)
       parts = (data || []).filter(p => {
-        if (p.status === 'pending') return true;
-        if (p.status === 'cammed') return true; // include cammed (we will distinguish travis_progged in display)
-        // Treat travis_progged as a virtual status layered on top of cammed; if future real status added, handle here
-        const meta = parseMeta(p);
-        if (meta?.travis_progged) return true;
-        return false;
+        if (p.status === 'complete' || p.status === 'kitted') return false;
+        return true;
       });
       // Prefill selected bin dropdowns from existing values
       for (const p of parts) {
@@ -380,6 +395,19 @@
       if (error) throw error;
       window.open(data.signedUrl,'_blank');
     } catch (e) { throw e; }
+  }
+
+  function getFileTypeLabel(part, meta = {}) {
+    if (part?.source_type === 'onshape_api' || part?.is_onshape_part) {
+      if (part?.file_format) return String(part.file_format).toUpperCase();
+      return 'STEP';
+    }
+    if (meta?.step_file) return 'STEP';
+    if (part?.file_name && part.file_name.includes('.')) {
+      const ext = part.file_name.split('.').pop();
+      if (ext) return ext.toUpperCase();
+    }
+    return 'FILE';
   }
 
   // Group renaming
@@ -584,7 +612,167 @@
 {#if loading}
   <div class="card"><p>Loading...</p></div>
 {:else}
-  <div class="group-list">
+  <!-- Mobile cards -->
+  <div class="mobile-section">
+    {#if Object.keys(groupMap).length > 0}
+      <h2 class="subheading">Groups</h2>
+      {#each Object.values(groupMap).filter(g => (g.parts && g.parts.length > 0)) as g}
+        {#if !groupIsCut(g)}
+          <div class="group-card" role="group" aria-label="Router group">
+            <div class="group-card-header">
+              {#if editingGroupId === g.id}
+                <input class="group-name-input" bind:value={editingGroupName} on:keydown={(e)=>{ if(e.key==='Enter'){ saveGroupName(g.id); } else if (e.key==='Escape'){ editingGroupId=null; editingGroupName=''; } }} on:blur={()=>saveGroupName(g.id)} />
+              {:else}
+                <button class="group-name-btn" on:click={()=>{ editingGroupId=g.id; editingGroupName=g.name || g.id; }}>{g.name || g.id}</button>
+                {#if groupIsAllCamReviewed(g) || groupIsTravisProgged(g)}
+                  <select 
+                    class="group-status-select {groupIsTravisProgged(g) ? 'status-travis' : 'status-cammed'}"
+                    value={getGroupStatus(g)}
+                    on:change={(e) => handleGroupStatusChange(g.id, e.target.value)}
+                  >
+                    {#each GROUP_STATUS_OPTIONS as opt}
+                      <option value={opt}>{opt}</option>
+                    {/each}
+                  </select>
+                {/if}
+              {/if}
+            </div>
+
+            <div class="mobile-parts-list">
+              {#each g.parts as part (part.id)}
+                <div class="part-card" role="article">
+                  <div class="part-card-header">
+                    <div class="part-card-title">
+                      <strong>{part.name}</strong>
+                    </div>
+                    <span class={`status-badge ${getBadgeClass(part.status, parseMeta(part))}`}>{getStatusDisplay(part)}</span>
+                  </div>
+
+                  <div class="part-card-meta">
+                    <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
+                      {getWorkflowLabel(part.workflow)}
+                    </span>
+                    {#if part.project_id}
+                      <span class="part-card-project">{part.project_id}</span>
+                    {/if}
+                  </div>
+
+                  <div class="part-card-details">
+                    <div class="part-card-detail">
+                      <span class="detail-label">Qty</span>
+                      <span class="detail-value">{part.quantity || 1}</span>
+                    </div>
+                    <div class="part-card-detail">
+                      <span class="detail-label">Stock</span>
+                      <span class="detail-value">{getStock(part) || '-'}</span>
+                    </div>
+                    <div class="part-card-detail">
+                      <span class="detail-label">Created</span>
+                      <span class="detail-value">{formatDate(part.created_at)}</span>
+                    </div>
+                  </div>
+
+                  <div class="part-card-actions">
+                    {#if part.source_type === 'onshape_api' || part.is_onshape_part}
+                      <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                        <Download size={14} /> {getFileTypeLabel(part)}
+                      </button>
+                    {:else}
+                      {#if parseMeta(part).step_file}
+                        <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(parseMeta(part).step_file)}>
+                          <Download size={14} /> {getFileTypeLabel(part, parseMeta(part))}
+                        </button>
+                      {:else if part.file_name}
+                        <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name)}>
+                          <Download size={14} /> {getFileTypeLabel(part)}
+                        </button>
+                      {/if}
+                    {/if}
+
+                    <div class="status-action">
+                      {#key part.id}
+                        <RouterStatusSelector part={part} on:update={loadParts} />
+                      {/key}
+                    </div>
+
+                    <button class="btn btn-ghost btn-sm danger" on:click|stopPropagation={() => removeFromGroup(part)}>Remove</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/each}
+    {/if}
+
+    <h2 class="subheading">Ungrouped</h2>
+    <div class="mobile-parts-list">
+      {#each ungroupedParts as part (part.id)}
+        <div class="part-card" role="article">
+          <div class="part-card-header">
+            <div class="part-card-title">
+              <strong>{part.name}</strong>
+            </div>
+            <span class={`status-badge ${getBadgeClass(part.status, parseMeta(part))}`}>{getStatusDisplay(part)}</span>
+          </div>
+
+          <div class="part-card-meta">
+            <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
+              {getWorkflowLabel(part.workflow)}
+            </span>
+            {#if part.project_id}
+              <span class="part-card-project">{part.project_id}</span>
+            {/if}
+          </div>
+
+          <div class="part-card-details">
+            <div class="part-card-detail">
+              <span class="detail-label">Qty</span>
+              <span class="detail-value">{part.quantity || 1}</span>
+            </div>
+            <div class="part-card-detail">
+              <span class="detail-label">Stock</span>
+              <span class="detail-value">{getStock(part) || '-'}</span>
+            </div>
+            <div class="part-card-detail">
+              <span class="detail-label">Created</span>
+              <span class="detail-value">{formatDate(part.created_at)}</span>
+            </div>
+          </div>
+
+          <div class="part-card-actions">
+            {#if part.source_type === 'onshape_api' || part.is_onshape_part}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                <Download size={14} /> {getFileTypeLabel(part)}
+              </button>
+            {:else}
+              {#if parseMeta(part).step_file}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(parseMeta(part).step_file)}>
+                  <Download size={14} /> {getFileTypeLabel(part, parseMeta(part))}
+                </button>
+              {:else if part.file_name}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name)}>
+                  <Download size={14} /> {getFileTypeLabel(part)}
+                </button>
+              {/if}
+            {/if}
+
+            <div class="status-action">
+              {#key part.id}
+                <RouterStatusSelector part={part} on:update={loadParts} />
+              {/key}
+            </div>
+          </div>
+        </div>
+      {/each}
+      {#if ungroupedParts.length === 0}
+        <p class="hint">No ungrouped parts.</p>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Desktop tables -->
+  <div class="group-list desktop-table-view">
     {#if Object.keys(groupMap).length > 0}
       <h2 class="subheading">Groups</h2>
       {#each Object.values(groupMap).filter(g => (g.parts && g.parts.length > 0)) as g}
@@ -633,23 +821,21 @@
                   <td>{p.quantity || 1}</td>
                   <td>
                     {#if p.source_type === 'onshape_api' || p.is_onshape_part}
-                      <div class="source-cell">
-                        <span class="source-tag">STEP</span>
-                        <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(p)}><Download size={14} /></button>
-                      </div>
+                      <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(p)}`} title={`Download ${getFileTypeLabel(p)}`} on:click={()=>downloadStepFromOnshape(p)}>
+                        {getFileTypeLabel(p)}
+                      </button>
                     {:else}
                       {#await Promise.resolve(parseMeta(p)) then meta}
                         <div class="source-cell">
                           {#if meta.step_file}
-                            <span class="source-tag">STEP</span>
-                            <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
-                          {/if}
-                          {#if !meta.step_file}
-                            {#if p.file_name}
-                              <span class="file-label">{p.file_name}</span>
-                              <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(p.file_name)}><Download size={14} /></button>
-                            {:else}-{/if}
-                          {/if}
+                            <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(p, meta)}`} title={`Download ${getFileTypeLabel(p, meta)}`} on:click={()=>downloadFromStorage(meta.step_file)}>
+                              {getFileTypeLabel(p, meta)}
+                            </button>
+                          {:else if p.file_name}
+                            <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(p, meta)}`} title={`Download ${getFileTypeLabel(p, meta)}`} on:click={()=>downloadFromStorage(p.file_name)}>
+                              {getFileTypeLabel(p, meta)}
+                            </button>
+                          {:else}-{/if}
                         </div>
                       {/await}
                     {/if}
@@ -701,23 +887,21 @@
                 <td>{part.quantity || 1}</td>
                 <td>
                   {#if part.source_type === 'onshape_api' || part.is_onshape_part}
-                    <div class="source-cell">
-                      <span class="source-tag">STEP</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(part)}><Download size={14} /></button>
-                    </div>
+                    <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(part)}`} title={`Download ${getFileTypeLabel(part)}`} on:click={()=>downloadStepFromOnshape(part)}>
+                      {getFileTypeLabel(part)}
+                    </button>
                   {:else}
                     {#await Promise.resolve(parseMeta(part)) then meta}
                       <div class="source-cell">
                         {#if meta.step_file}
-                          <span class="source-tag">STEP</span>
-                          <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
-                        {/if}
-                        {#if !meta.step_file}
-                          {#if part.file_name}
-                            <span class="file-label">{part.file_name}</span>
-                            <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(part.file_name)}><Download size={14} /></button>
-                          {:else}-{/if}
-                        {/if}
+                          <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(part, meta)}`} title={`Download ${getFileTypeLabel(part, meta)}`} on:click={()=>downloadFromStorage(meta.step_file)}>
+                            {getFileTypeLabel(part, meta)}
+                          </button>
+                        {:else if part.file_name}
+                          <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(part, meta)}`} title={`Download ${getFileTypeLabel(part, meta)}`} on:click={()=>downloadFromStorage(part.file_name)}>
+                            {getFileTypeLabel(part, meta)}
+                          </button>
+                        {:else}-{/if}
                       </div>
                     {/await}
                   {/if}
@@ -937,6 +1121,146 @@
 
     .group-table-header {
       flex-wrap: wrap;
+    }
+  }
+
+  /* Mobile card layout (hidden on desktop) */
+  .mobile-section {
+    display: none;
+    margin-top: var(--space-4);
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .mobile-parts-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .group-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+  }
+
+  .group-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    justify-content: space-between;
+    margin-bottom: var(--space-3);
+  }
+
+  .part-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .part-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--gap-3);
+  }
+
+  .part-card-title {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .part-card-title strong {
+    font-size: 1rem;
+    color: var(--secondary);
+  }
+
+  .part-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+  }
+
+  .part-card-project {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .part-card-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--gap-3);
+    padding: var(--space-3);
+    background: var(--background);
+    border-radius: var(--radius-sm);
+  }
+
+  .part-card-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .detail-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  .detail-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .part-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+    align-items: center;
+  }
+
+  .part-card-actions .btn {
+    flex: 1 1 auto;
+    min-width: 120px;
+    justify-content: center;
+  }
+
+  .status-action {
+    flex: 1 1 160px;
+  }
+
+  /* Desktop hide/show */
+  .desktop-table-view {
+    display: block;
+  }
+
+  @media (max-width: 900px) {
+    .desktop-table-view {
+      display: none;
+    }
+    .mobile-section {
+      display: flex;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .part-card {
+      padding: var(--space-3);
+    }
+    .part-card-actions .btn {
+      min-width: 100px;
+    }
+    .part-card-details {
+      grid-template-columns: 1fr 1fr;
     }
   }
 </style>
