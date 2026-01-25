@@ -1221,6 +1221,8 @@
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
             <option value="Software Supply">Software Supply</option>
+            <option value="Manufacturing Stock">Manufacturing Stock</option>
+            <option value="9584 mic">9584 mic</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
             <option value="Budget Exempt">Budget Exempt</option>
@@ -1280,6 +1282,8 @@
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
             <option value="Software Supply">Software Supply</option>
+            <option value="Manufacturing Stock">Manufacturing Stock</option>
+            <option value="9584 misc">9584 misc</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
             <option value="Budget Exempt">Budget Exempt</option>

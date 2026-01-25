@@ -35,7 +35,8 @@
   ];
 
   const CATEGORIES = [
-    'General', 'Mechanical', 'Electrical', 'Software', 'Manufacturing', 'Travel', 'Events', 'Food', 'Marketing'
+    'General', 'Mechanical', 'Electrical', 'Software', 'Manufacturing', 'Travel', 'Events', 'Food', 'Marketing',
+    'Lab Supply', 'Lab Consumable', 'Manufacturing Stock'
   ];
 
   onMount(async () => {
@@ -82,7 +83,12 @@
   }
 
   function calculateBudgetSpent(budget, allPurchases) {
+    const BUDGET_EXEMPT_PROJECT = 'Budget Exempt';
+    
     const matches = allPurchases.filter(p => {
+      // Exclude budget-exempt projects from any budget counts
+      if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
+      
       // Only count non-rejected items
       if (p.status === 'rejected') return false;
       
