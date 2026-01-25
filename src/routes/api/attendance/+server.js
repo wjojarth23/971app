@@ -24,15 +24,15 @@ const getClientFromRequest = (request) => {
  *    - IPv4: First 3 octets (e.g., 205.167.46.123 → "205.167.46")
  *    - IPv6: First 4 hextets (e.g., 2001:db8:1234:5678::1 → "2001:db8:1234:5678")
  * 
- * 2. Trusted locations store the SAME normalized prefix format:
- *    - IPv4: "205.167.46" (NOT "205.167.46.0/24" or "205.167.46.123/32")
+ * 2. Trusted locations store the SAME normalized prefix format as TEXT:
+ *    - IPv4: "205.167.46" (NOT "205.167.46.0/24" or "205.167.46.123")
  *    - IPv6: "2001:db8:1234:5678"
  * 
- * 3. The database RPC function does a simple string equality match between
+ * 3. The database RPC function does a simple TEXT equality match between
  *    the normalized client IP and the stored network_cidr values.
  * 
- * IMPORTANT: The "network_cidr" column name is historical. It now stores
- * normalized network prefixes, not CIDR notation.
+ * IMPORTANT: The "network_cidr" column name is historical. It stores
+ * normalized network prefixes as TEXT, not CIDR notation or inet types.
  */
 
 /**
@@ -94,14 +94,13 @@ export async function POST({ request, getClientAddress }) {
       return json({ error: 'User ID is required' }, { status: 400 });
     }
     
-    // Get the client's IP address and normalize to network prefix
+    // Get the client's IP address and normalize to network prefix (three octets only)
     const clientIP = getClientAddress();
     const clientIPNormalized = normalizeIPToPrefix(clientIP);
 
     console.log('Attendance check for user:', user_id, 'from IP:', clientIP, 'normalized:', clientIPNormalized);
 
-    // Call the database function to log attendance using the NORMALIZED client IP
-    // (use first-three-octets for IPv4 and first-four-hextets for IPv6 per policy).
+    // Call the database function to log attendance using the three-octet prefix as text
     const { data, error } = await supabase.rpc('log_user_attendance', {
       p_user_id: user_id,
       p_external_ip: clientIPNormalized

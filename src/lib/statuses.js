@@ -2,10 +2,11 @@
 // Keep this file minimal: it maps DB status + router_meta into the
 // canonical display labels used across the app.
 
-export const DISPLAY_ORDER = ['Pending','CAM Review Ready','CAM Reviewed','TravisProgged','Machined','Kitted'];
+export const DISPLAY_ORDER = ['Pending','In Progress','CAM Review Ready','CAM Reviewed','TravisProgged','Machined','Kitted'];
 
 export const BUTTONS = {
   PENDING: 'Pending',
+  IN_PROGRESS: 'In Progress',
   CAM_REVIEW_READY: 'CAM Review Ready',
   CAM_REVIEWED: 'CAM Reviewed',
   TRAVIS: 'TravisProgged',
@@ -23,12 +24,17 @@ export function getDisplayStatus(status, meta) {
   if (status === 'pending') return BUTTONS.PENDING;
 
   // CAM stages
-  // If in-process CAMing or explicitly awaiting review -> CAM Review Ready
-  if ((status === 'in-progress' && meta?.router_meta && meta.router_meta.step === 'cam_ing') || (meta?.router_meta && meta.router_meta.step === 'cam_review')) {
+  // In Progress: actively being CAMmed
+  if (status === 'in-progress' && (!meta?.router_meta || !meta.router_meta.step || meta.router_meta.step === 'cam_ing')) {
+    return BUTTONS.IN_PROGRESS;
+  }
+
+  // CAM Review Ready: CAM work done, awaiting review
+  if (status === 'in-progress' && meta?.router_meta && meta.router_meta.step === 'cam_review') {
     return BUTTONS.CAM_REVIEW_READY;
   }
 
-  // Underlying cammed state without review-step set => treated as CAM Reviewed
+  // CAM Reviewed: status is cammed (review complete)
   if (status === 'cammed') return BUTTONS.CAM_REVIEWED;
 
   // Machined / Cut

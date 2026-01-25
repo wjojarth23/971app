@@ -371,27 +371,7 @@
     } catch (e) { throw e; }
   }
 
-  async function downloadDXFFromOnshape(part) {
-    try {
-      if (part?.status === 'pending') {
-        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
-      }
-      const params = new URLSearchParams({
-        action: 'convert-to-dxf',
-        documentId: part.onshape_document_id,
-        elementId: part.onshape_element_id,
-        partId: part.onshape_part_id,
-        wvm: part.onshape_wvm || 'v',
-        wvmId: part.onshape_wvmid
-      });
-      const resp = await fetch(`/api/onshape?${params}`);
-      if (!resp.ok) throw new Error('Onshape DXF download failed');
-      const blob = await resp.blob();
-      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.dxf`;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    } catch (e) { throw e; }
-  }
+
 
   async function downloadFromStorage(fileName) {
     try {
@@ -655,8 +635,6 @@
                       <div class="source-cell">
                         <span class="source-tag">STEP</span>
                         <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(p)}><Download size={14} /></button>
-                        <span class="source-tag">DXF</span>
-                        <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(p)}><Download size={14} /></button>
                       </div>
                     {:else}
                       {#await Promise.resolve(parseMeta(p)) then meta}
@@ -665,11 +643,7 @@
                             <span class="source-tag">STEP</span>
                             <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
                           {/if}
-                          {#if meta.dxf_file}
-                            <span class="source-tag">DXF</span>
-                            <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadFromStorage(meta.dxf_file)}><Download size={14} /></button>
-                          {/if}
-                          {#if !meta.step_file && !meta.dxf_file}
+                          {#if !meta.step_file}
                             {#if p.file_name}
                               <span class="file-label">{p.file_name}</span>
                               <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(p.file_name)}><Download size={14} /></button>
@@ -729,8 +703,6 @@
                     <div class="source-cell">
                       <span class="source-tag">STEP</span>
                       <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadStepFromOnshape(part)}><Download size={14} /></button>
-                      <span class="source-tag">DXF</span>
-                      <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadDXFFromOnshape(part)}><Download size={14} /></button>
                     </div>
                   {:else}
                     {#await Promise.resolve(parseMeta(part)) then meta}
@@ -739,11 +711,7 @@
                           <span class="source-tag">STEP</span>
                           <button class="btn btn-secondary btn-icon" aria-label="Download STEP" title="Download STEP" on:click={()=>downloadFromStorage(meta.step_file)}><Download size={14} /></button>
                         {/if}
-                        {#if meta.dxf_file}
-                          <span class="source-tag">DXF</span>
-                          <button class="btn btn-secondary btn-icon" aria-label="Download DXF" title="Download DXF" on:click={()=>downloadFromStorage(meta.dxf_file)}><Download size={14} /></button>
-                        {/if}
-                        {#if !meta.step_file && !meta.dxf_file}
+                        {#if !meta.step_file}
                           {#if part.file_name}
                             <span class="file-label">{part.file_name}</span>
                             <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click={()=>downloadFromStorage(part.file_name)}><Download size={14} /></button>

@@ -37,14 +37,18 @@
         }
         await supabase.from('parts').update({ file_url: JSON.stringify(m), updated_at: new Date().toISOString() }).eq('id', part.id);
 
+      } else if (newStatusLabel === BUTTONS.IN_PROGRESS) {
+        // In Progress -> Status: in-progress, Step: cam_ing
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterStep(part, 'cam_ing');
+
       } else if (newStatusLabel === BUTTONS.CAM_REVIEW_READY) {
-        // CAM Review Ready -> Status: in-progress, Step: cam_ing (or cam_review)
-        // Choosing cam_ing to be safe as "In Progress / Ready for Review"
-         await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
-         await updateRouterStep(part, 'cam_ing');
+        // CAM Review Ready -> Status: in-progress, Step: cam_review (CAM work done, awaiting review)
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterStep(part, 'cam_review');
 
       } else if (newStatusLabel === BUTTONS.CAM_REVIEWED) {
-         // CAM Reviewed -> Status: cammed, Step: cammed (clearing cam_review)
+         // CAM Reviewed -> Status: cammed, Step: cammed (review complete)
          await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
          const m = parseMeta(part);
          // Ensure we remove travis flag if strictly setting to Reviewed
