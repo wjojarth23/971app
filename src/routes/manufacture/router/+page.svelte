@@ -155,7 +155,8 @@
         await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
         await updateRouterMeta(part, { step: 'cam_ing' });
       } else if (nextStep === 'cam_review') {
-        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+        // CAM Review Ready: status stays 'in-progress', step is 'cam_review'
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
         await updateRouterMeta(part, { step: 'cam_review' });
       } else if (nextStep === 'queued') {
         // TravisProgged: underlying cammed + flag

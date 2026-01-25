@@ -1147,7 +1147,14 @@
             {#if part.workflow === 'router' && getRouterMeta(part).step === 'cam_ing'}
               <button
                 class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
+                on:click|stopPropagation={async () => { await updateRouterMeta(part, { step: 'cam_review' }); }}
+              >
+                CAM Done
+              </button>
+            {:else if part.workflow === 'router' && getRouterMeta(part).step === 'cam_review'}
+              <button
+                class="btn btn-primary btn-sm"
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); }}
               >
                 {BUTTONS.CAM_REVIEWED}
               </button>
@@ -1342,12 +1349,22 @@
 
               {:else if part.status === 'in-progress'}
                 {#if part.workflow === 'router'}
-                  <!-- Router: CAMed appears when in CAMing sub-step -->
+                  <!-- Router: CAM Done appears when in CAMing sub-step -->
                   {#if getRouterMeta(part).step === 'cam_ing'}
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
+                      on:click={async () => { await updateRouterMeta(part, { step: 'cam_review' }); }}
+                      title="CAM Done"
+                    >
+                      CAM Done
+                    </button>
+                  </div>
+                  {:else if getRouterMeta(part).step === 'cam_review'}
+                  <div class="actions-col">
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); }}
                       title={BUTTONS.CAM_REVIEWED}
                     >
                       {BUTTONS.CAM_REVIEWED}
