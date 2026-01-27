@@ -1,8 +1,8 @@
 import { json } from '@sveltejs/kit';
-import { PUBLIC_AUTOCAM_API_URL } from '$env/static/public';
+import * as env from '$env/static/public';
 import { DISABLE_AUTOCAM } from '$lib/config/autocam.js';
 
-const AUTOCAM_BASE_URL = PUBLIC_AUTOCAM_API_URL || 'http://localhost:8080';
+const AUTOCAM_BASE_URL = env.PUBLIC_AUTOCAM_API_URL || 'http://localhost:8080';
 
 /**
  * GET /api/autocam - Get autocam service status and presets
