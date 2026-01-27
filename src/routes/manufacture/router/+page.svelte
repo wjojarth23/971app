@@ -2,7 +2,31 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
-  import { Package, Group, GripVertical, Download } from 'lucide-svelte';
+  import { Package, Group, GripVertical, Download, Settings } from 'lucide-svelte';
+  import AutocamReviewModal from '$lib/components/AutocamReviewModal.svelte';
+  import { userStore } from '$lib/stores/auth.js';
+  import { TEAM_ROLES } from '$lib/permissions.js';
+
+  // User profile for permission checks
+  let profile = null;
+  $: isManufacturingLead = profile?.team_role === TEAM_ROLES.MANUFACTURING_LEAD || 
+                          profile?.general_role === 'lead' || 
+                          profile?.role === 'admin';
+
+  // Autocam review modal state
+  let showAutocamModal = false;
+  let autocamReviewPart = null;
+
+  function openAutocamReview(part) {
+    autocamReviewPart = part;
+    showAutocamModal = true;
+  }
+
+  function closeAutocamReview() {
+    showAutocamModal = false;
+    autocamReviewPart = null;
+    loadParts(); // Refresh after review
+  }
 
   // Lightweight helpers borrowed from the manufacture list for mobile cards
   function formatDate(dateString) {
@@ -78,10 +102,21 @@
   let useDedicatedTables = true; // will flip false if queries fail
   let editingGroupId = null; // currently editing group id
   let editingGroupName = '';
+  let groupFields = {}; // gid -> { cut_name, output_folder, machine }
+
+  const MACHINE_OPTIONS = ['UNC Router', 'ShopSabre'];
 
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
   import RouterStatusSelector from '$lib/components/RouterStatusSelector.svelte';
+
+  function shortHash(id = '') {
+    const cleaned = id.replace(/-/g, '');
+    if (!cleaned) return '000';
+    let sum = 0;
+    for (let i = 0; i < cleaned.length; i++) sum = (sum * 31 + cleaned.charCodeAt(i)) >>> 0;
+    return (sum & 0xfff).toString(16).padStart(3, '0');
+  }
 
   // We store grouping metadata inside file_url JSON under router_group_id
   function parseMeta(part) {
@@ -217,7 +252,7 @@
     }
     // Try to load groups from dedicated tables
     if (useDedicatedTables) {
-      const { data: groups, error: gErr } = await supabase.from('router_groups').select('id, name, created_at');
+      const { data: groups, error: gErr } = await supabase.from('router_groups').select('id, name, created_at, stock_type, cut_name, output_folder, machine');
       const { data: links, error: lErr } = await supabase.from('router_group_parts').select('group_id, part_id');
       if (gErr || lErr) {
         console.log('Failed to load dedicated tables, falling back to JSON', { gErr, lErr });
@@ -226,7 +261,19 @@
       } else {
         console.log('Loaded groups and links', { groups, links });
         const gmap = {};
-        groups.forEach(g => { gmap[g.id] = { id: g.id, name: g.name || g.id, parts: [] }; });
+        groups.forEach(g => {
+          const stockType = g.stock_type || 'stock';
+          const suffix = shortHash(g.id);
+          gmap[g.id] = {
+            id: g.id,
+            name: g.name || `${stockType}_${suffix}`,
+            stock_type: stockType,
+            cut_name: g.cut_name || '',
+            output_folder: g.output_folder || '',
+            machine: g.machine || 'UNC Router',
+            parts: []
+          };
+        });
         const partById = Object.fromEntries(parts.map(p => [p.id, p]));
         links.forEach(l => { if (gmap[l.group_id] && partById[l.part_id]) gmap[l.group_id].parts.push(partById[l.part_id]); });
         groupMap = gmap;
@@ -235,6 +282,14 @@
     } else {
       buildGroups();
     }
+    groupFields = {};
+    Object.values(groupMap).forEach((g) => {
+      groupFields[g.id] = {
+        cut_name: g.cut_name || '',
+        output_folder: g.output_folder || '',
+        machine: g.machine || 'UNC Router'
+      };
+    });
     loading = false;
   }
 
@@ -243,7 +298,19 @@
     for (const p of parts) {
       const meta = parseMeta(p);
       if (meta.router_group_id) {
-        if (!groupMap[meta.router_group_id]) groupMap[meta.router_group_id] = { id: meta.router_group_id, name: meta.router_group_name || meta.router_group_id, parts: [] };
+        if (!groupMap[meta.router_group_id]) {
+          const stockType = extractStockType(p);
+          const suffix = shortHash(meta.router_group_id);
+          groupMap[meta.router_group_id] = {
+            id: meta.router_group_id,
+            name: meta.router_group_name || `${stockType}_${suffix}`,
+            stock_type: stockType,
+            cut_name: '',
+            output_folder: '',
+            machine: 'UNC Router',
+            parts: []
+          };
+        }
         groupMap[meta.router_group_id].parts.push(p);
       }
     }
@@ -278,6 +345,17 @@
   // Reactive list of parts not in any group
   $: ungroupedParts = parts.filter((p) => !groupedIdSet.has(p.id));
   function getStock(part) { return part.stock_assignment || ''; }
+  function extractStockType(part) {
+    const stock = getStock(part) || '';
+    const first = stock.split(' ')[0]?.trim();
+    return first && first.length > 0 ? first : 'stock';
+  }
+  function inferGroupStock(g) {
+    if (g?.stock_type) return g.stock_type;
+    const firstPart = g?.parts?.[0];
+    if (firstPart) return extractStockType(firstPart);
+    return 'stock';
+  }
   function makeGroupName(part) {
     const base = (getStock(part).split(' ')[0] || 'Group').replace(/[^A-Za-z0-9]/g,'');
     const rand = Math.floor(10 + Math.random()*90); // 2 digits
@@ -438,6 +516,20 @@
     }
   }
 
+  async function updateGroupField(gid, field, value) {
+    if (!gid || !useDedicatedTables) return;
+    groupFields = { ...groupFields, [gid]: { ...(groupFields[gid] || {}), [field]: value } };
+    const payload = { [field]: value };
+    try {
+      await supabase.from('router_groups').update(payload).eq('id', gid);
+    } catch (e) {
+      console.error('Update group field failed', e);
+      alert('Failed to update group field');
+    } finally {
+      await loadParts();
+    }
+  }
+
   function handleDragStart(event, part) {
     dragPart = part;
     event.dataTransfer.effectAllowed = 'move';
@@ -462,9 +554,42 @@
     // stop autoscroll when drop completes
     stopAutoScroll();
 
-  // Establish or reuse a group id (use link-table map when present)
-  let targetGroup = findGroupIdForPart(targetPart);
-  const dragGroup = findGroupIdForPart(dragPart);
+    const dragGroup = findGroupIdForPart(dragPart);
+    let targetGroup = findGroupIdForPart(targetPart);
+
+    const dragStock = extractStockType(dragPart).toLowerCase();
+    const targetStock = extractStockType(targetPart).toLowerCase();
+
+    // Enforce stock-type consistency when grouping/merging
+    if (dragGroup && targetGroup && dragGroup !== targetGroup) {
+      const dragGroupStock = inferGroupStock(groupMap[dragGroup]).toLowerCase();
+      const targetGroupStock = inferGroupStock(groupMap[targetGroup]).toLowerCase();
+      if (dragGroupStock !== targetGroupStock) {
+        alert('Cannot merge groups with different stock types.');
+        return;
+      }
+    }
+
+    if (targetGroup && !dragGroup) {
+      const targetGroupStock = inferGroupStock(groupMap[targetGroup]).toLowerCase();
+      if (dragStock !== targetGroupStock) {
+        alert('Parts in a group must share the same stock type.');
+        return;
+      }
+    }
+
+    if (dragGroup && !targetGroup) {
+      const dragGroupStock = inferGroupStock(groupMap[dragGroup]).toLowerCase();
+      if (targetStock !== dragGroupStock) {
+        alert('Parts in a group must share the same stock type.');
+        return;
+      }
+    }
+
+    if (!dragGroup && !targetGroup && dragStock !== targetStock) {
+      alert('Cannot create a group with mixed stock types.');
+      return;
+    }
 
   if (useDedicatedTables) {
       // Need concrete group id(s) from link table. Ensure we remove any existing links for parts being moved
@@ -473,7 +598,15 @@
         await supabase.from('router_group_parts').delete().match({ part_id: targetPart.id });
         await supabase.from('router_group_parts').delete().match({ part_id: dragPart.id });
         const newId = crypto.randomUUID();
-        await supabase.from('router_groups').insert({ id: newId, name: makeGroupName(targetPart) });
+        const stockType = extractStockType(targetPart) || extractStockType(dragPart);
+        await supabase.from('router_groups').insert({
+          id: newId,
+          name: '',
+          stock_type: stockType,
+          cut_name: '',
+          output_folder: '',
+          machine: 'UNC Router'
+        });
         await supabase.from('router_group_parts').insert([
           { group_id: newId, part_id: targetPart.id },
           { group_id: newId, part_id: dragPart.id }
@@ -591,14 +724,31 @@
     await loadParts();
   }
 
-  onMount(loadParts);
+  onMount(() => {
+    const unsubUser = userStore.subscribe(v => { profile = v; });
+    loadParts();
+    return () => { unsubUser?.(); };
+  });
 </script>
 
 <svelte:head><title>Router Grouping</title></svelte:head>
 
+<!-- Autocam Review Modal -->
+<AutocamReviewModal 
+  part={autocamReviewPart} 
+  visible={showAutocamModal} 
+  on:close={closeAutocamReview}
+  on:update={loadParts}
+/>
+
 <div class="page-header">
   <h1>Router Parts</h1>
   <div class="page-actions">
+    {#if isManufacturingLead}
+      <a href="/manufacture/autocam" class="btn btn-ghost">
+        <Settings size={16} /> Autocam Settings
+      </a>
+    {/if}
     <a href="/manufacture" class="btn btn-secondary">Back</a>
   </div>
 </div>
@@ -691,7 +841,7 @@
 
                     <div class="status-action">
                       {#key part.id}
-                        <RouterStatusSelector part={part} on:update={loadParts} />
+                        <RouterStatusSelector part={part} on:update={loadParts} onReviewAutocam={openAutocamReview} />
                       {/key}
                     </div>
 
@@ -759,7 +909,7 @@
 
             <div class="status-action">
               {#key part.id}
-                <RouterStatusSelector part={part} on:update={loadParts} />
+                <RouterStatusSelector part={part} on:update={loadParts} onReviewAutocam={openAutocamReview} />
               {/key}
             </div>
           </div>
@@ -797,6 +947,53 @@
               {/if}
             {/if}
           </div>
+
+      {#if groupFields[g.id]}
+        <div class="group-meta">
+          <div class="group-meta-header">
+            <div class="group-meta-title">
+              <Group size={16} />
+              <span>Router setup</span>
+            </div>
+            <span class="meta-pill">Fill before export</span>
+          </div>
+          <div class="group-meta-grid">
+            <label class="group-meta-field">
+              <span class="field-label">Cut name</span>
+              <input
+                class="meta-input"
+                value={groupFields[g.id].cut_name}
+                on:change={(e)=>updateGroupField(g.id,'cut_name', e.target.value)}
+                disabled={!useDedicatedTables}
+                placeholder="Cut name"
+              />
+            </label>
+            <label class="group-meta-field">
+              <span class="field-label">Output folder</span>
+              <input
+                class="meta-input"
+                value={groupFields[g.id].output_folder}
+                on:change={(e)=>updateGroupField(g.id,'output_folder', e.target.value)}
+                disabled={!useDedicatedTables}
+                placeholder="/router/outputs"
+              />
+            </label>
+            <label class="group-meta-field">
+              <span class="field-label">Machine</span>
+              <select
+                class="meta-input"
+                value={groupFields[g.id].machine}
+                on:change={(e)=>updateGroupField(g.id,'machine', e.target.value)}
+                disabled={!useDedicatedTables}
+              >
+                {#each MACHINE_OPTIONS as opt}
+                  <option value={opt}>{opt}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+        </div>
+      {/if}
           <div class="table-container">
           <table class="table">
             <thead>
@@ -843,7 +1040,7 @@
                   {#if !groupIsAllCamReviewed(g) && !groupIsTravisProgged(g)}
                     <td>
                       {#key p.id}
-                        <RouterStatusSelector part={p} on:update={loadParts} />
+                        <RouterStatusSelector part={p} on:update={loadParts} onReviewAutocam={openAutocamReview} />
                       {/key}
                     </td>
                   {/if}
@@ -908,7 +1105,7 @@
                 </td>
                 <td>
                   {#key part.id}
-                    <RouterStatusSelector part={part} on:update={loadParts} />
+                    <RouterStatusSelector part={part} on:update={loadParts} onReviewAutocam={openAutocamReview} />
                   {/key}
                 </td>
               </tr>
@@ -943,6 +1140,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
   }
 
   /* Group header with name + actions */
@@ -952,22 +1150,25 @@
     justify-content: space-between;
     gap: var(--gap-3);
     margin-bottom: var(--space-3);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
   }
 
   .group-name-btn {
     background: none;
     border: none;
     font-size: 1rem;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text);
     cursor: pointer;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease;
   }
 
   .group-name-btn:hover {
     background: var(--neutral-100);
+    color: var(--secondary);
   }
 
   .group-name-input {
@@ -976,13 +1177,99 @@
     border-radius: var(--radius-sm);
     font-size: 1rem;
     font-weight: 600;
-    min-width: 180px;
+    min-width: 200px;
+    background: var(--surface-1);
   }
 
   .group-name-input:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px var(--btn-focus-ring);
+  }
+
+  /* Group meta area (inspired by fill parts list) */
+  .group-meta {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+
+  .group-meta-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    margin-bottom: var(--space-3);
+  }
+
+  .group-meta-title {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-2);
+    font-weight: 700;
+    color: var(--secondary);
+    letter-spacing: 0.01em;
+  }
+
+  .meta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: var(--accent-subtle);
+    color: var(--accent-strong, var(--accent));
+    border: 1px solid var(--accent-soft, var(--accent));
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .group-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--gap-3);
+  }
+
+  .group-meta-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .field-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    font-weight: 700;
+  }
+
+  .meta-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 0.75rem;
+    font-size: 0.95rem;
+    background: var(--card);
+    color: var(--text);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  }
+
+  .meta-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--btn-focus-ring);
+    background: var(--surface-1);
+  }
+
+  .meta-input:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   /* Drag-over highlight for table rows */

@@ -2,10 +2,11 @@
 // Keep this file minimal: it maps DB status + router_meta into the
 // canonical display labels used across the app.
 
-export const DISPLAY_ORDER = ['Pending','In Progress','CAM Review Ready','CAM Reviewed','TravisProgged','Machined','Kitted'];
+export const DISPLAY_ORDER = ['Pending','Autocammed','In Progress','CAM Review Ready','CAM Reviewed','TravisProgged','Machined','Kitted'];
 
 export const BUTTONS = {
   PENDING: 'Pending',
+  AUTOCAMMED: 'Autocammed',  // NEW: Part has been auto-CAMmed, awaiting review
   IN_PROGRESS: 'In Progress',
   CAM_REVIEW_READY: 'CAM Review Ready',
   CAM_REVIEWED: 'CAM Reviewed',
@@ -14,7 +15,7 @@ export const BUTTONS = {
   KITTED: 'Kitted'
 };
 
-// status: raw part.status from DB (e.g. 'pending','in-progress','cammed','machined','kitted')
+// status: raw part.status from DB (e.g. 'pending','autocammed','in-progress','cammed','machined','kitted')
 // meta: parsed file_url JSON (may contain router_meta.step and/or travis_progged flag)
 export function getDisplayStatus(status, meta) {
   const step = meta?.step ?? meta?.router_meta?.step;
@@ -24,6 +25,7 @@ export function getDisplayStatus(status, meta) {
 
   // Status-only mapping
   if (status === 'pending') return BUTTONS.PENDING;
+  if (status === 'autocammed') return BUTTONS.AUTOCAMMED;  // NEW: Autocammed status
   if (status === 'in-progress') return BUTTONS.IN_PROGRESS;
   if (status === 'cam_review') return BUTTONS.CAM_REVIEW_READY;
   if (status === 'cammed') return BUTTONS.CAM_REVIEWED;
@@ -38,6 +40,7 @@ export function getBadgeClass(status, meta) {
   const step = meta?.step ?? meta?.router_meta?.step;
 
   if (step === 'cam_review') return 'status-cammed';
+  if (status === 'autocammed') return 'status-autocammed';  // NEW: Autocammed badge
   if (status === 'cam_review' || status === 'cammed') return 'status-cammed';
   if (status === 'in-progress') return 'status-progress';
   if (status === 'machined' || status === 'inspected') return 'status-progress';
@@ -45,9 +48,24 @@ export function getBadgeClass(status, meta) {
   return 'status-pending';
 }
 
+// Check if a part is eligible for autocam (sheet stock with router workflow)
+export function isAutocamEligible(part, stockData) {
+  if (!part || part.workflow !== 'router') return false;
+  
+  // Check if stock assignment is a sheet type
+  const stockId = part.stock_assignment;
+  if (!stockId) return false;
+  
+  // Check router stocks for sheet dimension
+  const routerStocks = stockData?.router || [];
+  const stock = routerStocks.find(s => s.id === stockId);
+  return stock?.dimensions === 'Sheet';
+}
+
 export default {
   DISPLAY_ORDER,
   BUTTONS,
-  getDisplayStatus
-  , getBadgeClass
+  getDisplayStatus,
+  getBadgeClass,
+  isAutocamEligible
 };

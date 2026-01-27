@@ -2,10 +2,11 @@
   import { createEventDispatcher } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { getDisplayStatus, getBadgeClass, DISPLAY_ORDER, BUTTONS } from '$lib/statuses.js';
-  import { Package } from 'lucide-svelte';
+  import { Package, Zap } from 'lucide-svelte';
 
   export let part;
   export let bins = []; // pass bins for kitting if needed
+  export let onReviewAutocam = null; // callback to open autocam review modal
 
   const dispatch = createEventDispatcher();
 
@@ -18,6 +19,7 @@
   $: meta = parseMeta(part);
   $: currentDisplay = getDisplayStatus(part.status, meta);
   $: badgeClass = getBadgeClass(part.status, meta);
+  $: isAutocammed = part.status === 'autocammed';
 
   // Handle change
   async function handleChange(event) {
@@ -121,10 +123,23 @@
     await supabase.from('parts').update({ file_url: JSON.stringify(root), updated_at: new Date().toISOString() }).eq('id', p.id);
   }
 
+  function handleReviewAutocam() {
+    if (onReviewAutocam) {
+      onReviewAutocam(part);
+    } else {
+      dispatch('reviewAutocam', { part });
+    }
+  }
+
 </script>
 
 <div class="status-selector">
-  {#if (part.status === 'in-progress' || (meta?.router_meta && (meta.router_meta.step === 'cam_ing' || meta.router_meta.step === 'cam_review')))}
+  {#if isAutocammed}
+    <!-- Autocammed parts show Review Autocam button -->
+    <button class="btn btn-autocam cam-btn" on:click={handleReviewAutocam}>
+      <Zap size={14} /> Review Autocam
+    </button>
+  {:else if (part.status === 'in-progress' || (meta?.router_meta && (meta.router_meta.step === 'cam_ing' || meta.router_meta.step === 'cam_review')))}
     {#if meta?.router_meta && meta.router_meta.step === 'cam_review'}
       <button class="btn btn-primary cam-btn" on:click={handleCamReviewed}>CAM Reviewed</button>
     {:else}
@@ -210,5 +225,21 @@
     font-weight: 600;
     text-transform: uppercase;
     border-radius: var(--radius-sm, 4px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+  }
+
+  /* Autocam review button - orange/amber to stand out */
+  .btn-autocam {
+    background-color: var(--brand-gold-base, #f1c331);
+    color: var(--brand-gold-strong, #8f5f00);
+    border: 1px solid var(--brand-gold-base, #f1c331);
+  }
+
+  .btn-autocam:hover {
+    background-color: var(--brand-gold-strong, #d4a817);
+    color: white;
   }
 </style>
