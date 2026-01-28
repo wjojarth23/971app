@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { Settings, Package, Wrench, CheckCircle, Clock, ExternalLink } from 'lucide-svelte';
+  import { Settings, Package, Wrench, CheckCircle, Clock, ExternalLink, DollarSign } from 'lucide-svelte';
   import { goto } from '$app/navigation';
 
   let user = null;
   let loading = true;
   let builds = [];
+  let budgets = []; // Budgets for build groups and individual builds
   let buildStats = {
     total: 0,
     pending: 0,
@@ -114,8 +115,41 @@
     }
 
     await loadBuilds();
+    await loadBudgets();
     loading = false;
-  });  async function loadBuilds() {
+  });
+
+  // Load budgets for build groups and individual builds
+  async function loadBudgets() {
+    try {
+      const { data, error } = await supabase
+        .from('purchasing_budgets')
+        .select('*')
+        .in('scope_type', ['build', 'build_group', 'subsystem']);
+      if (error) throw error;
+      budgets = data || [];
+    } catch (e) {
+      console.warn('Failed to load budgets:', e);
+      budgets = [];
+    }
+  }
+
+  // Get budget for a build group (project_id)
+  function getBudgetForBuildGroup(projectId) {
+    return budgets.find(b => b.scope_type === 'build_group' && b.scope_value === projectId);
+  }
+
+  // Get budget for a specific build
+  function getBudgetForBuild(build) {
+    // Check for build-specific budget first
+    const buildLabel = `${build.subsystems?.name || 'Project'}-${build.release_name || ''}`;
+    const buildBudget = budgets.find(b => b.scope_type === 'build' && b.scope_value === buildLabel);
+    if (buildBudget) return buildBudget;
+    // Check for subsystem budget
+    return budgets.find(b => b.scope_type === 'subsystem' && b.scope_value === build.subsystem_id);
+  }
+
+  async function loadBuilds() {
     try {
       const { data, error } = await supabase
         .from('builds')
@@ -444,11 +478,29 @@
             {@const projectBuilds = groupedBuilds[pid]}
             {@const projectTotalCost = projectBuilds.reduce((s,b) => s + (b.totalPurchasingCost || 0), 0)}
             {@const projectPartsCount = projectBuilds.reduce((s,b) => s + (((b.parts||[]).length || 0) + ((b.purchasing||[]).length || 0) + ((b.kitting||[]).length || 0)), 0)}
+            {@const groupBudget = getBudgetForBuildGroup(pid)}
             <div class="project-container" role="group" on:drop={(e) => dropOnProject(e, pid)} on:dragover={allowDrop} on:dragenter={allowDrop}>
               <div class="project-header" on:click={() => { if (pid !== '__NO_PROJECT__') projectOpen = { ...projectOpen, [pid]: !projectOpen[pid] }; }} on:keydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && pid !== '__NO_PROJECT__') { projectOpen = { ...projectOpen, [pid]: !projectOpen[pid] }; } }} role="button" tabindex="0">
-                <div>
+                <div class="project-header-left">
                   <strong class="project-name">{human}</strong>
                   <div class="project-meta">{projectBuilds.length} builds • {projectPartsCount} parts • Total cost: ${projectTotalCost.toFixed(2)}</div>
+                  {#if groupBudget}
+                    {@const spent = projectTotalCost}
+                    {@const percent = Math.min((spent / groupBudget.amount) * 100, 100)}
+                    <div class="budget-indicator">
+                      <DollarSign size={14} />
+                      <div class="budget-progress-track">
+                        <div 
+                          class="budget-progress-fill" 
+                          class:over={spent > groupBudget.amount}
+                          style="width: {percent}%"
+                        ></div>
+                      </div>
+                      <span class="budget-text" class:over-budget={spent > groupBudget.amount}>
+                        ${spent.toFixed(0)} / ${Number(groupBudget.amount).toLocaleString()}
+                      </span>
+                    </div>
+                  {/if}
                 </div>
                 <div class="project-actions">
                   {#if pid === '__NO_PROJECT__'}
@@ -532,6 +584,24 @@
                         <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
                           <div class="cost-badge">Cost: ${ (build.totalPurchasingCost || 0).toFixed(2) }</div>
                         </div>
+                        {#if getBudgetForBuild(build)}
+                          {@const buildBudget = getBudgetForBuild(build)}
+                          {@const spent = build.totalPurchasingCost || 0}
+                          {@const budgetPercent = Math.min((spent / buildBudget.amount) * 100, 100)}
+                          <div class="build-budget-indicator">
+                            <DollarSign size={12} />
+                            <div class="budget-progress-track small">
+                              <div 
+                                class="budget-progress-fill" 
+                                class:over={spent > buildBudget.amount}
+                                style="width: {budgetPercent}%"
+                              ></div>
+                            </div>
+                            <span class="budget-text small" class:over-budget={spent > buildBudget.amount}>
+                              ${spent.toFixed(0)} / ${Number(buildBudget.amount).toLocaleString()}
+                            </span>
+                          </div>
+                        {/if}
                       </div>
 
                       <div class="build-actions">
@@ -631,12 +701,25 @@
   }
 
   .project-container { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-2); margin-bottom: var(--space-4); background: var(--color-white); }
-  .project-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2); cursor: pointer; }
+  .project-header { display: flex; align-items: flex-start; justify-content: space-between; padding: var(--space-2); cursor: pointer; gap: var(--gap-3); }
+  .project-header-left { flex: 1; min-width: 0; }
   .project-name { font-size: var(--font-base); }
   .project-meta { color: var(--neutral-500); font-size: var(--font-xs); }
   .project-builds { padding: var(--space-2) var(--space-1); }
   .cost-badge { background: var(--neutral-100); padding: var(--space-1) var(--space-2); border-radius: var(--radius-lg); font-weight: 600; }
   .assign-project .form-input { max-width: 140px; }
+
+  /* Budget indicators */
+  .budget-indicator { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+  .budget-progress-track { flex: 1; max-width: 200px; height: 6px; background: var(--neutral-200); border-radius: 99px; overflow: hidden; }
+  .budget-progress-track.small { height: 4px; max-width: 120px; }
+  .budget-progress-fill { height: 100%; background: var(--brand-gold-strong); border-radius: 99px; transition: width 0.3s ease; }
+  .budget-progress-fill.over { background: var(--red-strong); }
+  .budget-text { font-size: 0.75rem; color: var(--neutral-600); white-space: nowrap; }
+  .budget-text.small { font-size: 0.7rem; }
+  .budget-text.over-budget { color: var(--red-strong); font-weight: 600; }
+  .build-budget-indicator { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; }
+
   .build-card { 
     padding: var(--space-3); 
     border-radius: var(--radius-xl); 

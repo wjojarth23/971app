@@ -33,7 +33,15 @@ export function detectVendorFromString(input) {
 
   // Patterns
   const amPattern = /^(AM|ANDYMARK)[.\-]/i;
-  const wcpPattern = /^(WCP|WESTCOAST)[.\-]/i;
+  const wcpPattern = /^WCP[.\-]/i;
+  // McMaster-Carr pattern: 5-8 digits followed by a letter followed by 2-4 digits (e.g., 90633A411)
+  const mcmasterPattern = /^\d{4,8}[A-Za-z]\d{2,4}$/;
+
+  // West Coast Products - check first since it's most specific with WCP- prefix
+  if (wcpPattern.test(s) || /west ?coast/i.test(s)) {
+    // Return the full part number including prefix for WCP
+    return { vendor: 'WCP', vendorCode: 'WCP', partNumber: s };
+  }
 
   // Andymark
   if (amPattern.test(s) || /andymark/i.test(s)) {
@@ -41,25 +49,18 @@ export function detectVendorFromString(input) {
     return { vendor: 'Andymark', vendorCode: 'AM', partNumber: part };
   }
 
-  // West Coast Products (normalize vendor to lowercase 'wcp' when used programmatically)
-  if (wcpPattern.test(s) || /west ?coast|wcp/i.test(s)) {
-    const part = extractPrefixedPart(s, ['WCP', 'WESTCOAST']);
-    return { vendor: 'wcp', vendorCode: 'WCP', partNumber: part };
+  // McMaster-Carr - specific pattern match for their part number format (e.g., 90633A411)
+  if (mcmasterPattern.test(s)) {
+    return { vendor: 'McMaster-Carr', vendorCode: 'MCM', partNumber: s };
   }
 
   // McMaster heuristics: match common patterns and mention of mcmaster
-  // Accept strings that contain 'mcmaster' or 'mcmaster-carr' or numeric part numbers with dashes
   const mcDirect = /mcmaster/i.test(s) || /mcmaster-carr/i.test(s);
-  const mcLoose = /^(\s*\d{2,6}[-\dA-Za-z]*\s*)$/.test(s); // fairly permissive numeric-ish part
   if (mcDirect) {
     // try to extract a trailing part-like token
     const tokens = s.split(/\s+/).filter(Boolean);
     const candidate = tokens.length ? tokens[tokens.length - 1].replace(/[^0-9A-Za-z\-]/g, '') : null;
     return { vendor: 'McMaster-Carr', vendorCode: 'MCM', partNumber: candidate || null };
-  }
-  if (mcLoose) {
-    const cleaned = s.replace(/[^0-9A-Za-z\-]/g, '').trim();
-    return { vendor: 'McMaster-Carr', vendorCode: 'MCM', partNumber: cleaned || null };
   }
 
   return null;
@@ -77,8 +78,12 @@ function extractPrefixedPart(s, prefixes) {
 export function buildVendorSearchUrl(detection) {
   if (!detection || !detection.vendor) return null;
   const pn = detection.partNumber || '';
+  if (!pn) return null;
+  
   if (detection.vendorCode === 'AM') return `https://www.andymark.com/search?keyword=${encodeURIComponent(pn)}`;
-  if (detection.vendorCode === 'WCP') return `https://www.wcproducts.com/search?query=${encodeURIComponent(pn)}`;
-  if (detection.vendorCode === 'MCM') return `https://www.mcmaster.com/search/?q=${encodeURIComponent(pn)}`;
+  // WCP: Use search results page with the full part number (e.g., WCP-0941)
+  if (detection.vendorCode === 'WCP') return `https://wcproducts.com/pages/search-results-page?q=${encodeURIComponent(pn)}`;
+  // McMaster-Carr: Direct product page URL using part number
+  if (detection.vendorCode === 'MCM') return `https://www.mcmaster.com/products/${encodeURIComponent(pn)}/`;
   return null;
 }

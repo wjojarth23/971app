@@ -57,9 +57,9 @@
     { 
       value: 'build_group', 
       label: 'Build Group', 
-      description: 'Tracks purchases where Project ID contains this subsystem name',
+      description: 'Tracks all builds grouped under a project container (created by dragging builds together)',
       needsValue: true,
-      valueLabel: 'Subsystem Name'
+      valueLabel: 'Build Group'
     }
   ];
 
@@ -82,6 +82,8 @@
 
   // Build options for build/build_group scope types
   let buildOptions = [];
+  // Build groups (project_ids from builds table)
+  let buildGroupOptions = [];
 
   $: selectedScopeType = SCOPE_TYPES.find(t => t.value === form.scope_type);
 
@@ -89,16 +91,25 @@
     try {
       const { data, error } = await supabase
         .from('builds')
-        .select('id, release_name, subsystems(name)')
+        .select('id, release_name, project_id, subsystems(name)')
         .order('created_at', { ascending: false });
       if (error) throw error;
+      
+      // Individual build options
       buildOptions = (data || []).map(b => {
         const label = `${b.subsystems?.name || 'Project'}-${b.release_name || ''}`;
         return { id: b.id, label };
       });
+      
+      // Extract unique project_ids (build groups) - exclude null and '__NO_PROJECT__'
+      const projectIds = [...new Set((data || [])
+        .map(b => b.project_id)
+        .filter(pid => pid && pid !== '__NO_PROJECT__'))];
+      buildGroupOptions = projectIds.map(pid => ({ id: pid, label: pid }));
     } catch (e) {
       console.warn('Failed to load builds', e);
       buildOptions = [];
+      buildGroupOptions = [];
     }
   }
 
@@ -447,11 +458,15 @@
               <label>{selectedScopeType.valueLabel}*</label>
               <select class="form-select" bind:value={form.scope_value}>
                 <option value="" disabled>Select Build Group</option>
-                {#each subsystems as sub}
-                  <option value={sub.name}>{sub.name}</option>
+                {#each buildGroupOptions as group}
+                  <option value={group.id}>{group.label}</option>
                 {/each}
               </select>
-              <small class="help-text">Tracks all builds/purchases containing this subsystem name</small>
+              {#if buildGroupOptions.length === 0}
+                <small class="help-text text-warning">No build groups found. Create build groups on the Build page by dragging builds together.</small>
+              {:else}
+                <small class="help-text">Tracks all builds in the selected project container</small>
+              {/if}
             {/if}
           </div>
         {/if}
@@ -508,7 +523,15 @@
           </div>
         {:else if form.scope_type === 'build_group' && form.scope_value}
           <div class="info-box">
-            <strong>This budget will track:</strong> All purchases where the Project ID contains "<strong>{form.scope_value}</strong>"
+            <strong>This budget will track:</strong> All builds in the "<strong>{form.scope_value}</strong>" build group
+          </div>
+        {:else if form.scope_type === 'build' && form.scope_value}
+          <div class="info-box">
+            <strong>This budget will track:</strong> The specific build "<strong>{form.scope_value}</strong>"
+          </div>
+        {:else if form.scope_type === 'subsystem' && form.scope_value}
+          <div class="info-box">
+            <strong>This budget will track:</strong> All builds for the selected subsystem
           </div>
         {/if}
       </div>

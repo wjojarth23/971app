@@ -1049,6 +1049,38 @@
               </button>
             {/if}
           </div>
+
+          <!-- Builds for this subsystem -->
+          {#if builds.filter(b => b.subsystem_id === subsystem.id).length > 0}
+            {@const subsystemBuilds = builds.filter(b => b.subsystem_id === subsystem.id)}
+            <div class="subsystem-builds">
+              <div class="builds-header">
+                <FileText size={14} />
+                <span>Builds ({subsystemBuilds.length})</span>
+              </div>
+              <div class="builds-list">
+                {#each subsystemBuilds.slice(0, 5) as build}
+                  <a 
+                    href="/cad/build/{build.id}" 
+                    class="build-link"
+                    on:click|stopPropagation
+                  >
+                    <span class="build-name">{build.release_name || 'Build'}</span>
+                    <span class="build-status-dot status-{build.status}"></span>
+                  </a>
+                {/each}
+                {#if subsystemBuilds.length > 5}
+                  <a 
+                    href="/cad/build" 
+                    class="build-link more"
+                    on:click|stopPropagation
+                  >
+                    +{subsystemBuilds.length - 5} more builds
+                  </a>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
       {/each}
 
@@ -1364,12 +1396,12 @@
   .subsystem-card.clickable { cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
   .subsystem-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); border-color: var(--primary); }
   .subsystem-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
-  .subsystem-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-4); }
-  .subsystem-title, .build-title { display: flex; align-items: center; gap: var(--gap-1); }
-  .subsystem-toolbar { display: flex; align-items: center; gap: var(--gap-2); }
+  .subsystem-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-4); gap: var(--gap-2); flex-wrap: wrap; }
+  .subsystem-title, .build-title { display: flex; align-items: center; gap: var(--gap-1); flex: 1; min-width: 0; }
+  .subsystem-toolbar { display: flex; align-items: center; gap: var(--gap-2); flex-shrink: 0; flex-wrap: wrap; }
   .subsystem-header h3 { margin: 0; color: var(--secondary); font-size: 1.3rem; line-height: 24px; }
-  .subsystem-badges { display: flex; align-items: center; gap: var(--gap-2); }
-  .badge { display: inline-flex; align-items: center; justify-content: center; height: var(--control-height) !important; padding: 0 var(--space-3) !important; border-radius: var(--radius-sm); font-size: var(--font-xs); font-weight: 600; text-transform: uppercase; line-height: 1; box-sizing: border-box; }
+  .subsystem-badges { display: flex; align-items: center; gap: var(--gap-1); flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; justify-content: center; height: var(--control-height) !important; padding: 0 var(--space-2) !important; border-radius: var(--radius-sm); font-size: var(--font-xs); font-weight: 600; text-transform: uppercase; line-height: 1; box-sizing: border-box; white-space: nowrap; }
   .subsystem-header .btn-outline.btn-small { display: inline-flex; align-items: center; justify-content: center; height: var(--control-height) !important; width: var(--control-height) !important; padding: 0 !important; font-size: var(--font-xs); border-radius: var(--radius-sm); box-sizing: border-box; }
   .badge-lead { background: var(--accent); color: var(--color-white); }
   .badge-member { background: var(--green-base); color: var(--color-white); }
@@ -1381,6 +1413,21 @@
   .external-link { color: var(--accent); text-decoration: none; margin-left: auto; }
   .external-link:hover { color: var(--secondary); }
   .btn-small { font-size: var(--font-xs); padding: 0 var(--space-2); height: 24px; line-height: 1; }
+
+  /* Subsystem builds list */
+  .subsystem-builds { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+  .subsystem-builds .builds-header { display: flex; align-items: center; gap: var(--gap-2); color: var(--neutral-500); font-size: var(--font-xs); font-weight: 600; margin-bottom: var(--space-2); text-transform: uppercase; }
+  .subsystem-builds .builds-list { display: flex; flex-direction: column; gap: var(--gap-1); }
+  .subsystem-builds .build-link { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); text-decoration: none; color: var(--text); font-size: var(--font-sm); transition: background 0.15s ease; }
+  .subsystem-builds .build-link:hover { background: var(--surface-3); }
+  .subsystem-builds .build-link.more { color: var(--accent); font-weight: 500; justify-content: center; }
+  .subsystem-builds .build-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subsystem-builds .build-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .subsystem-builds .build-status-dot.status-pending { background: var(--brand-gold-strong); }
+  .subsystem-builds .build-status-dot.status-manufacturing { background: var(--blue-base); }
+  .subsystem-builds .build-status-dot.status-ready_to_assemble { background: var(--green-strong); }
+  .subsystem-builds .build-status-dot.status-assembled { background: var(--green-strong); }
+
   .builds-section { margin-top: var(--space-7); background: var(--primary); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: var(--space-6); margin-bottom: var(--space-4); }
   .builds-section h2 { margin: 0 0 var(--space-6) 0; color: var(--secondary); font-size: var(--font-xl); }
   .builds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: var(--gap-6); }
