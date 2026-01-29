@@ -1045,69 +1045,43 @@
       // Analyze BOM
       const newBOM = await onShapeAPI.analyzeBOM(bom, build.subsystems.onshape_workspace_id);
       
-      // Build a set of identifiers from the NEW BOM (parts that exist in CAD)
-      const newBOMIdentifiers = new Set();
-      newBOM.forEach(part => {
-        if (part.part_name) newBOMIdentifiers.add(part.part_name.toLowerCase().trim());
-        if (part.part_number) newBOMIdentifiers.add(part.part_number.toLowerCase().trim());
-      });
-      
       // Separate existing BOM parts into added and unadded
       const addedParts = bomSnapshot.filter(row => row.added === true);
       const unaddedParts = bomSnapshot.filter(row => row.added !== true);
       
-      // Find unadded parts that NO LONGER exist in the new CAD version - these should be deleted
-      const partsToDelete = unaddedParts.filter(existingPart => {
-        const name = (existingPart.part_name || '').toLowerCase().trim();
-        const partNum = (existingPart.part_number || '').toLowerCase().trim();
-        
-        // If neither name nor part_number is in the new BOM, this part was removed from CAD
-        const nameInNewBOM = name && newBOMIdentifiers.has(name);
-        const partNumInNewBOM = partNum && newBOMIdentifiers.has(partNum);
-        
-        return !nameInNewBOM && !partNumInNewBOM;
-      });
-      
-      // Delete the unadded parts that no longer exist in CAD
-      if (partsToDelete.length > 0) {
-        const idsToDelete = partsToDelete.map(p => p.id);
+      // Delete ALL unadded parts - even if names match, Onshape parameters change between versions
+      if (unaddedParts.length > 0) {
+        const idsToDelete = unaddedParts.map(p => p.id);
         const { error: deleteError } = await supabase
           .from('build_bom')
           .delete()
           .in('id', idsToDelete);
         
         if (deleteError) {
-          console.error('Error deleting obsolete parts:', deleteError);
+          console.error('Error deleting unadded parts:', deleteError);
         }
       }
       
-      // Build set of identifiers for parts that already exist (both added and remaining unadded)
-      const existingIdentifiers = new Set();
-      // Added parts are kept regardless
+      // Build set of identifiers for added parts only (these are preserved)
+      const addedIdentifiers = new Set();
       addedParts.forEach(part => {
-        if (part.part_name) existingIdentifiers.add(part.part_name.toLowerCase().trim());
-        if (part.part_number) existingIdentifiers.add(part.part_number.toLowerCase().trim());
-      });
-      // Unadded parts that still exist in new BOM are also kept
-      const remainingUnaddedParts = unaddedParts.filter(p => !partsToDelete.includes(p));
-      remainingUnaddedParts.forEach(part => {
-        if (part.part_name) existingIdentifiers.add(part.part_name.toLowerCase().trim());
-        if (part.part_number) existingIdentifiers.add(part.part_number.toLowerCase().trim());
+        if (part.part_name) addedIdentifiers.add(part.part_name.toLowerCase().trim());
+        if (part.part_number) addedIdentifiers.add(part.part_number.toLowerCase().trim());
       });
       
-      // Filter new BOM to only include truly new parts
+      // Filter new BOM to exclude parts that are already added (in production)
       const partsToAdd = newBOM.filter(newPart => {
         const name = (newPart.part_name || '').toLowerCase().trim();
         const partNum = (newPart.part_number || '').toLowerCase().trim();
         
-        // If either name or part_number matches an existing part, skip it
-        if (name && existingIdentifiers.has(name)) return false;
-        if (partNum && existingIdentifiers.has(partNum)) return false;
+        // If either name or part_number matches an added part, skip it (already in production)
+        if (name && addedIdentifiers.has(name)) return false;
+        if (partNum && addedIdentifiers.has(partNum)) return false;
         
         return true;
       });
       
-      // Insert new BOM entries into build_bom table (marked as not added)
+      // Insert new BOM entries with fresh Onshape parameters from the new version
       if (partsToAdd.length > 0) {
         const bomInserts = partsToAdd.map(part => ({
           build_id: buildId,
@@ -1152,8 +1126,8 @@
       
       // Show summary
       const summary = [];
-      if (partsToAdd.length > 0) summary.push(`${partsToAdd.length} new parts added`);
-      if (partsToDelete.length > 0) summary.push(`${partsToDelete.length} obsolete unadded parts removed`);
+      if (partsToAdd.length > 0) summary.push(`${partsToAdd.length} parts from new version`);
+      if (unaddedParts.length > 0) summary.push(`${unaddedParts.length} unadded parts replaced`);
       if (addedParts.length > 0) summary.push(`${addedParts.length} added parts preserved`);
       
       alert(summary.length > 0 ? `BOM updated:\n• ${summary.join('\n• ')}` : 'BOM is already up to date');
