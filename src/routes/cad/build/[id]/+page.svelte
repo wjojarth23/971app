@@ -414,7 +414,8 @@
       }
 
       if (wasCOTS !== wantsCOTS) {
-        const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+        // Project ID uses subsystem name only (version-independent for rollup)
+        const project_id = build?.subsystems?.name || 'Project';
         if (wantsCOTS) {
           // Converting from manufactured to COTS - create purchasing entry
           const purchasingInsertData = {
@@ -723,7 +724,8 @@
     if (processingAdd) return;
     processingAdd = true;
     try {
-      const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+      // Project ID uses subsystem name only (version-independent for rollup)
+      const project_id = build?.subsystems?.name || 'Project';
 
       if (item.part_type === 'COTS' && item.workflow === 'kit') {
         // Insert into kitting (in-stock COTS, just assign to bin later)
@@ -886,7 +888,8 @@
     if (!purchaseModalItem) return;
     showPurchaseModal = false;
     
-    const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+    // Project ID uses subsystem name only (version-independent for rollup)
+    const project_id = build?.subsystems?.name || 'Project';
     
     try {
       // Insert into purchasing with user-provided URL and price
@@ -1042,30 +1045,71 @@
       // Analyze BOM
       const newBOM = await onShapeAPI.analyzeBOM(bom, build.subsystems.onshape_workspace_id);
       
-      // Get list of already added parts (crosscheck by name and part_number)
-      const addedParts = bomSnapshot.filter(row => row.added === true);
-      const addedIdentifiers = new Set();
-      
-      addedParts.forEach(part => {
-        if (part.part_name) addedIdentifiers.add(part.part_name.toLowerCase().trim());
-        if (part.part_number) addedIdentifiers.add(part.part_number.toLowerCase().trim());
+      // Build a set of identifiers from the NEW BOM (parts that exist in CAD)
+      const newBOMIdentifiers = new Set();
+      newBOM.forEach(part => {
+        if (part.part_name) newBOMIdentifiers.add(part.part_name.toLowerCase().trim());
+        if (part.part_number) newBOMIdentifiers.add(part.part_number.toLowerCase().trim());
       });
       
-      // Filter out parts that already exist in the build
-      const filteredNewBOM = newBOM.filter(newPart => {
+      // Separate existing BOM parts into added and unadded
+      const addedParts = bomSnapshot.filter(row => row.added === true);
+      const unaddedParts = bomSnapshot.filter(row => row.added !== true);
+      
+      // Find unadded parts that NO LONGER exist in the new CAD version - these should be deleted
+      const partsToDelete = unaddedParts.filter(existingPart => {
+        const name = (existingPart.part_name || '').toLowerCase().trim();
+        const partNum = (existingPart.part_number || '').toLowerCase().trim();
+        
+        // If neither name nor part_number is in the new BOM, this part was removed from CAD
+        const nameInNewBOM = name && newBOMIdentifiers.has(name);
+        const partNumInNewBOM = partNum && newBOMIdentifiers.has(partNum);
+        
+        return !nameInNewBOM && !partNumInNewBOM;
+      });
+      
+      // Delete the unadded parts that no longer exist in CAD
+      if (partsToDelete.length > 0) {
+        const idsToDelete = partsToDelete.map(p => p.id);
+        const { error: deleteError } = await supabase
+          .from('build_bom')
+          .delete()
+          .in('id', idsToDelete);
+        
+        if (deleteError) {
+          console.error('Error deleting obsolete parts:', deleteError);
+        }
+      }
+      
+      // Build set of identifiers for parts that already exist (both added and remaining unadded)
+      const existingIdentifiers = new Set();
+      // Added parts are kept regardless
+      addedParts.forEach(part => {
+        if (part.part_name) existingIdentifiers.add(part.part_name.toLowerCase().trim());
+        if (part.part_number) existingIdentifiers.add(part.part_number.toLowerCase().trim());
+      });
+      // Unadded parts that still exist in new BOM are also kept
+      const remainingUnaddedParts = unaddedParts.filter(p => !partsToDelete.includes(p));
+      remainingUnaddedParts.forEach(part => {
+        if (part.part_name) existingIdentifiers.add(part.part_name.toLowerCase().trim());
+        if (part.part_number) existingIdentifiers.add(part.part_number.toLowerCase().trim());
+      });
+      
+      // Filter new BOM to only include truly new parts
+      const partsToAdd = newBOM.filter(newPart => {
         const name = (newPart.part_name || '').toLowerCase().trim();
         const partNum = (newPart.part_number || '').toLowerCase().trim();
         
-        // If either name or part_number matches an existing part, discard this entry
-        if (name && addedIdentifiers.has(name)) return false;
-        if (partNum && addedIdentifiers.has(partNum)) return false;
+        // If either name or part_number matches an existing part, skip it
+        if (name && existingIdentifiers.has(name)) return false;
+        if (partNum && existingIdentifiers.has(partNum)) return false;
         
         return true;
       });
       
       // Insert new BOM entries into build_bom table (marked as not added)
-      if (filteredNewBOM.length > 0) {
-        const bomInserts = filteredNewBOM.map(part => ({
+      if (partsToAdd.length > 0) {
+        const bomInserts = partsToAdd.map(part => ({
           build_id: buildId,
           part_name: part.part_name || 'Unnamed Part',
           part_number: part.part_number || null,
@@ -1088,14 +1132,31 @@
           .insert(bomInserts);
         
         if (insertError) throw insertError;
-        
-        // Reload build details to show new BOM entries
-        await loadBuildDetails();
-        
-        alert(`Added ${filteredNewBOM.length} new parts to BOM (${newBOM.length - filteredNewBOM.length} duplicates skipped)`);
-      } else {
-        alert('No new parts to add - all parts from this version are already in the build');
       }
+      
+      // Update the version reference on the build
+      const { error: updateError } = await supabase
+        .from('builds')
+        .update({ 
+          release_id: selectedVersionForRefetch.id,
+          release_name: selectedVersionForRefetch.name
+        })
+        .eq('id', buildId);
+      
+      if (updateError) {
+        console.warn('Failed to update build version reference:', updateError);
+      }
+      
+      // Reload build details to show changes
+      await loadBuildDetails();
+      
+      // Show summary
+      const summary = [];
+      if (partsToAdd.length > 0) summary.push(`${partsToAdd.length} new parts added`);
+      if (partsToDelete.length > 0) summary.push(`${partsToDelete.length} obsolete unadded parts removed`);
+      if (addedParts.length > 0) summary.push(`${addedParts.length} added parts preserved`);
+      
+      alert(summary.length > 0 ? `BOM updated:\n• ${summary.join('\n• ')}` : 'BOM is already up to date');
       
       showVersionModal = false;
       selectedVersionForRefetch = null;

@@ -15,6 +15,50 @@ export const BUTTONS = {
   KITTED: 'Kitted'
 };
 
+// Workflow-specific progress steps
+// Each workflow has its own set of statuses that make sense for that process
+export const WORKFLOW_STATUSES = {
+  'router': [
+    { value: 'pending', label: 'Pending' },
+    { value: 'autocammed', label: 'Autocammed' },
+    { value: 'in-progress', label: 'In Progress' },
+    { value: 'cam_review', label: 'CAM Review Ready' },
+    { value: 'cammed', label: 'CAM Reviewed' },
+    { value: 'machined', label: 'Machined' },
+    { value: 'complete', label: 'Kitted' }
+  ],
+  '3d-print': [
+    { value: 'pending', label: 'Pending' },
+    { value: 'in-progress', label: 'In Progress' },
+    { value: 'print-started', label: 'Print Started' },
+    { value: 'complete', label: 'Complete' }
+  ],
+  'lathe': [
+    { value: 'pending', label: 'Pending' },
+    { value: 'drawing', label: 'Drawing In Progress' },
+    { value: 'machining', label: 'Machining' },
+    { value: 'inspection', label: 'Inspection' },
+    { value: 'complete', label: 'Done' }
+  ],
+  'mill': [
+    { value: 'pending', label: 'Pending' },
+    { value: 'drawing', label: 'Drawing In Progress' },
+    { value: 'machining', label: 'Machining' },
+    { value: 'inspection', label: 'Inspection' },
+    { value: 'complete', label: 'Done' }
+  ],
+  'laser-cut': [
+    { value: 'pending', label: 'Pending' },
+    { value: 'in-progress', label: 'In Progress' },
+    { value: 'complete', label: 'Complete' }
+  ]
+};
+
+// Get statuses for a specific workflow (returns router statuses as default fallback)
+export function getWorkflowStatuses(workflow) {
+  return WORKFLOW_STATUSES[workflow] || WORKFLOW_STATUSES['router'];
+}
+
 // status: raw part.status from DB (e.g. 'pending','autocammed','in-progress','cammed','machined','kitted')
 // meta: parsed file_url JSON (may contain router_meta.step and/or travis_progged flag)
 export function getDisplayStatus(status, meta) {
@@ -65,6 +109,8 @@ export function isAutocamEligible(part, stockData) {
 export default {
   DISPLAY_ORDER,
   BUTTONS,
+  WORKFLOW_STATUSES,
+  getWorkflowStatuses,
   getDisplayStatus,
   getBadgeClass,
   isAutocamEligible

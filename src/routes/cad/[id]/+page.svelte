@@ -665,7 +665,8 @@
   async function confirmBuild() {
     loadingBuild = true;
     try {
-      const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}_${Date.now()}`;
+      // Use subsystem ID in build hash (not version) so builds can be rolled up across versions
+      const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
       
       const { data: build, error } = await supabase
         .from('builds')
@@ -1020,8 +1021,9 @@
           const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
 
           // Ensure a build exists (create or find)
+          // Use subsystem ID in build hash (not version) so builds can be rolled up across versions
           let buildId = null;
-          const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}`;
+          const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
           const { data: existingBuild, error: buildQueryError } = await supabase
             .from('builds')
             .select('id')
@@ -1071,7 +1073,7 @@
           const purchasingInsertData = {
             name: item.part_name || item.part_number || 'Unnamed Part',
             requester: user.full_name || user.email,
-            project_id: `${subsystem.name}-${selectedVersion.name}`,
+            project_id: subsystem.name,
             quantity: item.quantity || 1,
             material: item.material || '',
             status: 'pending',
@@ -1142,8 +1144,8 @@
         file_name = `${item.part_name || item.part_number || "Part"}.step`;
       }
 
-      // Project ID format: {subsystem name}-{version name}
-      const project_id = `${subsystem.name}-${selectedVersion.name}`;
+      // Project ID format: {subsystem name} (version-independent for rollup)
+      const project_id = subsystem.name;
         // Insert into parts table (main manufacturing queue)
       const { data: partData, error: partsError } = await supabase
         .from('parts')
@@ -1168,9 +1170,9 @@
 
   const createdPart = Array.isArray(partData) ? partData[0] : partData;
 
-      // Create or find existing build for this version
+      // Create or find existing build for this subsystem (version-independent for rollup)
       let buildId = null;
-      const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}`;
+      const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
       
       // Check if build already exists
       const { data: existingBuild, error: buildQueryError } = await supabase

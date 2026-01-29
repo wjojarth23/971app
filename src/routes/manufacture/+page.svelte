@@ -8,7 +8,7 @@
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users } from 'lucide-svelte';
   import ROUTER_FLOW from '$lib/router_flow.json';
-  import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
+  import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { TEAM_ROLES } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   
@@ -44,15 +44,22 @@
     { value: '3d-print', label: '3D Print', icon: Upload }
   ];
   
-  // Include all DB-allowed statuses for filtering
+  // Include all DB-allowed statuses for filtering (combined from all workflows)
   const statuses = [
     { value: 'pending', label: 'Pending' },
     { value: 'in-progress', label: 'In Progress' },
-  { value: 'cammed', label: 'CAM Reviewed' },
-  { value: 'cam_review', label: 'CAM Review Ready' },
-  { value: 'machined', label: 'Machined' },
+    { value: 'drawing', label: 'Drawing In Progress' },
+    { value: 'print-started', label: 'Print Started' },
+    { value: 'machining', label: 'Machining' },
+    { value: 'inspection', label: 'Inspection' },
+    { value: 'cammed', label: 'CAM Reviewed' },
+    { value: 'cam_review', label: 'CAM Review Ready' },
+    { value: 'machined', label: 'Machined' },
     { value: 'complete', label: 'Complete' }
   ];
+  
+  // Get workflow-specific statuses for edit modal
+  $: editStatusOptions = editWorkflow ? getWorkflowStatuses(editWorkflow) : statuses;
 
   function getWorkflowClass(workflow) {
     if (!workflow) return 'tag-workflow-default';
@@ -1384,7 +1391,7 @@
         <div class="form-group">
           <label class="form-label" for="edit-status">Status</label>
           <select id="edit-status" class="form-select" bind:value={editStatus}>
-            {#each statuses as status}
+            {#each editStatusOptions as status}
               <option value={status.value}>{status.label}</option>
             {/each}
           </select>

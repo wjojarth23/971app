@@ -476,8 +476,8 @@
         return;
       }
 
-      // Generate unique build hash
-      const buildHash = onShapeAPI.generateBuildHash(release.id, Date.now());
+      // Generate build hash using subsystem ID (not version) for rollup across versions
+      const buildHash = `${subsystem.onshape_document_id}_${subsystemId}`;
 
       // Create build record
       const { data: buildData, error: buildError } = await supabase
@@ -804,8 +804,8 @@
 
     loadingBuild = true;
     try {
-      // Create a build from the current document state
-      const buildHash = `${subsystem.onshape_document_id}_${Date.now()}`;
+      // Create a build hash using subsystem ID (not version) for rollup across versions
+      const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
       
       const { data: build, error } = await supabase
         .from('builds')
