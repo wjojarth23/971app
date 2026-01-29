@@ -36,6 +36,7 @@ export const WORKFLOW_STATUSES = {
   'lathe': [
     { value: 'pending', label: 'Pending' },
     { value: 'drawing', label: 'Drawing In Progress' },
+    { value: 'ready', label: 'Ready to Machine' },
     { value: 'machining', label: 'Machining' },
     { value: 'inspection', label: 'Inspection' },
     { value: 'complete', label: 'Done' }
