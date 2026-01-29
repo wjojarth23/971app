@@ -22,8 +22,8 @@ export const WORKFLOW_STATUSES = {
     { value: 'pending', label: 'Pending' },
     { value: 'autocammed', label: 'Autocammed' },
     { value: 'in-progress', label: 'In Progress' },
-    { value: 'cam_review', label: 'CAM Review Ready' },
     { value: 'cammed', label: 'CAM Reviewed' },
+    { value: 'cam_review', label: 'CAM Review Ready' },
     { value: 'machined', label: 'Machined' },
     { value: 'complete', label: 'Kitted' }
   ],
