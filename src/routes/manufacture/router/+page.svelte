@@ -422,6 +422,16 @@
 
   async function downloadFromOnshape(part) {
     try {
+      // Log the Onshape IDs being used for debugging
+      console.log('Downloading from Onshape:', {
+        name: part.name,
+        onshape_document_id: part.onshape_document_id,
+        onshape_element_id: part.onshape_element_id,
+        onshape_part_id: part.onshape_part_id,
+        onshape_wvm: part.onshape_wvm,
+        onshape_wvmid: part.onshape_wvmid
+      });
+      
       const params = new URLSearchParams({
         action: 'translate-part',
         documentId: part.onshape_document_id,
@@ -433,13 +443,26 @@
         format: part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')
       });
       const resp = await fetch(`/api/onshape?${params}`);
-      if (!resp.ok) throw new Error('Onshape download failed');
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        const errorMsg = errorData.details || errorData.error || 'Onshape download failed';
+        console.error('Onshape download failed:', errorData);
+        if (errorData.suggestion) {
+          alert(`Download failed: ${errorMsg}\n\nSuggestion: ${errorData.suggestion}`);
+        } else {
+          alert(`Download failed: ${errorMsg}`);
+        }
+        return;
+      }
       const blob = await resp.blob();
       const ext = part.workflow === '3d-print' ? 'step' : (part.file_format === 'stl' ? 'stl' : 'step');
       const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.${ext}`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    } catch (e) { throw e; }
+    } catch (e) { 
+      console.error('Error downloading from Onshape:', e);
+      alert(`Download error: ${e.message}`);
+    }
   }
 
   async function downloadStepFromOnshape(part) {
@@ -447,6 +470,17 @@
       if (part?.status === 'pending') {
         await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
       }
+      
+      // Log the Onshape IDs being used for debugging
+      console.log('Downloading STEP for part:', {
+        name: part.name,
+        onshape_document_id: part.onshape_document_id,
+        onshape_element_id: part.onshape_element_id,
+        onshape_part_id: part.onshape_part_id,
+        onshape_wvm: part.onshape_wvm,
+        onshape_wvmid: part.onshape_wvmid
+      });
+      
       const params = new URLSearchParams({
         action: 'translate-part',
         documentId: part.onshape_document_id,
@@ -457,12 +491,26 @@
         format: 'STEP'
       });
       const resp = await fetch(`/api/onshape?${params}`);
-      if (!resp.ok) throw new Error('Onshape STEP download failed');
+      if (!resp.ok) {
+        // Try to get detailed error message
+        const errorData = await resp.json().catch(() => ({}));
+        const errorMsg = errorData.details || errorData.error || 'Onshape STEP download failed';
+        console.error('STEP download failed:', errorData);
+        if (errorData.suggestion) {
+          alert(`Download failed: ${errorMsg}\n\nSuggestion: ${errorData.suggestion}`);
+        } else {
+          alert(`Download failed: ${errorMsg}`);
+        }
+        return;
+      }
       const blob = await resp.blob();
       const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.step`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    } catch (e) { throw e; }
+    } catch (e) { 
+      console.error('Error downloading STEP:', e);
+      alert(`Download error: ${e.message}`);
+    }
   }
 
 

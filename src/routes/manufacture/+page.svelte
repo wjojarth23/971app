@@ -317,6 +317,16 @@
       // Note: lathe/mill drawing PDF generation has been removed. Those parts should
       // open the subsystem/document page instead (handled earlier in downloadFile or via UI).
 
+      // Log the Onshape IDs being used for debugging
+      console.log('Downloading from Onshape:', {
+        name: part.name,
+        onshape_document_id: part.onshape_document_id,
+        onshape_element_id: part.onshape_element_id,
+        onshape_part_id: part.onshape_part_id,
+        onshape_wvm: part.onshape_wvm,
+        onshape_wvmid: part.onshape_wvmid
+      });
+
       // Use the new translation workflow for both STL and STEP (prefer STEP for 3D prints)
       const action = 'translate-part';
       
@@ -337,8 +347,16 @@
       const response = await fetch(`/api/onshape?${params}`);
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.details || errorData.error || `HTTP error! status: ${response.status}`;
+        console.error('Onshape download failed:', errorData);
+        if (errorData.suggestion) {
+          showToastMessage(`Download failed: ${errorMsg}`);
+          alert(`Download failed: ${errorMsg}\n\nSuggestion: ${errorData.suggestion}`);
+        } else {
+          showToastMessage(`Download failed: ${errorMsg}`);
+        }
+        return;
       }
 
       // Create blob and download
@@ -359,7 +377,6 @@
     } catch (error) {
       console.error('Error downloading from Onshape:', error);
       showToastMessage(`Error downloading file: ${error.message}`);
-      throw error;
     }
   }
 
