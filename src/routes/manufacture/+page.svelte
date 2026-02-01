@@ -557,6 +557,29 @@
 
   // Router flow helpers (new) - definitions moved earlier in file for JSON-based flow
 
+  // Build Onshape URL for a part (returns null if not an Onshape part)
+  function getOnshapeUrl(part) {
+    if (!part.onshape_document_id || !part.onshape_wvmid) return null;
+    const baseUrl = PUBLIC_ONSHAPE_BASE_URL || 'https://cad.onshape.com';
+    const wvm = part.onshape_wvm || 'w';
+    const elementId = part.onshape_drawing_element_id || part.onshape_element_id;
+    if (!elementId) return null;
+    return `${baseUrl.replace(/\/$/, '')}/documents/${encodeURIComponent(part.onshape_document_id)}/${encodeURIComponent(wvm)}/${encodeURIComponent(part.onshape_wvmid)}/e/${encodeURIComponent(elementId)}`;
+  }
+
+  // Format date/time in a friendly way
+  function formatDateTime(dateStr) {
+    if (!dateStr) return 'N/A';
+    const date = new Date(dateStr);
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
   // Open the subsystem page or linked Onshape document for parts that require drawings
   async function openSubsystemDocument(part) {
     try {
@@ -1405,6 +1428,29 @@
         </button>
       </div>
       <div class="modal-body">
+        <!-- Part Details Section -->
+        {#if editPart}
+          <div class="part-details-section">
+            {#if getOnshapeUrl(editPart)}
+              <div class="detail-row">
+                <span class="detail-label">Onshape Document:</span>
+                <a href={getOnshapeUrl(editPart)} target="_blank" rel="noopener noreferrer" class="onshape-link">
+                  <ExternalLink size={14} />
+                  Open in Onshape
+                </a>
+              </div>
+            {/if}
+            <div class="detail-row">
+              <span class="detail-label">Added:</span>
+              <span class="detail-value">{formatDateTime(editPart.created_at)}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last Updated:</span>
+              <span class="detail-value">{formatDateTime(editPart.updated_at)}</span>
+            </div>
+          </div>
+        {/if}
+
         <div class="form-group">
           <label class="form-label" for="edit-status">Status</label>
           <select id="edit-status" class="form-select" bind:value={editStatus}>
@@ -1594,6 +1640,57 @@
   .hidden { display: none !important; }
   tr.droppable { transition: background-color 0.2s; }
   tr.droppable:hover { background-color: var(--surface-2); }
+
+  /* Part Details Section in Edit Modal */
+  .part-details-section {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+
+  .part-details-section .detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .part-details-section .detail-row:last-child {
+    border-bottom: none;
+  }
+
+  .part-details-section .detail-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .part-details-section .detail-value {
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .onshape-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    color: var(--primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--primary-soft, rgba(0, 102, 204, 0.1));
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .onshape-link:hover {
+    background: var(--primary);
+    color: white;
+  }
 
   /* Toast notification */
   .toast {

@@ -150,7 +150,7 @@ CREATE TABLE public.parts (
   requester text NOT NULL,
   project_id text NOT NULL,
   workflow text NOT NULL CHECK (workflow = ANY (ARRAY['laser-cut'::text, 'router'::text, 'lathe'::text, 'mill'::text, '3d-print'::text, 'purchase'::text])),
-  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'in-progress'::text, 'cammed'::text, 'machined'::text, 'inspected'::text, 'deburred'::text, 'complete'::text])),
+  status text NOT NULL DEFAULT 'pending'::text,
   file_name text NOT NULL,
   file_url text NOT NULL,
   kitting_bin text,
@@ -248,6 +248,7 @@ CREATE TABLE public.subsystem_members (
   user_id uuid,
   joined_at timestamp with time zone DEFAULT now(),
   CONSTRAINT subsystem_members_pkey PRIMARY KEY (id),
+  CONSTRAINT subsystem_members_unique_membership UNIQUE (subsystem_id, user_id),
   CONSTRAINT subsystem_members_subsystem_id_fkey FOREIGN KEY (subsystem_id) REFERENCES public.subsystems(id),
   CONSTRAINT subsystem_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
