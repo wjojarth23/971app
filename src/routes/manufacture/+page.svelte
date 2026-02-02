@@ -71,6 +71,14 @@
   let editWorkflow = '';
   let editStock = '';
   let editCustomStock = '';
+  
+  // Part Preview Modal State
+  let showPreviewModal = false;
+  let previewPart = null;
+  let previewImage = null;
+  let previewLoading = false;
+  let previewError = null;
+  
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
   $: projectIds = Array.from(new Set(parts.filter(p => p.status !== 'complete' && p.project_id).map(p => p.project_id))).sort();
 
@@ -794,7 +802,7 @@
     parts = parts.map((p) => (p.id === partId ? { ...p, status } : p));
   }
 
-  // Row click handler: open edit modal when user clicks the row body
+  // Row click handler: for Onshape parts, show preview; otherwise open edit modal
   // but ignore clicks that originated on interactive elements (buttons, inputs, links)
   function onRowClick(e, part) {
     try {
@@ -803,7 +811,12 @@
       // defensive: if DOM not available, just return
       return;
     }
-    openEditModal(part);
+    // Show preview modal for Onshape parts that have all required IDs
+    if (part.source_type === 'onshape_api' && part.onshape_document_id && part.onshape_element_id && part.onshape_part_id) {
+      openPreviewModal(part);
+    } else {
+      openEditModal(part);
+    }
   }
 
   function onRowKeyDown(e, part) {
@@ -816,6 +829,61 @@
     }
     // Prevent page from scrolling on Space
     e.preventDefault();
+    // Show preview modal for Onshape parts that have all required IDs
+    if (part.source_type === 'onshape_api' && part.onshape_document_id && part.onshape_element_id && part.onshape_part_id) {
+      openPreviewModal(part);
+    } else {
+      openEditModal(part);
+    }
+  }
+
+  // Part Preview Modal Functions
+  async function openPreviewModal(part) {
+    previewPart = part;
+    previewImage = null;
+    previewError = null;
+    previewLoading = true;
+    showPreviewModal = true;
+    
+    try {
+      const params = new URLSearchParams({
+        action: 'shaded-views',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'w',
+        wvmId: part.onshape_wvmid,
+        outputHeight: '400',
+        outputWidth: '400'
+      });
+      
+      const response = await fetch(`/api/onshape?${params}`);
+      const data = await response.json();
+      
+      if (data.success && data.image) {
+        previewImage = `data:image/png;base64,${data.image}`;
+      } else {
+        previewError = data.error || 'Failed to load preview';
+      }
+    } catch (err) {
+      console.error('Error loading part preview:', err);
+      previewError = err.message || 'Failed to load preview';
+    } finally {
+      previewLoading = false;
+    }
+  }
+
+  function closePreviewModal() {
+    showPreviewModal = false;
+    previewPart = null;
+    previewImage = null;
+    previewError = null;
+    previewLoading = false;
+  }
+
+  function openEditFromPreview() {
+    const part = previewPart;
+    closePreviewModal();
     openEditModal(part);
   }
 
@@ -1496,6 +1564,91 @@
   </div>
 {/if}
 
+<!-- Part Preview Modal -->
+{#if showPreviewModal}
+  <div
+    class="modal-backdrop"
+    on:click|self={closePreviewModal}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closePreviewModal(); } }}
+  >
+    <div class="modal preview-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>{previewPart?.name || 'Part Preview'}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closePreviewModal}>
+          <X size={18} />
+        </button>
+      </div>
+      <div class="modal-body preview-modal-body">
+        <div class="preview-image-container">
+          {#if previewLoading}
+            <div class="preview-loading">
+              <div class="spinner"></div>
+              <span>Loading preview...</span>
+            </div>
+          {:else if previewError}
+            <div class="preview-error">
+              <span>⚠️ {previewError}</span>
+            </div>
+          {:else if previewImage}
+            <img src={previewImage} alt="Isometric view of {previewPart?.name}" class="preview-image" />
+          {/if}
+        </div>
+        
+        {#if previewPart}
+          <div class="preview-details">
+            <div class="preview-detail-row">
+              <span class="preview-label">Workflow:</span>
+              <span class={`tag workflow-tag ${getWorkflowClass(previewPart.workflow)}`}>
+                {getWorkflowLabel(previewPart.workflow)}
+              </span>
+            </div>
+            <div class="preview-detail-row">
+              <span class="preview-label">Status:</span>
+              <span class="status-badge {getBadgeClass(previewPart.status, getRouterMeta(previewPart))}">{getStatusDisplay(previewPart)}</span>
+            </div>
+            {#if previewPart.quantity}
+              <div class="preview-detail-row">
+                <span class="preview-label">Quantity:</span>
+                <span class="preview-value">{previewPart.quantity}</span>
+              </div>
+            {/if}
+            {#if previewPart.stock_assignment}
+              <div class="preview-detail-row">
+                <span class="preview-label">Stock:</span>
+                <span class="preview-value">{previewPart.stock_assignment}</span>
+              </div>
+            {/if}
+            {#if previewPart.project_id}
+              <div class="preview-detail-row">
+                <span class="preview-label">Project:</span>
+                <span class="preview-value mono">{previewPart.project_id}</span>
+              </div>
+            {/if}
+            {#if getOnshapeUrl(previewPart)}
+              <div class="preview-detail-row">
+                <a href={getOnshapeUrl(previewPart)} target="_blank" rel="noopener noreferrer" class="onshape-link">
+                  <ExternalLink size={14} />
+                  Open in Onshape
+                </a>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" on:click={openEditFromPreview}>
+          <Pencil size={16} />
+          Edit Part
+        </button>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" on:click={closePreviewModal}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <!-- Toast Notification -->
 {#if showToast}
   <div class="toast">
@@ -1896,6 +2049,124 @@
     .status-badge {
       font-size: 0.65rem;
       padding: var(--space-1) var(--space-2);
+    }
+  }
+
+  /* Part Preview Modal Styles */
+  .preview-modal {
+    max-width: 500px;
+    width: 95%;
+  }
+
+  .preview-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-4);
+  }
+
+  .preview-image-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    background: var(--background);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .preview-image {
+    max-width: 100%;
+    max-height: 400px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+  }
+
+  .preview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--text-muted);
+    padding: var(--space-6);
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .preview-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    text-align: center;
+  }
+
+  .preview-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  .preview-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    padding: var(--space-1) 0;
+  }
+
+  .preview-detail-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-2);
+  }
+
+  .preview-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .preview-value {
+    font-size: 0.9rem;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .preview-value.mono {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 480px) {
+    .preview-modal {
+      max-width: 100%;
+      margin: var(--space-2);
+    }
+
+    .preview-image-container {
+      min-height: 150px;
+    }
+
+    .preview-image {
+      max-height: 250px;
     }
   }
 </style>

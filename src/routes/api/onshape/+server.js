@@ -583,6 +583,79 @@ export async function GET({ url }) {
                 
                 // Use the SVG conversion workflow
                 return await handleSVGConversion(documentId, svgWvm, svgWvmId, elementId, svgPartId);
+            case 'shaded-views': {
+                // Get an isometric shaded view image of a part
+                if (!elementId) {
+                    return json({ error: 'Missing elementId for shaded views' }, { status: 400 });
+                }
+                const shadedWvm = url.searchParams.get('wvm') || 'w';
+                const shadedWvmId = url.searchParams.get('wvmId');
+                const shadedPartId = url.searchParams.get('partId');
+                const outputHeight = url.searchParams.get('outputHeight') || '300';
+                const outputWidth = url.searchParams.get('outputWidth') || '300';
+                
+                if (!shadedPartId) {
+                    return json({ error: 'Missing partId for shaded views' }, { status: 400 });
+                }
+                if (!shadedWvmId) {
+                    return json({ error: 'Missing wvmId for shaded views' }, { status: 400 });
+                }
+
+                // First check if the element is an Assembly and resolve to Part Studio if needed
+                const shadedElementType = await getElementType(documentId, shadedWvm, shadedWvmId, elementId);
+                let targetElementId = elementId;
+                let targetDocumentId = documentId;
+                let targetWvm = shadedWvm;
+                let targetWvmId = shadedWvmId;
+
+                if (shadedElementType === 'ASSEMBLY') {
+                    console.log(`Shaded views: Element ${elementId} is an Assembly - looking up Part Studio for part ${shadedPartId}`);
+                    let partStudioInfo = await findPartStudioFromAssemblyBOM(documentId, shadedWvm, shadedWvmId, elementId, shadedPartId);
+                    if (!partStudioInfo) {
+                        partStudioInfo = await findPartStudioContainingPart(documentId, shadedWvm, shadedWvmId, shadedPartId);
+                    }
+                    if (partStudioInfo) {
+                        targetElementId = partStudioInfo.elementId;
+                        targetDocumentId = partStudioInfo.documentId || documentId;
+                        targetWvm = partStudioInfo.wvmType || shadedWvm;
+                        targetWvmId = partStudioInfo.wvmId || shadedWvmId;
+                    }
+                }
+
+                // Isometric view matrix (standard isometric projection)
+                // This creates a view looking from front-top-right corner
+                const viewMatrix = 'isometric';
+                
+                const shadedViewUrl = `${ONSHAPE_BASE_URL}/api/v6/parts/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/partid/${encodeURIComponent(shadedPartId)}/shadedviews?viewMatrix=${viewMatrix}&outputHeight=${outputHeight}&outputWidth=${outputWidth}&edges=show&useAntiAliasing=true`;
+                
+                console.log('Fetching shaded view from:', shadedViewUrl);
+                
+                const shadedResp = await fetch(shadedViewUrl, {
+                    headers: {
+                        ...getBasicAuth(),
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!shadedResp.ok) {
+                    const errorText = await shadedResp.text();
+                    console.error('Shaded views error:', shadedResp.status, errorText);
+                    return json({ error: `Shaded views failed: ${shadedResp.status}`, details: errorText }, { status: shadedResp.status });
+                }
+                
+                const shadedData = await shadedResp.json();
+                
+                // The response contains an images array with base64-encoded PNG data
+                if (shadedData.images && shadedData.images.length > 0) {
+                    return json({ 
+                        success: true, 
+                        image: shadedData.images[0],  // Base64 PNG image
+                        partId: shadedPartId
+                    });
+                } else {
+                    return json({ error: 'No image returned from Onshape' }, { status: 500 });
+                }
+            }
             case 'download-step':
                 if (!elementId) {
                     return json({ error: 'Missing elementId for STEP download' }, { status: 400 });
@@ -700,7 +773,7 @@ export async function GET({ url }) {
                 apiPath = `/api/v11/documents/d/${documentId}/externaldata/${externalDataId}`;
                 break;
       default:
-        return json({ error: 'Invalid action. Available actions: document-info, versions, version-details, assembly-info, assembly-bom, part-bounding-box, download-stl, download-step, translate-part, convert-to-svg, translate-drawing, check-translation, download-translation-result' }, { status: 400 });
+        return json({ error: 'Invalid action. Available actions: document-info, versions, version-details, assembly-info, assembly-bom, part-bounding-box, download-stl, download-step, translate-part, convert-to-svg, translate-drawing, check-translation, download-translation-result, shaded-views' }, { status: 400 });
         }
 
         const controller = new AbortController();
