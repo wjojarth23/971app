@@ -78,6 +78,10 @@
   let previewImage = null;
   let previewLoading = false;
   let previewError = null;
+  let previewStatus = '';
+  let previewWorkflow = '';
+  let previewStock = '';
+  let previewCustomStock = '';
   
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
   $: projectIds = Array.from(new Set(parts.filter(p => p.status !== 'complete' && p.project_id).map(p => p.project_id))).sort();
@@ -845,6 +849,13 @@
     previewLoading = true;
     showPreviewModal = true;
     
+    // Initialize edit state
+    const meta = part.workflow === 'router' ? getRouterMeta(part) : {};
+    previewStatus = (part.workflow === 'router' && meta.step === 'cam_review') ? 'cam_review' : (part.status || 'pending');
+    previewWorkflow = part.workflow || '';
+    previewStock = part.stock_assignment || '';
+    previewCustomStock = '';
+    
     try {
       const params = new URLSearchParams({
         action: 'shaded-views',
@@ -853,8 +864,8 @@
         partId: part.onshape_part_id,
         wvm: part.onshape_wvm || 'w',
         wvmId: part.onshape_wvmid,
-        outputHeight: '400',
-        outputWidth: '400'
+        outputHeight: '800',
+        outputWidth: '800'
       });
       
       const response = await fetch(`/api/onshape?${params}`);
@@ -879,13 +890,73 @@
     previewImage = null;
     previewError = null;
     previewLoading = false;
+    previewStatus = '';
+    previewWorkflow = '';
+    previewStock = '';
+    previewCustomStock = '';
   }
 
-  function openEditFromPreview() {
-    const part = previewPart;
-    closePreviewModal();
-    openEditModal(part);
+  async function savePreviewEdits() {
+    if (!previewPart) return;
+    const effectiveStock = previewStock === '__other__' ? (previewCustomStock || '').trim() : previewStock;
+    const update = {
+      status: previewStatus === 'cam_review' ? 'in-progress' : previewStatus,
+      workflow: previewWorkflow,
+      updated_at: new Date().toISOString()
+    };
+    if (effectiveStock) update.stock_assignment = effectiveStock;
+    try {
+      const { error } = await supabase
+        .from('parts')
+        .update(update)
+        .eq('id', previewPart.id);
+      if (error) throw error;
+      if (previewStatus === 'cam_review') {
+        try { await updateRouterMeta(previewPart, { step: 'cam_review' }); } catch (e) { console.warn('updateRouterMeta failed:', e); }
+      }
+      await loadParts();
+      showToastMessage('Part updated');
+      closePreviewModal();
+    } catch (e) {
+      console.error('savePreviewEdits error:', e);
+      alert('Failed to update part: ' + (e.message || e));
+    }
   }
+
+  async function deletePreviewPart() {
+    if (!previewPart) return;
+    if (!confirm('Delete this part permanently?')) return;
+    try {
+      const normalizedId = (typeof previewPart.id === 'string' && /^\d+$/.test(previewPart.id)) ? Number(previewPart.id) : previewPart.id;
+      try {
+        const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').eq('parts_id', normalizedId);
+        if (refErr) throw refErr;
+        if (refs && refs.length > 0) {
+          const ids = refs.map(r => r.id);
+          const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', ids);
+          if (clearErr) throw clearErr;
+        }
+      } catch (e) {
+        console.error('Failed to clear BOM refs before deleting part:', e);
+        alert('Failed to delete part: could not clear BOM references. Remove or unlink those BOM rows first.');
+        return;
+      }
+      const { error } = await supabase
+        .from('parts')
+        .delete()
+        .eq('id', normalizedId);
+      if (error) throw error;
+      await loadParts();
+      showToastMessage('Part deleted');
+      closePreviewModal();
+    } catch (e) {
+      console.error('deletePreviewPart error:', e);
+      alert('Failed to delete part: ' + (e.message || e));
+    }
+  }
+
+  $: previewStockOptions = previewWorkflow ? (stockData[previewWorkflow] || []).map(s => s.description) : [];
+  $: previewStatusOptions = previewWorkflow ? getWorkflowStatuses(previewWorkflow) : statuses;
 
   function closeEditModal() {
     showEditModal = false;
@@ -1597,37 +1668,22 @@
         </div>
         
         {#if previewPart}
-          <div class="preview-details">
-            <div class="preview-detail-row">
-              <span class="preview-label">Workflow:</span>
-              <span class={`tag workflow-tag ${getWorkflowClass(previewPart.workflow)}`}>
-                {getWorkflowLabel(previewPart.workflow)}
-              </span>
-            </div>
-            <div class="preview-detail-row">
-              <span class="preview-label">Status:</span>
-              <span class="status-badge {getBadgeClass(previewPart.status, getRouterMeta(previewPart))}">{getStatusDisplay(previewPart)}</span>
-            </div>
+          <!-- Part Info -->
+          <div class="preview-info-section">
             {#if previewPart.quantity}
-              <div class="preview-detail-row">
+              <div class="preview-info-item">
                 <span class="preview-label">Quantity:</span>
                 <span class="preview-value">{previewPart.quantity}</span>
               </div>
             {/if}
-            {#if previewPart.stock_assignment}
-              <div class="preview-detail-row">
-                <span class="preview-label">Stock:</span>
-                <span class="preview-value">{previewPart.stock_assignment}</span>
-              </div>
-            {/if}
             {#if previewPart.project_id}
-              <div class="preview-detail-row">
+              <div class="preview-info-item">
                 <span class="preview-label">Project:</span>
                 <span class="preview-value mono">{previewPart.project_id}</span>
               </div>
             {/if}
             {#if getOnshapeUrl(previewPart)}
-              <div class="preview-detail-row">
+              <div class="preview-info-item">
                 <a href={getOnshapeUrl(previewPart)} target="_blank" rel="noopener noreferrer" class="onshape-link">
                   <ExternalLink size={14} />
                   Open in Onshape
@@ -1635,15 +1691,51 @@
               </div>
             {/if}
           </div>
+
+          <!-- Edit Fields -->
+          <div class="preview-edit-section">
+            <div class="form-group">
+              <label class="form-label" for="preview-status">Status</label>
+              <select id="preview-status" class="form-select" bind:value={previewStatus}>
+                {#each previewStatusOptions as status}
+                  <option value={status.value}>{status.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="preview-workflow">Workflow</label>
+              <select id="preview-workflow" class="form-select" bind:value={previewWorkflow}>
+                {#each workflows as w}
+                  <option value={w.value}>{w.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="preview-stock">Stock</label>
+              <select id="preview-stock" class="form-select" bind:value={previewStock}>
+                <option value="">—</option>
+                {#each previewStockOptions as s}
+                  <option value={s}>{s}</option>
+                {/each}
+                <option value="__other__">Custom...</option>
+              </select>
+            </div>
+            {#if previewStock === '__other__'}
+            <div class="form-group">
+              <input class="form-input" type="text" placeholder="Custom stock" bind:value={previewCustomStock} />
+            </div>
+            {/if}
+          </div>
         {/if}
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" on:click={openEditFromPreview}>
-          <Pencil size={16} />
-          Edit Part
+        <button class="btn btn-danger" on:click={deletePreviewPart}>
+          <Trash2 size={16} />
+          Delete
         </button>
         <div class="spacer"></div>
-        <button class="btn btn-primary" on:click={closePreviewModal}>Close</button>
+        <button class="btn" on:click={closePreviewModal}>Cancel</button>
+        <button class="btn btn-primary" on:click={savePreviewEdits}>Save</button>
       </div>
     </div>
   </div>
@@ -2054,7 +2146,7 @@
 
   /* Part Preview Modal Styles */
   .preview-modal {
-    max-width: 500px;
+    max-width: 600px;
     width: 95%;
   }
 
@@ -2069,7 +2161,8 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    min-height: 200px;
+    min-height: 350px;
+    height: 350px;
     background: var(--background);
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
@@ -2077,11 +2170,10 @@
   }
 
   .preview-image {
-    max-width: 100%;
-    max-height: 400px;
-    width: auto;
-    height: auto;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
+    object-position: center;
   }
 
   .preview-loading {
@@ -2113,6 +2205,28 @@
     padding: var(--space-6);
     color: var(--danger);
     text-align: center;
+  }
+
+  .preview-info-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  .preview-info-item {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+
+  .preview-edit-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
   }
 
   .preview-details {
@@ -2162,11 +2276,8 @@
     }
 
     .preview-image-container {
-      min-height: 150px;
-    }
-
-    .preview-image {
-      max-height: 250px;
+      min-height: 200px;
+      height: 200px;
     }
   }
 </style>
