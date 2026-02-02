@@ -856,6 +856,28 @@
     previewStock = part.stock_assignment || '';
     previewCustomStock = '';
     
+    // Check if we have a cached preview image URL first
+    if (part.preview_image_url) {
+      const { data: urlData } = supabase.storage.from('part-previews').getPublicUrl(part.preview_image_url);
+      previewImage = urlData?.publicUrl || null;
+      if (previewImage) {
+        previewLoading = false;
+        return;
+      }
+    }
+    
+    // Fetch from Onshape API if no cached image
+    await fetchAndCachePreviewImage(part);
+  }
+
+  // Fetch preview image from Onshape and cache it to storage
+  async function fetchAndCachePreviewImage(part) {
+    if (!part.onshape_document_id || !part.onshape_element_id || !part.onshape_part_id) {
+      previewError = 'Missing Onshape IDs for preview';
+      previewLoading = false;
+      return null;
+    }
+    
     try {
       const params = new URLSearchParams({
         action: 'shaded-views',
@@ -872,15 +894,65 @@
       const data = await response.json();
       
       if (data.success && data.image) {
+        // Show the image immediately
         previewImage = `data:image/png;base64,${data.image}`;
+        
+        // Upload to storage in the background (don't wait)
+        uploadPreviewToStorage(part.id, data.image);
+          
+        return data.image;
       } else {
         previewError = data.error || 'Failed to load preview';
+        return null;
       }
     } catch (err) {
       console.error('Error loading part preview:', err);
       previewError = err.message || 'Failed to load preview';
+      return null;
     } finally {
       previewLoading = false;
+    }
+  }
+  
+  // Upload preview image to storage bucket and update database
+  async function uploadPreviewToStorage(partId, base64Image) {
+    try {
+      // Convert base64 to blob
+      const byteCharacters = atob(base64Image);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/png' });
+      
+      // Upload to storage
+      const fileName = `${partId}.png`;
+      const { error: uploadError } = await supabase.storage
+        .from('part-previews')
+        .upload(fileName, blob, { upsert: true, contentType: 'image/png' });
+      
+      if (uploadError) {
+        console.warn('Failed to upload preview image:', uploadError);
+        return;
+      }
+      
+      // Update the parts table with the storage path
+      const { error: updateError } = await supabase
+        .from('parts')
+        .update({ 
+          preview_image_url: fileName,
+          preview_image_updated_at: new Date().toISOString()
+        })
+        .eq('id', partId);
+      
+      if (updateError) {
+        console.warn('Failed to update part with preview URL:', updateError);
+      } else {
+        console.log('Preview image uploaded for part:', partId);
+      }
+    } catch (err) {
+      console.warn('Error uploading preview to storage:', err);
     }
   }
 

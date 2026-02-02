@@ -174,6 +174,8 @@ CREATE TABLE public.parts (
   layout_rotation numeric DEFAULT 0,
   onshape_drawing_element_id character varying,
   stock_assignment text,
+  preview_image_url text,
+  preview_image_updated_at timestamp with time zone,
   CONSTRAINT parts_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.predict_settings (

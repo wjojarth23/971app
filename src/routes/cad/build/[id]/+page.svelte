@@ -69,6 +69,62 @@
     loading = false;
   });
 
+  // Helper function to fetch and cache preview image for a part
+  async function fetchAndCachePreviewImage(part) {
+    if (!part?.onshape_document_id || !part?.onshape_element_id || !part?.onshape_part_id || !part?.onshape_wvmid) {
+      return;
+    }
+    
+    try {
+      const params = new URLSearchParams({
+        action: 'shaded-views',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'w',
+        wvmId: part.onshape_wvmid,
+        outputHeight: '800',
+        outputWidth: '800'
+      });
+      
+      const response = await fetch(`/api/onshape?${params}`);
+      const data = await response.json();
+      
+      if (data.success && data.image) {
+        // Convert base64 to blob and upload to storage
+        const byteCharacters = atob(data.image);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/png' });
+        
+        const fileName = `${part.id}.png`;
+        const { error: uploadError } = await supabase.storage
+          .from('part-previews')
+          .upload(fileName, blob, { upsert: true, contentType: 'image/png' });
+        
+        if (uploadError) {
+          console.warn('Failed to upload preview image:', uploadError);
+          return;
+        }
+        
+        // Update the parts table with the storage path
+        await supabase
+          .from('parts')
+          .update({ 
+            preview_image_url: fileName,
+            preview_image_updated_at: new Date().toISOString()
+          })
+          .eq('id', part.id);
+        console.log('Preview image uploaded for part:', part.id, part.name);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch/cache preview image:', err);
+    }
+  }
+
   async function loadBuildDetails() {
     try {
       const { data, error } = await supabase
@@ -872,6 +928,11 @@
             parts_id: partRow.id,
             added: true
           }).eq('id', item.id);
+          
+          // Fetch and cache preview image in the background (don't block)
+          if (partRow.is_onshape_part) {
+            fetchAndCachePreviewImage(partRow);
+          }
         }
       }
 

@@ -626,7 +626,11 @@ export async function GET({ url }) {
                 // This creates a view looking from front-top-right corner
                 const viewMatrix = 'isometric';
                 
-                const shadedViewUrl = `${ONSHAPE_BASE_URL}/api/v6/parts/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/partid/${encodeURIComponent(shadedPartId)}/shadedviews?viewMatrix=${viewMatrix}&outputHeight=${outputHeight}&outputWidth=${outputWidth}&edges=show&useAntiAliasing=true`;
+                // pixelSize controls zoom - smaller value = more zoomed in
+                // Using a small value to make the part fill more of the frame
+                const pixelSize = url.searchParams.get('pixelSize') || '0.003';
+                
+                const shadedViewUrl = `${ONSHAPE_BASE_URL}/api/v6/parts/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/partid/${encodeURIComponent(shadedPartId)}/shadedviews?viewMatrix=${viewMatrix}&outputHeight=${outputHeight}&outputWidth=${outputWidth}&pixelSize=${pixelSize}&edges=show&useAntiAliasing=true`;
                 
                 console.log('Fetching shaded view from:', shadedViewUrl);
                 
