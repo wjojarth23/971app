@@ -897,8 +897,8 @@
         // Show the image immediately
         previewImage = `data:image/png;base64,${data.image}`;
         
-        // Upload to storage in the background (don't wait)
-        uploadPreviewToStorage(part.id, data.image);
+        // Upload to storage (wait for it to complete)
+        await uploadPreviewToStorage(part.id, data.image);
           
         return data.image;
       } else {
@@ -917,6 +917,8 @@
   // Upload preview image to storage bucket and update database
   async function uploadPreviewToStorage(partId, base64Image) {
     try {
+      console.log('Starting upload for part:', partId, 'image size:', base64Image.length);
+      
       // Convert base64 to blob
       const byteCharacters = atob(base64Image);
       const byteNumbers = new Array(byteCharacters.length);
@@ -925,17 +927,19 @@
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'image/png' });
+      console.log('Blob created, size:', blob.size);
       
       // Upload to storage
       const fileName = `${partId}.png`;
-      const { error: uploadError } = await supabase.storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('part-previews')
         .upload(fileName, blob, { upsert: true, contentType: 'image/png' });
       
       if (uploadError) {
-        console.warn('Failed to upload preview image:', uploadError);
+        console.error('Storage upload error:', uploadError);
         return;
       }
+      console.log('Upload successful:', uploadData);
       
       // Update the parts table with the storage path
       const { error: updateError } = await supabase
@@ -947,12 +951,12 @@
         .eq('id', partId);
       
       if (updateError) {
-        console.warn('Failed to update part with preview URL:', updateError);
+        console.error('Database update error:', updateError);
       } else {
-        console.log('Preview image uploaded for part:', partId);
+        console.log('Preview image saved for part:', partId);
       }
     } catch (err) {
-      console.warn('Error uploading preview to storage:', err);
+      console.error('Error uploading preview to storage:', err);
     }
   }
 
