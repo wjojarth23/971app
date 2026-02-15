@@ -48,6 +48,12 @@
   let animatedBalls = [];
   let shootingTimer;
 
+  function handleButtonClick(e) {
+    if (e.currentTarget) {
+      e.currentTarget.blur();
+    }
+  }
+
   $: {
     if (typeof window !== "undefined") {
       clearInterval(shootingTimer);
@@ -233,6 +239,13 @@
     }
   }
 
+  // Phase Actions
+  function recordPickup(source) {
+    record("pickup", source);
+  }
+  function recordPushing() {
+    record("pushing", "outpost");
+  }
   // Phase transitions
   function chooseStart(pos) {
     startPosition = pos;
@@ -262,15 +275,7 @@
     phase = "finished";
   }
 
-  // Actions
-  function recordPickup(source) {
-    record("pickup", source);
-  }
-  function recordPushing() {
-    record("pushing", "outpost");
-  }
-
-  // Hold-to-record Handlers (Shooting, Climbing)
+  // Hold-to-record Handlers (Shooting, Climbing, Pick Up, Pushing)
   let holdTimers = {};
 
   function startAction(actionName, value) {
@@ -286,6 +291,19 @@
     const key = `${actionName}_${value}`;
     if (!holdTimers[key]) return;
     record(`${actionName}_end`, value);
+    const newTimers = { ...holdTimers };
+    delete newTimers[key];
+    holdTimers = newTimers;
+  }
+
+  function startVisualAction(key, actionFn) {
+    if (holdTimers[key]) return;
+    if (actionFn) actionFn();
+    holdTimers = { ...holdTimers, [key]: true };
+  }
+
+  function endVisualAction(key) {
+    if (!holdTimers[key]) return;
     const newTimers = { ...holdTimers };
     delete newTimers[key];
     holdTimers = newTimers;
@@ -389,7 +407,7 @@
     {/if}
 
     <div class="form-group match-select">
-      <label class="form-label" for="matchSelect">Match</label>
+      <span class="label" for="matchSelect">Match</span>
       <select
         id="matchSelect"
         class="form-select"
@@ -405,7 +423,7 @@
     </div>
 
     <div class="form-group team-view">
-      <label class="form-label" for="viewTeamSelect">View Data</label>
+      <span class="label" for="viewTeamSelect">View Data</span>
       <div class="row">
         <select
           id="viewTeamSelect"
@@ -466,11 +484,11 @@
       <!-- Header Info -->
       <div class="console-header">
         <div class="info-block">
-          <label>Match</label>
+          <span class="label">Match</span>
           <div class="val">{selectedMatch.key.split("_").pop()}</div>
         </div>
         <div class="info-block" style="flex-grow:1">
-          <label for="teamScout">Team</label>
+          <span class="label" for="teamScout">Team</span>
           <select
             id="teamScout"
             class="form-select large"
@@ -482,13 +500,16 @@
           </select>
         </div>
         <div class="info-block">
-          <label>Phase</label>
+          <span class="label">Phase</span>
           <div class="phase-badge {phase}">{phase.toUpperCase()}</div>
         </div>
         <div class="undo-block">
           <button
             class="btn btn-danger undo-btn"
-            on:click={undoLast}
+            on:click={(e) => {
+              handleButtonClick(e);
+              undoLast();
+            }}
             disabled={scoutingEvents.length === 0}
             title="Undo last action"
           >
@@ -502,21 +523,27 @@
       <!-- PRE PHASE -->
       {#if phase === "pre"}
         <div class="phase-section pre-state">
-          <h4>Auto Start Position</h4>
+          <span class="label">Auto Start Position</span>
           <div class="btn-row">
             {#each ["Left", "Center", "Right"] as p}
               <button
                 class="btn {startPosition === p.toLowerCase()
                   ? 'btn-selected'
                   : 'btn-outline'} big-btn"
-                on:click={() => chooseStart(p.toLowerCase())}>{p}</button
+                on:click={(e) => {
+                  handleButtonClick(e);
+                  chooseStart(p.toLowerCase());
+                }}>{p}</button
               >
             {/each}
           </div>
           <button
             class="btn btn-success action-btn full-width"
             disabled={!startPosition}
-            on:click={beginAuto}
+            on:click={(e) => {
+              handleButtonClick(e);
+              beginAuto();
+            }}
           >
             START MATCH (AUTO)
           </button>
@@ -526,27 +553,62 @@
       <!-- AUTO PHASE -->
       {#if phase === "auto"}
         <div class="phase-section">
-          <h4>Pick Up</h4>
+          <span class="label">Pick Up</span>
           <div class="btn-row">
             <button
-              class="btn btn-outline big-btn"
-              on:click={() => recordPickup("ground")}>Ground</button
+              class="btn {holdTimers['pickup_ground']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pickup_ground", () =>
+                  recordPickup("ground"),
+                )}
+              on:mouseup={() => endVisualAction("pickup_ground")}
+              on:mouseleave={() => endVisualAction("pickup_ground")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pickup_ground", () =>
+                  recordPickup("ground"),
+                )}
+              on:touchend|preventDefault={() =>
+                endVisualAction("pickup_ground")}>Ground</button
             >
             <button
-              class="btn btn-outline big-btn"
-              on:click={() => recordPickup("depot")}>Depot</button
+              class="btn {holdTimers['pickup_depot']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pickup_depot", () => recordPickup("depot"))}
+              on:mouseup={() => endVisualAction("pickup_depot")}
+              on:mouseleave={() => endVisualAction("pickup_depot")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pickup_depot", () => recordPickup("depot"))}
+              on:touchend|preventDefault={() => endVisualAction("pickup_depot")}
+              >Depot</button
             >
             <button
-              class="btn btn-outline big-btn"
-              on:click={() => recordPickup("outpost")}>Outpost</button
+              class="btn {holdTimers['pickup_outpost']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pickup_outpost", () =>
+                  recordPickup("outpost"),
+                )}
+              on:mouseup={() => endVisualAction("pickup_outpost")}
+              on:mouseleave={() => endVisualAction("pickup_outpost")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pickup_outpost", () =>
+                  recordPickup("outpost"),
+                )}
+              on:touchend|preventDefault={() =>
+                endVisualAction("pickup_outpost")}>Outpost</button
             >
           </div>
 
-          <h4>Shooting (Hold)</h4>
+          <span class="label">Shooting (Hold)</span>
           <div class="btn-row">
             <button
               class="btn {holdTimers['shooting_shuttling']
-                ? 'btn-selected'
+                ? 'btn-selected-blue'
                 : 'btn-outline'} big-btn"
               on:mousedown={() => startAction("shooting", "shuttling")}
               on:mouseup={() => endAction("shooting", "shuttling")}
@@ -558,7 +620,7 @@
 
             <button
               class="btn {holdTimers['shooting_scoring']
-                ? 'btn-selected'
+                ? 'btn-selected-blue'
                 : 'btn-outline'} big-btn"
               on:mousedown={() => startAction("shooting", "scoring")}
               on:mouseup={() => endAction("shooting", "scoring")}
@@ -572,7 +634,10 @@
           <div class="spacer"></div>
           <button
             class="btn btn-success action-btn full-width"
-            on:click={endAuto}
+            on:click={(e) => {
+              handleButtonClick(e);
+              endAuto();
+            }}
           >
             START TELEOP
           </button>
@@ -585,27 +650,40 @@
           <!-- Roles & Shift -->
           <div class="teleop-config">
             <div class="role-selector">
-              <label>Current Robot Role</label>
-              <div class="chip-grid">
+              <span class="label">Current Robot Role</span>
+              <div class="btn-row">
                 {#each ROLES as r}
                   <button
-                    class="chip {currentRole === r ? 'active' : ''}"
-                    on:click={() => setRole(r)}>{r}</button
+                    class="btn {currentRole === r
+                      ? 'btn-selected'
+                      : 'btn-outline'} big-btn"
+                    on:click={(e) => {
+                      handleButtonClick(e);
+                      setRole(r);
+                    }}>{r}</button
                   >
                 {/each}
               </div>
             </div>
 
             <div class="shift-selector">
-              <label>Shift Status</label>
-              <div class="chip-grid">
+              <span class="label">Shift Status</span>
+              <div class="btn-row">
                 <button
-                  class="chip shift-chip {shiftOn ? 'on' : ''}"
-                  on:click={() => setShift(true)}>ON SHIFT</button
+                  class="btn {shiftOn ? 'btn-selected' : 'btn-outline'} big-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    setShift(true);
+                  }}>On Shift</button
                 >
                 <button
-                  class="chip shift-chip {!shiftOn ? 'off' : ''}"
-                  on:click={() => setShift(false)}>OFF SHIFT</button
+                  class="btn {!shiftOn
+                    ? 'btn-selected'
+                    : 'btn-outline'} big-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    setShift(false);
+                  }}>Off Shift</button
                 >
               </div>
             </div>
@@ -613,27 +691,66 @@
 
           <hr class="divider-sm" />
 
-          <h4>Pick Up</h4>
+          <span class="label">Pick Up</span>
           <div class="btn-row">
             <button
-              class="btn btn-outline big-btn"
-              on:click={() => recordPickup("ground")}>Ground</button
+              class="btn {holdTimers['pickup_ground_tele']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pickup_ground_tele", () =>
+                  recordPickup("ground"),
+                )}
+              on:mouseup={() => endVisualAction("pickup_ground_tele")}
+              on:mouseleave={() => endVisualAction("pickup_ground_tele")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pickup_ground_tele", () =>
+                  recordPickup("ground"),
+                )}
+              on:touchend|preventDefault={() =>
+                endVisualAction("pickup_ground_tele")}>Ground</button
             >
             <button
-              class="btn btn-outline big-btn"
-              on:click={() => recordPickup("depot")}>Depot</button
+              class="btn {holdTimers['pickup_depot_tele']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pickup_depot_tele", () =>
+                  recordPickup("depot"),
+                )}
+              on:mouseup={() => endVisualAction("pickup_depot_tele")}
+              on:mouseleave={() => endVisualAction("pickup_depot_tele")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pickup_depot_tele", () =>
+                  recordPickup("depot"),
+                )}
+              on:touchend|preventDefault={() =>
+                endVisualAction("pickup_depot_tele")}>Depot</button
             >
             <button
-              class="btn btn-outline big-btn"
-              on:click={() => recordPickup("outpost")}>Outpost</button
+              class="btn {holdTimers['pickup_outpost_tele']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pickup_outpost_tele", () =>
+                  recordPickup("outpost"),
+                )}
+              on:mouseup={() => endVisualAction("pickup_outpost_tele")}
+              on:mouseleave={() => endVisualAction("pickup_outpost_tele")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pickup_outpost_tele", () =>
+                  recordPickup("outpost"),
+                )}
+              on:touchend|preventDefault={() =>
+                endVisualAction("pickup_outpost_tele")}>Outpost</button
             >
           </div>
 
-          <h4>Shooting (Hold)</h4>
+          <span class="label">Shooting (Hold)</span>
           <div class="btn-row">
             <button
               class="btn {holdTimers['shooting_shuttling']
-                ? 'btn-selected'
+                ? 'btn-selected-blue'
                 : 'btn-outline'} big-btn"
               on:mousedown={() => startAction("shooting", "shuttling")}
               on:mouseup={() => endAction("shooting", "shuttling")}
@@ -645,7 +762,7 @@
 
             <button
               class="btn {holdTimers['shooting_scoring']
-                ? 'btn-selected'
+                ? 'btn-selected-blue'
                 : 'btn-outline'} big-btn"
               on:mousedown={() => startAction("shooting", "scoring")}
               on:mouseup={() => endAction("shooting", "scoring")}
@@ -656,10 +773,24 @@
             >
           </div>
 
-          <h4>Pushing</h4>
+          <span class="label">Pushing</span>
           <div class="btn-row">
-            <button class="btn btn-outline big-btn" on:click={recordPushing}
-              >Outpost</button
+            <button
+              class="btn {holdTimers['pushing_outpost_tele']
+                ? 'btn-selected'
+                : 'btn-outline'} big-btn"
+              on:mousedown={() =>
+                startVisualAction("pushing_outpost_tele", () =>
+                  recordPushing(),
+                )}
+              on:mouseup={() => endVisualAction("pushing_outpost_tele")}
+              on:mouseleave={() => endVisualAction("pushing_outpost_tele")}
+              on:touchstart|preventDefault={() =>
+                startVisualAction("pushing_outpost_tele", () =>
+                  recordPushing(),
+                )}
+              on:touchend|preventDefault={() =>
+                endVisualAction("pushing_outpost_tele")}>Outpost</button
             >
           </div>
         </div>
@@ -667,35 +798,38 @@
         <hr class="divider" />
 
         <div class="phase-section">
-          <h4>Climbing (Hold)</h4>
+          <span class="label">Climbing (Hold)</span>
           <button
             class="btn {holdTimers['climbing_generic']
-              ? 'btn-selected'
+              ? 'btn-selected-blue'
               : 'btn-outline'} big-btn full-width"
             on:mousedown={() => startAction("climbing", "generic")}
             on:mouseup={() => endAction("climbing", "generic")}
             on:touchstart|preventDefault={() =>
               startAction("climbing", "generic")}
             on:touchend|preventDefault={() => endAction("climbing", "generic")}
-            >CLIMBING</button
+            >Climbing</button
           >
 
           <div class="form-group mt-1">
-            <label class="form-label">Final Climbing Position</label>
+            <span class="label">Climb Position</span>
             <div class="btn-row">
               {#each CLIMB_POSITIONS as p}
                 <button
                   class="btn {finalClimbPos === p
                     ? 'btn-selected'
-                    : 'btn-outline'}"
-                  on:click={() => (finalClimbPos = p)}>{p}</button
+                    : 'btn-outline'} big-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    finalClimbPos = p;
+                  }}>{p}</button
                 >
               {/each}
             </div>
           </div>
 
           <div class="form-group mt-1">
-            <label class="form-label">Robot Shooting Accuracy (1-5)</label>
+            <span class="label">Shooting Accuracy</span>
             <input
               type="range"
               min="1"
@@ -715,9 +849,7 @@
           </div>
 
           <div class="form-group mt-1">
-            <label class="form-label"
-              >Robot Shooting Speed (1-10 balls/sec)</label
-            >
+            <span class="label">Shooting Speed</span>
 
             <!-- Animation -->
             <div class="animation-stage">
@@ -751,7 +883,7 @@
           </div>
 
           <div class="form-group mt-1">
-            <label class="form-label">Driving Rank (1-5)</label>
+            <span class="label">Driving Rank</span>
             <input
               type="range"
               min="1"
@@ -765,7 +897,7 @@
               {#each Array(5) as _, i}<option value={i + 1}></option>{/each}
             </datalist>
             <div class="range-labels">
-              <span>1 (Bad)</span><span>3</span><span>5 (Godlike)</span>
+              <span>BAD</span><span>GODLIKE</span>
             </div>
             <div class="current-val">{drivingRank}</div>
           </div>
@@ -774,7 +906,10 @@
           <button
             class="btn btn-success action-btn full-width"
             style="margin-bottom: 2rem;"
-            on:click={submitMatch}
+            on:click={(e) => {
+              handleButtonClick(e);
+              submitMatch();
+            }}
           >
             SUBMIT MATCH
           </button>
@@ -818,15 +953,14 @@
 
 <style>
   /* Reuse main variables from global css if available, else standard fallback */
-  :global(:root) {
-    --primary: #0d6efd;
-    --secondary: #6c757d;
-    --success: #198754;
-    --danger: #dc3545;
-    --warning: #ffc107;
-    --dark: #212529;
-    --light: #f8f9fa;
-    --border: #dee2e6;
+  :root {
+    --scout-primary: #0d6efd;
+    --scout-secondary: #6c757d;
+    --scout-success: #198754;
+    --scout-danger: #dc3545;
+    --scout-dark: #212529;
+    --scout-light: #f8f9fa;
+    --scout-border: #dee2e6;
     --stage-height: 450px;
     --stage-width: 450px; /* Half of 900px */
     --full-travel: 900px;
@@ -836,7 +970,7 @@
   }
 
   @media (max-width: 600px) {
-    :global(:root) {
+    :root {
       --stage-height: 250px;
       --stage-width: 300px; /* Half of 600px */
       --full-travel: 600px;
@@ -847,13 +981,13 @@
   }
 
   .mt-1 {
-    margin-top: 1rem;
+    margin-top: 0.25rem;
   }
   .full-width {
     width: 100%;
   }
   .spacer {
-    height: 2rem;
+    height: 0.5rem;
   }
 
   .page-header {
@@ -865,11 +999,11 @@
   }
   .sub-label {
     font-size: 0.85rem;
-    color: var(--secondary);
+    color: var(--scout-secondary);
   }
   .note {
-    color: var(--danger);
-    font-size: 0.8rem;
+    color: var(--scout-danger);
+    font-size: 1rem;
     margin-top: 0.25rem;
   }
 
@@ -881,7 +1015,7 @@
   .form-group {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.1rem;
   }
   .row {
     display: flex;
@@ -890,37 +1024,41 @@
 
   .card {
     background: white;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--scout-border);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
 
   /* Console Header */
   .console-header {
     display: flex;
-    gap: 1rem;
+    gap: 0.5rem;
     align-items: center;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
+    padding: 0.25rem 0;
   }
-  .info-block .label,
-  .role-selector .label,
-  .shift-selector .label {
-    font-size: 0.75rem;
+  .label,
+  .form-label {
+    font-size: 0.65rem;
     text-transform: uppercase;
-    color: var(--secondary);
+    color: var(--scout-secondary);
     display: block;
+    margin-bottom: 0.1rem;
+    font-weight: 600;
   }
   .info-block .val {
-    font-size: 1.25rem;
+    font-size: 1rem;
     font-weight: bold;
   }
-  .undo-btn,
+  .undo-btn {
+    padding: 0.8rem 0.6rem;
+  }
   .phase-badge {
-    padding: 0.25rem 0.6rem;
-    border-radius: 6px;
-    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.65rem;
     font-weight: 800;
     line-height: 1;
     display: inline-flex;
@@ -930,9 +1068,9 @@
     letter-spacing: 0.5px;
     border: 1px solid transparent;
     transition: all 0.2s;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     width: auto;
-    min-width: 50px;
+    min-width: 40px;
   }
   .undo-btn {
     background: #dc3545; /* Match red */
@@ -951,10 +1089,10 @@
     border: 1px solid #004085;
   }
   .phase-badge.teleop {
-    background: #ffc107; /* Vibrant Yellow */
-    color: #000;
-    border: 1px solid #856404;
-    text-shadow: none;
+    background: #6f42c1; /* Deep Purple instead of Yellow/Orange */
+    color: #fff;
+    border: 1px solid #5a32a3;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
   }
   .phase-badge.endgame {
     background: #dc3545; /* Vibrant Red */
@@ -978,7 +1116,7 @@
     background: #f1f3f5; /* Light Greyish Blue */
     padding: 1.5rem;
     border-radius: 12px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--scout-border);
   }
   .finished-state h3 {
     color: #2e7d32;
@@ -1001,69 +1139,97 @@
   }
 
   .phase-title {
-    font-size: 1.5rem;
+    font-size: 1.2rem;
     font-weight: 800;
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem;
     text-align: center;
-    color: var(--dark);
+    color: var(--scout-dark);
     letter-spacing: 1px;
-    border-bottom: 2px solid var(--border);
-    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--scout-border);
+    padding-bottom: 0.25rem;
+    text-transform: uppercase;
   }
 
   .divider {
     border: 0;
-    border-top: 2px solid var(--border);
-    margin: 1rem 0;
+    border-top: 1px solid var(--scout-border);
+    margin: 0.5rem 0;
   }
   .divider-sm {
     border: 0;
-    border-top: 1px solid var(--border);
-    margin: 1rem 0;
+    border-top: 1px solid var(--scout-border);
+    margin: 0.25rem 0;
   }
 
   /* Buttons */
   .btn {
     border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 0.4rem 0.8rem;
-    font-size: 0.95rem;
+    border-radius: 4px;
+    padding: 1.5rem 0.9rem;
+    font-size: 1rem;
     cursor: pointer;
     transition: all 0.2s;
     background: #e9ecef;
+    -webkit-tap-highlight-color: transparent !important;
+    user-select: none;
   }
   .btn:active {
-    transform: scale(0.98);
+    background: #6c757d !important;
+    color: white !important;
+    box-shadow: none !important;
+    outline: none !important;
+    transition: none !important;
+  }
+  .btn:hover {
+    background: #5a6268 !important;
+    color: white !important;
+    border-color: #545b62 !important;
+  }
+  .btn:focus,
+  .btn:active:focus,
+  .btn:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  .btn-outline:hover {
+    background: #6c757d !important;
+    color: white !important;
+    border-color: #6c757d !important;
+  }
+  .btn-outline:focus {
+    background: white !important;
+    box-shadow: none !important;
   }
   .btn-primary {
-    background: var(--primary);
+    background: var(--scout-primary);
     color: white;
   }
   .btn-secondary {
-    background: var(--secondary);
+    background: var(--scout-secondary);
     color: white;
   }
   .btn-success {
-    background: var(--success);
+    background: var(--scout-success);
     color: white;
   }
   .btn-danger {
-    background: var(--danger);
+    background: var(--scout-danger);
     color: white;
   }
   .btn-warning {
-    background: var(--warning);
-    color: black;
+    background: #f8f9fa;
+    color: #212529;
+    border: 1px solid #dee2e6;
   }
   .btn-outline {
     background: white;
-    border-color: var(--border);
+    border-color: var(--scout-border);
   }
 
   .btn-outline-primary {
     background: white;
-    border: 1px solid var(--primary);
-    color: var(--primary);
+    border: 1px solid var(--scout-primary);
+    color: var(--scout-primary);
   }
 
   .active {
@@ -1077,21 +1243,31 @@
     color: white !important;
   }
 
+  .btn-selected-blue {
+    background: #cfe2ff !important;
+    color: #004085 !important;
+    border-color: #b6d4fe !important;
+  }
+
   .btn-row {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.2rem;
     flex-wrap: wrap;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+  .btn-row .btn {
+    flex: 0 0 calc(33.33% - 0.15rem);
+    min-width: 0;
   }
   .big-btn {
     flex: 1;
-    min-width: 80px;
-    padding: 0.75rem 0.5rem;
-    font-size: 0.9rem;
+    min-width: 70px;
+    padding: 0.8rem 0.25rem;
+    font-size: 0.8rem;
   }
   .action-btn {
     padding: 0.8rem;
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: bold;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -1101,7 +1277,7 @@
   .teleop-config {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.25rem;
   }
   .chip-grid {
     display: flex;
@@ -1109,7 +1285,7 @@
     gap: 0.5rem;
   }
   .chip {
-    border: 1px solid var(--border);
+    border: 1px solid var(--scout-border);
     background: white;
     border-radius: 20px;
     padding: 0.25rem 0.75rem;
@@ -1119,38 +1295,52 @@
   .shift-chip.on {
     background-color: #5dade2 !important; /* Softer blue */
     color: white !important;
-    border-color: var(--border) !important;
+    border-color: var(--scout-border) !important;
   }
   .shift-chip.off {
     background-color: #ec7063 !important; /* Softer red */
     color: white !important;
-    border-color: var(--border) !important;
+    border-color: var(--scout-border) !important;
   }
 
   /* Sliders */
   .range-labels {
     display: flex;
     justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--secondary);
-    margin-top: 0.25rem;
+    font-size: 0.6rem;
+    color: var(--scout-secondary);
+    margin-top: 0.15rem;
   }
   .current-val {
     text-align: center;
     font-weight: 500;
-    font-size: 0.75rem;
-    color: var(--secondary);
-    margin-top: -0.25rem;
+    font-size: 0.65rem;
+    color: var(--scout-secondary);
+    margin-top: -0.2rem;
   }
   .slider {
     width: 100%;
-    margin: 0.5rem 0;
+    margin: 0.25rem 0;
+    height: 12px;
+  }
+
+  /* Form Selects */
+  .form-select {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    border: 1px solid var(--scout-border);
+    background-color: white;
+  }
+  .form-select.large {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.9rem;
   }
 
   /* Logs */
   .mini-log {
     margin-top: 2rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--scout-border);
     padding-top: 0.5rem;
     opacity: 0.8;
   }
@@ -1158,7 +1348,7 @@
     font-size: 0.8rem;
     font-weight: bold;
     text-transform: uppercase;
-    color: var(--secondary);
+    color: var(--scout-secondary);
   }
   .log-entries {
     display: flex;
@@ -1180,7 +1370,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--scout-border);
   }
   .badg {
     font-size: 0.7rem;
@@ -1191,7 +1381,7 @@
   }
   .match-badge {
     font-size: 0.7rem;
-    background: var(--dark);
+    background: var(--scout-dark);
     color: white;
     padding: 2px 4px;
     border-radius: 4px;
@@ -1221,7 +1411,7 @@
   .time {
     margin-left: auto;
     font-size: 0.75rem;
-    color: var(--secondary);
+    color: var(--scout-secondary);
   }
 
   /* Responsive */
@@ -1261,7 +1451,12 @@
       padding-left: 0;
       flex: 0 0 auto;
     }
-    .undo-btn,
+    .undo-btn {
+      padding: 0.8rem 0.6rem;
+      font-size: 0.75rem;
+      width: auto;
+      min-width: 50px;
+    }
     .phase-badge {
       padding: 0.25rem 0.6rem;
       font-size: 0.75rem;
@@ -1277,16 +1472,16 @@
 
     .big-btn {
       min-width: 45%;
-      padding: 0.5rem 0.25rem;
+      padding: 0.8rem 0.25rem;
       font-size: 0.85rem;
     }
     .action-btn {
-      padding: 0.75rem;
+      padding: 1rem;
       font-size: 1rem;
     }
     .btn {
-      padding: 0.35rem 0.75rem;
-      font-size: 0.85rem;
+      padding: 1.5rem 0.9rem;
+      font-size: 1rem;
     }
     .spacer {
       height: 1rem;
@@ -1298,7 +1493,7 @@
     display: flex;
     align-items: flex-end; /* Align robot to bottom */
     background: #f8f9fa;
-    border: 1px solid var(--border);
+    border: 1px solid var(--scout-border);
     border-radius: 4px;
     height: var(--stage-height);
     width: var(--stage-width);
