@@ -229,6 +229,8 @@
     } catch (error) {
       authError = error.message;
     } finally {
+      // Do not keep plaintext password in component state after submit.
+      formData = { ...formData, password: '' };
       authLoading = false;
     }
   }
@@ -454,6 +456,7 @@
               type="email"
               class="form-input"
               bind:value={formData.email}
+              autocomplete="username"
               placeholder="Enter your email"
               required
             />
@@ -469,6 +472,7 @@
               type="password"
               class="form-input"
               bind:value={formData.password}
+              autocomplete={authMode === 'login' ? 'current-password' : 'new-password'}
               placeholder="Enter your password"
               required
               minlength="6"

@@ -1531,13 +1531,13 @@
     .budget-progress-track {
       height: 6px;
       background: var(--surface-2);
-      border-radius: 99px;
+      border-radius: 4px;
       overflow: hidden;
     }
     .budget-progress-fill {
       height: 100%;
       background: var(--brand-gold-strong);
-      border-radius: 99px;
+      border-radius: 4px;
     }
     .budget-progress-fill.over { background: var(--red-strong); }
     .budget-values.over-budget { color: var(--red-strong); }

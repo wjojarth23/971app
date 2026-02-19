@@ -891,7 +891,7 @@
   .card {
     background: white;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 1rem;
     margin-bottom: 1rem;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
@@ -919,7 +919,7 @@
   .undo-btn,
   .phase-badge {
     padding: 0.25rem 0.6rem;
-    border-radius: 6px;
+    border-radius: 4px;
     font-size: 0.75rem;
     font-weight: 800;
     line-height: 1;
@@ -968,7 +968,7 @@
   .finished-state {
     background: #e8f5e9; /* Light Green */
     padding: 2rem;
-    border-radius: 12px;
+    border-radius: 4px;
     border: 2px dashed #a5d6a7;
     margin: 1rem 0;
     text-align: center;
@@ -977,7 +977,7 @@
   .pre-state {
     background: #f1f3f5; /* Light Greyish Blue */
     padding: 1.5rem;
-    border-radius: 12px;
+    border-radius: 4px;
     border: 1px solid var(--border);
   }
   .finished-state h3 {
@@ -1025,7 +1025,7 @@
   /* Buttons */
   .btn {
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0.4rem 0.8rem;
     font-size: 0.95rem;
     cursor: pointer;
@@ -1111,7 +1111,7 @@
   .chip {
     border: 1px solid var(--border);
     background: white;
-    border-radius: 20px;
+    border-radius: 4px;
     padding: 0.25rem 0.75rem;
     font-size: 0.9rem;
     cursor: pointer;
@@ -1201,13 +1201,13 @@
     background: #d4e6f1;
     color: #1b4f72;
     padding: 2px 6px;
-    border-radius: 10px;
+    border-radius: 4px;
     font-weight: bold;
   }
   .shift-badge {
     font-size: 0.7rem;
     padding: 2px 6px;
-    border-radius: 10px;
+    border-radius: 4px;
     font-weight: bold;
   }
   .shift-badge.on {
