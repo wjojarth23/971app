@@ -2063,7 +2063,7 @@
     padding: 0.5rem 1rem;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     color: var(--text);
     text-decoration: none;
     font-size: 0.875rem;
@@ -2091,7 +2091,7 @@
   .timeline-section {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 4px;
     padding: 1.5rem;
   }
 
@@ -2147,7 +2147,7 @@
   .timeline-content {
     background: var(--background);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 1rem;
   }
 
@@ -2237,7 +2237,7 @@
   .ai-reasoning { font-size: 0.8rem; color: var(--secondary); max-width: 200px; cursor: help; }
   .fallback-indicator { font-size: 0.75rem; color: var(--warning); font-style: italic; }
 
-  .confidence-bar { position: relative; width: 60px; height: 16px; background: var(--neutral-100); border-radius: 8px; overflow: hidden; }
+  .confidence-bar { position: relative; width: 60px; height: 16px; background: var(--neutral-100); border-radius: 4px; overflow: hidden; }
   .confidence-fill { height: 100%; background: linear-gradient(90deg, var(--orange-strong) 0%, var(--orange-strong) 50%, var(--green-base) 100%); transition: width 0.3s ease; }
   .confidence-text { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 500; color: var(--neutral-500); }
 
@@ -2249,7 +2249,7 @@
     background: var(--blue-base);
     color: var(--color-white);
     border: 1px solid var(--blue-base);
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0.3rem 0.9rem;
     font-size: 0.9rem;
     font-weight: 500;

@@ -744,7 +744,7 @@
     font-size: var(--font-xs);
   }
 
-  .status-badge { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; border: 1px solid transparent; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; box-sizing: border-box; }
+  .status-badge { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem; border-radius: 4px; font-size: 0.78rem; font-weight: 600; border: 1px solid transparent; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; box-sizing: border-box; }
   .status-badge.status-pending { background: var(--brand-gold-soft); color: var(--brand-gold-strong); border-color: var(--brand-gold-soft); }
   .status-badge.status-manufacturing { background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-soft); }
   .status-badge.status-ready_to_assemble { background: var(--green-soft); color: var(--green-strong); border-color: var(--green-soft); }

@@ -837,8 +837,8 @@ CREATE TABLE IF NOT EXISTS "public"."scout_data_events" (
     "phase" "text",
     "event_type" "text" NOT NULL,
     "event_value" "text",
-    "coral_in_robot" boolean,
-    "algae_in_robot" boolean,
+    "role" "text",
+    "on_shift" boolean,
     "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );

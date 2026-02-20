@@ -202,6 +202,7 @@
   $: ordererStats = computeOrdererStats(purchaseHistory, timePeriodDays, customStartDate, customEndDate);
   $: totalSpending = computeTotalSpending(purchaseHistory, timePeriodDays, customStartDate, customEndDate);
   $: orderStats = computeOrderStats(orders, purchaseHistory, timePeriodDays, customStartDate, customEndDate);
+  const countedPurchaseStatuses = new Set(['approved', 'ordered', 'delivered', 'kitted', 'pickup', 'picked_up']);
 
   function computeApproverStats(purchases, days, startDate, endDate) {
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
@@ -212,7 +213,7 @@
       // Completely ignore Budget Exempt items in analytics
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.approver && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted')) {
+      if (p.approver && countedPurchaseStatuses.has(p.status)) {
         if (!stats[p.approver]) {
           stats[p.approver] = { count: 0, total: 0 };
         }
@@ -237,7 +238,7 @@
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
       const ordererName = p.requester || 'Unknown';
-      if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
+      if (countedPurchaseStatuses.has(p.status)) {
         if (!stats[ordererName]) {
           stats[ordererName] = { count: 0, total: 0 };
         }
@@ -261,7 +262,7 @@
       // Skip budget-exempt projects entirely
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.project_id && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted')) {
+      if (p.project_id && countedPurchaseStatuses.has(p.status)) {
         if (!stats[p.project_id]) {
           stats[p.project_id] = { count: 0, total: 0 };
         }
@@ -286,7 +287,7 @@
       // Ignore budget-exempt items
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
+      if (countedPurchaseStatuses.has(p.status)) {
         // Normalize vendor name for matching
         const rawVendor = p.vendor || '';
         const normalizedVendor = rawVendor.trim().toLowerCase();
@@ -324,7 +325,7 @@
       // Ignore budget-exempt items
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
+      if (countedPurchaseStatuses.has(p.status)) {
         const qty = p.quantity || 1;
         const itemCost = (p.final_price || p.price || 0) * qty;
         const shippingAlloc = Number(p.shipping_cost_allocated || 0);
@@ -347,7 +348,7 @@
       }
     });
 
-    const eligibleStatuses = new Set(['approved', 'ordered', 'delivered', 'kitted']);
+    const eligibleStatuses = countedPurchaseStatuses;
     const BUDGET_EXEMPT = 'Budget Exempt';
 
     // Compute order totals by summing their purchases (excluding Budget Exempt items)

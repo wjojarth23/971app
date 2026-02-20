@@ -555,7 +555,7 @@
   .table-container {
     overflow-x: auto;
     background: var(--surface-1);
-    border-radius: 0.5rem;
+    border-radius: 4px;
     border: 1px solid var(--border);
   }
   .table {
@@ -682,7 +682,7 @@
   }
   .modal {
     background: var(--surface-1);
-    border-radius: 0.5rem;
+    border-radius: 4px;
     width: 100%;
     max-width: 700px;
     max-height: 90vh;

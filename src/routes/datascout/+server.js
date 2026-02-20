@@ -4,7 +4,9 @@ import { supabase } from '$lib/supabase.js';
 /*
   Data Scout API
   POST actions:
-    - record-event: { action, match_key, match_number, team_key, phase, event_type, event_value, coral_in_robot, algae_in_robot, user_id }
+    - record-event: { action, match_key, match_number, team_key, phase, event_type, event_value, role, on_shift, user_id }
+  DELETE actions:
+    - { id } => deletes specific event
   GET query params:
     - ?team_key=... => all events for team
     - ?team_key=...&match_key=... => events for that match/team
@@ -17,7 +19,7 @@ export async function POST({ request }) {
     if (body?.action !== 'record-event') return json({ error: 'Invalid action' }, { status: 400 });
     const {
       match_key, match_number, team_key, phase, event_type, event_value,
-      coral_in_robot, algae_in_robot, user_id
+      role, on_shift, user_id
     } = body;
     if (!match_key || !team_key || !event_type) return json({ error: 'Missing required fields' }, { status: 400 });
 
@@ -28,8 +30,8 @@ export async function POST({ request }) {
       phase: phase || null,
       event_type,
       event_value: event_value ?? null,
-      coral_in_robot: typeof coral_in_robot === 'boolean' ? coral_in_robot : null,
-      algae_in_robot: typeof algae_in_robot === 'boolean' ? algae_in_robot : null,
+      role: role ?? null,
+      on_shift: typeof on_shift === 'boolean' ? on_shift : null,
       created_by: user_id || null,
       created_at: new Date().toISOString()
     };
@@ -37,6 +39,20 @@ export async function POST({ request }) {
     const { data, error } = await supabase.from('scout_data_events').insert([payload]).select('*').single();
     if (error) return json({ error: error.message }, { status: 500 });
     return json({ success: true, data });
+  } catch (e) {
+    return json({ error: e.message || 'Internal error' }, { status: 500 });
+  }
+}
+
+export async function DELETE({ request }) {
+  try {
+    const { id } = await request.json();
+    if (!id) return json({ error: 'Missing ID' }, { status: 400 });
+
+    const { error } = await supabase.from('scout_data_events').delete().eq('id', id);
+    if (error) return json({ error: error.message }, { status: 500 });
+
+    return json({ success: true });
   } catch (e) {
     return json({ error: e.message || 'Internal error' }, { status: 500 });
   }
