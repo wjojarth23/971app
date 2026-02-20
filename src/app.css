@@ -717,6 +717,13 @@ textarea:focus,
   color: var(--primary);
 }
 
+/* Autocammed badge: amber/orange to indicate needs review */
+.status-autocammed {
+  background: var(--brand-gold-base, #f1c331);
+  color: var(--brand-gold-strong, #8f5f00);
+  border: 1px solid var(--brand-gold-base, #f1c331);
+}
+
 .status-in-progress, /* alias */
 .status-progress {
   background: var(--blue-base);

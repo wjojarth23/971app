@@ -166,33 +166,33 @@
       // Exclude budget-exempt projects from any budget counts
       if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
 
+      // Only count non-rejected items
+      if (p.status === 'rejected') return false;
+
       // Date filter
       if (budget.start_date && new Date(p.created_at) < new Date(budget.start_date)) return false;
       if (budget.end_date && new Date(p.created_at) > new Date(budget.end_date)) return false;
 
       // Scope filter
+      if (budget.scope_type === 'overall') return true;
       if (budget.scope_type === 'project') {
         return p.project_id === budget.scope_value;
       }
-      if (budget.scope_type === 'team') {
-        // We need to check frc_team. 
-        // Note: parts loaded from 'purchasing' might not have frc_team populated in older rows, 
-        // or we need to join user profile to check requester's team if column missing?
-        // Schema seems to have added 'frc_team' recently? The insert logic used `user.frc_team`.
-        // Let's assume p.frc_team exists or we rely on p.project_id lookup? 
-        // For simplicity: check p.frc_team if exists
-        return p.frc_team === budget.scope_value;
+      if (budget.scope_type === 'subsystem') {
+        // Match by subsystem - would need to join with builds table in real implementation
+        return p.project_id && p.project_id.includes(budget.scope_value);
       }
-      // Global: count everything? Or maybe general items? 
-      // Plan said "Global". Let's include everything that isn't excluded? 
-      // Actually, typically Global means "All purchasing".
-      return true;
+      if (budget.scope_type === 'build') {
+        return p.project_id === budget.scope_value;
+      }
+      if (budget.scope_type === 'build_group') {
+        return p.project_id && p.project_id.includes(budget.scope_value);
+      }
+      return false;
     });
 
     // Sum cost
     return matches.reduce((sum, p) => {
-      // Only count non-rejected items?
-      if (p.status === 'rejected') return sum;
       return sum + ((p.final_price || p.price || 0) * (p.quantity || 1));
     }, 0);
   }
@@ -1245,6 +1245,8 @@
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
             <option value="Software Supply">Software Supply</option>
+            <option value="Manufacturing Stock">Manufacturing Stock</option>
+            <option value="9584 misc">9584 misc</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
             <option value="Budget Exempt">Budget Exempt</option>
@@ -1304,6 +1306,8 @@
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
             <option value="Software Supply">Software Supply</option>
+            <option value="Manufacturing Stock">Manufacturing Stock</option>
+            <option value="9584 misc">9584 misc</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
             <option value="Budget Exempt">Budget Exempt</option>

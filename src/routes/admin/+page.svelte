@@ -5,6 +5,7 @@
   import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES, FRC_TEAMS } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
+  import { goto } from '$app/navigation';
   import { ShoppingCart, DollarSign, TrendingUp, Package, Plus, Edit, Trash2, User } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import {
@@ -479,8 +480,21 @@
   }
 
   const currentUser = userStore;
+  
+  // Check if user has admin access (only leads can access this page)
+  $: canAccessAdmin = $currentUser && hasPermission($currentUser, 'VIEW_ADMIN_PANEL');
 
   onMount(async () => {
+    // Wait for user profile to load
+    const user = get(currentUser);
+    
+    // Check if user has VIEW_ADMIN_PANEL permission (only leads have this)
+    if (!user || !hasPermission(user, 'VIEW_ADMIN_PANEL')) {
+      toastActions.show('Access denied: Only leads can access the admin panel');
+      goto('/');
+      return;
+    }
+    
     await loadUsers();
     await loadRosters();
     if (activeTab === 'purchasing') {
@@ -1232,6 +1246,14 @@
   <title>Admin Control Center</title>
 </svelte:head>
 
+{#if !canAccessAdmin}
+  <div class="container">
+    <div class="access-denied">
+      <h2>Access Denied</h2>
+      <p>Only leads can access the admin panel.</p>
+    </div>
+  </div>
+{:else}
 <div class="container admin-page">
   <div class="page-header">
     <div>
@@ -2378,8 +2400,18 @@
     </div>
   </div>
 {/if}
+{/if}
 
 <style>
+  .access-denied {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .access-denied h2 {
+    color: var(--danger);
+    margin-bottom: var(--space-2);
+  }
   .error { color: var(--danger); font-weight: 600; }
   .admin-table td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .role-filters { display: flex; flex-wrap: wrap; gap: var(--gap-3); margin-bottom: var(--space-3); align-items: center; }
