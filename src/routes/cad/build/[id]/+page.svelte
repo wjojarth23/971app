@@ -69,6 +69,62 @@
     loading = false;
   });
 
+  // Helper function to fetch and cache preview image for a part
+  async function fetchAndCachePreviewImage(part) {
+    if (!part?.onshape_document_id || !part?.onshape_element_id || !part?.onshape_part_id || !part?.onshape_wvmid) {
+      return;
+    }
+    
+    try {
+      const params = new URLSearchParams({
+        action: 'shaded-views',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'w',
+        wvmId: part.onshape_wvmid,
+        outputHeight: '800',
+        outputWidth: '800'
+      });
+      
+      const response = await fetch(`/api/onshape?${params}`);
+      const data = await response.json();
+      
+      if (data.success && data.image) {
+        // Convert base64 to blob and upload to storage
+        const byteCharacters = atob(data.image);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/png' });
+        
+        const fileName = `${part.id}.png`;
+        const { error: uploadError } = await supabase.storage
+          .from('part-previews')
+          .upload(fileName, blob, { upsert: true, contentType: 'image/png' });
+        
+        if (uploadError) {
+          console.warn('Failed to upload preview image:', uploadError);
+          return;
+        }
+        
+        // Update the parts table with the storage path
+        await supabase
+          .from('parts')
+          .update({ 
+            preview_image_url: fileName,
+            preview_image_updated_at: new Date().toISOString()
+          })
+          .eq('id', part.id);
+        console.log('Preview image uploaded for part:', part.id, part.name);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch/cache preview image:', err);
+    }
+  }
+
   async function loadBuildDetails() {
     try {
       const { data, error } = await supabase
@@ -414,7 +470,8 @@
       }
 
       if (wasCOTS !== wantsCOTS) {
-        const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+        // Project ID uses subsystem name only (version-independent for rollup)
+        const project_id = build?.subsystems?.name || 'Project';
         if (wantsCOTS) {
           // Converting from manufactured to COTS - create purchasing entry
           const purchasingInsertData = {
@@ -723,7 +780,8 @@
     if (processingAdd) return;
     processingAdd = true;
     try {
-      const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+      // Project ID uses subsystem name only (version-independent for rollup)
+      const project_id = build?.subsystems?.name || 'Project';
 
       if (item.part_type === 'COTS' && item.workflow === 'kit') {
         // Insert into kitting (in-stock COTS, just assign to bin later)
@@ -870,6 +928,11 @@
             parts_id: partRow.id,
             added: true
           }).eq('id', item.id);
+          
+          // Fetch and cache preview image in the background (don't block)
+          if (partRow.is_onshape_part) {
+            fetchAndCachePreviewImage(partRow);
+          }
         }
       }
 
@@ -886,7 +949,8 @@
     if (!purchaseModalItem) return;
     showPurchaseModal = false;
     
-    const project_id = `${build?.subsystems?.name || 'Project'}-${build?.release_name || ''}`;
+    // Project ID uses subsystem name only (version-independent for rollup)
+    const project_id = build?.subsystems?.name || 'Project';
     
     try {
       // Insert into purchasing with user-provided URL and price
@@ -1042,30 +1106,45 @@
       // Analyze BOM
       const newBOM = await onShapeAPI.analyzeBOM(bom, build.subsystems.onshape_workspace_id);
       
-      // Get list of already added parts (crosscheck by name and part_number)
+      // Separate existing BOM parts into added and unadded
       const addedParts = bomSnapshot.filter(row => row.added === true);
-      const addedIdentifiers = new Set();
+      const unaddedParts = bomSnapshot.filter(row => row.added !== true);
       
+      // Delete ALL unadded parts - even if names match, Onshape parameters change between versions
+      if (unaddedParts.length > 0) {
+        const idsToDelete = unaddedParts.map(p => p.id);
+        const { error: deleteError } = await supabase
+          .from('build_bom')
+          .delete()
+          .in('id', idsToDelete);
+        
+        if (deleteError) {
+          console.error('Error deleting unadded parts:', deleteError);
+        }
+      }
+      
+      // Build set of identifiers for added parts only (these are preserved)
+      const addedIdentifiers = new Set();
       addedParts.forEach(part => {
         if (part.part_name) addedIdentifiers.add(part.part_name.toLowerCase().trim());
         if (part.part_number) addedIdentifiers.add(part.part_number.toLowerCase().trim());
       });
       
-      // Filter out parts that already exist in the build
-      const filteredNewBOM = newBOM.filter(newPart => {
+      // Filter new BOM to exclude parts that are already added (in production)
+      const partsToAdd = newBOM.filter(newPart => {
         const name = (newPart.part_name || '').toLowerCase().trim();
         const partNum = (newPart.part_number || '').toLowerCase().trim();
         
-        // If either name or part_number matches an existing part, discard this entry
+        // If either name or part_number matches an added part, skip it (already in production)
         if (name && addedIdentifiers.has(name)) return false;
         if (partNum && addedIdentifiers.has(partNum)) return false;
         
         return true;
       });
       
-      // Insert new BOM entries into build_bom table (marked as not added)
-      if (filteredNewBOM.length > 0) {
-        const bomInserts = filteredNewBOM.map(part => ({
+      // Insert new BOM entries with fresh Onshape parameters from the new version
+      if (partsToAdd.length > 0) {
+        const bomInserts = partsToAdd.map(part => ({
           build_id: buildId,
           part_name: part.part_name || 'Unnamed Part',
           part_number: part.part_number || null,
@@ -1088,14 +1167,31 @@
           .insert(bomInserts);
         
         if (insertError) throw insertError;
-        
-        // Reload build details to show new BOM entries
-        await loadBuildDetails();
-        
-        alert(`Added ${filteredNewBOM.length} new parts to BOM (${newBOM.length - filteredNewBOM.length} duplicates skipped)`);
-      } else {
-        alert('No new parts to add - all parts from this version are already in the build');
       }
+      
+      // Update the version reference on the build
+      const { error: updateError } = await supabase
+        .from('builds')
+        .update({ 
+          release_id: selectedVersionForRefetch.id,
+          release_name: selectedVersionForRefetch.name
+        })
+        .eq('id', buildId);
+      
+      if (updateError) {
+        console.warn('Failed to update build version reference:', updateError);
+      }
+      
+      // Reload build details to show changes
+      await loadBuildDetails();
+      
+      // Show summary
+      const summary = [];
+      if (partsToAdd.length > 0) summary.push(`${partsToAdd.length} parts from new version`);
+      if (unaddedParts.length > 0) summary.push(`${unaddedParts.length} unadded parts replaced`);
+      if (addedParts.length > 0) summary.push(`${addedParts.length} added parts preserved`);
+      
+      alert(summary.length > 0 ? `BOM updated:\n• ${summary.join('\n• ')}` : 'BOM is already up to date');
       
       showVersionModal = false;
       selectedVersionForRefetch = null;

@@ -209,125 +209,6 @@ async function handleSVGConversion(documentId, wvm, wvmId, elementId, partId) {
   }
 }
 
-/* ── DXF Conversion (similar to SVG using tessellated edges) ───────────────── */
-function projectMM(point, plane) {
-  // Onshape returns meters; DXF should be in millimeters
-  const scale = 1000; // meters -> mm
-  if (plane === 'XY') return { x: point.x * scale, y: point.y * scale };
-  if (plane === 'XZ') return { x: point.x * scale, y: point.z * scale };
-  if (plane === 'YZ') return { x: point.y * scale, y: point.z * scale };
-  return null;
-}
-
-function generateDXF(edgesData, plane) {
-  // Minimal DXF (R2000) with LWPOLYLINE entities for each tessellated edge
-  const header = [
-    '0', 'SECTION',
-    '2', 'HEADER',
-    '9', '$INSUNITS',
-    '70', '4',       // 4 = millimeters
-    '0', 'ENDSEC',
-    '0', 'SECTION',
-    '2', 'TABLES',
-    '0', 'TABLE',
-    '2', 'LAYER',
-    '70', '1',
-    '0', 'LAYER',
-    '2', '0',
-    '70', '0',
-    '62', '7',
-    '6', 'CONTINUOUS',
-    '0', 'ENDTAB',
-    '0', 'ENDSEC',
-    '0', 'SECTION',
-    '2', 'ENTITIES'
-  ].join('\n');
-
-  const footer = [
-    '0', 'ENDSEC',
-    '0', 'EOF'
-  ].join('\n');
-
-  let edges = [];
-  if (edgesData && edgesData.bodies && edgesData.bodies.length > 0 && edgesData.bodies[0].edges) {
-    edges = edgesData.bodies[0].edges;
-  } else if (edgesData && edgesData.edges) {
-    edges = edgesData.edges;
-  }
-
-  const entities = [];
-
-  for (const edge of edges) {
-    const pts = [];
-    if (edge.tessellation && edge.tessellation.length > 0) {
-      for (let i = 0; i < edge.tessellation.length; i += 3) {
-        const p = { x: edge.tessellation[i], y: edge.tessellation[i + 1], z: edge.tessellation[i + 2] };
-        const pr = projectMM(p, plane);
-        if (pr) pts.push(pr);
-      }
-    } else if (edge.vertices && edge.vertices.length > 0) {
-      for (const v of edge.vertices) {
-        const pr = projectMM(v, plane);
-        if (pr) pts.push(pr);
-      }
-    }
-    if (pts.length >= 2) {
-      // LWPOLYLINE for each edge segment list
-      const lines = [
-        '0', 'LWPOLYLINE',
-        '8', '0',              // layer 0
-        '90', String(pts.length),
-        '70', '0'              // 0 = open polyline
-      ];
-      for (const pt of pts) {
-        lines.push('10', String(pt.x));
-        lines.push('20', String(pt.y));
-      }
-      entities.push(lines.join('\n'));
-    }
-  }
-
-  return [header, entities.join('\n'), footer].join('\n');
-}
-
-async function handleDXFConversion(documentId, wvm, wvmId, elementId, partId) {
-  try {
-    // Choose projection plane similar to SVG conversion
-    let plane = 'XY';
-    const boundingBoxData = await getBoundingBox(documentId, wvm, wvmId, elementId, partId).catch(() => null);
-    const edgesData = await getTessellatedEdges(documentId, wvm, wvmId, elementId, partId);
-
-    if (boundingBoxData && boundingBoxData.bodies && boundingBoxData.bodies.length > 0) {
-      const bb = boundingBoxData.bodies[0];
-      const xSize = Math.abs(bb.highX - bb.lowX);
-      const ySize = Math.abs(bb.highY - bb.lowY);
-      const zSize = Math.abs(bb.highZ - bb.lowZ);
-
-      const xyArea = xSize * ySize;
-      const xzArea = xSize * zSize;
-      const yzArea = ySize * zSize;
-
-      if (xzArea > xyArea && xzArea > yzArea) plane = 'XZ';
-      else if (yzArea > xyArea && yzArea > xzArea) plane = 'YZ';
-    }
-
-    const dxf = generateDXF(edgesData, plane);
-    const encoder = new TextEncoder();
-    const buf = encoder.encode(dxf);
-
-    return new Response(buf, {
-      headers: {
-        'Content-Type': 'application/dxf',
-        'Content-Disposition': `attachment; filename="${partId}.dxf"`,
-        'Content-Length': buf.byteLength.toString()
-      }
-    });
-  } catch (error) {
-    console.error('Error in DXF conversion:', error);
-    return json({ error: 'Internal server error during DXF conversion', details: error.message }, { status: 500 });
-  }
-}
-
 /* ── Auth helpers (add or replace) ─────────────────────────────── */
 
 function getBasicAuth() {
@@ -335,14 +216,162 @@ function getBasicAuth() {
   return { 'Authorization': `Basic ${cred}` };
 }
 
+/* ── Helper to get element type ─────────────────────────────── */
+async function getElementType(documentId, wvm, wvmId, elementId) {
+    try {
+        const url = `${ONSHAPE_BASE_URL}/api/v6/documents/d/${documentId}/${wvm}/${wvmId}/elements?elementId=${elementId}`;
+        const response = await fetch(url, { headers: { ...getBasicAuth(), 'Accept': 'application/json' } });
+        if (!response.ok) {
+            console.warn(`Could not get element type: ${response.status}`);
+            return null;
+        }
+        const elements = await response.json();
+        if (elements && elements.length > 0) {
+            return elements[0].elementType || elements[0].type;
+        }
+        return null;
+    } catch (e) {
+        console.warn('Error getting element type:', e.message);
+        return null;
+    }
+}
+
+/* ── Helper to find Part Studio element ID from Assembly BOM ─────────────────────────────── */
+async function findPartStudioFromAssemblyBOM(documentId, wvm, wvmId, assemblyElementId, partId) {
+    try {
+        console.log(`Looking up Part Studio for part ${partId} in assembly ${assemblyElementId}`);
+        
+        // Get the assembly BOM which includes itemSource with Part Studio element IDs
+        const url = `${ONSHAPE_BASE_URL}/api/v6/assemblies/d/${documentId}/${wvm}/${wvmId}/e/${assemblyElementId}/bom?indented=false&generateIfAbsent=true`;
+        const response = await fetch(url, { headers: { ...getBasicAuth(), 'Accept': 'application/json' } });
+        
+        if (!response.ok) {
+            console.warn(`Could not get assembly BOM: ${response.status}`);
+            return null;
+        }
+        
+        const bomData = await response.json();
+        
+        // Search through BOM rows for matching part ID
+        if (bomData.rows) {
+            for (const row of bomData.rows) {
+                if (row.itemSource && row.itemSource.partId === partId) {
+                    console.log(`Found part ${partId} in BOM, Part Studio element: ${row.itemSource.elementId}`);
+                    return {
+                        elementId: row.itemSource.elementId,
+                        documentId: row.itemSource.documentId || documentId,
+                        wvmId: row.itemSource.wvmId || wvmId,
+                        wvmType: row.itemSource.wvmType || wvm
+                    };
+                }
+            }
+        }
+        
+        console.warn(`Part ${partId} not found in assembly BOM`);
+        return null;
+    } catch (e) {
+        console.warn('Error finding Part Studio from assembly BOM:', e.message);
+        return null;
+    }
+}
+
+/* ── Helper to get all Part Studios in document and find the part ─────────────────────────────── */
+async function findPartStudioContainingPart(documentId, wvm, wvmId, partId) {
+    try {
+        console.log(`Searching all Part Studios in document for part ${partId}`);
+        
+        // Get all elements in the document
+        const elementsUrl = `${ONSHAPE_BASE_URL}/api/v6/documents/d/${documentId}/${wvm}/${wvmId}/elements`;
+        const elementsResp = await fetch(elementsUrl, { headers: { ...getBasicAuth(), 'Accept': 'application/json' } });
+        
+        if (!elementsResp.ok) {
+            console.warn(`Could not get document elements: ${elementsResp.status}`);
+            return null;
+        }
+        
+        const elements = await elementsResp.json();
+        
+        // Filter to Part Studios only
+        const partStudios = elements.filter(e => e.elementType === 'PARTSTUDIO' || e.type === 'PARTSTUDIO');
+        console.log(`Found ${partStudios.length} Part Studios in document`);
+        
+        // Check each Part Studio for the part
+        for (const ps of partStudios) {
+            try {
+                const partsUrl = `${ONSHAPE_BASE_URL}/api/v6/parts/d/${documentId}/${wvm}/${wvmId}/e/${ps.id}`;
+                const partsResp = await fetch(partsUrl, { headers: { ...getBasicAuth(), 'Accept': 'application/json' } });
+                
+                if (partsResp.ok) {
+                    const parts = await partsResp.json();
+                    const foundPart = parts.find(p => p.partId === partId);
+                    if (foundPart) {
+                        console.log(`Found part ${partId} in Part Studio ${ps.name} (${ps.id})`);
+                        return {
+                            elementId: ps.id,
+                            documentId: documentId,
+                            wvmId: wvmId,
+                            wvmType: wvm
+                        };
+                    }
+                }
+            } catch (e) {
+                console.warn(`Error checking Part Studio ${ps.id}:`, e.message);
+            }
+        }
+        
+        console.warn(`Part ${partId} not found in any Part Studio`);
+        return null;
+    } catch (e) {
+        console.warn('Error searching for Part Studio:', e.message);
+        return null;
+    }
+}
+
 /* ── Translation Handler (for both STL and STEP) ─────────────────────────────── */
 async function handlePartTranslation(documentId, wvm, wvmId, elementId, partId, format) {
     try {
         console.log(`Starting ${format} translation for part ${partId}`);
+        console.log(`Document: ${documentId}, WVM: ${wvm}/${wvmId}, Element: ${elementId}`);
         
-        // 1) Initiate translation using the PartStudio endpoint (not Assembly)
+        // Check if element is a Part Studio or Assembly
+        const elementType = await getElementType(documentId, wvm, wvmId, elementId);
+        console.log(`Element type: ${elementType}`);
+        
+        let targetElementId = elementId;
+        let targetDocumentId = documentId;
+        let targetWvm = wvm;
+        let targetWvmId = wvmId;
+        
+        if (elementType === 'ASSEMBLY') {
+            console.log(`Element ${elementId} is an Assembly - looking up Part Studio for part ${partId}`);
+            
+            // First try to find via assembly BOM (faster, more accurate)
+            let partStudioInfo = await findPartStudioFromAssemblyBOM(documentId, wvm, wvmId, elementId, partId);
+            
+            // If not found in BOM, search all Part Studios in document
+            if (!partStudioInfo) {
+                console.log('Part not found in assembly BOM, searching all Part Studios...');
+                partStudioInfo = await findPartStudioContainingPart(documentId, wvm, wvmId, partId);
+            }
+            
+            if (partStudioInfo) {
+                targetElementId = partStudioInfo.elementId;
+                targetDocumentId = partStudioInfo.documentId || documentId;
+                targetWvm = partStudioInfo.wvmType || wvm;
+                targetWvmId = partStudioInfo.wvmId || wvmId;
+                console.log(`Resolved Part Studio: ${targetElementId} in document ${targetDocumentId}`);
+            } else {
+                console.error(`Could not find Part Studio containing part ${partId}`);
+                return json({ 
+                    error: 'Could not find Part Studio for this part',
+                    details: `Part ID "${partId}" was not found in the assembly BOM or any Part Studio in the document.`
+                }, { status: 404 });
+            }
+        }
+        
+        // 1) Initiate translation using the PartStudio endpoint
         const exportResp = await fetch(
-            `${ONSHAPE_BASE_URL}/api/v11/partstudios/d/${documentId}/${wvm}/${wvmId}/e/${elementId}/translations`,
+            `${ONSHAPE_BASE_URL}/api/v11/partstudios/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/translations`,
             {
                 method: 'POST',
                 headers: {
@@ -554,23 +583,80 @@ export async function GET({ url }) {
                 
                 // Use the SVG conversion workflow
                 return await handleSVGConversion(documentId, svgWvm, svgWvmId, elementId, svgPartId);
-            case 'convert-to-dxf':
+            case 'shaded-views': {
+                // Get an isometric shaded view image of a part
                 if (!elementId) {
-                    return json({ error: 'Missing elementId for DXF conversion' }, { status: 400 });
+                    return json({ error: 'Missing elementId for shaded views' }, { status: 400 });
                 }
-                const dxfWvm = url.searchParams.get('wvm') || 'w';
-                const dxfWvmId = url.searchParams.get('wvmId');
-                const dxfPartId = url.searchParams.get('partId');
+                const shadedWvm = url.searchParams.get('wvm') || 'w';
+                const shadedWvmId = url.searchParams.get('wvmId');
+                const shadedPartId = url.searchParams.get('partId');
+                const outputHeight = url.searchParams.get('outputHeight') || '300';
+                const outputWidth = url.searchParams.get('outputWidth') || '300';
                 
-                if (!dxfPartId) {
-                    return json({ error: 'Missing partId for DXF conversion' }, { status: 400 });
+                if (!shadedPartId) {
+                    return json({ error: 'Missing partId for shaded views' }, { status: 400 });
                 }
-                if (!dxfWvmId) {
-                    return json({ error: 'Missing wvmId for DXF conversion' }, { status: 400 });
+                if (!shadedWvmId) {
+                    return json({ error: 'Missing wvmId for shaded views' }, { status: 400 });
+                }
+
+                // First check if the element is an Assembly and resolve to Part Studio if needed
+                const shadedElementType = await getElementType(documentId, shadedWvm, shadedWvmId, elementId);
+                let targetElementId = elementId;
+                let targetDocumentId = documentId;
+                let targetWvm = shadedWvm;
+                let targetWvmId = shadedWvmId;
+
+                if (shadedElementType === 'ASSEMBLY') {
+                    console.log(`Shaded views: Element ${elementId} is an Assembly - looking up Part Studio for part ${shadedPartId}`);
+                    let partStudioInfo = await findPartStudioFromAssemblyBOM(documentId, shadedWvm, shadedWvmId, elementId, shadedPartId);
+                    if (!partStudioInfo) {
+                        partStudioInfo = await findPartStudioContainingPart(documentId, shadedWvm, shadedWvmId, shadedPartId);
+                    }
+                    if (partStudioInfo) {
+                        targetElementId = partStudioInfo.elementId;
+                        targetDocumentId = partStudioInfo.documentId || documentId;
+                        targetWvm = partStudioInfo.wvmType || shadedWvm;
+                        targetWvmId = partStudioInfo.wvmId || shadedWvmId;
+                    }
+                }
+
+                // Isometric view matrix (standard isometric projection)
+                // This creates a view looking from front-top-right corner
+                const viewMatrix = 'isometric';
+                
+                // Let Onshape auto-fit the part to the view (no pixelSize = auto-scale)
+                const shadedViewUrl = `${ONSHAPE_BASE_URL}/api/v6/parts/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/partid/${encodeURIComponent(shadedPartId)}/shadedviews?viewMatrix=${viewMatrix}&outputHeight=${outputHeight}&outputWidth=${outputWidth}&edges=show&useAntiAliasing=true`;
+                
+                console.log('Fetching shaded view from:', shadedViewUrl);
+                
+                const shadedResp = await fetch(shadedViewUrl, {
+                    headers: {
+                        ...getBasicAuth(),
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!shadedResp.ok) {
+                    const errorText = await shadedResp.text();
+                    console.error('Shaded views error:', shadedResp.status, errorText);
+                    return json({ error: `Shaded views failed: ${shadedResp.status}`, details: errorText }, { status: shadedResp.status });
                 }
                 
-                // Use the DXF conversion workflow
-                return await handleDXFConversion(documentId, dxfWvm, dxfWvmId, elementId, dxfPartId);
+                const shadedData = await shadedResp.json();
+                
+                // The response contains an images array with base64-encoded PNG data
+                if (shadedData.images && shadedData.images.length > 0) {
+                    return json({ 
+                        success: true, 
+                        image: shadedData.images[0],  // Base64 PNG image
+                        partId: shadedPartId
+                    });
+                } else {
+                    return json({ error: 'No image returned from Onshape' }, { status: 500 });
+                }
+            }
             case 'download-step':
                 if (!elementId) {
                     return json({ error: 'Missing elementId for STEP download' }, { status: 400 });
@@ -688,7 +774,7 @@ export async function GET({ url }) {
                 apiPath = `/api/v11/documents/d/${documentId}/externaldata/${externalDataId}`;
                 break;
       default:
-        return json({ error: 'Invalid action. Available actions: document-info, versions, version-details, assembly-info, assembly-bom, part-bounding-box, download-stl, download-step, translate-part, convert-to-svg, translate-drawing, check-translation, download-translation-result' }, { status: 400 });
+        return json({ error: 'Invalid action. Available actions: document-info, versions, version-details, assembly-info, assembly-bom, part-bounding-box, download-stl, download-step, translate-part, convert-to-svg, translate-drawing, check-translation, download-translation-result, shaded-views' }, { status: 400 });
         }
 
         const controller = new AbortController();

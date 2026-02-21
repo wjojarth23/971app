@@ -2,10 +2,11 @@
   import { createEventDispatcher } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { getDisplayStatus, getBadgeClass, DISPLAY_ORDER, BUTTONS } from '$lib/statuses.js';
-  import { Package } from 'lucide-svelte';
+  import { Package, Zap } from 'lucide-svelte';
 
   export let part;
   export let bins = []; // pass bins for kitting if needed
+  export let onReviewAutocam = null; // callback to open autocam review modal
 
   const dispatch = createEventDispatcher();
 
@@ -18,6 +19,7 @@
   $: meta = parseMeta(part);
   $: currentDisplay = getDisplayStatus(part.status, meta);
   $: badgeClass = getBadgeClass(part.status, meta);
+  $: isAutocammed = part.status === 'autocammed';
 
   // Handle change
   async function handleChange(event) {
@@ -37,14 +39,18 @@
         }
         await supabase.from('parts').update({ file_url: JSON.stringify(m), updated_at: new Date().toISOString() }).eq('id', part.id);
 
+      } else if (newStatusLabel === BUTTONS.IN_PROGRESS) {
+        // In Progress -> Status: in-progress, Step: cam_ing
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterStep(part, 'cam_ing');
+
       } else if (newStatusLabel === BUTTONS.CAM_REVIEW_READY) {
-        // CAM Review Ready -> Status: in-progress, Step: cam_ing (or cam_review)
-        // Choosing cam_ing to be safe as "In Progress / Ready for Review"
-         await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
-         await updateRouterStep(part, 'cam_ing');
+        // CAM Review Ready -> Status: in-progress, Step: cam_review (CAM work done, awaiting review)
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterStep(part, 'cam_review');
 
       } else if (newStatusLabel === BUTTONS.CAM_REVIEWED) {
-         // CAM Reviewed -> Status: cammed, Step: cammed (clearing cam_review)
+         // CAM Reviewed -> Status: cammed, Step: cammed (review complete)
          await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
          const m = parseMeta(part);
          // Ensure we remove travis flag if strictly setting to Reviewed
@@ -80,6 +86,35 @@
     }
   }
 
+  // CAM quick actions for convenience
+  async function handleCamDone() {
+    try {
+      // Mark CAM work done -> set step to cam_review while keeping status in-progress
+      await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+      await updateRouterStep(part, 'cam_review');
+      dispatch('update');
+    } catch (e) {
+      console.error('Failed to set CAM Review Ready', e);
+      alert('Failed to set CAM Review Ready');
+    }
+  }
+
+  async function handleCamReviewed() {
+    try {
+      // Mark reviewed -> status cammed and explicit step cammed, remove travis flag
+      await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+      const m = parseMeta(part);
+      if (m.travis_progged) delete m.travis_progged;
+      if (!m.router_meta) m.router_meta = {};
+      m.router_meta.step = 'cammed';
+      await supabase.from('parts').update({ file_url: JSON.stringify(m), updated_at: new Date().toISOString() }).eq('id', part.id);
+      dispatch('update');
+    } catch (e) {
+      console.error('Failed to set CAM Reviewed', e);
+      alert('Failed to set CAM Reviewed');
+    }
+  }
+
   async function updateRouterStep(p, step, extraMeta = {}) {
     let root = {};
     try { root = JSON.parse(p.file_url || '{}') || {}; } catch { root = {}; }
@@ -88,14 +123,35 @@
     await supabase.from('parts').update({ file_url: JSON.stringify(root), updated_at: new Date().toISOString() }).eq('id', p.id);
   }
 
+  function handleReviewAutocam() {
+    if (onReviewAutocam) {
+      onReviewAutocam(part);
+    } else {
+      dispatch('reviewAutocam', { part });
+    }
+  }
+
 </script>
 
 <div class="status-selector">
-  <select class="status-select {badgeClass}" value={currentDisplay} on:change={handleChange}>
-    {#each DISPLAY_ORDER as statusLabel}
-      <option value={statusLabel}>{statusLabel}</option>
-    {/each}
-  </select>
+  {#if isAutocammed}
+    <!-- Autocammed parts show Review Autocam button -->
+    <button class="btn btn-autocam cam-btn" on:click={handleReviewAutocam}>
+      <Zap size={14} /> Review Autocam
+    </button>
+  {:else if (part.status === 'in-progress' || (meta?.router_meta && (meta.router_meta.step === 'cam_ing' || meta.router_meta.step === 'cam_review')))}
+    {#if meta?.router_meta && meta.router_meta.step === 'cam_review'}
+      <button class="btn btn-primary cam-btn" on:click={handleCamReviewed}>CAM Reviewed</button>
+    {:else}
+      <button class="btn btn-primary cam-btn" on:click={handleCamDone}>CAM Done</button>
+    {/if}
+  {:else}
+    <select class="status-select {badgeClass}" value={currentDisplay} on:change={handleChange}>
+      {#each DISPLAY_ORDER as statusLabel}
+        <option value={statusLabel}>{statusLabel}</option>
+      {/each}
+    </select>
+  {/if}
 </div>
 
 <style>
@@ -158,5 +214,32 @@
     background-color: white;
     color: #1f2933;
     font-weight: 500;
+  }
+
+  /* CAM action button styling */
+  .cam-btn {
+    height: var(--control-height, 32px);
+    min-width: 120px;
+    padding: 0 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: var(--radius-sm, 4px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+  }
+
+  /* Autocam review button - orange/amber to stand out */
+  .btn-autocam {
+    background-color: var(--brand-gold-base, #f1c331);
+    color: var(--brand-gold-strong, #8f5f00);
+    border: 1px solid var(--brand-gold-base, #f1c331);
+  }
+
+  .btn-autocam:hover {
+    background-color: var(--brand-gold-strong, #d4a817);
+    color: white;
   }
 </style>

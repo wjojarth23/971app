@@ -2,11 +2,75 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
-  import { Package, GripVertical, Download, ChevronUp, ChevronDown, Calendar, Eye, Pencil, AlertCircle, X } from 'lucide-svelte';
-  import ROUTER_FLOW from '$lib/router_flow.json';
-  import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
-  import RouterStatusSelector from '$lib/components/RouterStatusSelector.svelte';
-  import stockData from '$lib/stock.json';
+  import { Package, Group, GripVertical, Download, Settings } from 'lucide-svelte';
+  import AutocamReviewModal from '$lib/components/AutocamReviewModal.svelte';
+  import { userStore } from '$lib/stores/auth.js';
+  import { TEAM_ROLES } from '$lib/permissions.js';
+
+  // User profile for permission checks
+  let profile = null;
+  $: isManufacturingLead = profile?.team_role === TEAM_ROLES.MANUFACTURING_LEAD || 
+                          profile?.general_role === 'lead' || 
+                          profile?.role === 'admin';
+
+  // Autocam review modal state
+  let showAutocamModal = false;
+  let autocamReviewPart = null;
+
+  function openAutocamReview(part) {
+    autocamReviewPart = part;
+    showAutocamModal = true;
+  }
+
+  function closeAutocamReview() {
+    showAutocamModal = false;
+    autocamReviewPart = null;
+    loadParts(); // Refresh after review
+  }
+
+  // Lightweight helpers borrowed from the manufacture list for mobile cards
+  function formatDate(dateString) {
+    return new Date(dateString).toLocaleDateString();
+  }
+
+  function getWorkflowLabel(workflow) {
+    // Router page only lists router parts, but keep a helper for consistency
+    return workflow ? workflow.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Router';
+  }
+
+  function getWorkflowClass(workflow) {
+    if (!workflow) return 'tag-workflow-default';
+    return `tag-workflow-${workflow.toLowerCase().replace(/_/g, '-')}`;
+  }
+
+  function getStatusDisplay(part) {
+    return getDisplayStatus(part.status, parseMeta(part));
+  }
+
+  function groupIsCut(g) {
+    if (!g || !g.parts || g.parts.length === 0) return false;
+    return g.parts.every(p => {
+      const m = parseMeta(p);
+      return Boolean(m?.router_meta && m.router_meta.step === 'cut');
+    });
+  }
+
+  function groupIsReadyForTProged(g) {
+    if (!g || !g.parts || g.parts.length === 0) return false;
+    return g.parts.every(p => {
+      const m = parseMeta(p);
+      return Boolean(m?.router_meta && m.router_meta.step === 'layout');
+    });
+  }
+
+  function groupIsTravisProgged(g) {
+    if (!g || !g.parts || g.parts.length === 0) return false;
+    return g.parts.every(p => {
+      const m = parseMeta(p);
+      // Accept either explicit travis_progged flag or router_meta.step === 'queued'
+      return Boolean((m?.router_meta && m.router_meta.step === 'queued') || m?.travis_progged || (m?.router_meta && m.router_meta.travis_progged));
+    });
+  }
 
   // ==================== State ====================
   let parts = [];
@@ -26,6 +90,9 @@
   // Group editing state
   let editingGroupId = null;
   let editingGroupName = '';
+  let groupFields = {}; // gid -> { cut_name, output_folder, machine }
+
+  const MACHINE_OPTIONS = ['UNC Router', 'ShopSabre'];
 
   // Stock options from stock.json
   const routerStockOptions = stockData.router || [];
@@ -53,7 +120,15 @@
     return MACHINE_COLORS[machine] || { bg: 'var(--surface-2)', text: 'var(--text-muted)', border: 'var(--border)' };
   }
 
-  // ==================== Helper Functions ====================
+  function shortHash(id = '') {
+    const cleaned = id.replace(/-/g, '');
+    if (!cleaned) return '000';
+    let sum = 0;
+    for (let i = 0; i < cleaned.length; i++) sum = (sum * 31 + cleaned.charCodeAt(i)) >>> 0;
+    return (sum & 0xfff).toString(16).padStart(3, '0');
+  }
+
+  // We store grouping metadata inside file_url JSON under router_group_id
   function parseMeta(part) {
     try { return JSON.parse(part.file_url || '{}') || {}; } catch { return {}; }
   }
@@ -99,18 +174,29 @@
     return BUTTONS.PENDING;
   }
 
-  function getGroupMismatches(g) {
-    const mismatches = { status: null, stock: null };
-    if (!g || !g.parts || g.parts.length <= 1) return mismatches;
-    const groupStatus = g.status || getGroupDisplayStatus(g);
-    const groupStock = g.stock || '';
-    const statusMismatchParts = g.parts.filter(p => {
-      const partStatus = getDisplayStatus(p.status, parseMeta(p));
-      return partStatus !== groupStatus;
-    });
-    if (statusMismatchParts.length > 0 && statusMismatchParts.length < g.parts.length) {
-      const minorityStatus = getDisplayStatus(statusMismatchParts[0].status, parseMeta(statusMismatchParts[0]));
-      mismatches.status = { count: statusMismatchParts.length, label: minorityStatus };
+  async function advanceRouterStep(part, nextStep) {
+    if (!part || !nextStep) return;
+    try {
+      if (nextStep === 'cam_ing') {
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterMeta(part, { step: 'cam_ing' });
+      } else if (nextStep === 'cam_review') {
+        // CAM Review Ready: status stays 'in-progress', step is 'cam_review'
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterMeta(part, { step: 'cam_review' });
+      } else if (nextStep === 'queued') {
+        // TravisProgged: underlying cammed + flag
+        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterMeta(part, { travis_progged: true, step: 'queued' });
+      } else {
+        // generic step (e.g., layout)
+        await updateRouterMeta(part, { step: nextStep });
+      }
+    } catch (e) {
+      console.error('Failed to advance router step', e);
+      alert('Failed to advance step: ' + (e?.message || e));
+    } finally {
+      await loadParts();
     }
     const stockMismatchParts = g.parts.filter(p => (p.stock_assignment || '') !== groupStock);
     if (stockMismatchParts.length > 0 && stockMismatchParts.length < g.parts.length) {
@@ -144,6 +230,7 @@
       .order('created_at', { ascending: false });
 
     if (!error) {
+      // Show all router parts except those fully completed/kitted (non-complete set)
       parts = (data || []).filter(p => {
         if (p.status === 'complete' || p.status === 'kitted') return false;
         return true;
@@ -156,60 +243,43 @@
 
   async function loadGroups() {
     if (useDedicatedTables) {
-      const { data: groups, error: gErr } = await supabase
-        .from('router_groups')
-        .select('id, name, created_at, machine, material, status, stock, queue_position, target_date, post_processing_stage')
-        .order('queue_position', { ascending: true, nullsFirst: false });
-
-      const { data: links, error: lErr } = await supabase
-        .from('router_group_parts')
-        .select('group_id, part_id');
-
+      const { data: groups, error: gErr } = await supabase.from('router_groups').select('id, name, created_at, stock_type, cut_name, output_folder, machine');
+      const { data: links, error: lErr } = await supabase.from('router_group_parts').select('group_id, part_id');
       if (gErr || lErr) {
         console.log('Failed to load dedicated tables, falling back to JSON', { gErr, lErr });
         useDedicatedTables = false;
         buildGroupsFromJSON();
       } else {
         const gmap = {};
-        (groups || []).forEach(g => {
+        groups.forEach(g => {
+          const stockType = g.stock_type || 'stock';
+          const suffix = shortHash(g.id);
           gmap[g.id] = {
             id: g.id,
-            name: g.name || g.id,
-            parts: [],
-            machine: g.machine || '',
-            material: g.material || '',
-            status: g.status || '',
-            stock: g.stock || '',
-            queue_position: g.queue_position ?? 999,
-            target_date: g.target_date || null,
-            post_processing_stage: g.post_processing_stage || null
+            name: g.name || `${stockType}_${suffix}`,
+            stock_type: stockType,
+            cut_name: g.cut_name || '',
+            output_folder: g.output_folder || '',
+            machine: g.machine || 'UNC Router',
+            parts: []
           };
         });
-
-        const { data: allRouterParts } = await supabase
-          .from('parts')
-          .select('*')
-          .eq('workflow', 'router');
-
-        const partById = Object.fromEntries((allRouterParts || []).map(p => [p.id, p]));
-        (links || []).forEach(l => {
-          if (gmap[l.group_id] && partById[l.part_id]) {
-            gmap[l.group_id].parts.push(partById[l.part_id]);
-          }
-        });
-
-        // Auto-fill stock/material for groups that don't have them set
-        for (const g of Object.values(gmap)) {
-          if (!g.stock && g.parts.length > 0) {
-            g.stock = getMostCommonValue(g.parts, 'stock_assignment');
-          }
-        }
-
+        const partById = Object.fromEntries(parts.map(p => [p.id, p]));
+        links.forEach(l => { if (gmap[l.group_id] && partById[l.part_id]) gmap[l.group_id].parts.push(partById[l.part_id]); });
         groupMap = gmap;
       }
     } else {
       buildGroupsFromJSON();
     }
+    groupFields = {};
+    Object.values(groupMap).forEach((g) => {
+      groupFields[g.id] = {
+        cut_name: g.cut_name || '',
+        output_folder: g.output_folder || '',
+        machine: g.machine || 'UNC Router'
+      };
+    });
+    loading = false;
   }
 
   function buildGroupsFromJSON() {
@@ -218,17 +288,16 @@
       const meta = parseMeta(p);
       if (meta.router_group_id) {
         if (!groupMap[meta.router_group_id]) {
+          const stockType = extractStockType(p);
+          const suffix = shortHash(meta.router_group_id);
           groupMap[meta.router_group_id] = {
             id: meta.router_group_id,
-            name: meta.router_group_name || meta.router_group_id,
-            parts: [],
-            machine: '',
-            material: '',
-            status: '',
-            stock: '',
-            queue_position: 999,
-            target_date: null,
-            post_processing_stage: null
+            name: meta.router_group_name || `${stockType}_${suffix}`,
+            stock_type: stockType,
+            cut_name: '',
+            output_folder: '',
+            machine: 'UNC Router',
+            parts: []
           };
         }
         groupMap[meta.router_group_id].parts.push(p);
@@ -239,6 +308,23 @@
   // ==================== Computed Values ====================
   $: groupedIdSet = new Set(Object.values(groupMap).flatMap((g) => g.parts.map((p) => p.id)));
   $: ungroupedParts = parts.filter((p) => !groupedIdSet.has(p.id));
+  function getStock(part) { return part.stock_assignment || ''; }
+  function extractStockType(part) {
+    const stock = getStock(part) || '';
+    const first = stock.split(' ')[0]?.trim();
+    return first && first.length > 0 ? first : 'stock';
+  }
+  function inferGroupStock(g) {
+    if (g?.stock_type) return g.stock_type;
+    const firstPart = g?.parts?.[0];
+    if (firstPart) return extractStockType(firstPart);
+    return 'stock';
+  }
+  function makeGroupName(part) {
+    const base = (getStock(part).split(' ')[0] || 'Group').replace(/[^A-Za-z0-9]/g,'');
+    const rand = Math.floor(10 + Math.random()*90); // 2 digits
+    return `${base}${rand}`;
+  }
 
   // Router groups: not yet cut
   $: routerGroups = Object.values(groupMap)
@@ -264,13 +350,102 @@
         upNext: unassigned.length > 1 ? unassigned[1] : null
       };
     }
-    return result;
-  })();
-
-  // ==================== Group Actions ====================
-  function getStock(part) {
-    return part.stock_assignment || '';
   }
+
+  async function downloadFromOnshape(part) {
+    try {
+      // Log the Onshape IDs being used for debugging
+      console.log('Downloading from Onshape:', {
+        name: part.name,
+        onshape_document_id: part.onshape_document_id,
+        onshape_element_id: part.onshape_element_id,
+        onshape_part_id: part.onshape_part_id,
+        onshape_wvm: part.onshape_wvm,
+        onshape_wvmid: part.onshape_wvmid
+      });
+      
+      const params = new URLSearchParams({
+        action: 'translate-part',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'v',
+        wvmId: part.onshape_wvmid,
+        // Prefer STEP for 3D prints
+        format: part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')
+      });
+      const resp = await fetch(`/api/onshape?${params}`);
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        const errorMsg = errorData.details || errorData.error || 'Onshape download failed';
+        console.error('Onshape download failed:', errorData);
+        if (errorData.suggestion) {
+          alert(`Download failed: ${errorMsg}\n\nSuggestion: ${errorData.suggestion}`);
+        } else {
+          alert(`Download failed: ${errorMsg}`);
+        }
+        return;
+      }
+      const blob = await resp.blob();
+      const ext = part.workflow === '3d-print' ? 'step' : (part.file_format === 'stl' ? 'stl' : 'step');
+      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.${ext}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) { 
+      console.error('Error downloading from Onshape:', e);
+      alert(`Download error: ${e.message}`);
+    }
+  }
+
+  async function downloadStepFromOnshape(part) {
+    try {
+      if (part?.status === 'pending') {
+        await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
+      }
+      
+      // Log the Onshape IDs being used for debugging
+      console.log('Downloading STEP for part:', {
+        name: part.name,
+        onshape_document_id: part.onshape_document_id,
+        onshape_element_id: part.onshape_element_id,
+        onshape_part_id: part.onshape_part_id,
+        onshape_wvm: part.onshape_wvm,
+        onshape_wvmid: part.onshape_wvmid
+      });
+      
+      const params = new URLSearchParams({
+        action: 'translate-part',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'v',
+        wvmId: part.onshape_wvmid,
+        format: 'STEP'
+      });
+      const resp = await fetch(`/api/onshape?${params}`);
+      if (!resp.ok) {
+        // Try to get detailed error message
+        const errorData = await resp.json().catch(() => ({}));
+        const errorMsg = errorData.details || errorData.error || 'Onshape STEP download failed';
+        console.error('STEP download failed:', errorData);
+        if (errorData.suggestion) {
+          alert(`Download failed: ${errorMsg}\n\nSuggestion: ${errorData.suggestion}`);
+        } else {
+          alert(`Download failed: ${errorMsg}`);
+        }
+        return;
+      }
+      const blob = await resp.blob();
+      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g,'_')}.step`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) { 
+      console.error('Error downloading STEP:', e);
+      alert(`Download error: ${e.message}`);
+    }
+  }
+
+
 
   function makeGroupName(part) {
     const base = (getStock(part).split(' ')[0] || 'Group').replace(/[^A-Za-z0-9]/g, '');
@@ -278,6 +453,20 @@
     return `${base}${rand}`;
   }
 
+  function getFileTypeLabel(part, meta = {}) {
+    if (part?.source_type === 'onshape_api' || part?.is_onshape_part) {
+      if (part?.file_format) return String(part.file_format).toUpperCase();
+      return 'STEP';
+    }
+    if (meta?.step_file) return 'STEP';
+    if (part?.file_name && part.file_name.includes('.')) {
+      const ext = part.file_name.split('.').pop();
+      if (ext) return ext.toUpperCase();
+    }
+    return 'FILE';
+  }
+
+  // Group renaming
   async function saveGroupName(gid) {
     if (!gid) return;
     const newName = editingGroupName.trim();
@@ -334,7 +523,20 @@
     }
   }
 
-  // ==================== Drag and Drop ====================
+  async function updateGroupField(gid, field, value) {
+    if (!gid || !useDedicatedTables) return;
+    groupFields = { ...groupFields, [gid]: { ...(groupFields[gid] || {}), [field]: value } };
+    const payload = { [field]: value };
+    try {
+      await supabase.from('router_groups').update(payload).eq('id', gid);
+    } catch (e) {
+      console.error('Update group field failed', e);
+      alert('Failed to update group field');
+    } finally {
+      await loadParts();
+    }
+  }
+
   function handleDragStart(event, part) {
     dragPart = part;
     event.dataTransfer.effectAllowed = 'move';
@@ -350,14 +552,42 @@
     dragOverTarget = null;
   }
 
-  async function handleDropOnGroup(event, group) {
-    event.preventDefault();
-    dragOverTarget = null;
-    if (!dragPart) return;
-    await addPartToGroup(dragPart, group.id);
-    dragPart = null;
-    await loadParts();
-  }
+    const dragGroup = findGroupIdForPart(dragPart);
+    let targetGroup = findGroupIdForPart(targetPart);
+
+    const dragStock = extractStockType(dragPart).toLowerCase();
+    const targetStock = extractStockType(targetPart).toLowerCase();
+
+    // Enforce stock-type consistency when grouping/merging
+    if (dragGroup && targetGroup && dragGroup !== targetGroup) {
+      const dragGroupStock = inferGroupStock(groupMap[dragGroup]).toLowerCase();
+      const targetGroupStock = inferGroupStock(groupMap[targetGroup]).toLowerCase();
+      if (dragGroupStock !== targetGroupStock) {
+        alert('Cannot merge groups with different stock types.');
+        return;
+      }
+    }
+
+    if (targetGroup && !dragGroup) {
+      const targetGroupStock = inferGroupStock(groupMap[targetGroup]).toLowerCase();
+      if (dragStock !== targetGroupStock) {
+        alert('Parts in a group must share the same stock type.');
+        return;
+      }
+    }
+
+    if (dragGroup && !targetGroup) {
+      const dragGroupStock = inferGroupStock(groupMap[dragGroup]).toLowerCase();
+      if (targetStock !== dragGroupStock) {
+        alert('Parts in a group must share the same stock type.');
+        return;
+      }
+    }
+
+    if (!dragGroup && !targetGroup && dragStock !== targetStock) {
+      alert('Cannot create a group with mixed stock types.');
+      return;
+    }
 
   async function handleDropOnPart(event, targetPart) {
     event.preventDefault();
@@ -368,12 +598,14 @@
     if (useDedicatedTables) {
       if (!targetGroupId && !dragGroupId) {
         const newId = crypto.randomUUID();
-        const autoStock = getMostCommonValue([targetPart, dragPart], 'stock_assignment');
+        const stockType = extractStockType(targetPart) || extractStockType(dragPart);
         await supabase.from('router_groups').insert({
           id: newId,
-          name: makeGroupName(targetPart),
-          queue_position: routerGroups.length,
-          stock: autoStock
+          name: '',
+          stock_type: stockType,
+          cut_name: '',
+          output_folder: '',
+          machine: 'UNC Router'
         });
         await supabase.from('router_group_parts').insert([
           { group_id: newId, part_id: targetPart.id },
@@ -440,122 +672,34 @@
     await loadParts();
   }
 
-  // ==================== Download Functions ====================
-  async function downloadStepFromOnshape(part) {
-    try {
-      const params = new URLSearchParams({
-        action: 'translate-part',
-        documentId: part.onshape_document_id,
-        elementId: part.onshape_element_id,
-        partId: part.onshape_part_id,
-        wvm: part.onshape_wvm || 'v',
-        wvmId: part.onshape_wvmid,
-        format: 'STEP'
-      });
-      const resp = await fetch(`/api/onshape?${params}`);
-      if (!resp.ok) throw new Error('Onshape STEP download failed');
-      const blob = await resp.blob();
-      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g, '_')}.step`;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    } catch (e) { throw e; }
-  }
-
-  async function downloadDXFFromOnshape(part) {
-    try {
-      const params = new URLSearchParams({
-        action: 'convert-to-dxf',
-        documentId: part.onshape_document_id,
-        elementId: part.onshape_element_id,
-        partId: part.onshape_part_id,
-        wvm: part.onshape_wvm || 'v',
-        wvmId: part.onshape_wvmid
-      });
-      const resp = await fetch(`/api/onshape?${params}`);
-      if (!resp.ok) throw new Error('Onshape DXF download failed');
-      const blob = await resp.blob();
-      const fname = `${(part.name || 'part').replace(/[^A-Za-z0-9]/g, '_')}.dxf`;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    } catch (e) { throw e; }
-  }
-
-  async function downloadFromStorage(fileName) {
-    try {
-      let { data, error } = await supabase.storage.from('manufacturing-files').createSignedUrl(fileName, 60);
-      if (error) throw error;
-      window.open(data.signedUrl, '_blank');
-    } catch (e) { throw e; }
-  }
-
-  // ==================== Group Status Change ====================
-  async function handleGroupStatusChange(gid, newStatus) {
-    await updateGroupField(gid, 'status', newStatus);
-    const group = groupMap[gid];
-    if (!group) return;
-    if (newStatus === BUTTONS.TRAVIS) {
-      for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', p.id);
-        const meta = parseMeta(p);
-        meta.travis_progged = true;
-        if (!meta.router_meta) meta.router_meta = {};
-        meta.router_meta.step = 'queued';
-        await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', p.id);
-      }
-    } else if (newStatus === BUTTONS.MACHINED) {
-      for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'machined', updated_at: new Date().toISOString() }).eq('id', p.id);
-        const meta = parseMeta(p);
-        if (!meta.router_meta) meta.router_meta = {};
-        meta.router_meta.step = 'cut';
-        await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', p.id);
-      }
-    } else if (newStatus === BUTTONS.CAM_REVIEWED) {
-      for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', p.id);
-        const meta = parseMeta(p);
-        delete meta.travis_progged;
-        if (meta.router_meta) {
-          delete meta.router_meta.travis_progged;
-          meta.router_meta.step = 'cammed';
-        }
-        await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', p.id);
-      }
-    }
-    await loadParts();
-  }
-
-  function getGroupSummary(g) {
-    if (!g || !g.parts) return '';
-    const stockDesc = g.stock || g.parts[0]?.stock_assignment || '';
-    const partCount = g.parts.length;
-    return `${stockDesc}${stockDesc ? ' · ' : ''}${partCount} part${partCount !== 1 ? 's' : ''}`;
-  }
-
-  // ==================== Lifecycle ====================
-  onMount(loadParts);
+  onMount(() => {
+    const unsubUser = userStore.subscribe(v => { profile = v; });
+    loadParts();
+    return () => { unsubUser?.(); };
+  });
 </script>
 
-<svelte:head><title>Router Management</title></svelte:head>
+<svelte:head><title>Router Grouping</title></svelte:head>
+
+<!-- Autocam Review Modal -->
+<AutocamReviewModal 
+  part={autocamReviewPart} 
+  visible={showAutocamModal} 
+  on:close={closeAutocamReview}
+  on:update={loadParts}
+/>
 
 <div class="page-header">
-  <h1>Router</h1>
+  <h1>Router Parts</h1>
   <div class="page-actions">
-    <button
-      class="btn {editMode ? 'btn-primary' : 'btn-secondary'}"
-      on:click={() => editMode = !editMode}
-    >
-      {#if editMode}
-        <Eye size={16} />
-        View Mode
-      {:else}
-        <Pencil size={16} />
-        Edit Mode
-      {/if}
-    </button>
+    {#if isManufacturingLead}
+      <a href="/manufacture/autocam" class="btn btn-ghost">
+        <Settings size={16} /> Autocam Settings
+      </a>
+    {/if}
+    <a href="/manufacture" class="btn btn-secondary">Back</a>
   </div>
 </div>
-
 <div class="subtabs">
   <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
   <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
@@ -567,43 +711,287 @@
 {#if loading}
   <div class="card"><p>Loading...</p></div>
 {:else}
-
-  <!-- ==================== ROUTER VIEW ==================== -->
-    <!-- View Mode: Per-Machine Status Summary -->
-    {#if !editMode}
-      <div class="machine-status-grid">
-        {#each Object.entries(machineGroups) as [machine, data]}
-          {@const mc = getMachineColor(machine)}
-          <div class="card machine-section">
-            <div class="machine-header" style="border-left: 3px solid {mc.border};">
-              <span class="machine-name">{machine}</span>
-            </div>
-            <div class="machine-status-cards">
-              <div class="status-summary-card">
-                <span class="status-label">Cutting</span>
-                {#if data.cutting}
-                  <span class="status-group-name">{data.cutting.name}</span>
-                  <span class="status-group-meta">{getGroupSummary(data.cutting)}</span>
-                  {#if data.cutting.target_date}
-                    <span class="status-target-date">
-                      <Calendar size={12} />
-                      {new Date(data.cutting.target_date).toLocaleDateString()}
-                    </span>
-                  {/if}
-                {:else}
-                  <span class="text-muted">—</span>
+  <!-- Mobile cards -->
+  <div class="mobile-section">
+    {#if Object.keys(groupMap).length > 0}
+      <h2 class="subheading">Groups</h2>
+      {#each Object.values(groupMap).filter(g => (g.parts && g.parts.length > 0)) as g}
+        {#if !groupIsCut(g)}
+          <div class="group-card" role="group" aria-label="Router group">
+            <div class="group-card-header">
+              {#if editingGroupId === g.id}
+                <input class="group-name-input" bind:value={editingGroupName} on:keydown={(e)=>{ if(e.key==='Enter'){ saveGroupName(g.id); } else if (e.key==='Escape'){ editingGroupId=null; editingGroupName=''; } }} on:blur={()=>saveGroupName(g.id)} />
+              {:else}
+                <button class="group-name-btn" on:click={()=>{ editingGroupId=g.id; editingGroupName=g.name || g.id; }}>{g.name || g.id}</button>
+                {#if groupIsAllCamReviewed(g) || groupIsTravisProgged(g)}
+                  <select 
+                    class="group-status-select {groupIsTravisProgged(g) ? 'status-travis' : 'status-cammed'}"
+                    value={getGroupStatus(g)}
+                    on:change={(e) => handleGroupStatusChange(g.id, e.target.value)}
+                  >
+                    {#each GROUP_STATUS_OPTIONS as opt}
+                      <option value={opt}>{opt}</option>
+                    {/each}
+                  </select>
                 {/if}
-              </div>
-              <div class="status-summary-card">
-                <span class="status-label">Up Next</span>
-                {#if data.upNext}
-                  <span class="status-group-name">{data.upNext.name}</span>
-                  <span class="status-group-meta">{getGroupSummary(data.upNext)}</span>
-                  {#if data.upNext.target_date}
-                    <span class="status-target-date">
-                      <Calendar size={12} />
-                      {new Date(data.upNext.target_date).toLocaleDateString()}
+              {/if}
+            </div>
+
+            <div class="mobile-parts-list">
+              {#each g.parts as part (part.id)}
+                <div class="part-card" role="article">
+                  <div class="part-card-header">
+                    <div class="part-card-title">
+                      <strong>{part.name}</strong>
+                    </div>
+                    <span class={`status-badge ${getBadgeClass(part.status, parseMeta(part))}`}>{getStatusDisplay(part)}</span>
+                  </div>
+
+                  <div class="part-card-meta">
+                    <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
+                      {getWorkflowLabel(part.workflow)}
                     </span>
+                    {#if part.project_id}
+                      <span class="part-card-project">{part.project_id}</span>
+                    {/if}
+                  </div>
+
+                  <div class="part-card-details">
+                    <div class="part-card-detail">
+                      <span class="detail-label">Qty</span>
+                      <span class="detail-value">{part.quantity || 1}</span>
+                    </div>
+                    <div class="part-card-detail">
+                      <span class="detail-label">Stock</span>
+                      <span class="detail-value">{getStock(part) || '-'}</span>
+                    </div>
+                    <div class="part-card-detail">
+                      <span class="detail-label">Created</span>
+                      <span class="detail-value">{formatDate(part.created_at)}</span>
+                    </div>
+                  </div>
+
+                  <div class="part-card-actions">
+                    {#if part.source_type === 'onshape_api' || part.is_onshape_part}
+                      <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                        <Download size={14} /> {getFileTypeLabel(part)}
+                      </button>
+                    {:else}
+                      {#if parseMeta(part).step_file}
+                        <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(parseMeta(part).step_file)}>
+                          <Download size={14} /> {getFileTypeLabel(part, parseMeta(part))}
+                        </button>
+                      {:else if part.file_name}
+                        <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name)}>
+                          <Download size={14} /> {getFileTypeLabel(part)}
+                        </button>
+                      {/if}
+                    {/if}
+
+                    <div class="status-action">
+                      {#key part.id}
+                        <RouterStatusSelector part={part} on:update={loadParts} onReviewAutocam={openAutocamReview} />
+                      {/key}
+                    </div>
+
+                    <button class="btn btn-ghost btn-sm danger" on:click|stopPropagation={() => removeFromGroup(part)}>Remove</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/each}
+    {/if}
+
+    <h2 class="subheading">Ungrouped</h2>
+    <div class="mobile-parts-list">
+      {#each ungroupedParts as part (part.id)}
+        <div class="part-card" role="article">
+          <div class="part-card-header">
+            <div class="part-card-title">
+              <strong>{part.name}</strong>
+            </div>
+            <span class={`status-badge ${getBadgeClass(part.status, parseMeta(part))}`}>{getStatusDisplay(part)}</span>
+          </div>
+
+          <div class="part-card-meta">
+            <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
+              {getWorkflowLabel(part.workflow)}
+            </span>
+            {#if part.project_id}
+              <span class="part-card-project">{part.project_id}</span>
+            {/if}
+          </div>
+
+          <div class="part-card-details">
+            <div class="part-card-detail">
+              <span class="detail-label">Qty</span>
+              <span class="detail-value">{part.quantity || 1}</span>
+            </div>
+            <div class="part-card-detail">
+              <span class="detail-label">Stock</span>
+              <span class="detail-value">{getStock(part) || '-'}</span>
+            </div>
+            <div class="part-card-detail">
+              <span class="detail-label">Created</span>
+              <span class="detail-value">{formatDate(part.created_at)}</span>
+            </div>
+          </div>
+
+          <div class="part-card-actions">
+            {#if part.source_type === 'onshape_api' || part.is_onshape_part}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                <Download size={14} /> {getFileTypeLabel(part)}
+              </button>
+            {:else}
+              {#if parseMeta(part).step_file}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(parseMeta(part).step_file)}>
+                  <Download size={14} /> {getFileTypeLabel(part, parseMeta(part))}
+                </button>
+              {:else if part.file_name}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name)}>
+                  <Download size={14} /> {getFileTypeLabel(part)}
+                </button>
+              {/if}
+            {/if}
+
+            <div class="status-action">
+              {#key part.id}
+                <RouterStatusSelector part={part} on:update={loadParts} onReviewAutocam={openAutocamReview} />
+              {/key}
+            </div>
+          </div>
+        </div>
+      {/each}
+      {#if ungroupedParts.length === 0}
+        <p class="hint">No ungrouped parts.</p>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Desktop tables -->
+  <div class="group-list desktop-table-view">
+    {#if Object.keys(groupMap).length > 0}
+      <h2 class="subheading">Groups</h2>
+      {#each Object.values(groupMap).filter(g => (g.parts && g.parts.length > 0)) as g}
+        {#if !groupIsCut(g)}
+  <div class="group-table-wrapper" role="group" aria-label="Router group" on:dragover={(e)=>{e.preventDefault();}} on:drop={(e)=>{ if(dragPart){ handleDrop(e, g.parts[0] || dragPart); } }}>
+          <div class="group-table-header">
+            {#if editingGroupId === g.id}
+              <input class="group-name-input" bind:value={editingGroupName} on:keydown={(e)=>{ if(e.key==='Enter'){ saveGroupName(g.id); } else if (e.key==='Escape'){ editingGroupId=null; editingGroupName=''; } }} on:blur={()=>saveGroupName(g.id)} />
+            {:else}
+              <button class="group-name-btn" on:click={()=>{ editingGroupId=g.id; editingGroupName=g.name || g.id; }}>{g.name || g.id}</button>
+              {#if groupIsAllCamReviewed(g) || groupIsTravisProgged(g)}
+                <!-- Group-level status dropdown when all parts are CAM Reviewed or beyond -->
+                <select 
+                  class="group-status-select {groupIsTravisProgged(g) ? 'status-travis' : 'status-cammed'}"
+                  value={getGroupStatus(g)}
+                  on:change={(e) => handleGroupStatusChange(g.id, e.target.value)}
+                >
+                  {#each GROUP_STATUS_OPTIONS as opt}
+                    <option value={opt}>{opt}</option>
+                  {/each}
+                </select>
+              {/if}
+            {/if}
+          </div>
+
+      {#if groupFields[g.id]}
+        <div class="group-meta">
+          <div class="group-meta-header">
+            <div class="group-meta-title">
+              <Group size={16} />
+              <span>Router setup</span>
+            </div>
+            <span class="meta-pill">Fill before export</span>
+          </div>
+          <div class="group-meta-grid">
+            <label class="group-meta-field">
+              <span class="field-label">Cut name</span>
+              <input
+                class="meta-input"
+                value={groupFields[g.id].cut_name}
+                on:change={(e)=>updateGroupField(g.id,'cut_name', e.target.value)}
+                disabled={!useDedicatedTables}
+                placeholder="Cut name"
+              />
+            </label>
+            <label class="group-meta-field">
+              <span class="field-label">Output folder</span>
+              <input
+                class="meta-input"
+                value={groupFields[g.id].output_folder}
+                on:change={(e)=>updateGroupField(g.id,'output_folder', e.target.value)}
+                disabled={!useDedicatedTables}
+                placeholder="/router/outputs"
+              />
+            </label>
+            <label class="group-meta-field">
+              <span class="field-label">Machine</span>
+              <select
+                class="meta-input"
+                value={groupFields[g.id].machine}
+                on:change={(e)=>updateGroupField(g.id,'machine', e.target.value)}
+                disabled={!useDedicatedTables}
+              >
+                {#each MACHINE_OPTIONS as opt}
+                  <option value={opt}>{opt}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+        </div>
+      {/if}
+          <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Stock</th>
+                <th>Project</th>
+                <th>Qty</th>
+                <th>Source</th>
+                {#if !groupIsAllCamReviewed(g) && !groupIsTravisProgged(g)}
+                  <th>Status</th>
+                {/if}
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each g.parts as p, i}
+                <tr draggable="true" on:dragstart={(e)=>handleDragStart(e,p)} on:drop={(e)=>handleDrop(e,p)} on:dragover={(e)=>handleDragOver(e,p)} on:dragleave={handleDragLeave}>
+                  <td><strong>{p.name}</strong></td>
+                  <td>{getStock(p) || '-'}</td>
+                  <td class="mono">{p.project_id}</td>
+                  <td>{p.quantity || 1}</td>
+                  <td>
+                    {#if p.source_type === 'onshape_api' || p.is_onshape_part}
+                      <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(p)}`} title={`Download ${getFileTypeLabel(p)}`} on:click={()=>downloadStepFromOnshape(p)}>
+                        {getFileTypeLabel(p)}
+                      </button>
+                    {:else}
+                      {#await Promise.resolve(parseMeta(p)) then meta}
+                        <div class="source-cell">
+                          {#if meta.step_file}
+                            <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(p, meta)}`} title={`Download ${getFileTypeLabel(p, meta)}`} on:click={()=>downloadFromStorage(meta.step_file)}>
+                              {getFileTypeLabel(p, meta)}
+                            </button>
+                          {:else if p.file_name}
+                            <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(p, meta)}`} title={`Download ${getFileTypeLabel(p, meta)}`} on:click={()=>downloadFromStorage(p.file_name)}>
+                              {getFileTypeLabel(p, meta)}
+                            </button>
+                          {:else}-{/if}
+                        </div>
+                      {/await}
+                    {/if}
+                  </td>
+                  {#if !groupIsAllCamReviewed(g) && !groupIsTravisProgged(g)}
+                    <td>
+                      {#key p.id}
+                        <RouterStatusSelector part={p} on:update={loadParts} onReviewAutocam={openAutocamReview} />
+                      {/key}
+                    </td>
                   {/if}
                 {:else}
                   <span class="text-muted">—</span>
@@ -668,189 +1056,37 @@
                 on:dragleave={handleDragLeave}
                 on:drop={(e) => handleDropOnGroup(e, g)}
               >
-                <div class="group-card-inner">
-                  <!-- Left Half: Part List -->
-                  <div class="group-parts">
-                    <div class="group-header">
-                      {#if editingGroupId === g.id}
-                        <input
-                          class="group-name-input"
-                          bind:value={editingGroupName}
-                          on:keydown={(e) => { if (e.key === 'Enter') saveGroupName(g.id); else if (e.key === 'Escape') { editingGroupId = null; editingGroupName = ''; } }}
-                          on:blur={() => saveGroupName(g.id)}
-                        />
-                      {:else}
-                        <button class="group-name-btn" on:click={() => { editingGroupId = g.id; editingGroupName = g.name || g.id; }}>
-                          {g.name || g.id}
-                        </button>
-                      {/if}
-
-                      <!-- Mismatch Indicators -->
-                      {#if getGroupMismatches(g).status}
-                        <span class="mismatch-badge status-mismatch" title="{getGroupMismatches(g).status.count} parts: {getGroupMismatches(g).status.label}">
-                          <AlertCircle size={12} />
-                          {getGroupMismatches(g).status.count}: {getGroupMismatches(g).status.label}
-                        </span>
-                      {/if}
-                      {#if getGroupMismatches(g).stock}
-                        <span class="mismatch-badge stock-mismatch" title="{getGroupMismatches(g).stock.count} parts: {getGroupMismatches(g).stock.label}">
-                          <AlertCircle size={12} />
-                          {getGroupMismatches(g).stock.count}: {getGroupMismatches(g).stock.label}
-                        </span>
-                      {/if}
-                    </div>
-
-                    <div class="parts-list">
-                      {#each g.parts as p (p.id)}
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <div
-                          class="part-row"
-                          role="listitem"
-                          draggable={editMode}
-                          on:dragstart={(e) => editMode && handleDragStart(e, p)}
-                          on:dragover={(e) => editMode && handleDragOver(e, p.id)}
-                          on:dragleave={handleDragLeave}
-                          on:drop={(e) => editMode && handleDropOnPart(e, p)}
-                          class:drag-over={dragOverTarget === p.id}
-                        >
-                          {#if editMode}
-                            <GripVertical size={12} class="drag-handle" />
-                          {/if}
-                          <span class="part-name">{p.name}</span>
-                          {#if editMode}
-                            <button class="remove-btn" on:click={() => removeFromGroup(p)} title="Remove from group">
-                              <X size={12} />
-                            </button>
-                          {/if}
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-
-                  <!-- Right Half: Group Metadata -->
-                  <div class="group-metadata">
-                    <!-- Machine -->
-                    <div class="meta-field">
-                      <!-- svelte-ignore a11y_label_has_associated_control -->
-                      <label class="meta-label">Machine</label>
-                      {#if editMode}
-                        <select
-                          class="form-select"
-                          value={g.machine || ''}
-                          on:change={(e) => updateGroupField(g.id, 'machine', e.target.value)}
-                        >
-                          <option value="">Select machine...</option>
-                          {#each MACHINES as m}
-                            <option value={m}>{m}</option>
-                          {/each}
-                        </select>
-                      {:else}
-                        {@const mc = getMachineColor(g.machine)}
-                        {#if g.machine}
-                          <span class="color-chip" style="background: {mc.bg}; color: {mc.text}; border-color: {mc.border};">
-                            {g.machine}
-                          </span>
-                        {:else}
-                          <span class="text-muted">—</span>
-                        {/if}
-                      {/if}
-                    </div>
-
-                    <!-- Stock -->
-                    <div class="meta-field">
-                      <!-- svelte-ignore a11y_label_has_associated_control -->
-                      <label class="meta-label">Material / Stock</label>
-                      {#if editMode}
-                        <select
-                          class="form-select"
-                          value={g.stock || ''}
-                          on:change={(e) => updateGroupField(g.id, 'stock', e.target.value)}
-                        >
-                          <option value="">Select stock...</option>
-                          {#each routerStockOptions as opt}
-                            <option value={opt.description}>{opt.description}</option>
-                          {/each}
-                        </select>
-                      {:else}
-                        {@const sc = getStockColor(g.stock)}
-                        {#if g.stock}
-                          <span class="color-chip" style="background: {sc.bg}; color: {sc.text}; border-color: {sc.border};">
-                            {g.stock}
-                          </span>
-                        {:else}
-                          <span class="text-muted">—</span>
-                        {/if}
-                      {/if}
-                    </div>
-
-                    <!-- Status -->
-                    <div class="meta-field">
-                      <!-- svelte-ignore a11y_label_has_associated_control -->
-                      <label class="meta-label">Status</label>
-                      {#each [g.status || getGroupDisplayStatus(g)] as currentStatus}
-                        {@const statusColors = getStatusColors(currentStatus)}
-                        <select
-                          class="form-select group-status-select"
-                          style="background: {statusColors.bg}; color: {statusColors.text}; border-color: {statusColors.border};"
-                          value={currentStatus}
-                          on:change={(e) => handleGroupStatusChange(g.id, e.target.value)}
-                        >
-                          <option value={BUTTONS.PENDING}>{BUTTONS.PENDING}</option>
-                          <option value={BUTTONS.CAM_REVIEWED}>{BUTTONS.CAM_REVIEWED}</option>
-                          <option value={BUTTONS.TRAVIS}>{BUTTONS.TRAVIS}</option>
-                          <option value={BUTTONS.MACHINED}>{BUTTONS.MACHINED}</option>
-                        </select>
-                      {/each}
-                    </div>
-
-                    <!-- Target Date -->
-                    <div class="meta-field">
-                      <!-- svelte-ignore a11y_label_has_associated_control -->
-                      <label class="meta-label">Target Date</label>
-                      {#if editMode}
-                        <input
-                          type="date"
-                          class="form-input"
-                          value={g.target_date || ''}
-                          on:change={(e) => updateGroupField(g.id, 'target_date', e.target.value)}
-                        />
-                      {:else}
-                        {#if g.target_date}
-                          <span class="meta-value">
-                            <Calendar size={12} />
-                            {new Date(g.target_date).toLocaleDateString()}
-                          </span>
-                        {:else}
-                          <span class="text-muted">—</span>
-                        {/if}
-                      {/if}
-                    </div>
-
-                    <!-- Queue Controls (Edit Mode only) -->
-                    {#if editMode}
-                      <div class="queue-controls">
-                        <button
-                          class="queue-btn"
-                          on:click={() => moveGroupInQueue(g.id, 'up')}
-                          disabled={idx === 0}
-                          title="Move up in queue"
-                        >
-                          <ChevronUp size={16} />
-                        </button>
-                        <span class="queue-position">#{idx + 1}</span>
-                        <button
-                          class="queue-btn"
-                          on:click={() => moveGroupInQueue(g.id, 'down')}
-                          disabled={idx === routerGroups.length - 1}
-                          title="Move down in queue"
-                        >
-                          <ChevronDown size={16} />
-                        </button>
+                <td><strong>{part.name}</strong></td>
+                <td>{getStock(part) || '-'}</td>
+                <td class="mono">{part.project_id}</td>
+                <td>{part.quantity || 1}</td>
+                <td>
+                  {#if part.source_type === 'onshape_api' || part.is_onshape_part}
+                    <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(part)}`} title={`Download ${getFileTypeLabel(part)}`} on:click={()=>downloadStepFromOnshape(part)}>
+                      {getFileTypeLabel(part)}
+                    </button>
+                  {:else}
+                    {#await Promise.resolve(parseMeta(part)) then meta}
+                      <div class="source-cell">
+                        {#if meta.step_file}
+                          <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(part, meta)}`} title={`Download ${getFileTypeLabel(part, meta)}`} on:click={()=>downloadFromStorage(meta.step_file)}>
+                            {getFileTypeLabel(part, meta)}
+                          </button>
+                        {:else if part.file_name}
+                          <button class="btn btn-secondary source-btn" aria-label={`Download ${getFileTypeLabel(part, meta)}`} title={`Download ${getFileTypeLabel(part, meta)}`} on:click={()=>downloadFromStorage(part.file_name)}>
+                            {getFileTypeLabel(part, meta)}
+                          </button>
+                        {:else}-{/if}
                       </div>
-                    {/if}
-                  </div>
-                </div>
-              </div>
+                    {/await}
+                  {/if}
+                </td>
+                <td>
+                  {#key part.id}
+                    <RouterStatusSelector part={part} on:update={loadParts} onReviewAutocam={openAutocamReview} />
+                  {/key}
+                </td>
+              </tr>
             {/each}
           </div>
         {/if}
@@ -1063,7 +1299,7 @@
   /* Group Parts (Left Half) */
   .group-parts {
     padding: var(--space-4);
-    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
   }
 
   .group-header {
@@ -1071,23 +1307,25 @@
     align-items: center;
     gap: var(--gap-2);
     margin-bottom: var(--space-3);
-    flex-wrap: wrap;
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
   }
 
   .group-name-btn {
     background: none;
     border: none;
-    font-size: var(--font-base);
-    font-weight: 600;
+    font-size: 1rem;
+    font-weight: 700;
     color: var(--text);
     cursor: pointer;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease;
   }
 
   .group-name-btn:hover {
-    background: var(--surface-2);
+    background: var(--neutral-100);
+    color: var(--secondary);
   }
 
   .group-name-input {
@@ -1096,8 +1334,8 @@
     border-radius: var(--radius-sm);
     font-size: var(--font-base);
     font-weight: 600;
-    min-width: 180px;
-    background: var(--primary);
+    min-width: 200px;
+    background: var(--surface-1);
   }
 
   .group-name-input:focus {
@@ -1106,14 +1344,96 @@
     box-shadow: 0 0 0 3px var(--btn-focus-ring);
   }
 
-  .mismatch-badge {
+  /* Group meta area (inspired by fill parts list) */
+  .group-meta {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+
+  .group-meta-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    margin-bottom: var(--space-3);
+  }
+
+  .group-meta-title {
     display: inline-flex;
     align-items: center;
-    gap: var(--gap-1);
-    font-size: var(--font-xs);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
+    gap: var(--gap-2);
+    font-weight: 700;
+    color: var(--secondary);
+    letter-spacing: 0.01em;
+  }
+
+  .meta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: var(--accent-subtle);
+    color: var(--accent-strong, var(--accent));
+    border: 1px solid var(--accent-soft, var(--accent));
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.75rem;
     font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .group-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--gap-3);
+  }
+
+  .group-meta-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .field-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    font-weight: 700;
+  }
+
+  .meta-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 0.75rem;
+    font-size: 0.95rem;
+    background: var(--card);
+    color: var(--text);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  }
+
+  .meta-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--btn-focus-ring);
+    background: var(--surface-1);
+  }
+
+  .meta-input:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  /* Drag-over highlight for table rows */
+  :global(.table tr.drag-over) {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    background: var(--accent-subtle) !important;
   }
 
   .mismatch-badge.status-mismatch {
@@ -1298,5 +1618,145 @@
       border-top: 1px solid var(--border);
     }
 
+  }
+
+  /* Mobile card layout (hidden on desktop) */
+  .mobile-section {
+    display: none;
+    margin-top: var(--space-4);
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .mobile-parts-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .group-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+  }
+
+  .group-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    justify-content: space-between;
+    margin-bottom: var(--space-3);
+  }
+
+  .part-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .part-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--gap-3);
+  }
+
+  .part-card-title {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .part-card-title strong {
+    font-size: 1rem;
+    color: var(--secondary);
+  }
+
+  .part-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+  }
+
+  .part-card-project {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .part-card-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--gap-3);
+    padding: var(--space-3);
+    background: var(--background);
+    border-radius: var(--radius-sm);
+  }
+
+  .part-card-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .detail-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  .detail-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .part-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+    align-items: center;
+  }
+
+  .part-card-actions .btn {
+    flex: 1 1 auto;
+    min-width: 120px;
+    justify-content: center;
+  }
+
+  .status-action {
+    flex: 1 1 160px;
+  }
+
+  /* Desktop hide/show */
+  .desktop-table-view {
+    display: block;
+  }
+
+  @media (max-width: 900px) {
+    .desktop-table-view {
+      display: none;
+    }
+    .mobile-section {
+      display: flex;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .part-card {
+      padding: var(--space-3);
+    }
+    .part-card-actions .btn {
+      min-width: 100px;
+    }
+    .part-card-details {
+      grid-template-columns: 1fr 1fr;
+    }
   }
 </style>
