@@ -40,10 +40,27 @@
   let scoutingEvents = []; // current session events
 
   // Data Viewing
+  let allCompetitionTeams = [];
   let teamsWithData = [];
   let selectedTeamForView = "";
   let viewMode = "scout"; // scout | view
   let teamEvents = [];
+  let viewFilterMatch = "all";
+  let viewLoading = false;
+  let expandedSections = {};
+  function teamSort(a, b) {
+    const numA = parseInt(String(a).replace(/\D/g, "")) || 0;
+    const numB = parseInt(String(b).replace(/\D/g, "")) || 0;
+    return numA - numB;
+  }
+  $: teamsForViewDropdown = (() => {
+    const withData = new Set(teamsWithData);
+    const fromComp = allCompetitionTeams.filter((t) => !withData.has(t));
+    return [...teamsWithData, ...fromComp].sort(teamSort);
+  })();
+  function toggleSection(id) {
+    expandedSections = { ...expandedSections, [id]: !expandedSections[id] };
+  }
 
   // Animation State
   let animatedBalls = [];
@@ -116,7 +133,7 @@
       teamsCurrentMatch = [
         ...(m.alliances?.red?.team_keys || []),
         ...(m.alliances?.blue?.team_keys || []),
-      ];
+      ].sort(teamSort);
       selectedTeam = teamsCurrentMatch[0] || "";
     } else {
       teamsCurrentMatch = [];
@@ -580,7 +597,8 @@
           cr = null;
         }
       }
-      roleTimesByMatch[mk] = { label, ...rTimes };
+      const rt = rTimes.Scoring + rTimes.Shuttling + rTimes.Defense + (rTimes["Counter Defense"] || 0) + rTimes.Dead;
+      roleTimesByMatch[mk] = { label, ...rTimes, totalTime: rt };
 
       const speedEvt = mEvents.find((e) => e.event_type === "rank_speed");
       const spd = speedEvt ? parseFloat(speedEvt.event_value) || 5 : 5;
@@ -601,8 +619,10 @@
           }
         }
       }
-      shootingDistAutoByMatch[mk] = { label, shuttling: autoSh, scoring: autoSc };
-      shootingDistTeleopByMatch[mk] = { label, shuttling: teleSh, scoring: teleSc };
+      const autoShootTime = (autoSh + autoSc) / (spd || 1);
+      const teleopShootTime = (teleSh + teleSc) / (spd || 1);
+      shootingDistAutoByMatch[mk] = { label, shuttling: autoSh, scoring: autoSc, totalTime: autoShootTime };
+      shootingDistTeleopByMatch[mk] = { label, shuttling: teleSh, scoring: teleSc, totalTime: teleopShootTime };
 
       const aP = { ground: 0, depot: 0, outpost: 0 };
       const tP = { ground: 0, depot: 0, outpost: 0 };
@@ -689,13 +709,14 @@
     teamEvents = [];
     const teamKey = selectedTeamForView;
     const params = "team_key=" + encodeURIComponent(teamKey);
+    const headers = await getAuthHeader();
     const urlsToTry = [
       "/api/datascout/events?" + params,
       "/datascout?" + params,
     ];
     for (const url of urlsToTry) {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { headers });
         const contentType = res.headers.get("content-type") || "";
         if (!contentType.includes("application/json")) {
           continue;
@@ -742,9 +763,10 @@
   }
 
   async function loadTeamsWithData() {
+    const headers = await getAuthHeader();
     for (const url of ["/api/datascout/events?list_teams=1", "/datascout?list_teams=1"]) {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { headers });
         if (!(res.headers.get("content-type") || "").includes("application/json")) continue;
         const data = await res.json();
         if (data?.success && Array.isArray(data.data)) {
@@ -957,7 +979,7 @@
                         <div class="mini-bar-seg empty-bar" style="flex:1"></div>
                       {/if}
                     </div>
-                    <div class="mini-bar-label">{d.label}</div>
+                    <div class="mini-bar-label">{d.label}{#if (d.totalTime || 0) > 0} ({Math.round(d.totalTime)}s){/if}</div>
                   </div>
                 {/if}
               {/each}
@@ -1014,7 +1036,7 @@
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
                     {/if}
                   </div>
-                  <div class="mini-bar-label">{d.label}</div>
+                  <div class="mini-bar-label">{d.label}{#if (d.totalTime || 0) > 0} ({(d.totalTime).toFixed(1)}s){/if}</div>
                 </div>
               {/if}
             {/each}
@@ -1070,7 +1092,7 @@
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
                     {/if}
                   </div>
-                  <div class="mini-bar-label">{d.label}</div>
+                  <div class="mini-bar-label">{d.label}{#if (d.totalTime || 0) > 0} ({(d.totalTime).toFixed(1)}s){/if}</div>
                 </div>
               {/if}
             {/each}
@@ -1280,7 +1302,7 @@
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
                     {/if}
                   </div>
-                  <div class="mini-bar-label">{d.label}</div>
+                  <div class="mini-bar-label">{d.label}{#if (d.l1Time || 0) > 0} ({(d.l1Time).toFixed(1)}s){/if}</div>
                 </div>
               {/if}
             {/each}
@@ -1358,7 +1380,7 @@
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
                     {/if}
                   </div>
-                  <div class="mini-bar-label">{d.label}</div>
+                  <div class="mini-bar-label">{d.label}{#if (d.climbTime || 0) > 0} ({(d.climbTime).toFixed(1)}s){/if}</div>
                 </div>
               {/if}
             {/each}

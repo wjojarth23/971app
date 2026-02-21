@@ -31,7 +31,7 @@
   function canAdmin(){
     if(!user) return false;
     // Require explicit per-scouting-type permission (no admin bypass)
-    const needed = scoutingType === 'note' ? 'NOTE_SCOUT_ADMIN' : 'DATA_SCOUT_ADMIN';
+    const needed = scoutingType === 'note' ? 'NOTE_SCOUT_ADMIN' : permissionAdmin;
     return Array.isArray(user.permissions) && user.permissions.includes(needed);
   }
   $: isAdmin = canAdmin();
@@ -232,7 +232,7 @@
     on:click|self={() => { if(!saving) showModal = false; }}
     on:keydown={(e)=> { if(e.key==='Escape' || e.key==='Enter' || e.key===' ') { e.preventDefault(); if(!saving) showModal=false; } }}
   >
-    <div class="modal" style="--modal-width: 360px;" on:click|stopPropagation>
+    <div class="modal" style="--modal-width: 360px;" role="dialog" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
       <h4>Assign Scout – {modalContext.team_number}</h4>
       <select class="form-select" bind:value={selectedUserId} disabled={saving}>
         <option value="">-- choose user --</option>
@@ -260,5 +260,4 @@
   .assignment-table .team { font-weight: 700; }
   .assignment-table .scout { font-size: 0.6rem; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .scroll-x { overflow-x: auto; }
-  .empty { color: var(--secondary); padding: var(--space-2); }
 </style>

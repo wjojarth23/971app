@@ -1,5 +1,19 @@
 import { json } from '@sveltejs/kit';
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from '$lib/supabase.js';
+import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { env } from '$env/dynamic/private';
+
+function getSupabaseForRead(request) {
+  const serviceKey = env?.SUPABASE_SERVICE_KEY;
+  if (serviceKey) {
+    return createClient(PUBLIC_SUPABASE_URL, serviceKey);
+  }
+  const auth = request?.headers?.get?.('authorization') || '';
+  return createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
+    global: { headers: auth ? { Authorization: auth } : {} }
+  });
+}
 
 /*
   Data Scout API
@@ -58,13 +72,14 @@ export async function DELETE({ request }) {
   }
 }
 
-export async function GET({ url }) {
+export async function GET({ url, request }) {
+  const readSupa = getSupabaseForRead(request);
   try {
     const team_key = url.searchParams.get('team_key');
     const match_key = url.searchParams.get('match_key');
 
     if (team_key && match_key) {
-      const { data, error } = await supabase
+      const { data, error } = await readSupa
         .from('scout_data_events')
         .select('*')
         .eq('team_key', team_key)
@@ -75,7 +90,7 @@ export async function GET({ url }) {
     }
 
     if (team_key) {
-      const { data, error } = await supabase
+      const { data, error } = await readSupa
         .from('scout_data_events')
         .select('*')
         .eq('team_key', team_key)
@@ -85,7 +100,7 @@ export async function GET({ url }) {
     }
 
     if (url.searchParams.get('list_teams')) {
-      const { data, error } = await supabase
+      const { data, error } = await readSupa
         .from('scout_data_events')
         .select('team_key')
         .order('team_key', { ascending: true })
@@ -101,7 +116,7 @@ export async function GET({ url }) {
     }
 
     const recent = Number(url.searchParams.get('recent') || '100');
-    const { data, error } = await supabase
+    const { data, error } = await readSupa
       .from('scout_data_events')
       .select('*')
       .order('created_at', { ascending: false })
