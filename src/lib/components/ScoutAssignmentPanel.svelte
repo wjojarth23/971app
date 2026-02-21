@@ -3,22 +3,31 @@
   import { userStore } from '$lib/stores/auth.js';
   import { getAuthHeader } from '$lib/supabase.js';
   import notescoutConfig from '$lib/notescout.json';
-  let user; userStore.subscribe(v=> user=v);
+
+  let user;
+  userStore.subscribe((v) => (user = v));
 
   export let scoutingType = 'data'; // 'data' | 'note'
-  export let permissionAdmin = 'DATA_SCOUT_ADMIN';
-  export let memberPerm = 'DATA_SCOUT_MEMBER';
 
-  let matches = []; // simplified structure: { key, red:[], blue:[] }
-  let assignments = {}; // key: match_key -> { team_key: { user_id, user_name } }
-  let users = []; // eligible users
+  let panelOpen = false;
+  let matches = []; // { key, red:[], blue:[] }
+  let assignments = {}; // match_key -> team_key -> { user_id, user_name }
+  let users = []; // eligible assignees
   let loading = false;
   let saving = false;
   let errorMsg = '';
 
+  let capabilities = {
+    can_view: true,
+    can_edit: false,
+    can_be_assigned: false,
+    roster_keys: []
+  };
+
   let showModal = false;
-  let modalContext = { match_key:'', team_key:'', team_number:'', robot_color:'', alliance_index:0 };
+  let modalContext = { match_key: '', team_key: '', team_number: '' };
   let selectedUserId = '';
+  let lastUserId = null;
 
   async function authFetch(url, options = {}) {
     const headers = {
@@ -28,200 +37,306 @@
     return fetch(url, { ...options, headers });
   }
 
-  function canAdmin(){
-    if(!user) return false;
-    // Require explicit per-scouting-type permission (no admin bypass)
-    const needed = scoutingType === 'note' ? 'NOTE_SCOUT_ADMIN' : 'DATA_SCOUT_ADMIN';
-    return Array.isArray(user.permissions) && user.permissions.includes(needed);
+  function displayTeam(t) {
+    return t ? String(t).replace(/^frc/i, '') : '';
   }
-  $: isAdmin = canAdmin();
-  let bootstrapped = false;
-  // Debug admin gating in local console to verify visibility logic
-  $: (typeof window !== 'undefined') && console.debug('[ScoutAssignmentPanel]', {
-    scoutingType,
-    isAdmin,
-    role: user?.role,
-    permissions: Array.isArray(user?.permissions) ? user.permissions : user?.permissions
-  });
 
-  async function loadEligibleUsers(){
+  async function loadCapabilities() {
     try {
-      const res = await authFetch('/api/admin?action=list-users');
+      const qs = new URLSearchParams({ scouting_type: scoutingType, capabilities: '1' });
+      const res = await authFetch(`/api/scout-assignments?${qs}`);
       const data = await res.json();
-      if(data?.success){
-        // filter by memberPerm
-        users = (data.data||[]).filter(u => (u.role==='admin') || (Array.isArray(u.permissions) && u.permissions.includes(memberPerm)));
+      if (data?.success && data?.data) {
+        capabilities = { ...capabilities, ...data.data };
       }
-    }catch(e){ /* ignore */ }
+    } catch {
+      capabilities = { ...capabilities, can_edit: false };
+    }
   }
 
-  async function loadMatches(){
-    if(!notescoutConfig?.event_key){ errorMsg='No event configured'; return; }
+  async function loadEligibleUsers() {
+    if (!capabilities.can_edit) {
+      users = [];
+      return;
+    }
+
     try {
-      loading = true; errorMsg='';
-      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`);
+      const qs = new URLSearchParams({ scouting_type: scoutingType, eligible: '1' });
+      const res = await authFetch(`/api/scout-assignments?${qs}`);
+      const data = await res.json();
+      if (data?.success) {
+        users = data.data || [];
+      }
+    } catch {
+      users = [];
+    }
+  }
+
+  async function loadMatches() {
+    if (!notescoutConfig?.event_key) {
+      errorMsg = 'No event configured';
+      return;
+    }
+
+    try {
+      loading = true;
+      errorMsg = '';
+      const res = await fetch(
+        `/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`
+      );
+
       let data;
-      try { data = await res.json(); } catch(parseErr){
+      try {
+        data = await res.json();
+      } catch {
         const text = await res.text();
-        errorMsg = 'Non-JSON response ('+res.status+'): '+text.slice(0,100);
+        errorMsg = `Non-JSON response (${res.status}): ${text.slice(0, 100)}`;
         return;
       }
-      if(!data?.success){ errorMsg=data?.error||'Failed to load matches'; return; }
-      matches = (data.data||[]).map(m=>({
+
+      if (!data?.success) {
+        errorMsg = data?.error || 'Failed to load matches';
+        return;
+      }
+
+      matches = (data.data || []).map((m) => ({
         key: m.key,
         match_number: m.match_number,
-        red: m.alliances?.red?.team_keys||[],
-        blue: m.alliances?.blue?.team_keys||[]
+        red: m.alliances?.red?.team_keys || [],
+        blue: m.alliances?.blue?.team_keys || []
       }));
-    }catch(e){ errorMsg=e.message||'Load error'; }
-    finally{ loading=false; }
+    } catch (e) {
+      errorMsg = e.message || 'Load error';
+    } finally {
+      loading = false;
+    }
   }
 
-  async function loadAssignments(){
+  async function loadAssignments() {
     try {
       const qs = new URLSearchParams({ scouting_type: scoutingType });
       const res = await authFetch(`/api/scout-assignments?${qs}`);
       const data = await res.json();
-      if(data?.success){
-        assignments = {};
-        for(const row of data.data){
-          if(!assignments[row.match_key]) assignments[row.match_key]={};
-            assignments[row.match_key][row.team_key] = { user_id: row.assigned_user, user_name: row.user_name };
-        }
+      if (!data?.success) return;
+
+      assignments = {};
+      for (const row of data.data || []) {
+        if (!assignments[row.match_key]) assignments[row.match_key] = {};
+        assignments[row.match_key][row.team_key] = {
+          user_id: row.assigned_user,
+          user_name: row.user_name
+        };
       }
-    }catch(e){ /* ignore */ }
+    } catch {
+      assignments = {};
+    }
   }
 
-  function displayTeam(t){ return t? String(t).replace(/^frc/i,''):''; }
-
-  function openAssign(match_key, team_key){
+  function openAssign(match_key, team_key) {
+    if (!capabilities.can_edit) return;
     modalContext = { match_key, team_key, team_number: displayTeam(team_key) };
     selectedUserId = assignments?.[match_key]?.[team_key]?.user_id || '';
-    showModal=true;
+    showModal = true;
   }
 
-  async function saveAssignment(applyToAll=false){
-    if(!selectedUserId){ return; }
-    saving=true;
+  async function saveAssignment(applyToAll = false) {
+    if (!selectedUserId || !capabilities.can_edit) return;
+    saving = true;
+
     try {
       if (applyToAll) {
-        // Build items for every match where this team appears (use loaded matches from TBA)
         const team_key = modalContext.team_key;
         const items = [];
+
         for (const m of matches) {
           if ((m.blue || []).includes(team_key) || (m.red || []).includes(team_key)) {
             items.push({ match_key: m.key, team_key, user_id: selectedUserId });
           }
         }
+
         if (items.length === 0) {
           alert('No matches found for that robot');
         } else {
           const body = { action: 'bulk-assign', scouting_type: scoutingType, items };
-          const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+          const res = await authFetch('/api/scout-assignments', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
           const data = await res.json();
-          if(!data?.success){ alert('Save failed: '+(data?.error||'unknown')); }
-          else { await loadAssignments(); showModal=false; }
+          if (!data?.success) {
+            alert(`Save failed: ${data?.error || 'unknown'}`);
+          } else {
+            await loadAssignments();
+            showModal = false;
+          }
         }
       } else {
-        const body={ action: 'assign-single', scouting_type: scoutingType, match_key: modalContext.match_key, team_key: modalContext.team_key, user_id: selectedUserId };
-  const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+        const body = {
+          action: 'assign-single',
+          scouting_type: scoutingType,
+          match_key: modalContext.match_key,
+          team_key: modalContext.team_key,
+          user_id: selectedUserId
+        };
+
+        const res = await authFetch('/api/scout-assignments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        });
         const data = await res.json();
-        if(!data?.success){ alert('Save failed: '+(data?.error||'unknown')); }
-        else { await loadAssignments(); showModal=false; }
+        if (!data?.success) {
+          alert(`Save failed: ${data?.error || 'unknown'}`);
+        } else {
+          await loadAssignments();
+          showModal = false;
+        }
       }
-    }catch(e){ alert('Error: '+e.message); }
-    finally{ saving=false; }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      saving = false;
+    }
   }
 
-  function randomize(){
-    // Flatten all cells; assign eligible users round-robin ensuring per-match uniqueness
+  function randomize() {
+    if (!capabilities.can_edit) return;
+
     const eligible = [...users];
-    if(eligible.length===0) return;
+    if (eligible.length === 0) return;
+
     const newAssignments = {};
-    for(const m of matches){
+    for (const m of matches) {
       const usedInMatch = new Set();
       const teams = [...m.blue, ...m.red];
-      for(const t of teams){
-        // pick a user not yet used this match
-        const shuffled = [...eligible].sort(()=> Math.random()-0.5);
-        const u = shuffled.find(x=> !usedInMatch.has(x.id));
+      for (const t of teams) {
+        const shuffled = [...eligible].sort(() => Math.random() - 0.5);
+        const u = shuffled.find((x) => !usedInMatch.has(x.id));
         const chosen = u || shuffled[0];
         usedInMatch.add(chosen.id);
-        if(!newAssignments[m.key]) newAssignments[m.key]={};
-        newAssignments[m.key][t] = { user_id: chosen.id, user_name: chosen.full_name || chosen.email };
+
+        if (!newAssignments[m.key]) newAssignments[m.key] = {};
+        newAssignments[m.key][t] = {
+          user_id: chosen.id,
+          user_name: chosen.full_name || chosen.email
+        };
       }
     }
-    // Bulk save via API
+
     bulkPersist(newAssignments);
   }
 
-  async function bulkPersist(map){
-    try{
-      const list=[];
-      for(const mk of Object.keys(map)){
-        for(const tk of Object.keys(map[mk])){
+  async function bulkPersist(map) {
+    try {
+      const list = [];
+      for (const mk of Object.keys(map)) {
+        for (const tk of Object.keys(map[mk])) {
           list.push({ match_key: mk, team_key: tk, user_id: map[mk][tk].user_id });
         }
       }
-      const body={ action:'bulk-assign', scouting_type: scoutingType, items:list };
-  const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+
+      const body = { action: 'bulk-assign', scouting_type: scoutingType, items: list };
+      const res = await authFetch('/api/scout-assignments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
       const data = await res.json();
-      if(!data?.success){ alert('Bulk save failed: '+(data?.error||'unknown')); }
-      else { await loadAssignments(); }
-    }catch(e){ alert('Error: '+e.message); }
+      if (!data?.success) {
+        alert(`Bulk save failed: ${data?.error || 'unknown'}`);
+      } else {
+        await loadAssignments();
+      }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    }
   }
 
-  onMount(()=>{ if(isAdmin){ loadEligibleUsers(); loadMatches().then(loadAssignments); } });
-  $: if (!bootstrapped && isAdmin) {
-    bootstrapped = true;
-    // Run loads once when admin status becomes true (after auth/profile arrives)
-    loadEligibleUsers();
-    loadMatches().then(loadAssignments);
+  async function refreshAll() {
+    await loadCapabilities();
+    await Promise.all([loadMatches(), loadAssignments()]);
+    await loadEligibleUsers();
+  }
+
+  onMount(() => {
+    refreshAll();
+  });
+
+  $: if (user?.id && user.id !== lastUserId) {
+    lastUserId = user.id;
+    refreshAll();
   }
 </script>
 
-{#if canAdmin()}
-  <div class="panel-header">
-    <h3 style="margin:0">{scoutingType==='note'?'Note':'Data'} Scouting Assignments</h3>
-    <div class="actions">
-      <button class="btn btn-secondary" on:click={randomize} disabled={matches.length===0 || users.length===0}>Randomize</button>
-      <button class="btn btn-outline" on:click={loadAssignments}>Refresh</button>
+<details class="assignment-accordion" bind:open={panelOpen}>
+  <summary class="summary-row">
+    <div class="summary-title">
+      {scoutingType === 'note' ? 'Note' : 'Data'} Scouting Assignments
+    </div>
+    <div class="summary-meta">
+      <span class="mode-pill" class:editable={capabilities.can_edit}>
+        {capabilities.can_edit ? 'Lead edit mode' : 'View only'}
+      </span>
+    </div>
+  </summary>
+
+  <div class="panel-body">
+    <div class="panel-header">
+      <div class="hint">
+        {#if capabilities.can_edit}
+          Click a team cell to reassign. "Set for Robot" applies assignment to all that team's matches.
+        {:else}
+          Assignments are read-only unless you are a scouting lead in Roster Studio.
+        {/if}
+      </div>
+      <div class="actions">
+        {#if capabilities.can_edit}
+          <button class="btn btn-secondary" on:click={randomize} disabled={matches.length === 0 || users.length === 0}>Randomize</button>
+        {/if}
+        <button class="btn btn-outline" on:click={refreshAll} disabled={loading}>Refresh</button>
+      </div>
+    </div>
+
+    {#if errorMsg}
+      <div class="note" style="margin-bottom:0.5rem">{errorMsg}</div>
+    {/if}
+
+    <div class="scroll-x">
+      <table class="assignment-table">
+        <thead>
+          <tr>
+            <th colspan="3" class="alliance blue">Blue Alliance</th>
+            <th colspan="3" class="alliance red">Red Alliance</th>
+          </tr>
+          <tr>
+            {#each [1, 2, 3] as i}<th class="blue">B{i}</th>{/each}
+            {#each [1, 2, 3] as i}<th class="red">R{i}</th>{/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each matches as m}
+            <tr>
+              {#each m.blue as t}
+                <td class="cell blue" class:editable-cell={capabilities.can_edit} on:click={() => openAssign(m.key, t)}>
+                  <div class="team">{displayTeam(t)}</div>
+                  <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
+                </td>
+              {/each}
+              {#each m.red as t}
+                <td class="cell red" class:editable-cell={capabilities.can_edit} on:click={() => openAssign(m.key, t)}>
+                  <div class="team">{displayTeam(t)}</div>
+                  <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
+                </td>
+              {/each}
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
   </div>
-  {#if errorMsg}<div class="note" style="margin-bottom:0.5rem">{errorMsg}</div>{/if}
-  <div class="scroll-x">
-    <table class="assignment-table">
-      <thead>
-        <tr>
-          <th colspan="3" class="alliance blue">Blue Alliance</th>
-          <th colspan="3" class="alliance red">Red Alliance</th>
-        </tr>
-        <tr>
-          {#each [1,2,3] as i}<th class="blue">B{i}</th>{/each}
-          {#each [1,2,3] as i}<th class="red">R{i}</th>{/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each matches as m}
-          <tr>
-            {#each m.blue as t}
-              <td class="cell blue" on:click={() => openAssign(m.key, t)}>
-                <div class="team">{displayTeam(t)}</div>
-                <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
-              </td>
-            {/each}
-            {#each m.red as t}
-              <td class="cell red" on:click={() => openAssign(m.key, t)}>
-                <div class="team">{displayTeam(t)}</div>
-                <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
-              </td>
-            {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
-{/if}
+</details>
 
 {#if showModal}
   <div
@@ -229,11 +344,18 @@
     role="button"
     tabindex="0"
     aria-label="Close assignment dialog"
-    on:click|self={() => { if(!saving) showModal = false; }}
-    on:keydown={(e)=> { if(e.key==='Escape' || e.key==='Enter' || e.key===' ') { e.preventDefault(); if(!saving) showModal=false; } }}
+    on:click|self={() => {
+      if (!saving) showModal = false;
+    }}
+    on:keydown={(e) => {
+      if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (!saving) showModal = false;
+      }
+    }}
   >
-    <div class="modal" style="--modal-width: 360px;" on:click|stopPropagation>
-      <h4>Assign Scout – {modalContext.team_number}</h4>
+    <div class="modal" style="--modal-width: 360px;">
+      <h4>Assign Scout - {modalContext.team_number}</h4>
       <select class="form-select" bind:value={selectedUserId} disabled={saving}>
         <option value="">-- choose user --</option>
         {#each users as u}
@@ -241,24 +363,155 @@
         {/each}
       </select>
       <div class="btn-row" style="margin-top:0.75rem">
-        <button class="btn btn-primary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
-        <button class="btn btn-secondary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
-        <button class="btn btn-outline" on:click={() => { if(!saving) showModal=false; }}>Close</button>
+        <button class="btn btn-primary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
+        <button class="btn btn-secondary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
+        <button class="btn btn-outline" on:click={() => {
+          if (!saving) showModal = false;
+        }}>Close</button>
       </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2); }
-  .actions { display: flex; gap: var(--gap-2); }
-  .assignment-table { border-collapse: separate; border-spacing: 2px; }
-  .assignment-table th, .assignment-table td { padding: var(--space-1); font-size: var(--font-xs); text-align: center; background: var(--color-white); border: 1px solid var(--border); min-width: 70px; cursor: pointer; }
-  .assignment-table th.alliance { font-size: 0.65rem; }
-  .assignment-table .blue { background: var(--blue-soft); }
-  .assignment-table .red { background: var(--red-soft); }
-  .assignment-table .team { font-weight: 700; }
-  .assignment-table .scout { font-size: 0.6rem; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .scroll-x { overflow-x: auto; }
-  .empty { color: var(--secondary); padding: var(--space-2); }
+  .assignment-accordion {
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    overflow: hidden;
+  }
+
+  .summary-row {
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--gap-2);
+    cursor: pointer;
+    padding: var(--space-3);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .summary-row::-webkit-details-marker {
+    display: none;
+  }
+
+  .summary-title {
+    font-size: var(--font-base);
+  }
+
+  .summary-meta {
+    display: flex;
+    align-items: center;
+  }
+
+  .mode-pill {
+    font-size: var(--font-xs);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.5rem;
+    color: var(--text-muted);
+    background: var(--surface-2);
+  }
+
+  .mode-pill.editable {
+    color: var(--green-strong);
+    border-color: var(--green-strong);
+    background: var(--green-soft);
+  }
+
+  .panel-body {
+    padding: var(--space-3);
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--gap-2);
+    margin-bottom: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .hint {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+  }
+
+  .actions {
+    display: flex;
+    gap: var(--gap-2);
+  }
+
+  .assignment-table {
+    border-collapse: separate;
+    border-spacing: 2px;
+    width: 100%;
+  }
+
+  .assignment-table th,
+  .assignment-table td {
+    padding: var(--space-1);
+    font-size: var(--font-xs);
+    text-align: center;
+    background: var(--color-white);
+    border: 1px solid var(--border);
+    min-width: 70px;
+  }
+
+  .assignment-table th.alliance {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .assignment-table .blue {
+    background: var(--blue-soft);
+  }
+
+  .assignment-table .red {
+    background: var(--red-soft);
+  }
+
+  .assignment-table .team {
+    font-weight: 700;
+  }
+
+  .assignment-table .scout {
+    font-size: 0.65rem;
+    margin-top: var(--space-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .editable-cell {
+    cursor: pointer;
+  }
+
+  .editable-cell:hover {
+    filter: brightness(0.98);
+  }
+
+  .scroll-x {
+    overflow-x: auto;
+  }
+
+  @media (max-width: 768px) {
+    .summary-row {
+      padding: var(--space-2);
+    }
+
+    .panel-body {
+      padding: var(--space-2);
+    }
+
+    .assignment-table th,
+    .assignment-table td {
+      min-width: 56px;
+      font-size: 0.7rem;
+    }
+  }
 </style>
