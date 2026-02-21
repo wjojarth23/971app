@@ -1,7 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { getSupabase } from '$lib/server/971bot.js';
 import { notifyScoutAssignment } from '$lib/server/slack_notifications.js';
+
+const SCOUTING_TYPES = new Set(['data', 'note']);
 
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
@@ -10,97 +13,215 @@ const getClientFromRequest = (request) => {
   });
 };
 
+function getDbClient(fallbackClient) {
+  try {
+    return getSupabase();
+  } catch {
+    return fallbackClient;
+  }
+}
+
+function normalizePerms(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (value) return [String(value)];
+  return [];
+}
+
+function normalizeKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function keySet(keys) {
+  return new Set((keys || []).map(normalizeKey).filter(Boolean));
+}
+
+function computeScoutingAccess(profile, rosterKeys) {
+  const perms = new Set(normalizePerms(profile?.permissions));
+  const keys = keySet(rosterKeys);
+  const isAdmin = profile?.role === 'admin';
+
+  const hasDataLeadKey = keys.has('data scout lead') || keys.has('scouting lead');
+  const hasNoteLeadKey = keys.has('note scout lead') || hasDataLeadKey;
+  const hasDataMemberKey = keys.has('data scout member') || hasDataLeadKey;
+  const hasNoteMemberKey = keys.has('note scout member') || hasDataMemberKey || hasNoteLeadKey;
+
+  const canEditData = isAdmin || perms.has('DATA_SCOUT_ADMIN') || hasDataLeadKey;
+  const canEditNote = isAdmin || perms.has('NOTE_SCOUT_ADMIN') || hasNoteLeadKey;
+
+  return {
+    canEditData,
+    canEditNote,
+    canAssignData: canEditData || perms.has('DATA_SCOUT_MEMBER') || hasDataMemberKey,
+    canAssignNote: canEditNote || perms.has('DATA_SCOUT_MEMBER') || hasNoteMemberKey,
+    rosterKeys: [...keys]
+  };
+}
+
+function canEditForType(access, scoutingType) {
+  return scoutingType === 'note' ? access.canEditNote : access.canEditData;
+}
+
+function isEligibleKeyForType(scoutingType, keyName) {
+  const key = normalizeKey(keyName);
+  if (!key) return false;
+  if (scoutingType === 'data') {
+    return key === 'data scout member' || key === 'data scout lead' || key === 'scouting lead';
+  }
+  return (
+    key === 'note scout member' ||
+    key === 'note scout lead' ||
+    key === 'data scout member' ||
+    key === 'data scout lead' ||
+    key === 'scouting lead'
+  );
+}
+
 async function fetchActorProfile(supa) {
   const { data: authRes } = await supa.auth.getUser();
   const actorId = authRes?.user?.id || null;
   if (!actorId) return { actorId: null, profile: null };
+
   const { data: profileRow } = await supa
     .from('user_profiles')
     .select('id, role, permissions')
     .eq('id', actorId)
     .single();
-  const perms = Array.isArray(profileRow?.permissions)
-    ? profileRow.permissions.map(String)
-    : profileRow?.permissions
-    ? [String(profileRow.permissions)]
-    : [];
-  return { actorId, profile: { id: actorId, role: profileRow?.role || 'member', permissions: perms } };
+
+  return {
+    actorId,
+    profile: {
+      id: actorId,
+      role: profileRow?.role || 'member',
+      permissions: normalizePerms(profileRow?.permissions)
+    }
+  };
 }
 
-function hasAdminForType(profile, scouting_type) {
-  if (!profile) return false;
-  if (profile.role === 'admin') return true;
-  const needed = scouting_type === 'note' ? 'NOTE_SCOUT_ADMIN' : 'DATA_SCOUT_ADMIN';
-  return (profile.permissions || []).includes(needed);
+async function fetchRosterKeysForUser(supa, userId) {
+  if (!userId) return [];
+  const { data, error } = await supa
+    .from('roster_entries')
+    .select('key:key_id(key_name)')
+    .eq('user_id', userId);
+
+  if (error) return [];
+  return (data || [])
+    .map((row) => row?.key?.key_name)
+    .filter(Boolean)
+    .map(String);
+}
+
+async function listEligibleUsersForType(db, scoutingType) {
+  const { data, error } = await db
+    .from('roster_entries')
+    .select('user_id, key:key_id(key_name), user:user_id(id, full_name, email, banned)');
+
+  if (error) throw error;
+
+  const map = new Map();
+  for (const row of data || []) {
+    if (!isEligibleKeyForType(scoutingType, row?.key?.key_name)) continue;
+    const user = row?.user;
+    if (!user?.id || user?.banned) continue;
+    if (!map.has(user.id)) {
+      map.set(user.id, {
+        id: user.id,
+        full_name: user.full_name || null,
+        email: user.email || null
+      });
+    }
+  }
+
+  return [...map.values()].sort((a, b) => {
+    const aName = (a.full_name || a.email || '').toLowerCase();
+    const bName = (b.full_name || b.email || '').toLowerCase();
+    return aName.localeCompare(bName);
+  });
 }
 
 /*
   Scouting assignments API
   GET /api/scout-assignments?scouting_type=data|note
-    -> returns rows with user name joined
   GET /api/scout-assignments?scouting_type=..&user_id=..&mine=1
-    -> rows for a specific user (incomplete first)
+  GET /api/scout-assignments?scouting_type=..&capabilities=1
+  GET /api/scout-assignments?scouting_type=..&eligible=1
 
   POST actions:
     assign-single: { scouting_type, match_key, team_key, user_id }
-    assign-robot:  { scouting_type, team_key, user_id } (applies to all matches containing team_key)
+    assign-robot:  { scouting_type, team_key, user_id }
     bulk-assign:   { scouting_type, items:[{match_key, team_key, user_id}...] }
+    complete:      { scouting_type, match_key, team_key, user_id }
 */
 
 export async function GET({ url, request }) {
   try {
-    const scouting_type = url.searchParams.get('scouting_type');
-    if(!scouting_type) return json({ error: 'scouting_type required' }, { status:400 });
-
-    // AuthN/Z (bypass on localhost)
-    const supa = getClientFromRequest(request);
-    const { actorId, profile } = await fetchActorProfile(supa);
-    const mine = !!url.searchParams.get('mine');
-    const reqUserId = url.searchParams.get('user_id') || null;
-    const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-
-    if (!isLocal) {
-      if (mine) {
-        // Allow without Authorization header; if Authorization present, it must match the requested user_id
-        if (!reqUserId) {
-          return json({ error: 'user_id required' }, { status: 400 });
-        }
-        if (actorId && reqUserId !== actorId) {
-          return json({ error: 'Forbidden' }, { status: 403 });
-        }
-      } else {
-        // Listing global assignments requires proper admin
-        if (!hasAdminForType(profile, scouting_type)) {
-          return json({ error: 'Forbidden' }, { status: 403 });
-        }
-      }
+    const scouting_type = String(url.searchParams.get('scouting_type') || '').toLowerCase();
+    if (!SCOUTING_TYPES.has(scouting_type)) {
+      return json({ error: 'scouting_type required (data|note)' }, { status: 400 });
     }
 
-    const base = supa
+    const authSupa = getClientFromRequest(request);
+    const db = getDbClient(authSupa);
+    const { actorId, profile } = await fetchActorProfile(authSupa);
+    const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+
+    if (!isLocal && !actorId) {
+      return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const rosterKeys = actorId ? await fetchRosterKeysForUser(db, actorId) : [];
+    const access = computeScoutingAccess(profile, rosterKeys);
+
+    if (url.searchParams.get('capabilities')) {
+      return json({
+        success: true,
+        data: {
+          can_view: true,
+          can_edit: canEditForType(access, scouting_type),
+          can_be_assigned: scouting_type === 'note' ? access.canAssignNote : access.canAssignData,
+          roster_keys: access.rosterKeys
+        }
+      });
+    }
+
+    if (url.searchParams.get('eligible')) {
+      if (!canEditForType(access, scouting_type)) {
+        return json({ error: 'Forbidden' }, { status: 403 });
+      }
+      const users = await listEligibleUsersForType(db, scouting_type);
+      return json({ success: true, data: users });
+    }
+
+    const mine = !!url.searchParams.get('mine');
+    const reqUserId = url.searchParams.get('user_id') || null;
+    const base = db
       .from('scout_match_assignments')
       .select('id, scouting_type, match_key, team_key, assigned_user, completed_at')
       .eq('scouting_type', scouting_type);
 
-    // My assignments view
-    if (url.searchParams.get('mine') && url.searchParams.get('user_id')) {
-      base.eq('assigned_user', url.searchParams.get('user_id'))
+    if (mine) {
+      if (!reqUserId) return json({ error: 'user_id required' }, { status: 400 });
+      if (!isLocal && reqUserId !== actorId) return json({ error: 'Forbidden' }, { status: 403 });
+      base
+        .eq('assigned_user', reqUserId)
         .order('completed_at', { ascending: true })
         .order('match_key', { ascending: true });
     } else {
-      base.limit(5000);
+      base.order('match_key', { ascending: true }).limit(5000);
     }
 
     const { data, error } = await base;
-    if (error) return json({ error: error.message }, { status:500 });
+    if (error) return json({ error: error.message }, { status: 500 });
 
-    // Build user name lookup without relying on a DB foreign key join
-    const ids = Array.from(new Set((data || []).map(r => r.assigned_user).filter(Boolean)));
-    let nameMap = {};
+    const ids = Array.from(new Set((data || []).map((r) => r.assigned_user).filter(Boolean)));
+    const nameMap = {};
+
     if (ids.length > 0) {
-      const { data: users, error: uErr } = await supa
+      const { data: users, error: uErr } = await db
         .from('user_profiles')
         .select('id, full_name, email')
         .in('id', ids);
+
       if (!uErr) {
         for (const u of users || []) {
           nameMap[u.id] = u.full_name || u.email || null;
@@ -108,48 +229,54 @@ export async function GET({ url, request }) {
       }
     }
 
-    const rows = (data || []).map(r => ({
+    const rows = (data || []).map((r) => ({
       id: r.id,
       scouting_type: r.scouting_type,
       match_key: r.match_key,
       team_key: r.team_key,
       assigned_user: r.assigned_user,
       completed_at: r.completed_at,
-      user_name: r.assigned_user ? (nameMap[r.assigned_user] ?? null) : null
+      user_name: r.assigned_user ? nameMap[r.assigned_user] ?? null : null
     }));
-    return json({ success:true, data: rows });
-  }catch(e){ return json({ error: e.message||'Internal error' }, { status:500 }); }
+
+    return json({ success: true, data: rows });
+  } catch (e) {
+    return json({ error: e.message || 'Internal error' }, { status: 500 });
+  }
 }
 
 export async function POST({ request, url }) {
   try {
     const body = await request.json();
     const action = body?.action;
-    const scouting_type = body?.scouting_type;
-    if(!scouting_type) return json({ error: 'scouting_type required' }, { status:400 });
+    const scouting_type = String(body?.scouting_type || '').toLowerCase();
+    if (!SCOUTING_TYPES.has(scouting_type)) {
+      return json({ error: 'scouting_type required (data|note)' }, { status: 400 });
+    }
 
-    // AuthN/Z (bypass on localhost)
-    const supa = getClientFromRequest(request);
-    const { actorId, profile } = await fetchActorProfile(supa);
+    const authSupa = getClientFromRequest(request);
+    const db = getDbClient(authSupa);
+    const { actorId, profile } = await fetchActorProfile(authSupa);
     const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    // Only admins for the scouting_type may modify assignments, except 'complete' which is restricted below
-    if (!isLocal && action !== 'complete' && !hasAdminForType(profile, scouting_type)) {
+
+    if (!isLocal && !actorId) {
+      return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const rosterKeys = actorId ? await fetchRosterKeysForUser(db, actorId) : [];
+    const access = computeScoutingAccess(profile, rosterKeys);
+
+    if (action !== 'complete' && !isLocal && !canEditForType(access, scouting_type)) {
       return json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    async function upsert(match_key, team_key, user_id){
-      // Try update then insert
-      let { error } = await supa
-        .from('scout_match_assignments')
-        .upsert({ scouting_type, match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' });
-      if(error) return { error };
-      return { success:true };
-    }
-
-    if(action === 'assign-single'){
+    if (action === 'assign-single') {
       const { match_key, team_key, user_id } = body;
-      if(!match_key || !team_key || !user_id) return json({ error: 'match_key, team_key, user_id required' }, { status:400 });
-      const { data: existing } = await supa
+      if (!match_key || !team_key || !user_id) {
+        return json({ error: 'match_key, team_key, user_id required' }, { status: 400 });
+      }
+
+      const { data: existing } = await db
         .from('scout_match_assignments')
         .select('id, assigned_user')
         .eq('scouting_type', scouting_type)
@@ -157,12 +284,14 @@ export async function POST({ request, url }) {
         .eq('team_key', team_key)
         .maybeSingle();
 
-      const { data: upserted, error } = await supa
+      const { data: upserted, error } = await db
         .from('scout_match_assignments')
         .upsert({ scouting_type, match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' })
         .select('id, assigned_user')
         .single();
-      if(error) return json({ error: error.message }, { status:500 });
+
+      if (error) return json({ error: error.message }, { status: 500 });
+
       if (upserted?.assigned_user && upserted.assigned_user !== existing?.assigned_user) {
         await notifyScoutAssignment({
           assignmentId: upserted.id,
@@ -172,64 +301,85 @@ export async function POST({ request, url }) {
           scoutingType: scouting_type
         });
       }
-      return json({ success:true });
+      return json({ success: true });
     }
 
-    if(action === 'assign-robot'){
+    if (action === 'assign-robot') {
       const { team_key, user_id } = body;
-      if(!team_key || !user_id) return json({ error: 'team_key, user_id required' }, { status:400 });
-      const { data: existingRows } = await supa
+      if (!team_key || !user_id) return json({ error: 'team_key, user_id required' }, { status: 400 });
+
+      const { data: existingRows } = await db
         .from('scout_match_assignments')
         .select('id, match_key, team_key, assigned_user')
         .eq('scouting_type', scouting_type)
         .eq('team_key', team_key);
+
       const prevMap = new Map((existingRows || []).map((row) => [`${row.match_key}:${row.team_key}`, row]));
-      // find all matches containing this team in existing rows OR accept client does not send matches (no strict enforcement)
-      // simplest: client must send match_key for single; here we just update all rows currently referencing team_key
-  const { data: existing, error: selErr } = await supa.from('scout_match_assignments').select('match_key').eq('scouting_type', scouting_type).eq('team_key', team_key);
-      if(selErr) return json({ error: selErr.message }, { status:500 });
-      for(const row of existing || []){
-        const { data: upserted, error } = await supa
+
+      const { data: existing, error: selErr } = await db
+        .from('scout_match_assignments')
+        .select('match_key')
+        .eq('scouting_type', scouting_type)
+        .eq('team_key', team_key);
+
+      if (selErr) return json({ error: selErr.message }, { status: 500 });
+
+      for (const row of existing || []) {
+        const { data: upserted, error } = await db
           .from('scout_match_assignments')
           .upsert({ scouting_type, match_key: row.match_key, team_key, assigned_user: user_id }, { onConflict: 'scouting_type,match_key,team_key' })
           .select('id, assigned_user')
           .single();
-        if(error) return json({ error: error.message }, { status:500 });
+
+        if (error) return json({ error: error.message }, { status: 500 });
+
         const prev = prevMap.get(`${row.match_key}:${team_key}`)?.assigned_user;
         if (upserted?.assigned_user && upserted.assigned_user !== prev) {
           await notifyScoutAssignment({
             assignmentId: upserted.id,
             userId: upserted.assigned_user,
             matchKey: row.match_key,
-            teamKey,
+            teamKey: team_key,
             scoutingType: scouting_type
           });
         }
       }
-      return json({ success:true });
+      return json({ success: true });
     }
 
-    if(action === 'bulk-assign'){
-      const items = Array.isArray(body.items)? body.items: [];
-      if(items.length===0) return json({ error: 'items required' }, { status:400 });
-      const rows = items.map(i => ({ scouting_type, match_key: i.match_key, team_key: i.team_key, assigned_user: i.user_id }));
-      const matchKeys = [...new Set(items.map(i => i.match_key))];
-      const teamKeys = [...new Set(items.map(i => i.team_key))];
+    if (action === 'bulk-assign') {
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (items.length === 0) return json({ error: 'items required' }, { status: 400 });
+
+      const rows = items.map((i) => ({
+        scouting_type,
+        match_key: i.match_key,
+        team_key: i.team_key,
+        assigned_user: i.user_id
+      }));
+
+      const matchKeys = [...new Set(items.map((i) => i.match_key))];
+      const teamKeys = [...new Set(items.map((i) => i.team_key))];
+
       let prevMap = new Map();
       if (matchKeys.length && teamKeys.length) {
-        const { data: existingRows } = await supa
+        const { data: existingRows } = await db
           .from('scout_match_assignments')
           .select('id, match_key, team_key, assigned_user')
           .eq('scouting_type', scouting_type)
           .in('match_key', matchKeys)
           .in('team_key', teamKeys);
-        prevMap = new Map((existingRows || []).map(row => [`${row.match_key}:${row.team_key}`, row]));
+
+        prevMap = new Map((existingRows || []).map((row) => [`${row.match_key}:${row.team_key}`, row]));
       }
-      const { data: updatedRows, error } = await supa
+
+      const { data: updatedRows, error } = await db
         .from('scout_match_assignments')
         .upsert(rows, { onConflict: 'scouting_type,match_key,team_key' })
         .select('id, match_key, team_key, assigned_user');
-      if(error) return json({ error: error.message }, { status:500 });
+
+      if (error) return json({ error: error.message }, { status: 500 });
+
       for (const row of updatedRows || []) {
         const prev = prevMap.get(`${row.match_key}:${row.team_key}`)?.assigned_user;
         if (row.assigned_user && row.assigned_user !== prev) {
@@ -242,34 +392,43 @@ export async function POST({ request, url }) {
           });
         }
       }
-      return json({ success:true });
+      return json({ success: true });
     }
 
-    if(action === 'complete') {
+    if (action === 'complete') {
       const { match_key, team_key, user_id } = body;
-      if(!match_key || !team_key || !user_id) return json({ error: 'match_key, team_key, user_id required' }, { status:400 });
-      // Only the signed-in assignee can complete (unless local bypass)
-      if (!isLocal && (!actorId || user_id !== actorId)) return json({ error: 'Forbidden' }, { status:403 });
-      // Ensure the row exists and belongs to user
-      const { data: row, error: rErr } = await supa
+      if (!match_key || !team_key || !user_id) {
+        return json({ error: 'match_key, team_key, user_id required' }, { status: 400 });
+      }
+
+      if (!isLocal && (!actorId || user_id !== actorId)) {
+        return json({ error: 'Forbidden' }, { status: 403 });
+      }
+
+      const { data: row, error: rErr } = await db
         .from('scout_match_assignments')
         .select('assigned_user')
         .eq('scouting_type', scouting_type)
         .eq('match_key', match_key)
         .eq('team_key', team_key)
         .single();
-      if(rErr) return json({ error: rErr.message }, { status:500 });
-      if(row.assigned_user !== user_id) return json({ error: 'Not owner' }, { status:403 });
-      const { error } = await supa
+
+      if (rErr) return json({ error: rErr.message }, { status: 500 });
+      if (row.assigned_user !== user_id) return json({ error: 'Not owner' }, { status: 403 });
+
+      const { error } = await db
         .from('scout_match_assignments')
         .update({ completed_at: new Date().toISOString() })
         .eq('scouting_type', scouting_type)
         .eq('match_key', match_key)
         .eq('team_key', team_key);
-      if(error) return json({ error: error.message }, { status:500 });
-      return json({ success:true });
+
+      if (error) return json({ error: error.message }, { status: 500 });
+      return json({ success: true });
     }
 
-    return json({ error: 'Invalid action' }, { status:400 });
-  }catch(e){ return json({ error: e.message||'Internal error' }, { status:500 }); }
+    return json({ error: 'Invalid action' }, { status: 400 });
+  } catch (e) {
+    return json({ error: e.message || 'Internal error' }, { status: 500 });
+  }
 }

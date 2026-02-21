@@ -2,15 +2,11 @@
   import { onMount } from "svelte";
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
-  import { hasPermission } from "$lib/permissions.js";
   import notescoutConfig from "$lib/notescout.json";
   import ScoutAssignmentPanel from "$lib/components/ScoutAssignmentPanel.svelte";
 
   let user;
   userStore.subscribe((v) => (user = v));
-  $: canSeeDataAssignments =
-    !!user &&
-    (user.role === "admin" || hasPermission(user, "DATA_SCOUT_ADMIN"));
 
   // Match / Team State
   let matches = [];
@@ -18,6 +14,7 @@
   let selectedMatchKey = "";
   let selectedMatch = null;
   let selectedTeam = "";
+  let allowAnyTeamOverride = false;
   let loadNote = "";
   let loadingMatches = false;
 
@@ -43,10 +40,14 @@
   let selectedTeamForView = "";
   let viewMode = "scout"; // scout | view
   let teamEvents = [];
+  // Assignment Logic
+  let myAssignments = [];
+  let nextAssignment = null;
 
   // Animation State
   let animatedBalls = [];
   let shootingTimer;
+  let lastAssignmentUserId = null;
 
   function handleButtonClick(e) {
     if (e.currentTarget) {
@@ -77,6 +78,14 @@
 
   function displayTeam(t) {
     return t ? String(t).replace(/^frc/i, "") : "";
+  }
+
+  async function authFetch(url, options = {}) {
+    const headers = {
+      ...(options.headers || {}),
+      ...(await getAuthHeader()),
+    };
+    return fetch(url, { ...options, headers });
   }
 
   async function fetchMatches() {
@@ -116,12 +125,40 @@
         ...(m.alliances?.red?.team_keys || []),
         ...(m.alliances?.blue?.team_keys || []),
       ];
-      selectedTeam = teamsCurrentMatch[0] || "";
+      allowAnyTeamOverride = false;
+      pickTeamForCurrentMatch();
     } else {
       teamsCurrentMatch = [];
       selectedTeam = "";
+      allowAnyTeamOverride = false;
     }
     resetSessionState();
+  }
+
+  function assignedTeamsForMatch(matchKey) {
+    if (!matchKey) return [];
+    return (myAssignments || [])
+      .filter((r) => r.match_key === matchKey && !r.completed_at)
+      .map((r) => r.team_key)
+      .filter(Boolean);
+  }
+
+  $: assignedTeamsCurrentMatch = assignedTeamsForMatch(selectedMatch?.key);
+
+  function pickTeamForCurrentMatch() {
+    if (!selectedMatch) {
+      selectedTeam = "";
+      return;
+    }
+    if (allowAnyTeamOverride || assignedTeamsCurrentMatch.length === 0) {
+      if (!teamsCurrentMatch.includes(selectedTeam)) {
+        selectedTeam = teamsCurrentMatch[0] || "";
+      }
+      return;
+    }
+    if (!assignedTeamsCurrentMatch.includes(selectedTeam)) {
+      selectedTeam = assignedTeamsCurrentMatch[0] || "";
+    }
   }
 
   function resetSessionState() {
@@ -159,7 +196,10 @@
     try {
       const res = await fetch("/datascout", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(await getAuthHeader()),
+        },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
@@ -200,7 +240,10 @@
       try {
         const res = await fetch("/datascout", {
           method: "DELETE",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(await getAuthHeader()),
+          },
           body: JSON.stringify({ id: lastEvent.id }),
         });
         const data = await res.json();
@@ -272,7 +315,30 @@
     await record("rank_speed", shootingSpeed);
     await record("rank_driving", drivingRank);
     await record("phase", "finish_match");
+    await completeAssignmentForCurrentTeam();
     phase = "finished";
+  }
+
+  async function completeAssignmentForCurrentTeam() {
+    if (!user?.id || !selectedMatch?.key || !selectedTeam) return;
+    const isMine = assignedTeamsCurrentMatch.includes(selectedTeam);
+    if (!isMine) return;
+    try {
+      await authFetch("/api/scout-assignments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "complete",
+          scouting_type: "data",
+          match_key: selectedMatch.key,
+          team_key: selectedTeam,
+          user_id: user.id,
+        }),
+      });
+      await loadMyAssignments();
+    } catch (e) {
+      console.error("Failed to mark assignment complete", e);
+    }
   }
 
   // Hold-to-record Handlers (Shooting, Climbing, Pick Up, Pushing)
@@ -323,7 +389,7 @@
   // Viewing Data
   async function loadTeamsWithData() {
     try {
-      const res = await fetch("/datascout?list_teams=1");
+      const res = await authFetch("/datascout?list_teams=1");
       const data = await res.json();
       if (data?.success) {
         teamsWithData = data.data || [];
@@ -333,7 +399,7 @@
   async function viewTeamEvents() {
     if (!selectedTeamForView) return;
     viewMode = "view";
-    const res = await fetch(
+    const res = await authFetch(
       "/datascout?team_key=" + encodeURIComponent(selectedTeamForView),
     );
     const data = await res.json();
@@ -345,9 +411,6 @@
     viewMode = "scout";
   }
 
-  // Assignment Logic
-  let myAssignments = [];
-  let nextAssignment = null;
   async function loadMyAssignments() {
     if (!user?.id) return;
     try {
@@ -358,7 +421,10 @@
       const js = await res.json();
       if (js?.success) {
         myAssignments = (js.data || []).filter((r) => !r.completed_at);
-        nextAssignment = myAssignments[0] || null;
+        nextAssignment = [...myAssignments].sort((a, b) =>
+          String(a.match_key || "").localeCompare(String(b.match_key || "")),
+        )[0] || null;
+        pickTeamForCurrentMatch();
       }
     } catch (e) {}
   }
@@ -367,24 +433,29 @@
     selectedMatchKey = nextAssignment.match_key;
     onSelectMatchByKey();
     selectedTeam = nextAssignment.team_key;
+    allowAnyTeamOverride = false;
   }
 
   onMount(() => {
     fetchMatches();
     loadTeamsWithData();
-    loadMyAssignments();
   });
+
+  $: if (user?.id && user.id !== lastAssignmentUserId) {
+    lastAssignmentUserId = user.id;
+    loadMyAssignments();
+  }
+
+  $: if (selectedMatch) {
+    pickTeamForCurrentMatch();
+  }
 </script>
 
 <svelte:window on:contextmenu|preventDefault />
 
-{#if canSeeDataAssignments}
-  <ScoutAssignmentPanel
-    scoutingType="data"
-    permissionAdmin="DATA_SCOUT_ADMIN"
-    memberPerm="DATA_SCOUT_MEMBER"
-  />
-{/if}
+<ScoutAssignmentPanel
+  scoutingType="data"
+/>
 
 <!-- Header -->
 <div class="page-header card">
@@ -489,12 +560,25 @@
         </div>
         <div class="info-block" style="flex-grow:1">
           <span class="label" for="teamScout">Team</span>
+          {#if assignedTeamsCurrentMatch.length > 0}
+            <div class="assignment-team-tools">
+              <label class="assignment-toggle">
+                <input type="checkbox" bind:checked={allowAnyTeamOverride} />
+                <span>Override my assignment</span>
+              </label>
+              <span class="assignment-note">
+                Assigned: {assignedTeamsCurrentMatch.map(displayTeam).join(", ")}
+              </span>
+            </div>
+          {/if}
           <select
             id="teamScout"
             class="form-select large"
             bind:value={selectedTeam}
           >
-            {#each teamsCurrentMatch as t}<option value={t}
+            {#each (allowAnyTeamOverride || assignedTeamsCurrentMatch.length === 0
+              ? teamsCurrentMatch
+              : assignedTeamsCurrentMatch) as t}<option value={t}
                 >{displayTeam(t)}</option
               >{/each}
           </select>
@@ -1016,6 +1100,25 @@
     display: flex;
     flex-direction: column;
     gap: 0.1rem;
+  }
+  .assignment-team-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
+    align-items: center;
+  }
+  .assignment-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    color: var(--scout-secondary);
+    font-weight: 600;
+  }
+  .assignment-note {
+    font-size: 0.7rem;
+    color: var(--scout-secondary);
   }
   .row {
     display: flex;
