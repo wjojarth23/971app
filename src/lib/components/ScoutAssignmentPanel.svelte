@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { userStore } from '$lib/stores/auth.js';
   import { getAuthHeader } from '$lib/supabase.js';
-  import notescoutConfig from '$lib/notescout.json';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
 
   let user;
   userStore.subscribe((v) => (user = v));
@@ -11,6 +11,7 @@
 
   let panelOpen = false;
   let matches = []; // { key, red:[], blue:[] }
+  let eventKey = '';
   let assignments = {}; // match_key -> team_key -> { user_id, user_name }
   let users = []; // eligible assignees
   let loading = false;
@@ -73,7 +74,8 @@
   }
 
   async function loadMatches() {
-    if (!notescoutConfig?.event_key) {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    if (!eventKey) {
       errorMsg = 'No event configured';
       return;
     }
@@ -82,7 +84,7 @@
       loading = true;
       errorMsg = '';
       const res = await fetch(
-        `/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`
+        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`
       );
 
       let data;
@@ -300,7 +302,7 @@
     </div>
 
     {#if errorMsg}
-      <div class="note" style="margin-bottom:0.5rem">{errorMsg}</div>
+      <div class="error-note">{errorMsg}</div>
     {/if}
 
     <div class="scroll-x">
@@ -362,7 +364,7 @@
           <option value={u.id}>{u.full_name || u.email}</option>
         {/each}
       </select>
-      <div class="btn-row" style="margin-top:0.75rem">
+      <div class="btn-row modal-actions">
         <button class="btn btn-primary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
         <button class="btn btn-secondary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
         <button class="btn btn-outline" on:click={() => {
@@ -375,9 +377,8 @@
 
 <style>
   .assignment-accordion {
-    margin-bottom: var(--space-3);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--surface-1);
     overflow: hidden;
   }
@@ -389,8 +390,11 @@
     align-items: center;
     gap: var(--gap-2);
     cursor: pointer;
-    padding: var(--space-3);
+    padding: var(--space-3) var(--space-4);
     font-weight: 600;
+  }
+
+  .assignment-accordion[open] .summary-row {
     border-bottom: 1px solid var(--border);
   }
 
@@ -410,8 +414,8 @@
   .mode-pill {
     font-size: var(--font-xs);
     border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.15rem 0.5rem;
+    border-radius: var(--radius-full);
+    padding: var(--space-1) var(--space-2);
     color: var(--text-muted);
     background: var(--surface-2);
   }
@@ -423,7 +427,10 @@
   }
 
   .panel-body {
-    padding: var(--space-3);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-3);
   }
 
   .panel-header {
@@ -431,13 +438,22 @@
     justify-content: space-between;
     align-items: center;
     gap: var(--gap-2);
-    margin-bottom: var(--space-2);
     flex-wrap: wrap;
   }
 
   .hint {
     color: var(--text-muted);
     font-size: var(--font-xs);
+  }
+
+  .error-note {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--red-base);
+    background: var(--red-soft);
+    color: var(--red-strong);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-xs);
+    line-height: 1.4;
   }
 
   .actions {
@@ -453,7 +469,7 @@
 
   .assignment-table th,
   .assignment-table td {
-    padding: var(--space-1);
+    padding: var(--space-1) var(--space-2);
     font-size: var(--font-xs);
     text-align: center;
     background: var(--color-white);
@@ -462,7 +478,7 @@
   }
 
   .assignment-table th.alliance {
-    font-size: 0.7rem;
+    font-size: var(--font-xs);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -480,38 +496,43 @@
   }
 
   .assignment-table .scout {
-    font-size: 0.65rem;
+    font-size: var(--font-xs);
     margin-top: var(--space-1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100px;
   }
 
   .editable-cell {
     cursor: pointer;
+    transition: background 0.15s ease;
   }
 
   .editable-cell:hover {
-    filter: brightness(0.98);
+    filter: brightness(0.95);
   }
 
   .scroll-x {
     overflow-x: auto;
   }
 
+  .modal-actions {
+    margin-top: var(--space-3);
+  }
+
   @media (max-width: 768px) {
     .summary-row {
-      padding: var(--space-2);
+      padding: var(--space-2) var(--space-3);
     }
 
     .panel-body {
-      padding: var(--space-2);
+      padding: var(--space-3);
     }
 
     .assignment-table th,
     .assignment-table td {
       min-width: 56px;
-      font-size: 0.7rem;
     }
   }
 </style>

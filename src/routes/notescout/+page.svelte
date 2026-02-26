@@ -2,11 +2,9 @@
   import { onMount } from 'svelte';
   import { getAuthHeader } from '$lib/supabase.js';
   import { userStore } from '$lib/stores/auth.js';
-  import notescoutConfig from '$lib/notescout.json';
-  import ScoutAssignmentPanel from '$lib/components/ScoutAssignmentPanel.svelte';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   let user;
   userStore.subscribe((v) => (user = v));
-  let lastAssignmentUserId = null;
 
   let matches = [];
   let noteText = '';
@@ -20,9 +18,7 @@
   let teamNotes = [];
   let saving = false;
   let apiNote = '';
-  // assignment awareness
-  let myAssignments = [];
-  let nextAssignment = null;
+  let eventKey = '';
 
   async function authFetch(url, options = {}) {
     const headers = {
@@ -32,21 +28,6 @@
     return fetch(url, { ...options, headers });
   }
 
-  async function loadMyAssignments(){
-    if(!user?.id) return;
-    try{
-      const res = await authFetch(`/api/scout-assignments?scouting_type=note&mine=1&user_id=${encodeURIComponent(user.id)}`);
-      const js = await res.json();
-      if(js?.success){
-        myAssignments = (js.data||[]).filter(r=> !r.completed_at);
-        nextAssignment = [...myAssignments].sort((a, b) =>
-          String(a.match_key || '').localeCompare(String(b.match_key || ''))
-        )[0] || null;
-      }
-    }catch(e){ /* ignore */ }
-  }
-  function gotoNextAssignment(){ if(!nextAssignment) return; selectedMatchKey = nextAssignment.match_key; onSelectMatchByKey(); selectedTeam = nextAssignment.team_key; }
-
   function displayTeam(t) {
     if (!t) return '';
     return String(t).replace(/^frc/i, '');
@@ -55,13 +36,14 @@
   // Load qualification matches via server proxy to The Blue Alliance
   async function loadMatches() {
     apiNote = '';
-    if (!notescoutConfig?.event_key) {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    if (!eventKey) {
       apiNote = 'No event configured for Note Scouting.';
       matches = [];
       return;
     }
     try {
-      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`);
+      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`);
       let data;
       try { data = await res.json(); } catch(parseErr){
         const text = await res.text();
@@ -153,18 +135,14 @@
     }
   }
 
-  onMount(() => { loadMatches(); loadTeamsWithNotes(); loadMyAssignments(); });
-  $: if (user?.id && user.id !== lastAssignmentUserId) {
-    lastAssignmentUserId = user.id;
-    loadMyAssignments();
-  }
+  onMount(() => { loadMatches(); loadTeamsWithNotes(); });
 </script>
 
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Note Scouting</h2>
-    {#if notescoutConfig?.event_key}
-      <div class="form-label" style="margin-top:0.25rem">Event: {notescoutConfig.event_key}</div>
+    {#if eventKey}
+      <div class="form-label" style="margin-top:0.25rem">Event: {eventKey}</div>
     {/if}
     {#if apiNote}
       <div class="note" style="margin-top:0.5rem">{apiNote}</div>
@@ -172,12 +150,6 @@
   </div>
 
   <div class="page-actions">
-    {#if nextAssignment}
-      <div class="form-group" style="min-width:140px">
-        <div class="form-label">Next Up</div>
-        <button class="btn btn-primary" style="width:100%" on:click={gotoNextAssignment}>Match {nextAssignment.match_key.split('_').pop()}</button>
-      </div>
-    {/if}
     <div class="form-group" style="min-width:220px">
       <label class="form-label" for="matchSelect">Match</label>
       <select class="form-select" id="matchSelect" bind:value={selectedMatchKey} on:change={onSelectMatchByKey}>
@@ -259,8 +231,6 @@
     {/if}
   </div>
 </div>
-
-<ScoutAssignmentPanel scoutingType="note" />
 
 <style>
   /* Uses global .empty */

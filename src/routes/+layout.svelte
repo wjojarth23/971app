@@ -3,9 +3,9 @@
   import { onMount } from 'svelte';
   import { initAuth, user as authUserStore, userStore, signOut } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
-  import notescoutConfig from '$lib/notescout.json';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -16,6 +16,7 @@
   let profile = null;
   let lastProfile = null;
   let mobileMenuOpen = false;
+  let scoutingEventKey = '';
   $: activeProfile = profile ?? lastProfile;
   
   // Check if user is approved (has CAN_SEE_ROUTES permission)
@@ -82,6 +83,9 @@
         void checkAttendance(v);
       }
     });
+    void fetchActiveScoutingEventKey().then((k) => {
+      scoutingEventKey = k || '';
+    });
     const uninit = initAuth();
     return () => { unsubAuth?.(); unsubProfile?.(); uninit?.(); };
   });
@@ -105,6 +109,14 @@
     });
   }
 
+  function canRenderTabKey(key) {
+    const normalized = String(key || '').toLowerCase();
+    if (normalized === 'scouting-admin' || normalized === 'scoutingadmin') {
+      return activeProfile?.team_role === 'Competition Lead';
+    }
+    return true;
+  }
+
   // Map known tab keys to routes (extend as needed)
   function routeForKey(key) {
     switch (key) {
@@ -115,6 +127,9 @@
       case 'purchasing': return '/cad/purchasing';
       case 'notescout': return '/notescout';
       case 'datascout': return '/datascout';
+      case 'pitscout': return '/pitscout';
+      case 'scouting-admin': return '/scouting-admin';
+      case 'scoutingadmin': return '/scouting-admin';
       case 'home': return '/';
       case 'profile': return '/profile';
       default: return '/' + key;
@@ -130,6 +145,9 @@
     purchasing: Receipt,
     notescout: Coins,
     datascout: Coins,
+    pitscout: Camera,
+    scoutingadmin: Briefcase,
+    'scouting-admin': Briefcase,
     home: Home,
     profile: User
   };
@@ -216,7 +234,7 @@
                   </button>
                   <div class="folder-menu">
                     {#each item.children ?? [] as child}
-                      {#if child.key || child.label}
+                      {#if (child.key || child.label) && canRenderTabKey(child.key ?? inferKey(child))}
                         <a href={routeForKey(child.key ?? inferKey(child))} class="nav-link">
                           <svelte:component this={iconMap[child.key ?? inferKey(child)] ?? Home} size={18} />
                           {displayLabel(child)}
@@ -228,10 +246,12 @@
                   </div>
                 </div>
               {:else}
-                <a href={routeForKey(item.key ?? inferKey(item))} class="nav-link" class:active={isActive(routeForKey(item.key ?? inferKey(item)))}>
-                  <svelte:component this={iconMap[item.key ?? inferKey(item)] ?? Home} size={18} />
-                  {displayLabel(item)}
-                </a>
+                {#if canRenderTabKey(item.key ?? inferKey(item))}
+                  <a href={routeForKey(item.key ?? inferKey(item))} class="nav-link" class:active={isActive(routeForKey(item.key ?? inferKey(item)))}>
+                    <svelte:component this={iconMap[item.key ?? inferKey(item)] ?? Home} size={18} />
+                    {displayLabel(item)}
+                  </a>
+                {/if}
               {/if}
             {/each}
           {:else}
@@ -262,15 +282,31 @@
               <Receipt size={18} />
               Purchasing
             </a>
-            {#if notescoutConfig?.event_key}
-              <a href="/notescout" class="nav-link" class:active={isActive('/notescout')}>
-                <svelte:component this={iconMap['notescout'] ?? Coins} size={18} />
-                Note Scouting
-              </a>
-              <a href="/datascout" class="nav-link" class:active={isActive('/datascout')}>
-                <svelte:component this={iconMap['datascout'] ?? Coins} size={18} />
-                Data Scouting
-              </a>
+            {#if scoutingEventKey}
+              {#if navConfig?.tabs?.notescout !== false}
+                <a href="/notescout" class="nav-link" class:active={isActive('/notescout')}>
+                  <svelte:component this={iconMap['notescout'] ?? Coins} size={18} />
+                  Note Scouting
+                </a>
+              {/if}
+              {#if navConfig?.tabs?.datascout !== false}
+                <a href="/datascout" class="nav-link" class:active={isActive('/datascout')}>
+                  <svelte:component this={iconMap['datascout'] ?? Coins} size={18} />
+                  Data Scouting
+                </a>
+              {/if}
+              {#if navConfig?.tabs?.pitscout !== false}
+                <a href="/pitscout" class="nav-link" class:active={isActive('/pitscout')}>
+                  <svelte:component this={iconMap['pitscout'] ?? Camera} size={18} />
+                  Pit Scouting
+                </a>
+              {/if}
+              {#if activeProfile?.team_role === 'Competition Lead'}
+                <a href="/scouting-admin" class="nav-link" class:active={isActive('/scouting-admin')}>
+                  <svelte:component this={iconMap['scouting-admin'] ?? Briefcase} size={18} />
+                  Scouting Admin
+                </a>
+              {/if}
             {/if}
           {/if}
 

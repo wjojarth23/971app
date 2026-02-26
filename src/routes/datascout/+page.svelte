@@ -2,8 +2,7 @@
   import { onMount } from "svelte";
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
-  import notescoutConfig from "$lib/notescout.json";
-  import ScoutAssignmentPanel from "$lib/components/ScoutAssignmentPanel.svelte";
+  import { fetchActiveScoutingEventKey } from "$lib/scoutingEvent.js";
 
   let user;
   userStore.subscribe((v) => (user = v));
@@ -14,9 +13,9 @@
   let selectedMatchKey = "";
   let selectedMatch = null;
   let selectedTeam = "";
-  let allowAnyTeamOverride = false;
   let loadNote = "";
   let loadingMatches = false;
+  let eventKey = "";
 
   // Session State
   let phase = "pre"; // pre, auto, teleop, endgame, finished
@@ -40,14 +39,10 @@
   let selectedTeamForView = "";
   let viewMode = "scout"; // scout | view
   let teamEvents = [];
-  // Assignment Logic
-  let myAssignments = [];
-  let nextAssignment = null;
 
   // Animation State
   let animatedBalls = [];
   let shootingTimer;
-  let lastAssignmentUserId = null;
 
   function handleButtonClick(e) {
     if (e.currentTarget) {
@@ -90,14 +85,15 @@
 
   async function fetchMatches() {
     loadNote = "";
-    if (!notescoutConfig?.event_key) {
+    eventKey = (await fetchActiveScoutingEventKey()) || "";
+    if (!eventKey) {
       loadNote = "No event configured.";
       return;
     }
     loadingMatches = true;
     try {
       const res = await fetch(
-        `/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`,
+        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`,
       );
       if (!res.ok) {
         const js = await res.json().catch(() => null);
@@ -125,40 +121,12 @@
         ...(m.alliances?.red?.team_keys || []),
         ...(m.alliances?.blue?.team_keys || []),
       ];
-      allowAnyTeamOverride = false;
-      pickTeamForCurrentMatch();
+      selectedTeam = teamsCurrentMatch[0] || "";
     } else {
       teamsCurrentMatch = [];
       selectedTeam = "";
-      allowAnyTeamOverride = false;
     }
     resetSessionState();
-  }
-
-  function assignedTeamsForMatch(matchKey) {
-    if (!matchKey) return [];
-    return (myAssignments || [])
-      .filter((r) => r.match_key === matchKey && !r.completed_at)
-      .map((r) => r.team_key)
-      .filter(Boolean);
-  }
-
-  $: assignedTeamsCurrentMatch = assignedTeamsForMatch(selectedMatch?.key);
-
-  function pickTeamForCurrentMatch() {
-    if (!selectedMatch) {
-      selectedTeam = "";
-      return;
-    }
-    if (allowAnyTeamOverride || assignedTeamsCurrentMatch.length === 0) {
-      if (!teamsCurrentMatch.includes(selectedTeam)) {
-        selectedTeam = teamsCurrentMatch[0] || "";
-      }
-      return;
-    }
-    if (!assignedTeamsCurrentMatch.includes(selectedTeam)) {
-      selectedTeam = assignedTeamsCurrentMatch[0] || "";
-    }
   }
 
   function resetSessionState() {
@@ -315,30 +283,7 @@
     await record("rank_speed", shootingSpeed);
     await record("rank_driving", drivingRank);
     await record("phase", "finish_match");
-    await completeAssignmentForCurrentTeam();
     phase = "finished";
-  }
-
-  async function completeAssignmentForCurrentTeam() {
-    if (!user?.id || !selectedMatch?.key || !selectedTeam) return;
-    const isMine = assignedTeamsCurrentMatch.includes(selectedTeam);
-    if (!isMine) return;
-    try {
-      await authFetch("/api/scout-assignments", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: "complete",
-          scouting_type: "data",
-          match_key: selectedMatch.key,
-          team_key: selectedTeam,
-          user_id: user.id,
-        }),
-      });
-      await loadMyAssignments();
-    } catch (e) {
-      console.error("Failed to mark assignment complete", e);
-    }
   }
 
   // Hold-to-record Handlers (Shooting, Climbing, Pick Up, Pushing)
@@ -411,72 +356,25 @@
     viewMode = "scout";
   }
 
-  async function loadMyAssignments() {
-    if (!user?.id) return;
-    try {
-      const res = await fetch(
-        `/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`,
-        { headers: await getAuthHeader() },
-      );
-      const js = await res.json();
-      if (js?.success) {
-        myAssignments = (js.data || []).filter((r) => !r.completed_at);
-        nextAssignment = [...myAssignments].sort((a, b) =>
-          String(a.match_key || "").localeCompare(String(b.match_key || "")),
-        )[0] || null;
-        pickTeamForCurrentMatch();
-      }
-    } catch (e) {}
-  }
-  function gotoNextAssignment() {
-    if (!nextAssignment) return;
-    selectedMatchKey = nextAssignment.match_key;
-    onSelectMatchByKey();
-    selectedTeam = nextAssignment.team_key;
-    allowAnyTeamOverride = false;
-  }
-
   onMount(() => {
     fetchMatches();
     loadTeamsWithData();
   });
-
-  $: if (user?.id && user.id !== lastAssignmentUserId) {
-    lastAssignmentUserId = user.id;
-    loadMyAssignments();
-  }
-
-  $: if (selectedMatch) {
-    pickTeamForCurrentMatch();
-  }
 </script>
 
 <svelte:window on:contextmenu|preventDefault />
-
-<ScoutAssignmentPanel
-  scoutingType="data"
-/>
 
 <!-- Header -->
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Data Scouting</h2>
-    {#if notescoutConfig?.event_key}
-      <div class="sub-label">{notescoutConfig.event_key}</div>
+    {#if eventKey}
+      <div class="sub-label">{eventKey}</div>
     {/if}
     {#if loadNote}<div class="note">{loadNote}</div>{/if}
   </div>
 
   <div class="page-actions">
-    {#if nextAssignment}
-      <div class="form-group next-up">
-        <div class="form-label">Next Up</div>
-        <button class="btn btn-primary" on:click={gotoNextAssignment}
-          >Match {nextAssignment.match_key.split("_").pop()}</button
-        >
-      </div>
-    {/if}
-
     <div class="form-group match-select">
       <span class="label" for="matchSelect">Match</span>
       <select
@@ -560,25 +458,12 @@
         </div>
         <div class="info-block" style="flex-grow:1">
           <span class="label" for="teamScout">Team</span>
-          {#if assignedTeamsCurrentMatch.length > 0}
-            <div class="assignment-team-tools">
-              <label class="assignment-toggle">
-                <input type="checkbox" bind:checked={allowAnyTeamOverride} />
-                <span>Override my assignment</span>
-              </label>
-              <span class="assignment-note">
-                Assigned: {assignedTeamsCurrentMatch.map(displayTeam).join(", ")}
-              </span>
-            </div>
-          {/if}
           <select
             id="teamScout"
             class="form-select large"
             bind:value={selectedTeam}
           >
-            {#each (allowAnyTeamOverride || assignedTeamsCurrentMatch.length === 0
-              ? teamsCurrentMatch
-              : assignedTeamsCurrentMatch) as t}<option value={t}
+            {#each teamsCurrentMatch as t}<option value={t}
                 >{displayTeam(t)}</option
               >{/each}
           </select>

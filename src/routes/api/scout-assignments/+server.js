@@ -39,14 +39,15 @@ function computeScoutingAccess(profile, rosterKeys) {
   const perms = new Set(normalizePerms(profile?.permissions));
   const keys = keySet(rosterKeys);
   const isAdmin = profile?.role === 'admin';
+  const isCompetitionLead = String(profile?.team_role || '').trim().toLowerCase() === 'competition lead';
 
   const hasDataLeadKey = keys.has('data scout lead') || keys.has('scouting lead');
   const hasNoteLeadKey = keys.has('note scout lead') || hasDataLeadKey;
   const hasDataMemberKey = keys.has('data scout member') || hasDataLeadKey;
   const hasNoteMemberKey = keys.has('note scout member') || hasDataMemberKey || hasNoteLeadKey;
 
-  const canEditData = isAdmin || perms.has('DATA_SCOUT_ADMIN') || hasDataLeadKey;
-  const canEditNote = isAdmin || perms.has('NOTE_SCOUT_ADMIN') || hasNoteLeadKey;
+  const canEditData = isAdmin || isCompetitionLead || perms.has('DATA_SCOUT_ADMIN') || hasDataLeadKey;
+  const canEditNote = isAdmin || isCompetitionLead || perms.has('NOTE_SCOUT_ADMIN') || hasNoteLeadKey;
 
   return {
     canEditData,
@@ -83,7 +84,7 @@ async function fetchActorProfile(supa) {
 
   const { data: profileRow } = await supa
     .from('user_profiles')
-    .select('id, role, permissions')
+    .select('id, role, permissions, team_role')
     .eq('id', actorId)
     .single();
 
@@ -92,7 +93,8 @@ async function fetchActorProfile(supa) {
     profile: {
       id: actorId,
       role: profileRow?.role || 'member',
-      permissions: normalizePerms(profileRow?.permissions)
+      permissions: normalizePerms(profileRow?.permissions),
+      team_role: profileRow?.team_role || null
     }
   };
 }

@@ -6,6 +6,8 @@
     "cad": true,
     "purchasing": true,
     "notescout": true,
-    "datascout": true
+    "datascout": true,
+    "pitscout": true,
+    "scouting-admin": true
   }
 }

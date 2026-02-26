@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { Home, Hammer, Package, Move3d, Wrench, Receipt, Coins, User, Briefcase, ChevronDown } from 'lucide-svelte';
+  import { Home, Hammer, Package, Move3d, Wrench, Receipt, Coins, User, Briefcase, ChevronDown, Camera } from 'lucide-svelte';
   
   export let header_tabs = [];
   const dispatch = createEventDispatcher();
@@ -14,6 +14,9 @@
     purchasing: Receipt,
     notescout: Coins,
     datascout: Coins,
+    pitscout: Camera,
+    'scouting-admin': Briefcase,
+    scoutingadmin: Briefcase,
     home: Home,
     profile: User,
     admin: Briefcase
