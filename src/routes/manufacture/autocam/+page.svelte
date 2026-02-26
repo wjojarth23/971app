@@ -563,4 +563,22 @@
     color: var(--text-secondary);
     font-style: italic;
   }
+
+  @media (max-width: 768px) {
+    .card-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+
+    .profile-header {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .stock-buttons {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
 </style>

@@ -496,4 +496,36 @@
     gap: 0.5rem;
     padding: 0.35rem 0;
   }
+
+  @media (max-width: 768px) {
+    .page-actions {
+      width: 100%;
+    }
+
+    .page-actions > .card {
+      flex: 1 1 140px;
+      min-width: 0 !important;
+    }
+
+    .team-row {
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+
+    .photo-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 480px) {
+    .photo-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .pending-file-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
 </style>

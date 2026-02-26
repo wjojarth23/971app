@@ -112,8 +112,39 @@
       </tbody>
     </table>
   </div>
+
+  <div class="mobile-completed-list">
+    {#each filteredParts as part (part.id)}
+      <div class="card mobile-completed-card">
+        <div><strong>{part.name}</strong></div>
+        <div class="text-muted">{part.workflow}</div>
+        <div class="mono">{part.project_id}</div>
+        <div>Qty: {part.quantity || 1}</div>
+        <div>{part.kitting_bin ? part.kitting_bin : (part.delivered ? 'Delivered' : '-')}</div>
+        <div>{formatDate(part.updated_at || part.created_at)}</div>
+      </div>
+    {/each}
+  </div>
 {/if}
 
 <style>
-  /* Uses global .subtabs and .mono */
+  .mobile-completed-list {
+    display: none;
+  }
+
+  .mobile-completed-card {
+    display: grid;
+    gap: var(--gap-1);
+  }
+
+  @media (max-width: 768px) {
+    .table-container {
+      display: none;
+    }
+
+    .mobile-completed-list {
+      display: grid;
+      gap: var(--gap-3);
+    }
+  }
 </style>

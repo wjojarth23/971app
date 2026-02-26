@@ -275,4 +275,20 @@
   .redirect-container { text-align: center; padding: var(--space-8); }
   .redirect-container h2 { color: var(--text); margin-bottom: var(--space-4); }
   .redirect-container p { color: var(--text-secondary); margin-bottom: var(--space-7); }
+
+  @media (max-width: 768px) {
+    .bom-page {
+      padding: var(--space-4);
+    }
+
+    .redirect-container {
+      padding: var(--space-6) var(--space-3);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .bom-page {
+      padding: var(--space-3);
+    }
+  }
 </style>
