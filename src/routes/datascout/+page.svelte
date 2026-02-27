@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
   import { fetchActiveScoutingEventKey } from "$lib/scoutingEvent.js";
@@ -20,10 +20,16 @@
   // Session State
   let phase = "pre"; // pre, auto, teleop, endgame, finished
   let startPosition = ""; // center, left, right
+  let autoWinner = ""; // red, blue
+  let autoClimbPos = "N/A"; // N/A, L1, Failed
 
   // Teleop Specific State
   let currentRole = "Scoring";
   let shiftOn = true;
+  let teleopTimeRemaining = 0;
+  let teleopTimerInterval;
+  let currentShiftName = "";
+  let timeUntilNextShift = 0;
 
   // Endgame State
   let finalClimbPos = "N/A";
@@ -69,7 +75,7 @@
   }
 
   const ROLES = ["Scoring", "Shuttling", "Defense", "Counter Defense", "Dead"];
-  const CLIMB_POSITIONS = ["N/A", "L1", "L2", "L3"];
+  const CLIMB_POSITIONS = ["N/A", "L1", "L2", "L3", "Failed"];
 
   function displayTeam(t) {
     return t ? String(t).replace(/^frc/i, "") : "";
@@ -132,6 +138,7 @@
   function resetSessionState() {
     phase = "pre";
     startPosition = "";
+    autoWinner = "";
     currentRole = "Scoring";
     shiftOn = true;
     finalClimbPos = "N/A";
@@ -139,6 +146,11 @@
     shootingSpeed = 5;
     drivingRank = 3;
     scoutingEvents = [];
+    clearInterval(teleopTimerInterval);
+    teleopTimeRemaining = 0;
+    currentShiftName = "";
+    timeUntilNextShift = 0;
+    autoClimbPos = "N/A";
   }
 
   async function record(event_type, event_value) {
@@ -200,8 +212,10 @@
     // Phase Reversion Logic
     if (lastEvent.event_type === "phase") {
       if (lastEvent.event_value === "begin_auto") phase = "pre";
-      else if (lastEvent.event_value === "end_auto") phase = "auto";
-      else if (lastEvent.event_value === "finish_match") phase = "teleop";
+      else if (lastEvent.event_value === "end_auto") {
+        phase = "auto";
+        clearInterval(teleopTimerInterval);
+      } else if (lastEvent.event_value === "finish_match") phase = "teleop";
     }
 
     if (lastEvent.id) {
@@ -266,11 +280,102 @@
     phase = "auto";
     record("phase", "begin_auto");
   }
+  function getTeamAlliance(teamKey) {
+    if (!selectedMatch) return null;
+    if (selectedMatch.alliances?.red?.team_keys?.includes(teamKey))
+      return "red";
+    if (selectedMatch.alliances?.blue?.team_keys?.includes(teamKey))
+      return "blue";
+    return null;
+  }
+
+  function updateShift() {
+    if (phase !== "teleop") return;
+    const teamAlliance = getTeamAlliance(selectedTeam);
+    if (!teamAlliance) return;
+
+    let shiftName = "";
+    let shouldBeOnShift = false;
+    let nextBoundary = 0;
+
+    const isAutoLoser = teamAlliance !== autoWinner;
+
+    if (isAutoLoser) {
+      if (teleopTimeRemaining > 102) {
+        shiftName = "Transition Shift + Shift 1";
+        shouldBeOnShift = true;
+        nextBoundary = 102;
+      } else if (teleopTimeRemaining > 80) {
+        shiftName = "Shift 2";
+        shouldBeOnShift = false;
+        nextBoundary = 80;
+      } else if (teleopTimeRemaining > 52) {
+        shiftName = "Shift 3";
+        shouldBeOnShift = true;
+        nextBoundary = 52;
+      } else if (teleopTimeRemaining > 30) {
+        shiftName = "Shift 4";
+        shouldBeOnShift = false;
+        nextBoundary = 30;
+      } else {
+        shiftName = "Endgame";
+        shouldBeOnShift = true;
+        nextBoundary = 0;
+      }
+    } else {
+      if (teleopTimeRemaining > 127) {
+        shiftName = "Transition Shift";
+        shouldBeOnShift = true;
+        nextBoundary = 127;
+      } else if (teleopTimeRemaining > 105) {
+        shiftName = "Shift 1";
+        shouldBeOnShift = false;
+        nextBoundary = 105;
+      } else if (teleopTimeRemaining > 77) {
+        shiftName = "Shift 2";
+        shouldBeOnShift = true;
+        nextBoundary = 77;
+      } else if (teleopTimeRemaining > 55) {
+        shiftName = "Shift 3";
+        shouldBeOnShift = false;
+        nextBoundary = 55;
+      } else {
+        shiftName = "Shift 4 + Endgame";
+        shouldBeOnShift = true;
+        nextBoundary = 0;
+      }
+    }
+
+    currentShiftName = shiftName;
+    timeUntilNextShift = teleopTimeRemaining - nextBoundary;
+
+    if (shiftOn !== shouldBeOnShift) {
+      shiftOn = shouldBeOnShift;
+      record("shift_update", String(shouldBeOnShift));
+    }
+  }
+
   function endAuto() {
     phase = "teleop";
     record("phase", "end_auto");
+    record("auto_climb_pos", autoClimbPos);
     record("role_update", currentRole);
-    record("shift_update", String(shiftOn));
+
+    teleopTimeRemaining = 140;
+    updateShift(); // Initial shift set
+    clearInterval(teleopTimerInterval);
+    teleopTimerInterval = setInterval(() => {
+      if (phase !== "teleop") {
+        clearInterval(teleopTimerInterval);
+        return;
+      }
+      teleopTimeRemaining--;
+      if (teleopTimeRemaining <= 0) {
+        teleopTimeRemaining = 0;
+        clearInterval(teleopTimerInterval);
+      }
+      updateShift();
+    }, 1000);
   }
   function beginEndgame() {
     phase = "endgame";
@@ -359,6 +464,10 @@
   onMount(() => {
     fetchMatches();
     loadTeamsWithData();
+  });
+
+  onDestroy(() => {
+    clearInterval(teleopTimerInterval);
   });
 </script>
 
@@ -573,6 +682,26 @@
             >
           </div>
 
+          <span class="label">Climbing Position</span>
+          <div class="btn-row">
+            {#each ["N/A", "L1", "Failed"] as p}
+              <button
+                class="btn {autoClimbPos === p
+                  ? p === 'Failed'
+                    ? 'btn-danger'
+                    : 'btn-selected'
+                  : 'btn-outline'} big-btn"
+                style={autoClimbPos === p && p === "Failed"
+                  ? "background-color: var(--scout-danger) !important; color: white !important;"
+                  : ""}
+                on:click={(e) => {
+                  handleButtonClick(e);
+                  autoClimbPos = p;
+                }}>{p}</button
+              >
+            {/each}
+          </div>
+
           <span class="label">Shooting (Hold)</span>
           <div class="btn-row">
             <button
@@ -600,9 +729,40 @@
             >
           </div>
 
+          <hr class="divider-sm" />
+
+          <span class="label">Who got more fuel in auto?</span>
+          <div class="btn-row">
+            <button
+              class="btn {autoWinner === 'red'
+                ? 'btn-danger'
+                : 'btn-outline'} big-btn"
+              style={autoWinner === "red"
+                ? "background-color: var(--scout-danger) !important; color: white !important;"
+                : ""}
+              on:click={(e) => {
+                handleButtonClick(e);
+                autoWinner = "red";
+              }}>Red</button
+            >
+            <button
+              class="btn {autoWinner === 'blue'
+                ? 'btn-primary'
+                : 'btn-outline'} big-btn"
+              style={autoWinner === "blue"
+                ? "background-color: var(--scout-primary) !important; color: white !important;"
+                : ""}
+              on:click={(e) => {
+                handleButtonClick(e);
+                autoWinner = "blue";
+              }}>Blue</button
+            >
+          </div>
+
           <div class="spacer"></div>
           <button
             class="btn btn-success action-btn full-width"
+            disabled={!autoWinner}
             on:click={(e) => {
               handleButtonClick(e);
               endAuto();
@@ -616,7 +776,34 @@
       <!-- TELEOP PHASE -->
       {#if phase === "teleop"}
         <div class="phase-section">
-          <!-- Roles & Shift -->
+          <!-- Timer and Shift HUD -->
+          <div
+            class="shift-hud card"
+            style="text-align: center; border-color: {shiftOn
+              ? '#198754'
+              : '#dc3545'}; border-width: 2px;"
+          >
+            <div
+              style="display: flex; justify-content: center; align-items: baseline; gap: 0.3rem; font-size: 0.8rem; font-weight: bold; color: {shiftOn
+                ? '#198754'
+                : '#dc3545'}; text-transform: uppercase;"
+            >
+              <span
+                >{shiftOn ? "ON SHIFT" : "OFF SHIFT"} &mdash; {currentShiftName}</span
+              >
+              <span style="font-weight: 900; font-size: 1rem;">
+                {timeUntilNextShift}s
+              </span>
+              <span
+                style="font-size: 0.65rem; font-weight: normal; color: #6c757d; text-transform: none;"
+              >
+                until next
+              </span>
+            </div>
+          </div>
+          <hr class="divider-sm" />
+
+          <!-- Roles -->
           <div class="teleop-config">
             <div class="role-selector">
               <span class="label">Current Robot Role</span>
@@ -632,28 +819,6 @@
                     }}>{r}</button
                   >
                 {/each}
-              </div>
-            </div>
-
-            <div class="shift-selector">
-              <span class="label">Shift Status</span>
-              <div class="btn-row">
-                <button
-                  class="btn {shiftOn ? 'btn-selected' : 'btn-outline'} big-btn"
-                  on:click={(e) => {
-                    handleButtonClick(e);
-                    setShift(true);
-                  }}>On Shift</button
-                >
-                <button
-                  class="btn {!shiftOn
-                    ? 'btn-selected'
-                    : 'btn-outline'} big-btn"
-                  on:click={(e) => {
-                    handleButtonClick(e);
-                    setShift(false);
-                  }}>Off Shift</button
-                >
               </div>
             </div>
           </div>
@@ -786,8 +951,13 @@
               {#each CLIMB_POSITIONS as p}
                 <button
                   class="btn {finalClimbPos === p
-                    ? 'btn-selected'
+                    ? p === 'Failed'
+                      ? 'btn-danger'
+                      : 'btn-selected'
                     : 'btn-outline'} big-btn"
+                  style={finalClimbPos === p && p === "Failed"
+                    ? "background-color: var(--scout-danger) !important; color: white !important;"
+                    : ""}
                   on:click={(e) => {
                     handleButtonClick(e);
                     finalClimbPos = p;
