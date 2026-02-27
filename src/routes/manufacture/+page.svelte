@@ -8,7 +8,7 @@
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users } from 'lucide-svelte';
   import ROUTER_FLOW from '$lib/router_flow.json';
-  import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
+  import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { TEAM_ROLES } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   
@@ -44,15 +44,22 @@
     { value: '3d-print', label: '3D Print', icon: Upload }
   ];
   
-  // Include all DB-allowed statuses for filtering
+  // Include all DB-allowed statuses for filtering (combined from all workflows)
   const statuses = [
     { value: 'pending', label: 'Pending' },
     { value: 'in-progress', label: 'In Progress' },
-  { value: 'cammed', label: 'CAM Reviewed' },
-  { value: 'cam_review', label: 'CAM Review Ready' },
-  { value: 'machined', label: 'Machined' },
+    { value: 'drawing', label: 'Drawing In Progress' },
+    { value: 'print-started', label: 'Print Started' },
+    { value: 'machining', label: 'Machining' },
+    { value: 'inspection', label: 'Inspection' },
+    { value: 'cammed', label: 'CAM Reviewed' },
+    { value: 'cam_review', label: 'CAM Review Ready' },
+    { value: 'machined', label: 'Machined' },
     { value: 'complete', label: 'Complete' }
   ];
+  
+  // Get workflow-specific statuses for edit modal
+  $: editStatusOptions = editWorkflow ? getWorkflowStatuses(editWorkflow) : statuses;
 
   function getWorkflowClass(workflow) {
     if (!workflow) return 'tag-workflow-default';
@@ -64,6 +71,18 @@
   let editWorkflow = '';
   let editStock = '';
   let editCustomStock = '';
+  
+  // Part Preview Modal State
+  let showPreviewModal = false;
+  let previewPart = null;
+  let previewImage = null;
+  let previewLoading = false;
+  let previewError = null;
+  let previewStatus = '';
+  let previewWorkflow = '';
+  let previewStock = '';
+  let previewCustomStock = '';
+  
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
   $: projectIds = Array.from(new Set(parts.filter(p => p.status !== 'complete' && p.project_id).map(p => p.project_id))).sort();
 
@@ -310,6 +329,16 @@
       // Note: lathe/mill drawing PDF generation has been removed. Those parts should
       // open the subsystem/document page instead (handled earlier in downloadFile or via UI).
 
+      // Log the Onshape IDs being used for debugging
+      console.log('Downloading from Onshape:', {
+        name: part.name,
+        onshape_document_id: part.onshape_document_id,
+        onshape_element_id: part.onshape_element_id,
+        onshape_part_id: part.onshape_part_id,
+        onshape_wvm: part.onshape_wvm,
+        onshape_wvmid: part.onshape_wvmid
+      });
+
       // Use the new translation workflow for both STL and STEP (prefer STEP for 3D prints)
       const action = 'translate-part';
       
@@ -330,8 +359,16 @@
       const response = await fetch(`/api/onshape?${params}`);
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.details || errorData.error || `HTTP error! status: ${response.status}`;
+        console.error('Onshape download failed:', errorData);
+        if (errorData.suggestion) {
+          showToastMessage(`Download failed: ${errorMsg}`);
+          alert(`Download failed: ${errorMsg}\n\nSuggestion: ${errorData.suggestion}`);
+        } else {
+          showToastMessage(`Download failed: ${errorMsg}`);
+        }
+        return;
       }
 
       // Create blob and download
@@ -352,7 +389,6 @@
     } catch (error) {
       console.error('Error downloading from Onshape:', error);
       showToastMessage(`Error downloading file: ${error.message}`);
-      throw error;
     }
   }
 
@@ -531,31 +567,30 @@
     window.URL.revokeObjectURL(url); document.body.removeChild(a);
   }
 
-  async function downloadDXFFromOnshape(part) {
-    await ensureInProgress(part);
-    const params = new URLSearchParams({
-      action: 'convert-to-dxf',
-      documentId: part.onshape_document_id,
-      elementId: part.onshape_element_id,
-      partId: part.onshape_part_id,
-      wvm: part.onshape_wvm,
-      wvmId: part.onshape_wvmid
-    });
-    const response = await fetch(`/api/onshape?${params}`);
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-    const blob = await response.blob();
-    const fileName = `${(part.name || 'part').replace(/[^a-zA-Z0-9]/g, '_')}.dxf`;
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName;
-    document.body.appendChild(a); a.click();
-    window.URL.revokeObjectURL(url); document.body.removeChild(a);
+  // Router flow helpers (new) - definitions moved earlier in file for JSON-based flow
+
+  // Build Onshape URL for a part (returns null if not an Onshape part)
+  function getOnshapeUrl(part) {
+    if (!part.onshape_document_id || !part.onshape_wvmid) return null;
+    const baseUrl = PUBLIC_ONSHAPE_BASE_URL || 'https://cad.onshape.com';
+    const wvm = part.onshape_wvm || 'w';
+    const elementId = part.onshape_drawing_element_id || part.onshape_element_id;
+    if (!elementId) return null;
+    return `${baseUrl.replace(/\/$/, '')}/documents/${encodeURIComponent(part.onshape_document_id)}/${encodeURIComponent(wvm)}/${encodeURIComponent(part.onshape_wvmid)}/e/${encodeURIComponent(elementId)}`;
   }
 
-  // Router flow helpers (new) - definitions moved earlier in file for JSON-based flow
+  // Format date/time in a friendly way
+  function formatDateTime(dateStr) {
+    if (!dateStr) return 'N/A';
+    const date = new Date(dateStr);
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
 
   // Open the subsystem page or linked Onshape document for parts that require drawings
   async function openSubsystemDocument(part) {
@@ -743,14 +778,35 @@
   // Edit modal handlers
   function openEditModal(part) {
     editPart = part;
-    editStatus = part.status || 'pending';
+    // If router part is in the CAM Review Ready pseudo-state, surface that value in the select
+    const meta = part.workflow === 'router' ? getRouterMeta(part) : {};
+    editStatus = (part.workflow === 'router' && meta.step === 'cam_review') ? 'cam_review' : (part.status || 'pending');
     editWorkflow = part.workflow || '';
     editStock = part.stock_assignment || '';
     editCustomStock = '';
     showEditModal = true;
   }
 
-  // Row click handler: open edit modal when user clicks the row body
+  // Local state helpers to avoid a full reload after button clicks
+  function setLocalRouterMeta(partId, updates) {
+    parts = parts.map((p) => {
+      if (p.id !== partId) return p;
+      let root = {};
+      try {
+        root = JSON.parse(p.file_url || '{}') || {};
+      } catch {
+        root = {};
+      }
+      root.router_meta = { ...(root.router_meta || {}), ...updates };
+      return { ...p, file_url: JSON.stringify(root) };
+    });
+  }
+
+  function setLocalStatus(partId, status) {
+    parts = parts.map((p) => (p.id === partId ? { ...p, status } : p));
+  }
+
+  // Row click handler: for Onshape parts, show preview; otherwise open edit modal
   // but ignore clicks that originated on interactive elements (buttons, inputs, links)
   function onRowClick(e, part) {
     try {
@@ -759,7 +815,12 @@
       // defensive: if DOM not available, just return
       return;
     }
-    openEditModal(part);
+    // Show preview modal for Onshape parts that have all required IDs
+    if (part.source_type === 'onshape_api' && part.onshape_document_id && part.onshape_element_id && part.onshape_part_id) {
+      openPreviewModal(part);
+    } else {
+      openEditModal(part);
+    }
   }
 
   function onRowKeyDown(e, part) {
@@ -772,8 +833,206 @@
     }
     // Prevent page from scrolling on Space
     e.preventDefault();
-    openEditModal(part);
+    // Show preview modal for Onshape parts that have all required IDs
+    if (part.source_type === 'onshape_api' && part.onshape_document_id && part.onshape_element_id && part.onshape_part_id) {
+      openPreviewModal(part);
+    } else {
+      openEditModal(part);
+    }
   }
+
+  // Part Preview Modal Functions
+  async function openPreviewModal(part) {
+    previewPart = part;
+    previewImage = null;
+    previewError = null;
+    previewLoading = true;
+    showPreviewModal = true;
+    
+    // Initialize edit state
+    const meta = part.workflow === 'router' ? getRouterMeta(part) : {};
+    previewStatus = (part.workflow === 'router' && meta.step === 'cam_review') ? 'cam_review' : (part.status || 'pending');
+    previewWorkflow = part.workflow || '';
+    previewStock = part.stock_assignment || '';
+    previewCustomStock = '';
+    
+    // Check if we have a cached preview image URL first
+    if (part.preview_image_url) {
+      const { data: urlData } = supabase.storage.from('part-previews').getPublicUrl(part.preview_image_url);
+      previewImage = urlData?.publicUrl || null;
+      if (previewImage) {
+        previewLoading = false;
+        return;
+      }
+    }
+    
+    // Fetch from Onshape API if no cached image
+    await fetchAndCachePreviewImage(part);
+  }
+
+  // Fetch preview image from Onshape and cache it to storage
+  async function fetchAndCachePreviewImage(part) {
+    if (!part.onshape_document_id || !part.onshape_element_id || !part.onshape_part_id) {
+      previewError = 'Missing Onshape IDs for preview';
+      previewLoading = false;
+      return null;
+    }
+    
+    try {
+      const params = new URLSearchParams({
+        action: 'shaded-views',
+        documentId: part.onshape_document_id,
+        elementId: part.onshape_element_id,
+        partId: part.onshape_part_id,
+        wvm: part.onshape_wvm || 'w',
+        wvmId: part.onshape_wvmid,
+        outputHeight: '800',
+        outputWidth: '800'
+      });
+      
+      const response = await fetch(`/api/onshape?${params}`);
+      const data = await response.json();
+      
+      if (data.success && data.image) {
+        // Show the image immediately
+        previewImage = `data:image/png;base64,${data.image}`;
+        
+        // Upload to storage (wait for it to complete)
+        await uploadPreviewToStorage(part.id, data.image);
+          
+        return data.image;
+      } else {
+        previewError = data.error || 'Failed to load preview';
+        return null;
+      }
+    } catch (err) {
+      console.error('Error loading part preview:', err);
+      previewError = err.message || 'Failed to load preview';
+      return null;
+    } finally {
+      previewLoading = false;
+    }
+  }
+  
+  // Upload preview image to storage bucket and update database
+  async function uploadPreviewToStorage(partId, base64Image) {
+    try {
+      console.log('Starting upload for part:', partId, 'image size:', base64Image.length);
+      
+      // Convert base64 to blob
+      const byteCharacters = atob(base64Image);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/png' });
+      console.log('Blob created, size:', blob.size);
+      
+      // Upload to storage
+      const fileName = `${partId}.png`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('part-previews')
+        .upload(fileName, blob, { upsert: true, contentType: 'image/png' });
+      
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        return;
+      }
+      console.log('Upload successful:', uploadData);
+      
+      // Update the parts table with the storage path
+      const { error: updateError } = await supabase
+        .from('parts')
+        .update({ 
+          preview_image_url: fileName,
+          preview_image_updated_at: new Date().toISOString()
+        })
+        .eq('id', partId);
+      
+      if (updateError) {
+        console.error('Database update error:', updateError);
+      } else {
+        console.log('Preview image saved for part:', partId);
+      }
+    } catch (err) {
+      console.error('Error uploading preview to storage:', err);
+    }
+  }
+
+  function closePreviewModal() {
+    showPreviewModal = false;
+    previewPart = null;
+    previewImage = null;
+    previewError = null;
+    previewLoading = false;
+    previewStatus = '';
+    previewWorkflow = '';
+    previewStock = '';
+    previewCustomStock = '';
+  }
+
+  async function savePreviewEdits() {
+    if (!previewPart) return;
+    const effectiveStock = previewStock === '__other__' ? (previewCustomStock || '').trim() : previewStock;
+    const update = {
+      status: previewStatus === 'cam_review' ? 'in-progress' : previewStatus,
+      workflow: previewWorkflow,
+      updated_at: new Date().toISOString()
+    };
+    if (effectiveStock) update.stock_assignment = effectiveStock;
+    try {
+      const { error } = await supabase
+        .from('parts')
+        .update(update)
+        .eq('id', previewPart.id);
+      if (error) throw error;
+      if (previewStatus === 'cam_review') {
+        try { await updateRouterMeta(previewPart, { step: 'cam_review' }); } catch (e) { console.warn('updateRouterMeta failed:', e); }
+      }
+      await loadParts();
+      showToastMessage('Part updated');
+      closePreviewModal();
+    } catch (e) {
+      console.error('savePreviewEdits error:', e);
+      alert('Failed to update part: ' + (e.message || e));
+    }
+  }
+
+  async function deletePreviewPart() {
+    if (!previewPart) return;
+    if (!confirm('Delete this part permanently?')) return;
+    try {
+      const normalizedId = (typeof previewPart.id === 'string' && /^\d+$/.test(previewPart.id)) ? Number(previewPart.id) : previewPart.id;
+      try {
+        const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').eq('parts_id', normalizedId);
+        if (refErr) throw refErr;
+        if (refs && refs.length > 0) {
+          const ids = refs.map(r => r.id);
+          const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', ids);
+          if (clearErr) throw clearErr;
+        }
+      } catch (e) {
+        console.error('Failed to clear BOM refs before deleting part:', e);
+        alert('Failed to delete part: could not clear BOM references. Remove or unlink those BOM rows first.');
+        return;
+      }
+      const { error } = await supabase
+        .from('parts')
+        .delete()
+        .eq('id', normalizedId);
+      if (error) throw error;
+      await loadParts();
+      showToastMessage('Part deleted');
+      closePreviewModal();
+    } catch (e) {
+      console.error('deletePreviewPart error:', e);
+      alert('Failed to delete part: ' + (e.message || e));
+    }
+  }
+
+  $: previewStockOptions = previewWorkflow ? (stockData[previewWorkflow] || []).map(s => s.description) : [];
+  $: previewStatusOptions = previewWorkflow ? getWorkflowStatuses(previewWorkflow) : statuses;
 
   function closeEditModal() {
     showEditModal = false;
@@ -786,7 +1045,10 @@
     // If the user selected the CAM review pseudo-status, store underlying 'cammed'
     // as the actual status and set router_meta.step = 'cam_review' separately.
     const update = {
-      status: editStatus === 'cam_review' ? 'cammed' : editStatus,
+      // If user picked the pseudo-status 'cam_review' (CAM Review Ready), keep underlying status as in-progress
+      // and set router_meta.step to 'cam_review' below. Previously this stored 'cammed' which caused it to appear
+      // immediately as CAM Reviewed; keep it as 'in-progress' instead.
+      status: editStatus === 'cam_review' ? 'in-progress' : editStatus,
       workflow: editWorkflow,
       updated_at: new Date().toISOString()
     };
@@ -857,7 +1119,11 @@
       part.project_id.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesWorkflow = !filterWorkflow || part.workflow === filterWorkflow;
-    const matchesStatus = !filterStatus || part.status === filterStatus;
+    const meta = part.workflow === 'router' ? getRouterMeta(part) : {};
+    // Treat CAM Review Ready as a pseudo-status based on router_meta.step
+    const matchesStatus = !filterStatus ||
+      part.status === filterStatus ||
+      (filterStatus === 'cam_review' && meta.step === 'cam_review');
     const matchesProject = !filterProject || part.project_id === filterProject;
     const notCompleted = part.status !== 'complete';
     
@@ -954,6 +1220,7 @@
   <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
   <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
+  <a href="/manufacture/post-processing" class:active={$page.url.pathname === '/manufacture/post-processing'}>Post Processing</a>
   <a href="/manufacture/bins" class:active={$page.url.pathname === '/manufacture/bins'}>Bins</a>
 </div>
 
@@ -1108,14 +1375,11 @@
               <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openSubsystemDocument(part)}>
                 <ExternalLink size={14} /> View
               </button>
-            {:else if part.workflow === 'router'}
-              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
-                <Download size={14} /> STEP
-              </button>
-              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadDXFFromOnshape(part)}>
-                <Download size={14} /> DXF
-              </button>
-            {:else}
+              {:else if part.workflow === 'router'}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
+                  <Download size={14} /> STEP
+                </button>
+              {:else}
               <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFile(part, part.status)}>
                 <Download size={14} /> File
               </button>
@@ -1131,7 +1395,7 @@
             {#if part.workflow === 'router'}
               <button
                 class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); }}
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); setLocalStatus(part.id, 'in-progress'); setLocalRouterMeta(part.id, { step: 'cam_ing' }); }}
               >
                 <Clock size={14} /> Start
               </button>
@@ -1144,13 +1408,22 @@
               </button>
             {/if}
           {:else if part.status === 'in-progress'}
-            {#if part.workflow === 'router' && getRouterMeta(part).step === 'cam_ing'}
-              <button
-                class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
-              >
-                {BUTTONS.CAM_REVIEWED}
-              </button>
+            {#if part.workflow === 'router'}
+              {#if !getRouterMeta(part).step || getRouterMeta(part).step === 'cam_ing'}
+                <button
+                  class="btn btn-primary btn-sm"
+                  on:click|stopPropagation={async () => { await updateRouterMeta(part, { step: 'cam_review' }); setLocalRouterMeta(part.id, { step: 'cam_review' }); }}
+                >
+                  CAM Done
+                </button>
+              {:else if getRouterMeta(part).step === 'cam_review'}
+                <button
+                  class="btn btn-primary btn-sm"
+                  on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
+                >
+                  {BUTTONS.CAM_REVIEWED}
+                </button>
+              {/if}
             {/if}
           {/if}
         </div>
@@ -1243,16 +1516,6 @@
                       <Download size={14} />
                       STEP
                     </button>
-                    <button
-                      type="button"
-                      class="tag tag-source tag-action"
-                      aria-label="Download DXF file"
-                      title="Download DXF"
-                      on:click|stopPropagation={() => downloadDXFFromOnshape(part)}
-                    >
-                      <Download size={14} />
-                      DXF
-                    </button>
                   {:else}
                     <button
                       type="button"
@@ -1281,19 +1544,7 @@
                         STEP
                       </button>
                     {/if}
-                    {#if meta.dxf_file}
-                      <button
-                        type="button"
-                        class="tag tag-source tag-action"
-                        aria-label="Download DXF file"
-                        title="Download DXF"
-                        on:click|stopPropagation={() => downloadFromStorage(meta.dxf_file, part.id)}
-                      >
-                        <Download size={14} />
-                        DXF
-                      </button>
-                    {/if}
-                    {#if !meta.step_file && !meta.dxf_file}
+                    {#if !meta.step_file}
                       <span class="file-label">{part.file_name}</span>
                       <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
                         <Download size={16} />
@@ -1342,12 +1593,22 @@
 
               {:else if part.status === 'in-progress'}
                 {#if part.workflow === 'router'}
-                  <!-- Router: CAMed appears when in CAMing sub-step -->
-                  {#if getRouterMeta(part).step === 'cam_ing'}
+                  <!-- Router: CAM Done appears when in CAMing sub-step or no step set -->
+                  {#if !getRouterMeta(part).step || getRouterMeta(part).step === 'cam_ing'}
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cam_review' }); }}
+                      on:click={async () => { await updateRouterMeta(part, { step: 'cam_review' }); }}
+                      title="CAM Done"
+                    >
+                      CAM Done
+                    </button>
+                  </div>
+              {:else if getRouterMeta(part).step === 'cam_review'}
+              <div class="actions-col">
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
                       title={BUTTONS.CAM_REVIEWED}
                     >
                       {BUTTONS.CAM_REVIEWED}
@@ -1383,10 +1644,33 @@
         </button>
       </div>
       <div class="modal-body">
+        <!-- Part Details Section -->
+        {#if editPart}
+          <div class="part-details-section">
+            {#if getOnshapeUrl(editPart)}
+              <div class="detail-row">
+                <span class="detail-label">Onshape Document:</span>
+                <a href={getOnshapeUrl(editPart)} target="_blank" rel="noopener noreferrer" class="onshape-link">
+                  <ExternalLink size={14} />
+                  Open in Onshape
+                </a>
+              </div>
+            {/if}
+            <div class="detail-row">
+              <span class="detail-label">Added:</span>
+              <span class="detail-value">{formatDateTime(editPart.created_at)}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last Updated:</span>
+              <span class="detail-value">{formatDateTime(editPart.updated_at)}</span>
+            </div>
+          </div>
+        {/if}
+
         <div class="form-group">
           <label class="form-label" for="edit-status">Status</label>
           <select id="edit-status" class="form-select" bind:value={editStatus}>
-            {#each statuses as status}
+            {#each editStatusOptions as status}
               <option value={status.value}>{status.label}</option>
             {/each}
           </select>
@@ -1423,6 +1707,112 @@
         <div class="spacer"></div>
         <button class="btn" on:click={closeEditModal}>Cancel</button>
         <button class="btn btn-primary" on:click={saveEdits}>Save</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Part Preview Modal -->
+{#if showPreviewModal}
+  <div
+    class="modal-backdrop"
+    on:click|self={closePreviewModal}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closePreviewModal(); } }}
+  >
+    <div class="modal preview-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>{previewPart?.name || 'Part Preview'}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closePreviewModal}>
+          <X size={18} />
+        </button>
+      </div>
+      <div class="modal-body preview-modal-body">
+        <div class="preview-image-container">
+          {#if previewLoading}
+            <div class="preview-loading">
+              <div class="spinner"></div>
+              <span>Loading preview...</span>
+            </div>
+          {:else if previewError}
+            <div class="preview-error">
+              <span>⚠️ {previewError}</span>
+            </div>
+          {:else if previewImage}
+            <img src={previewImage} alt="Isometric view of {previewPart?.name}" class="preview-image" />
+          {/if}
+        </div>
+        
+        {#if previewPart}
+          <!-- Part Info -->
+          <div class="preview-info-section">
+            {#if previewPart.quantity}
+              <div class="preview-info-item">
+                <span class="preview-label">Quantity:</span>
+                <span class="preview-value">{previewPart.quantity}</span>
+              </div>
+            {/if}
+            {#if previewPart.project_id}
+              <div class="preview-info-item">
+                <span class="preview-label">Project:</span>
+                <span class="preview-value mono">{previewPart.project_id}</span>
+              </div>
+            {/if}
+            {#if getOnshapeUrl(previewPart)}
+              <div class="preview-info-item">
+                <a href={getOnshapeUrl(previewPart)} target="_blank" rel="noopener noreferrer" class="onshape-link">
+                  <ExternalLink size={14} />
+                  Open in Onshape
+                </a>
+              </div>
+            {/if}
+          </div>
+
+          <!-- Edit Fields -->
+          <div class="preview-edit-section">
+            <div class="form-group">
+              <label class="form-label" for="preview-status">Status</label>
+              <select id="preview-status" class="form-select" bind:value={previewStatus}>
+                {#each previewStatusOptions as status}
+                  <option value={status.value}>{status.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="preview-workflow">Workflow</label>
+              <select id="preview-workflow" class="form-select" bind:value={previewWorkflow}>
+                {#each workflows as w}
+                  <option value={w.value}>{w.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="preview-stock">Stock</label>
+              <select id="preview-stock" class="form-select" bind:value={previewStock}>
+                <option value="">—</option>
+                {#each previewStockOptions as s}
+                  <option value={s}>{s}</option>
+                {/each}
+                <option value="__other__">Custom...</option>
+              </select>
+            </div>
+            {#if previewStock === '__other__'}
+            <div class="form-group">
+              <input class="form-input" type="text" placeholder="Custom stock" bind:value={previewCustomStock} />
+            </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" on:click={deletePreviewPart}>
+          <Trash2 size={16} />
+          Delete
+        </button>
+        <div class="spacer"></div>
+        <button class="btn" on:click={closePreviewModal}>Cancel</button>
+        <button class="btn btn-primary" on:click={savePreviewEdits}>Save</button>
       </div>
     </div>
   </div>
@@ -1561,7 +1951,7 @@
   .table thead th { background: var(--background); color: var(--text); font-weight: 600; border-bottom: none; }
 
   .content-layout { display: flex; gap: 1rem; align-items: flex-start; }
-  .assign-sidebar { width: 250px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); display: flex; flex-direction: column; gap: 0.5rem; overflow: hidden; overscroll-behavior: contain; flex-shrink: 0; }
+  .assign-sidebar { width: 250px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 4px; padding: 1rem; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); display: flex; flex-direction: column; gap: 0.5rem; overflow: hidden; overscroll-behavior: contain; flex-shrink: 0; }
   .assign-sidebar h3 { margin-top: 0; margin-bottom: 1rem; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
   .roster-list { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-height: 0; overflow-y: auto; max-height: calc(100vh - 6rem); overscroll-behavior: contain; padding-right: 0.25rem; }
   .roster-member { background: var(--surface-2); border: 1px solid var(--border); padding: 0.5rem; border-radius: 4px; cursor: grab; user-select: none; }
@@ -1572,6 +1962,57 @@
   .hidden { display: none !important; }
   tr.droppable { transition: background-color 0.2s; }
   tr.droppable:hover { background-color: var(--surface-2); }
+
+  /* Part Details Section in Edit Modal */
+  .part-details-section {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+
+  .part-details-section .detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .part-details-section .detail-row:last-child {
+    border-bottom: none;
+  }
+
+  .part-details-section .detail-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .part-details-section .detail-value {
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .onshape-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-1);
+    color: var(--primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--primary-soft, rgba(0, 102, 204, 0.1));
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .onshape-link:hover {
+    background: var(--primary);
+    color: white;
+  }
 
   /* Toast notification */
   .toast {
@@ -1777,6 +2218,143 @@
     .status-badge {
       font-size: 0.65rem;
       padding: var(--space-1) var(--space-2);
+    }
+  }
+
+  /* Part Preview Modal Styles */
+  .preview-modal {
+    max-width: 600px;
+    width: 95%;
+  }
+
+  .preview-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-4);
+  }
+
+  .preview-image-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 350px;
+    height: 350px;
+    background: var(--background);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .preview-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    object-position: center;
+  }
+
+  .preview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--text-muted);
+    padding: var(--space-6);
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .preview-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    text-align: center;
+  }
+
+  .preview-info-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  .preview-info-item {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+
+  .preview-edit-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .preview-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  .preview-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    padding: var(--space-1) 0;
+  }
+
+  .preview-detail-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-2);
+  }
+
+  .preview-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .preview-value {
+    font-size: 0.9rem;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .preview-value.mono {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 480px) {
+    .preview-modal {
+      max-width: 100%;
+      margin: var(--space-2);
+    }
+
+    .preview-image-container {
+      min-height: 200px;
+      height: 200px;
     }
   }
 </style>

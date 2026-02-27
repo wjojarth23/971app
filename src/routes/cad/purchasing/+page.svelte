@@ -84,6 +84,7 @@
   let miscPrice = '';
   let miscQuantity = 1;
   let miscVendor = 'Other'; // Selected vendor
+  let miscPickup = false;
   // Item name (separate from project)
   let miscProjectText = '';
   // Project selection/linking to a build
@@ -165,33 +166,33 @@
       // Exclude budget-exempt projects from any budget counts
       if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
 
+      // Only count non-rejected items
+      if (p.status === 'rejected') return false;
+
       // Date filter
       if (budget.start_date && new Date(p.created_at) < new Date(budget.start_date)) return false;
       if (budget.end_date && new Date(p.created_at) > new Date(budget.end_date)) return false;
 
       // Scope filter
+      if (budget.scope_type === 'overall') return true;
       if (budget.scope_type === 'project') {
         return p.project_id === budget.scope_value;
       }
-      if (budget.scope_type === 'team') {
-        // We need to check frc_team. 
-        // Note: parts loaded from 'purchasing' might not have frc_team populated in older rows, 
-        // or we need to join user profile to check requester's team if column missing?
-        // Schema seems to have added 'frc_team' recently? The insert logic used `user.frc_team`.
-        // Let's assume p.frc_team exists or we rely on p.project_id lookup? 
-        // For simplicity: check p.frc_team if exists
-        return p.frc_team === budget.scope_value;
+      if (budget.scope_type === 'subsystem') {
+        // Match by subsystem - would need to join with builds table in real implementation
+        return p.project_id && p.project_id.includes(budget.scope_value);
       }
-      // Global: count everything? Or maybe general items? 
-      // Plan said "Global". Let's include everything that isn't excluded? 
-      // Actually, typically Global means "All purchasing".
-      return true;
+      if (budget.scope_type === 'build') {
+        return p.project_id === budget.scope_value;
+      }
+      if (budget.scope_type === 'build_group') {
+        return p.project_id && p.project_id.includes(budget.scope_value);
+      }
+      return false;
     });
 
     // Sum cost
     return matches.reduce((sum, p) => {
-      // Only count non-rejected items?
-      if (p.status === 'rejected') return sum;
       return sum + ((p.final_price || p.price || 0) * (p.quantity || 1));
     }, 0);
   }
@@ -249,7 +250,7 @@
   let orderNotes = '';
   
   // Filter items for order mode - only show approved items
-  $: orderableItems = parts.filter(p => p.status === 'approved' && !p.order_id);
+  $: orderableItems = parts.filter(p => p.status === 'approved' && !p.order_id && !p.is_pickup);
   
   // When in order mode and a vendor is selected, filter to that vendor only
   $: displayedOrderItems = orderMode && selectedVendor 
@@ -637,7 +638,8 @@
   requester: requesterName || 'Unknown',
   purchaser: user.id,
           approved: false,
-        status: 'pending'
+        status: 'pending',
+        is_pickup: miscPickup
   ,
         notes: miscNotes && miscNotes.trim() !== '' ? miscNotes.trim() : null,
           frc_team: user?.frc_team || null
@@ -685,6 +687,7 @@
       miscProjectText = '';
   miscProject = '';
   miscNotes = '';
+  miscPickup = false;
       await loadParts();
     } catch (err) {
       console.error('Failed to add misc item', err);
@@ -806,6 +809,20 @@
   function getWorkflowDisplay(workflow) {
     if (!workflow) return 'Not specified';
     return workflow.charAt(0).toUpperCase() + workflow.slice(1);
+  }
+
+  function isPickupItem(part) {
+    return !!part?.is_pickup;
+  }
+
+  function getSelectableStatuses(part) {
+    if (isPickupItem(part)) return ['pending', 'rejected', 'pickup', 'picked_up'];
+    return ['pending', 'rejected', 'ordered', 'delivered', 'kitted'];
+  }
+
+  function getApprovedStatuses(part) {
+    if (isPickupItem(part)) return ['approved', 'pickup', 'picked_up'];
+    return ['approved', 'ordered', 'delivered', 'kitted'];
   }
 </script>
 
@@ -930,6 +947,8 @@
             <option value="pending">Pending</option>
             <option value="rejected">Rejected</option>
             <option value="approved">Approved</option>
+            <option value="pickup">Pickup</option>
+            <option value="picked_up">Picked Up</option>
             <option value="ordered">Ordered</option>
             <option value="delivered">Delivered</option>
             <option value="kitted">Kitted</option>
@@ -1077,8 +1096,8 @@
                     class="status-select colorful"
                     value={(() => {
                       const s = (part.status || '').toString().toLowerCase();
-                      const selectable = ['pending','rejected','ordered','delivered','kitted'];
-                      const approvedLevel = ['approved','ordered','delivered','kitted'];
+                      const selectable = getSelectableStatuses(part);
+                      const approvedLevel = getApprovedStatuses(part);
                       if (selectable.includes(s)) return s;
                       if (approvedLevel.includes(s)) return '__approved__';
                       return 'pending';
@@ -1087,7 +1106,7 @@
                     on:change={(e) => {
                       const val = e.target.value;
                       if (val === '__approved__') return; // placeholder only
-                      if ((val === 'ordered' || val === 'delivered') && !hasPermission(user, 'PLACE_ORDERS_MISC')) {
+                      if ((val === 'ordered' || val === 'delivered' || val === 'pickup' || val === 'picked_up') && !hasPermission(user, 'PLACE_ORDERS_MISC')) {
                         alert('You do not have permission to change order status.');
                         loadParts();
                         return;
@@ -1096,14 +1115,19 @@
                     }}
                   >
                     
-                    <option value="pending" data-color="#ffc107">Pending</option>
+                    <option value="pending" data-color="#ffc107">{isPickupItem(part) ? 'Needs Approval' : 'Pending'}</option>
                     <option value="rejected" data-color="#e74c3c">Rejected</option>
-                    {#if ['approved','ordered','delivered','kitted'].includes((part.status || '').toString().toLowerCase())}
+                    {#if getApprovedStatuses(part).includes((part.status || '').toString().toLowerCase())}
                       <option value="__approved__" data-color="#4caf50">Approved</option>
                     {/if}
-                    <option value="ordered" data-color="#6c5ce7">Ordered</option>
-                    <option value="delivered" data-color="#27ae60">Delivered</option>
-                    <option value="kitted" data-color="#2ecc71">Kitted</option>
+                    {#if isPickupItem(part)}
+                      <option value="pickup" data-color="#6c5ce7">Pickup</option>
+                      <option value="picked_up" data-color="#27ae60">Picked Up</option>
+                    {:else}
+                      <option value="ordered" data-color="#6c5ce7">Ordered</option>
+                      <option value="delivered" data-color="#27ae60">Delivered</option>
+                      <option value="kitted" data-color="#2ecc71">Kitted</option>
+                    {/if}
                   </select>
                 </td>
                 <td class="shipping">
@@ -1221,6 +1245,8 @@
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
             <option value="Software Supply">Software Supply</option>
+            <option value="Manufacturing Stock">Manufacturing Stock</option>
+            <option value="9584 misc">9584 misc</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
             <option value="Budget Exempt">Budget Exempt</option>
@@ -1280,6 +1306,8 @@
             <option value="Lab Supply">Lab Supply</option>
             <option value="Software Consumable">Software Consumable</option>
             <option value="Software Supply">Software Supply</option>
+            <option value="Manufacturing Stock">Manufacturing Stock</option>
+            <option value="9584 misc">9584 misc</option>
             <option value="Competition">Competition</option>
             <option value="Outreach + Fundraising">Outreach + Fundraising</option>
             <option value="Budget Exempt">Budget Exempt</option>
@@ -1309,11 +1337,18 @@
           <small style="color: var(--text-secondary); margin-top: 0.25rem;">Auto-detected from URL if available</small>
         </div>
         <div class="form-row">
+          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+            <input type="checkbox" bind:checked={miscPickup} />
+            Pickup
+          </label>
+          <small style="color: var(--text-secondary); margin-top: 0.25rem;">Pickup items use status flow: Needs Approval -> Pickup -> Picked Up</small>
+        </div>
+        <div class="form-row">
           <label for="misc-notes">Notes (optional)</label>
           <textarea id="misc-notes" rows="4" bind:value={miscNotes} placeholder="Order notes, vendor info, etc."></textarea>
         </div>
         <div class="modal-actions">
-          <button class="btn" on:click={() => { showAddMiscModal = false; }}>Cancel</button>
+          <button class="btn" on:click={() => { showAddMiscModal = false; miscPickup = false; }}>Cancel</button>
           <button class="btn btn-primary" on:click={addMiscItem}>Add Item</button>
         </div>
       </div>
@@ -1577,7 +1612,7 @@
     align-items: center;
     padding: 0.75rem;
     border: 1px solid var(--border);
-    border-radius: 0.375rem;
+    border-radius: 4px;
     background: var(--surface-0);
   }
   .budget-info { display: flex; flex-direction: column; gap: 0.25rem; }
@@ -1777,7 +1812,17 @@
     color: var(--purple-strong);
     border-color: color-mix(in srgb, var(--purple-strong) 35%, transparent);
   }
+  .status-select.colorful[data-status="pickup"] {
+    background: var(--purple-soft);
+    color: var(--purple-strong);
+    border-color: color-mix(in srgb, var(--purple-strong) 35%, transparent);
+  }
   .status-select.colorful[data-status="delivered"] {
+    background: var(--green-soft);
+    color: var(--green-base);
+    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
+  }
+  .status-select.colorful[data-status="picked_up"] {
     background: var(--green-soft);
     color: var(--green-base);
     border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
@@ -1801,7 +1846,9 @@
   .status-select.colorful option[value="pending"] { background: var(--brand-gold-soft); }
   .status-select.colorful option[value="rejected"] { background: var(--red-soft); }
   .status-select.colorful option[value="ordered"] { background: var(--purple-soft); }
+  .status-select.colorful option[value="pickup"] { background: var(--purple-soft); }
   .status-select.colorful option[value="delivered"] { background: var(--green-soft); }
+  .status-select.colorful option[value="picked_up"] { background: var(--green-soft); }
   .status-select.colorful option[value="kitted"] { background: var(--green-soft); }
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }

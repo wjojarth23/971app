@@ -5,6 +5,7 @@
   import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES, FRC_TEAMS } from '$lib/permissions.js';
   import { supabase } from '$lib/supabase.js';
   import { get } from 'svelte/store';
+  import { goto } from '$app/navigation';
   import { ShoppingCart, DollarSign, TrendingUp, Package, Plus, Edit, Trash2, User } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import {
@@ -201,6 +202,7 @@
   $: ordererStats = computeOrdererStats(purchaseHistory, timePeriodDays, customStartDate, customEndDate);
   $: totalSpending = computeTotalSpending(purchaseHistory, timePeriodDays, customStartDate, customEndDate);
   $: orderStats = computeOrderStats(orders, purchaseHistory, timePeriodDays, customStartDate, customEndDate);
+  const countedPurchaseStatuses = new Set(['approved', 'ordered', 'delivered', 'kitted', 'pickup', 'picked_up']);
 
   function computeApproverStats(purchases, days, startDate, endDate) {
     const filtered = filterByTimePeriod(purchases, days, startDate, endDate);
@@ -211,7 +213,7 @@
       // Completely ignore Budget Exempt items in analytics
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.approver && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted')) {
+      if (p.approver && countedPurchaseStatuses.has(p.status)) {
         if (!stats[p.approver]) {
           stats[p.approver] = { count: 0, total: 0 };
         }
@@ -236,7 +238,7 @@
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
       const ordererName = p.requester || 'Unknown';
-      if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
+      if (countedPurchaseStatuses.has(p.status)) {
         if (!stats[ordererName]) {
           stats[ordererName] = { count: 0, total: 0 };
         }
@@ -260,7 +262,7 @@
       // Skip budget-exempt projects entirely
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.project_id && (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted')) {
+      if (p.project_id && countedPurchaseStatuses.has(p.status)) {
         if (!stats[p.project_id]) {
           stats[p.project_id] = { count: 0, total: 0 };
         }
@@ -285,7 +287,7 @@
       // Ignore budget-exempt items
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
+      if (countedPurchaseStatuses.has(p.status)) {
         // Normalize vendor name for matching
         const rawVendor = p.vendor || '';
         const normalizedVendor = rawVendor.trim().toLowerCase();
@@ -323,7 +325,7 @@
       // Ignore budget-exempt items
       if ((p.project_id || '').trim() === BUDGET_EXEMPT) return;
 
-      if (p.status === 'approved' || p.status === 'ordered' || p.status === 'delivered' || p.status === 'kitted') {
+      if (countedPurchaseStatuses.has(p.status)) {
         const qty = p.quantity || 1;
         const itemCost = (p.final_price || p.price || 0) * qty;
         const shippingAlloc = Number(p.shipping_cost_allocated || 0);
@@ -346,7 +348,7 @@
       }
     });
 
-    const eligibleStatuses = new Set(['approved', 'ordered', 'delivered', 'kitted']);
+    const eligibleStatuses = countedPurchaseStatuses;
     const BUDGET_EXEMPT = 'Budget Exempt';
 
     // Compute order totals by summing their purchases (excluding Budget Exempt items)
@@ -478,8 +480,21 @@
   }
 
   const currentUser = userStore;
+  
+  // Check if user has admin access (only leads can access this page)
+  $: canAccessAdmin = $currentUser && hasPermission($currentUser, 'VIEW_ADMIN_PANEL');
 
   onMount(async () => {
+    // Wait for user profile to load
+    const user = get(currentUser);
+    
+    // Check if user has VIEW_ADMIN_PANEL permission (only leads have this)
+    if (!user || !hasPermission(user, 'VIEW_ADMIN_PANEL')) {
+      toastActions.show('Access denied: Only leads can access the admin panel');
+      goto('/');
+      return;
+    }
+    
     await loadUsers();
     await loadRosters();
     if (activeTab === 'purchasing') {
@@ -1231,6 +1246,14 @@
   <title>Admin Control Center</title>
 </svelte:head>
 
+{#if !canAccessAdmin}
+  <div class="container">
+    <div class="access-denied">
+      <h2>Access Denied</h2>
+      <p>Only leads can access the admin panel.</p>
+    </div>
+  </div>
+{:else}
 <div class="container admin-page">
   <div class="page-header">
     <div>
@@ -2377,8 +2400,18 @@
     </div>
   </div>
 {/if}
+{/if}
 
 <style>
+  .access-denied {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .access-denied h2 {
+    color: var(--danger);
+    margin-bottom: var(--space-2);
+  }
   .error { color: var(--danger); font-weight: 600; }
   .admin-table td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .role-filters { display: flex; flex-wrap: wrap; gap: var(--gap-3); margin-bottom: var(--space-3); align-items: center; }

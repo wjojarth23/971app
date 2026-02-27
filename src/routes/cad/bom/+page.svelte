@@ -151,7 +151,8 @@
   }
 
   async function createEmptyBuild() {
-    const buildHash = `${subsystem.name}_${version.id}`;
+    // Use subsystem ID in build hash (not version) so builds can be rolled up across versions
+    const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
 
     const { data: newBuild, error: buildCreateError } = await supabase
       .from('builds')
@@ -173,7 +174,8 @@
   }
 
   async function createBuildWithAllBOMItems() {
-    const buildHash = `${subsystem.name}_${version.id}`;
+    // Use subsystem ID in build hash (not version) so builds can be rolled up across versions
+    const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
 
     // Check if build already exists
     const { data: existingBuild, error: existingError } = await supabase
@@ -205,7 +207,8 @@
     if (buildCreateError) throw buildCreateError;
     const build = newBuild;
 
-    const project_id = `${subsystem.name}-${version.name}`;
+    // Project ID format: {subsystem name} (version-independent for rollup)
+    const project_id = subsystem.name;
 
     // Save BOM snapshot with relations (but don't create parts/purchasing yet)
     const bomRows = buildBOM.map((item) => ({
@@ -272,4 +275,20 @@
   .redirect-container { text-align: center; padding: var(--space-8); }
   .redirect-container h2 { color: var(--text); margin-bottom: var(--space-4); }
   .redirect-container p { color: var(--text-secondary); margin-bottom: var(--space-7); }
+
+  @media (max-width: 768px) {
+    .bom-page {
+      padding: var(--space-4);
+    }
+
+    .redirect-container {
+      padding: var(--space-6) var(--space-3);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .bom-page {
+      padding: var(--space-3);
+    }
+  }
 </style>

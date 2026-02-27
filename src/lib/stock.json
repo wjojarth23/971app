@@ -403,6 +403,13 @@
       "description": "Onyx 3D Printing Filament",
       "dimensions": "Printed",
       "workflow": "3d-print"
+    },
+    {
+      "id": "paht_cf_filament",
+      "material": "PAHT-CF",
+      "description": "PAHT-CF 3D Printing Filament",
+      "dimensions": "Printed",
+      "workflow": "3d-print"
     }
   ]
 }

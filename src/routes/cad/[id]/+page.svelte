@@ -8,7 +8,7 @@
   import { partClassificationService } from '$lib/bom_classify.js';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy, Trash2 } from 'lucide-svelte';
+  import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy, Trash2, Users } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
 
   // Slack bot base URL for purchase notifications (defaults to in-app endpoint)
@@ -44,7 +44,18 @@
   let loadingBuild = false;  let loadingStep = 'Initializing...';
   
   // Track which parts have been added to the parts table
-  let addedPartsSet = new Set();  onMount(async () => {
+  let addedPartsSet = new Set();
+  
+  // Member management state
+  let showMemberModal = false;
+  let showTransferModal = false;
+  let subsystemMembers = [];
+  let allUsers = [];
+  let memberSearchQuery = '';
+  let transferTargetUserId = null;
+  let loadingMembers = false;
+
+  onMount(async () => {
     try {
       loadingStep = 'Checking authentication...';
       // Hydrate from UUID first and keep local var in sync
@@ -74,6 +85,11 @@
       loadingStep = 'Loading subsystem data...';
       await loadSubsystem();
       await loadStockTypes();
+      
+      // Load member details if user is subsystem lead
+      if (isSubsystemLead()) {
+        await loadSubsystemMembers();
+      }
     } catch (error) {
       console.error('Error in onMount:', error);
       goto('/');
@@ -199,6 +215,198 @@
       alert('Failed to delete subsystem: ' + error.message);
     }
   }
+
+  // ========================================
+  // Member Management Functions
+  // ========================================
+  
+  async function loadSubsystemMembers() {
+    loadingMembers = true;
+    try {
+      // Load current members with their profile info
+      const { data: members, error: membersError } = await supabase
+        .from('subsystem_members')
+        .select('id, user_id, joined_at')
+        .eq('subsystem_id', subsystemId);
+
+      if (membersError) throw membersError;
+
+      // Get user profiles for members
+      const memberUserIds = members.map(m => m.user_id).filter(id => id);
+      let memberProfiles = {};
+      
+      if (memberUserIds.length > 0) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from('user_profiles')
+          .select('id, full_name, email')
+          .in('id', memberUserIds);
+
+        if (!profilesError && profiles) {
+          profiles.forEach(p => { memberProfiles[p.id] = p; });
+        }
+      }
+
+      // Combine member data with profiles
+      subsystemMembers = members.map(m => ({
+        ...m,
+        profile: memberProfiles[m.user_id] || { full_name: 'Unknown', email: '' }
+      }));
+
+      console.log('Loaded subsystem members:', subsystemMembers);
+    } catch (error) {
+      console.error('Error loading subsystem members:', error);
+    } finally {
+      loadingMembers = false;
+    }
+  }
+
+  async function loadAllUsers() {
+    try {
+      const { data: users, error } = await supabase
+        .from('user_profiles')
+        .select('id, full_name, email')
+        .order('full_name');
+
+      if (error) throw error;
+      allUsers = users || [];
+    } catch (error) {
+      console.error('Error loading all users:', error);
+      allUsers = [];
+    }
+  }
+
+  function openMemberModal() {
+    loadAllUsers();
+    loadSubsystemMembers();
+    showMemberModal = true;
+  }
+
+  function closeMemberModal() {
+    showMemberModal = false;
+    memberSearchQuery = '';
+  }
+
+  // Filter users for adding - exclude current members
+  $: filteredUsersToAdd = allUsers.filter(u => {
+    // Exclude users who are already members
+    const isMember = subsystemMembers.some(m => m.user_id === u.id);
+    if (isMember) return false;
+    
+    // Filter by search query
+    if (!memberSearchQuery) return true;
+    const searchLower = memberSearchQuery.toLowerCase();
+    return (u.full_name?.toLowerCase().includes(searchLower) || u.email?.toLowerCase().includes(searchLower));
+  });
+
+  async function addMemberToSubsystem(userId) {
+    try {
+      const { error } = await supabase
+        .from('subsystem_members')
+        .insert({
+          subsystem_id: subsystemId,
+          user_id: userId
+        });
+
+      if (error) {
+        if (error.code === '23505') {
+          alert('This user is already a member of this subsystem');
+        } else {
+          throw error;
+        }
+      } else {
+        await loadSubsystemMembers();
+        await loadSubsystem(); // Refresh subsystem data
+      }
+    } catch (error) {
+      console.error('Error adding member:', error);
+      alert('Failed to add member: ' + error.message);
+    }
+  }
+
+  async function removeMemberFromSubsystem(memberId, userId) {
+    // Don't allow removing the lead
+    if (userId === subsystem.lead_user_id) {
+      alert('Cannot remove the subsystem lead. Transfer leadership first.');
+      return;
+    }
+
+    if (!confirm('Are you sure you want to remove this member from the subsystem?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('subsystem_members')
+        .delete()
+        .eq('id', memberId);
+
+      if (error) throw error;
+      
+      await loadSubsystemMembers();
+      await loadSubsystem(); // Refresh subsystem data
+    } catch (error) {
+      console.error('Error removing member:', error);
+      alert('Failed to remove member: ' + error.message);
+    }
+  }
+
+  function openTransferModal() {
+    loadSubsystemMembers();
+    transferTargetUserId = null;
+    showTransferModal = true;
+  }
+
+  function closeTransferModal() {
+    showTransferModal = false;
+    transferTargetUserId = null;
+  }
+
+  // Get eligible users for leadership transfer (current members excluding current lead)
+  $: transferEligibleMembers = subsystemMembers.filter(m => m.user_id !== subsystem?.lead_user_id);
+
+  async function transferLeadership() {
+    if (!transferTargetUserId) {
+      alert('Please select a user to transfer leadership to.');
+      return;
+    }
+
+    if (!confirm('Are you sure you want to transfer subsystem leadership? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      // Update the subsystem's lead_user_id
+      const { error } = await supabase
+        .from('subsystems')
+        .update({ lead_user_id: transferTargetUserId })
+        .eq('id', subsystemId);
+
+      if (error) throw error;
+
+      // Make sure the new lead is a member (in case they weren't)
+      const existingMember = subsystemMembers.find(m => m.user_id === transferTargetUserId);
+      if (!existingMember) {
+        await supabase
+          .from('subsystem_members')
+          .insert({
+            subsystem_id: subsystemId,
+            user_id: transferTargetUserId
+          });
+      }
+
+      alert('Leadership transferred successfully!');
+      closeTransferModal();
+      closeMemberModal();
+      
+      // Reload subsystem to reflect changes
+      await loadSubsystem();
+      await loadSubsystemMembers();
+    } catch (error) {
+      console.error('Error transferring leadership:', error);
+      alert('Failed to transfer leadership: ' + error.message);
+    }
+  }
+
   async function loadTimeline() {
     try {
       console.log('Starting timeline load for document:', subsystem.onshape_document_id);
@@ -665,7 +873,8 @@
   async function confirmBuild() {
     loadingBuild = true;
     try {
-      const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}_${Date.now()}`;
+      // Use subsystem ID in build hash (not version) so builds can be rolled up across versions
+      const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
       
       const { data: build, error } = await supabase
         .from('builds')
@@ -1020,8 +1229,9 @@
           const detection = detectVendorFromString(item.vendor || item.part_name || item.part_number || '');
 
           // Ensure a build exists (create or find)
+          // Use subsystem ID in build hash (not version) so builds can be rolled up across versions
           let buildId = null;
-          const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}`;
+          const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
           const { data: existingBuild, error: buildQueryError } = await supabase
             .from('builds')
             .select('id')
@@ -1071,7 +1281,7 @@
           const purchasingInsertData = {
             name: item.part_name || item.part_number || 'Unnamed Part',
             requester: user.full_name || user.email,
-            project_id: `${subsystem.name}-${selectedVersion.name}`,
+            project_id: subsystem.name,
             quantity: item.quantity || 1,
             material: item.material || '',
             status: 'pending',
@@ -1142,8 +1352,8 @@
         file_name = `${item.part_name || item.part_number || "Part"}.step`;
       }
 
-      // Project ID format: {subsystem name}-{version name}
-      const project_id = `${subsystem.name}-${selectedVersion.name}`;
+      // Project ID format: {subsystem name} (version-independent for rollup)
+      const project_id = subsystem.name;
         // Insert into parts table (main manufacturing queue)
       const { data: partData, error: partsError } = await supabase
         .from('parts')
@@ -1168,9 +1378,9 @@
 
   const createdPart = Array.isArray(partData) ? partData[0] : partData;
 
-      // Create or find existing build for this version
+      // Create or find existing build for this subsystem (version-independent for rollup)
       let buildId = null;
-      const buildHash = `${subsystem.onshape_document_id}_${selectedVersion.id}`;
+      const buildHash = `${subsystem.onshape_document_id}_${subsystem.id}`;
       
       // Check if build already exists
       const { data: existingBuild, error: buildQueryError } = await supabase
@@ -1322,8 +1532,57 @@
             <p class="subsystem-description">{subsystem.description}</p>
           {/if}
         </div>
+        {#if isSubsystemLead()}
+          <div class="header-actions">
+            <button class="btn btn-secondary" on:click={openMemberModal}>
+              <Users size={16} />
+              Manage Members
+            </button>
+          </div>
+        {/if}
       </div>
-    </header>    {#if subsystem.onshape_document_id}
+    </header>
+
+    <!-- Member Management Section for Subsystem Leads -->
+    {#if isSubsystemLead()}
+      <section class="member-section">
+        <div class="member-section-header">
+          <h3>
+            <Users size={18} />
+            Subsystem Members ({subsystemMembers.length})
+          </h3>
+          <div class="member-actions">
+            <button class="btn btn-sm btn-secondary" on:click={openMemberModal}>
+              <Plus size={14} />
+              Add Member
+            </button>
+            <button class="btn btn-sm btn-warning" on:click={openTransferModal}>
+              Transfer Leadership
+            </button>
+          </div>
+        </div>
+        <div class="member-list-preview">
+          {#each subsystemMembers.slice(0, 5) as member}
+            <div class="member-chip" class:is-lead={member.user_id === subsystem.lead_user_id}>
+              <span class="member-name">{member.profile?.full_name || member.profile?.email || 'Unknown'}</span>
+              {#if member.user_id === subsystem.lead_user_id}
+                <span class="lead-badge">Lead</span>
+              {/if}
+            </div>
+          {/each}
+          {#if subsystemMembers.length > 5}
+            <button class="member-chip more-chip" on:click={openMemberModal}>
+              +{subsystemMembers.length - 5} more
+            </button>
+          {/if}
+          {#if subsystemMembers.length === 0}
+            <p class="no-members">No members yet. Click "Add Member" to add team members.</p>
+          {/if}
+        </div>
+      </section>
+    {/if}
+
+    {#if subsystem.onshape_document_id}
       <section class="timeline-section">
         <h2>OnShape Timeline</h2>
         <div class="timeline-container">
@@ -1603,6 +1862,179 @@
       </div>
     </div>
   {/if}
+
+  <!-- Member Management Modal -->
+  {#if showMemberModal}
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close member management dialog"
+      on:click|self={closeMemberModal}
+      on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeMemberModal(); } }}
+    >
+      <div
+        class="modal modal-medium"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); closeMemberModal(); } }}
+      >
+        <div class="modal-header">
+          <h3>Manage Subsystem Members</h3>
+          <button type="button" class="modal-close-button" aria-label="Close member management dialog" on:click={closeMemberModal}>×</button>
+        </div>
+        <div class="modal-content">
+          <!-- Add New Member Section -->
+          <div class="member-add-section">
+            <h4>Add Member</h4>
+            <input 
+              type="text" 
+              class="form-input" 
+              placeholder="Search users by name or email..." 
+              bind:value={memberSearchQuery}
+            />
+            <div class="user-search-results">
+              {#if filteredUsersToAdd.length === 0}
+                <p class="no-results">
+                  {#if memberSearchQuery}
+                    No users found matching "{memberSearchQuery}"
+                  {:else}
+                    All users are already members
+                  {/if}
+                </p>
+              {:else}
+                {#each filteredUsersToAdd.slice(0, 10) as userToAdd}
+                  <div class="user-search-item">
+                    <div class="user-info">
+                      <span class="user-name">{userToAdd.full_name || 'No name'}</span>
+                      <span class="user-email">{userToAdd.email}</span>
+                    </div>
+                    <button 
+                      class="btn btn-sm btn-primary" 
+                      on:click={() => addMemberToSubsystem(userToAdd.id)}
+                    >
+                      <Plus size={14} />
+                      Add
+                    </button>
+                  </div>
+                {/each}
+                {#if filteredUsersToAdd.length > 10}
+                  <p class="more-results">Showing 10 of {filteredUsersToAdd.length} results. Refine your search.</p>
+                {/if}
+              {/if}
+            </div>
+          </div>
+
+          <!-- Current Members Section -->
+          <div class="member-list-section">
+            <h4>Current Members ({subsystemMembers.length})</h4>
+            {#if loadingMembers}
+              <div class="loading-small">Loading members...</div>
+            {:else if subsystemMembers.length === 0}
+              <p class="no-members">No members in this subsystem yet.</p>
+            {:else}
+              <div class="member-list">
+                {#each subsystemMembers as member}
+                  <div class="member-item" class:is-lead={member.user_id === subsystem.lead_user_id}>
+                    <div class="member-info">
+                      <span class="member-name">{member.profile?.full_name || 'Unknown'}</span>
+                      <span class="member-email">{member.profile?.email || ''}</span>
+                      {#if member.user_id === subsystem.lead_user_id}
+                        <span class="lead-badge">Lead</span>
+                      {/if}
+                    </div>
+                    {#if member.user_id !== subsystem.lead_user_id}
+                      <button 
+                        class="btn btn-sm btn-danger" 
+                        on:click={() => removeMemberFromSubsystem(member.id, member.user_id)}
+                        title="Remove member"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    {:else}
+                      <span class="protected-badge" title="Cannot remove the subsystem lead">Protected</span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn btn-warning" on:click={openTransferModal}>
+              Transfer Leadership
+            </button>
+            <button class="btn btn-secondary" on:click={closeMemberModal}>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Transfer Leadership Modal -->
+  {#if showTransferModal}
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close transfer leadership dialog"
+      on:click|self={closeTransferModal}
+      on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeTransferModal(); } }}
+    >
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        tabindex="0"
+        style="--modal-width: 480px;"
+        on:click|stopPropagation
+        on:keydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); closeTransferModal(); } }}
+      >
+        <div class="modal-header">
+          <h3>Transfer Subsystem Leadership</h3>
+          <button type="button" class="modal-close-button" aria-label="Close transfer dialog" on:click={closeTransferModal}>×</button>
+        </div>
+        <div class="modal-content">
+          <p class="transfer-warning">
+            ⚠️ You are about to transfer leadership of <strong>{subsystem.name}</strong> to another user. 
+            This action cannot be undone. The new lead will have full control over this subsystem.
+          </p>
+
+          {#if transferEligibleMembers.length === 0}
+            <p class="no-eligible">
+              There are no other members to transfer leadership to. 
+              Add members to the subsystem first.
+            </p>
+          {:else}
+            <div class="transfer-select">
+              <label for="transfer-target">Select new subsystem lead:</label>
+              <select id="transfer-target" class="form-input" bind:value={transferTargetUserId}>
+                <option value={null}>-- Select a member --</option>
+                {#each transferEligibleMembers as member}
+                  <option value={member.user_id}>
+                    {member.profile?.full_name || member.profile?.email || 'Unknown'}
+                  </option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+
+          <div class="modal-actions">
+            <button class="btn btn-secondary" on:click={closeTransferModal}>Cancel</button>
+            <button 
+              class="btn btn-danger" 
+              on:click={transferLeadership}
+              disabled={!transferTargetUserId || transferEligibleMembers.length === 0}
+            >
+              Confirm Transfer
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 {:else}
   <div class="error-container">
     <h2>Subsystem Not Found</h2>
@@ -1631,7 +2063,7 @@
     padding: 0.5rem 1rem;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     color: var(--text);
     text-decoration: none;
     font-size: 0.875rem;
@@ -1659,7 +2091,7 @@
   .timeline-section {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 4px;
     padding: 1.5rem;
   }
 
@@ -1715,7 +2147,7 @@
   .timeline-content {
     background: var(--background);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 1rem;
   }
 
@@ -1805,7 +2237,7 @@
   .ai-reasoning { font-size: 0.8rem; color: var(--secondary); max-width: 200px; cursor: help; }
   .fallback-indicator { font-size: 0.75rem; color: var(--warning); font-style: italic; }
 
-  .confidence-bar { position: relative; width: 60px; height: 16px; background: var(--neutral-100); border-radius: 8px; overflow: hidden; }
+  .confidence-bar { position: relative; width: 60px; height: 16px; background: var(--neutral-100); border-radius: 4px; overflow: hidden; }
   .confidence-fill { height: 100%; background: linear-gradient(90deg, var(--orange-strong) 0%, var(--orange-strong) 50%, var(--green-base) 100%); transition: width 0.3s ease; }
   .confidence-text { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 500; color: var(--neutral-500); }
 
@@ -1817,7 +2249,7 @@
     background: var(--blue-base);
     color: var(--color-white);
     border: 1px solid var(--blue-base);
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0.3rem 0.9rem;
     font-size: 0.9rem;
     font-weight: 500;
@@ -1954,6 +2386,318 @@
     .btn-sm {
       font-size: 0.75rem;
       padding: 0.25rem 0.5rem;
+    }
+  }
+
+  /* ========================================
+     Member Management Styles
+     ======================================== */
+
+  .header-content {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .header-actions {
+    margin-left: auto;
+  }
+
+  .member-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .member-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .member-section-header h3 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.1rem;
+    color: var(--text);
+  }
+
+  .member-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .member-list-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .member-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .member-chip.is-lead {
+    background: var(--primary-soft, #e3f2fd);
+    border-color: var(--primary);
+  }
+
+  .member-chip.more-chip {
+    cursor: pointer;
+    background: var(--neutral-100);
+    border-color: var(--neutral-300);
+    color: var(--secondary);
+  }
+
+  .member-chip.more-chip:hover {
+    background: var(--neutral-200);
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .lead-badge {
+    background: var(--primary);
+    color: white;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .no-members {
+    color: var(--secondary);
+    font-style: italic;
+    margin: 0;
+  }
+
+  /* Modal styles for member management */
+  .modal-medium {
+    width: 600px;
+    max-width: 95vw;
+  }
+
+  .member-add-section {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .member-add-section h4,
+  .member-list-section h4 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1rem;
+    color: var(--text);
+  }
+
+  .user-search-results {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--background);
+  }
+
+  .user-search-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .user-search-item:last-child {
+    border-bottom: none;
+  }
+
+  .user-search-item:hover {
+    background: var(--surface);
+  }
+
+  .user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .user-name {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .user-email {
+    font-size: 0.8rem;
+    color: var(--secondary);
+  }
+
+  .no-results,
+  .more-results {
+    padding: 1rem;
+    text-align: center;
+    color: var(--secondary);
+    font-style: italic;
+    margin: 0;
+  }
+
+  .member-list-section {
+    margin-bottom: 1rem;
+  }
+
+  .member-list {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--background);
+  }
+
+  .member-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .member-item:last-child {
+    border-bottom: none;
+  }
+
+  .member-item.is-lead {
+    background: var(--primary-soft, #e3f2fd);
+  }
+
+  .member-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .member-info .member-name {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .member-info .member-email {
+    font-size: 0.8rem;
+    color: var(--secondary);
+  }
+
+  .protected-badge {
+    font-size: 0.75rem;
+    color: var(--secondary);
+    font-style: italic;
+  }
+
+  .loading-small {
+    padding: 1rem;
+    text-align: center;
+    color: var(--secondary);
+  }
+
+  /* Transfer Modal Styles */
+  .transfer-warning {
+    background: var(--warning-soft, #fff3e0);
+    border: 1px solid var(--warning, #ff9800);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+
+  .no-eligible {
+    padding: 1rem;
+    text-align: center;
+    color: var(--secondary);
+    font-style: italic;
+  }
+
+  .transfer-select {
+    margin-bottom: 1.5rem;
+  }
+
+  .transfer-select label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .transfer-select select {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+
+  .btn-danger {
+    background: var(--red-base, #dc3545);
+    color: white;
+    border: 1px solid var(--red-base, #dc3545);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: var(--red-strong, #c82333);
+    border-color: var(--red-strong, #c82333);
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-warning {
+    background: var(--warning, #ff9800);
+    color: white;
+    border: 1px solid var(--warning, #ff9800);
+  }
+
+  .btn-warning:hover:not(:disabled) {
+    background: var(--warning-dark, #f57c00);
+    border-color: var(--warning-dark, #f57c00);
+  }
+
+  @media (max-width: 768px) {
+    .header-content {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .header-actions {
+      margin-left: 0;
+    }
+
+    .member-section-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .modal-medium {
+      width: 95vw;
     }
   }
 </style>

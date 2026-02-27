@@ -94,8 +94,42 @@
       </tbody>
     </table>
   </div>
+
+  <div class="mobile-kitting-list">
+    {#if (items || []).length === 0}
+      <div class="card"><p class="text-muted">No items to kit.</p></div>
+    {:else}
+      {#each items as it}
+        <div class="card mobile-kitting-card">
+          <div><strong>{it.name}</strong></div>
+          <div class="mono">{it.project_id}</div>
+          <div class="text-muted">{it.requester}</div>
+          <div class="mono">x{it.quantity || 1}</div>
+          <button class="btn btn-primary btn-sm" on:click={() => markKitted(it.id)}>Kit</button>
+        </div>
+      {/each}
+    {/if}
+  </div>
 {/if}
 
 <style>
-  /* Uses global .subtabs, .mono, .text-error, .strong, .page-header, .table styles */
+  .mobile-kitting-list {
+    display: none;
+  }
+
+  .mobile-kitting-card {
+    display: grid;
+    gap: var(--gap-2);
+  }
+
+  @media (max-width: 768px) {
+    .table-container {
+      display: none;
+    }
+
+    .mobile-kitting-list {
+      display: grid;
+      gap: var(--gap-3);
+    }
+  }
 </style>

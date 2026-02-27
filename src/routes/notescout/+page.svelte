@@ -1,19 +1,10 @@
 <script>
   import { onMount } from 'svelte';
-  import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { hasPermission } from '$lib/permissions.js';
+  import { getAuthHeader } from '$lib/supabase.js';
   import { userStore } from '$lib/stores/auth.js';
-  import notescoutConfig from '$lib/notescout.json';
-  import ScoutAssignmentPanel from '$lib/components/ScoutAssignmentPanel.svelte';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   let user;
   userStore.subscribe((v) => (user = v));
-
-  // Reactive permission gate for assignment panel (explicit perm; admin does not auto-bypass)
-  $: canSeeNoteAssignments = !!user && Array.isArray(user.permissions) && user.permissions.includes('NOTE_SCOUT_ADMIN');
-  // Debug (reactive; logs when values change)
-  $: if (typeof window !== 'undefined') {
-    console.log('[notescout]', { permissions: user?.permissions, role: user?.role, canSeeNoteAssignments });
-  }
 
   let matches = [];
   let noteText = '';
@@ -27,20 +18,15 @@
   let teamNotes = [];
   let saving = false;
   let apiNote = '';
-  // assignment awareness
-  let myAssignments = [];
-  let nextAssignment = null;
-  async function loadMyAssignments(){
-    if(!user?.id) return;
-    try{
-      const res = await fetch(`/api/scout-assignments?scouting_type=note&mine=1&user_id=${encodeURIComponent(user.id)}`, {
-        headers: await getAuthHeader()
-      });
-      const js = await res.json();
-      if(js?.success){ myAssignments = (js.data||[]).filter(r=> !r.completed_at); nextAssignment = myAssignments[0]||null; }
-    }catch(e){ /* ignore */ }
+  let eventKey = '';
+
+  async function authFetch(url, options = {}) {
+    const headers = {
+      ...(options.headers || {}),
+      ...(await getAuthHeader())
+    };
+    return fetch(url, { ...options, headers });
   }
-  function gotoNextAssignment(){ if(!nextAssignment) return; selectedMatchKey = nextAssignment.match_key; onSelectMatchByKey(); selectedTeam = nextAssignment.team_key; }
 
   function displayTeam(t) {
     if (!t) return '';
@@ -50,13 +36,14 @@
   // Load qualification matches via server proxy to The Blue Alliance
   async function loadMatches() {
     apiNote = '';
-    if (!notescoutConfig?.event_key) {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    if (!eventKey) {
       apiNote = 'No event configured for Note Scouting.';
       matches = [];
       return;
     }
     try {
-      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`);
+      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`);
       let data;
       try { data = await res.json(); } catch(parseErr){
         const text = await res.text();
@@ -93,7 +80,7 @@
   // Load list of teams that have notes
   async function loadTeamsWithNotes() {
     try {
-      const res = await fetch('/notescout?list_teams=1');
+      const res = await authFetch('/notescout?list_teams=1');
       const data = await res.json();
       if (data?.success) {
         teamsWithNotes = data.data || [];
@@ -108,7 +95,7 @@
     if (!selectedTeamWithNotes) return;
     apiNote = '';
     try {
-      const res = await fetch('/notescout?team_key=' + encodeURIComponent(selectedTeamWithNotes));
+      const res = await authFetch('/notescout?team_key=' + encodeURIComponent(selectedTeamWithNotes));
       const data = await res.json();
       if (!data?.success) {
         apiNote = data?.error || 'Failed to load notes';
@@ -131,10 +118,9 @@
         match_key: selectedMatch.match_key,
         match_number: selectedMatch.match_number,
         team_key: selectedTeam,
-        notes: noteText || '',
-        user_id: user?.id || null
+        notes: noteText || ''
       };
-      const res = await fetch('/notescout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await authFetch('/notescout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!data?.success) {
         alert('Save failed: ' + (data?.error || 'unknown'));
@@ -149,14 +135,14 @@
     }
   }
 
-  onMount(() => { loadMatches(); loadTeamsWithNotes(); loadMyAssignments(); });
+  onMount(() => { loadMatches(); loadTeamsWithNotes(); });
 </script>
 
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Note Scouting</h2>
-    {#if notescoutConfig?.event_key}
-      <div class="form-label" style="margin-top:0.25rem">Event: {notescoutConfig.event_key}</div>
+    {#if eventKey}
+      <div class="form-label" style="margin-top:0.25rem">Event: {eventKey}</div>
     {/if}
     {#if apiNote}
       <div class="note" style="margin-top:0.5rem">{apiNote}</div>
@@ -164,12 +150,6 @@
   </div>
 
   <div class="page-actions">
-    {#if nextAssignment}
-      <div class="form-group" style="min-width:140px">
-        <div class="form-label">Next Up</div>
-        <button class="btn btn-primary" style="width:100%" on:click={gotoNextAssignment}>Match {nextAssignment.match_key.split('_').pop()}</button>
-      </div>
-    {/if}
     <div class="form-group" style="min-width:220px">
       <label class="form-label" for="matchSelect">Match</label>
       <select class="form-select" id="matchSelect" bind:value={selectedMatchKey} on:change={onSelectMatchByKey}>
@@ -251,10 +231,6 @@
     {/if}
   </div>
 </div>
-
-{#if canSeeNoteAssignments}
-  <ScoutAssignmentPanel scoutingType="note" permissionAdmin="NOTE_SCOUT_ADMIN" memberPerm="DATA_SCOUT_MEMBER" />
-{/if}
 
 <style>
   /* Uses global .empty */

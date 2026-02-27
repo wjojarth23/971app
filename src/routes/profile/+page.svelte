@@ -474,7 +474,7 @@
               {/each}
             </select>
 
-            <select class="form-select" id="target-folder-select" title="Add to">
+            <select class="form-select" id="target-folder-select" title="Add to" bind:value={targetFolderIdx}>
               <option value="">Top level</option>
               {#each (header_tabs && Array.isArray(header_tabs) ? header_tabs : []) as it, i}
                 {#if it.type === 'folder'}

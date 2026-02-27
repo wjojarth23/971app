@@ -2,15 +2,10 @@
   import { onMount } from "svelte";
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
-  import { hasPermission } from "$lib/permissions.js";
-  import notescoutConfig from "$lib/notescout.json";
-  import ScoutAssignmentPanel from "$lib/components/ScoutAssignmentPanel.svelte";
+  import { fetchActiveScoutingEventKey } from "$lib/scoutingEvent.js";
 
   let user;
   userStore.subscribe((v) => (user = v));
-  $: canSeeDataAssignments =
-    !!user &&
-    (user.role === "admin" || hasPermission(user, "DATA_SCOUT_ADMIN"));
 
   // Match / Team State
   let matches = [];
@@ -20,6 +15,7 @@
   let selectedTeam = "";
   let loadNote = "";
   let loadingMatches = false;
+  let eventKey = "";
 
   // Session State
   let phase = "pre"; // pre, auto, teleop, endgame, finished
@@ -97,16 +93,25 @@
     return t ? String(t).replace(/^frc/i, "") : "";
   }
 
+  async function authFetch(url, options = {}) {
+    const headers = {
+      ...(options.headers || {}),
+      ...(await getAuthHeader()),
+    };
+    return fetch(url, { ...options, headers });
+  }
+
   async function fetchMatches() {
     loadNote = "";
-    if (!notescoutConfig?.event_key) {
+    eventKey = (await fetchActiveScoutingEventKey()) || "";
+    if (!eventKey) {
       loadNote = "No event configured.";
       return;
     }
     loadingMatches = true;
     try {
       const res = await fetch(
-        `/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`,
+        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`,
       );
       if (!res.ok) {
         const js = await res.json().catch(() => null);
@@ -179,7 +184,10 @@
     try {
       const res = await fetch("/datascout", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(await getAuthHeader()),
+        },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
@@ -220,7 +228,10 @@
       try {
         const res = await fetch("/datascout", {
           method: "DELETE",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(await getAuthHeader()),
+          },
           body: JSON.stringify({ id: lastEvent.id }),
         });
         const data = await res.json();
@@ -343,28 +354,13 @@
     record("shift_update", String(val));
   }
 
-  // Derive all competition teams from TBA matches
-  $: {
-    const teamSet = new Set();
-    for (const m of matches) {
-      for (const t of m.alliances?.red?.team_keys || []) teamSet.add(t);
-      for (const t of m.alliances?.blue?.team_keys || []) teamSet.add(t);
-    }
-    allCompetitionTeams = [...teamSet].sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, "")) || 0;
-      const numB = parseInt(b.replace(/\D/g, "")) || 0;
-      return numA - numB;
-    });
-  }
-
-  // Extract distinct match keys from teamEvents
-  $: viewMatchKeys = (() => {
-    const seen = new Set();
-    const keys = [];
-    for (const e of teamEvents) {
-      if (e.match_key && !seen.has(e.match_key)) {
-        seen.add(e.match_key);
-        keys.push(e.match_key);
+  // Viewing Data
+  async function loadTeamsWithData() {
+    try {
+      const res = await authFetch("/datascout?list_teams=1");
+      const data = await res.json();
+      if (data?.success) {
+        teamsWithData = data.data || [];
       }
     }
     keys.sort((a, b) => {
@@ -704,31 +700,12 @@
   async function viewTeamEvents() {
     if (!selectedTeamForView) return;
     viewMode = "view";
-    viewFilterMatch = "all";
-    viewLoading = true;
-    teamEvents = [];
-    const teamKey = selectedTeamForView;
-    const params = "team_key=" + encodeURIComponent(teamKey);
-    const headers = await getAuthHeader();
-    const urlsToTry = [
-      "/api/datascout/events?" + params,
-      "/datascout?" + params,
-    ];
-    for (const url of urlsToTry) {
-      try {
-        const res = await fetch(url, { headers });
-        const contentType = res.headers.get("content-type") || "";
-        if (!contentType.includes("application/json")) {
-          continue;
-        }
-        const data = await res.json();
-        if (data?.success && Array.isArray(data.data)) {
-          teamEvents = data.data;
-          break;
-        }
-      } catch (e) {
-        console.error("Fetch failed for", url, e);
-      }
+    const res = await authFetch(
+      "/datascout?team_key=" + encodeURIComponent(selectedTeamForView),
+    );
+    const data = await res.json();
+    if (data?.success) {
+      teamEvents = data.data || [];
     }
     viewLoading = false;
   }
@@ -738,82 +715,25 @@
     teamEvents = [];
   }
 
-  // Assignment Logic
-  let myAssignments = [];
-  let nextAssignment = null;
-  async function loadMyAssignments() {
-    if (!user?.id) return;
-    try {
-      const res = await fetch(
-        `/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`,
-        { headers: await getAuthHeader() },
-      );
-      const js = await res.json();
-      if (js?.success) {
-        myAssignments = (js.data || []).filter((r) => !r.completed_at);
-        nextAssignment = myAssignments[0] || null;
-      }
-    } catch (e) {}
-  }
-  function gotoNextAssignment() {
-    if (!nextAssignment) return;
-    selectedMatchKey = nextAssignment.match_key;
-    onSelectMatchByKey();
-    selectedTeam = nextAssignment.team_key;
-  }
-
-  async function loadTeamsWithData() {
-    const headers = await getAuthHeader();
-    for (const url of ["/api/datascout/events?list_teams=1", "/datascout?list_teams=1"]) {
-      try {
-        const res = await fetch(url, { headers });
-        if (!(res.headers.get("content-type") || "").includes("application/json")) continue;
-        const data = await res.json();
-        if (data?.success && Array.isArray(data.data)) {
-          teamsWithData = data.data;
-          return;
-        }
-      } catch (_) {}
-    }
-  }
-
   onMount(() => {
     fetchMatches();
     loadTeamsWithData();
-    loadMyAssignments();
   });
 </script>
 
 <svelte:window on:contextmenu|preventDefault />
 
-{#if canSeeDataAssignments}
-  <ScoutAssignmentPanel
-    scoutingType="data"
-    permissionAdmin="DATA_SCOUT_ADMIN"
-    memberPerm="DATA_SCOUT_MEMBER"
-  />
-{/if}
-
 <!-- Header -->
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Data Scouting</h2>
-    {#if notescoutConfig?.event_key}
-      <div class="sub-label">{notescoutConfig.event_key}</div>
+    {#if eventKey}
+      <div class="sub-label">{eventKey}</div>
     {/if}
     {#if loadNote}<div class="note">{loadNote}</div>{/if}
   </div>
 
   <div class="page-actions">
-    {#if nextAssignment}
-      <div class="form-group next-up">
-        <div class="form-label">Next Up</div>
-        <button class="btn btn-primary" on:click={gotoNextAssignment}
-          >Match {nextAssignment.match_key.split("_").pop()}</button
-        >
-      </div>
-    {/if}
-
     <div class="form-group match-select">
       <span class="label" for="matchSelect">Match</span>
       <select
@@ -1962,6 +1882,25 @@
     flex-direction: column;
     gap: 0.1rem;
   }
+  .assignment-team-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
+    align-items: center;
+  }
+  .assignment-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    color: var(--scout-secondary);
+    font-weight: 600;
+  }
+  .assignment-note {
+    font-size: 0.7rem;
+    color: var(--scout-secondary);
+  }
   .row {
     display: flex;
     gap: 0.5rem;
@@ -2051,7 +1990,7 @@
   .finished-state {
     background: #e8f5e9; /* Light Green */
     padding: 2rem;
-    border-radius: 12px;
+    border-radius: 4px;
     border: 2px dashed #a5d6a7;
     margin: 1rem 0;
     text-align: center;
@@ -2232,7 +2171,7 @@
   .chip {
     border: 1px solid var(--scout-border);
     background: white;
-    border-radius: 20px;
+    border-radius: 4px;
     padding: 0.25rem 0.75rem;
     font-size: 0.9rem;
     cursor: pointer;
@@ -2336,13 +2275,13 @@
     background: #d4e6f1;
     color: #1b4f72;
     padding: 2px 6px;
-    border-radius: 10px;
+    border-radius: 4px;
     font-weight: bold;
   }
   .shift-badge {
     font-size: 0.7rem;
     padding: 2px 6px;
-    border-radius: 10px;
+    border-radius: 4px;
     font-weight: bold;
   }
   .shift-badge.on {

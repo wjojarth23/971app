@@ -1,6 +1,5 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-import notescoutConfig from '$lib/notescout.json';
 import { getSupabase } from '$lib/server/971bot';
 import { notifyMatchReminder } from '$lib/server/slack_notifications.js';
 
@@ -11,8 +10,17 @@ function requireToken(url) {
   return provided === expected;
 }
 
-function eventKeyFromUrl(url) {
-  return url.searchParams.get('event_key') || notescoutConfig?.event_key || null;
+async function eventKeyFromUrl(url, db) {
+  const fromQuery = url.searchParams.get('event_key');
+  if (fromQuery) return fromQuery;
+
+  const { data } = await db
+    .from('scouting_settings')
+    .select('event_key')
+    .eq('id', 1)
+    .maybeSingle();
+
+  return String(data?.event_key || '').trim() || null;
 }
 
 function matchStartTimestamp(match) {
@@ -23,7 +31,8 @@ export async function GET({ url }) {
   if (!requireToken(url)) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const eventKey = eventKeyFromUrl(url);
+  const supa = getSupabase();
+  const eventKey = await eventKeyFromUrl(url, supa);
   if (!eventKey) {
     return json({ error: 'event_key missing' }, { status: 400 });
   }
@@ -55,7 +64,6 @@ export async function GET({ url }) {
     return json({ ok: true, scheduled: 0, reason: 'no-upcoming' });
   }
   const matchKeys = upcoming.map((m) => m.key);
-  const supa = getSupabase();
   const { data: assignments, error: assignError } = await supa
     .from('scout_match_assignments')
     .select('match_key, team_key, assigned_user')

@@ -145,6 +145,7 @@
   <a href="/manufacture" class:active={$page.url.pathname === '/manufacture'}>ToDo</a>
   <a href="/manufacture/completed" class:active={$page.url.pathname === '/manufacture/completed'}>Completed</a>
   <a href="/manufacture/router" class:active={$page.url.pathname === '/manufacture/router'}>Router</a>
+  <a href="/manufacture/post-processing" class:active={$page.url.pathname === '/manufacture/post-processing'}>Post Processing</a>
   <a href="/manufacture/bins" class:active={$page.url.pathname === '/manufacture/bins'}>Bins</a>
 </div>
 
@@ -224,4 +225,20 @@
   .parts-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
   .parts-list li { display: inline-flex; align-items: center; gap: 0.5rem; }
   .tag { border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; }
+
+  @media (max-width: 768px) {
+    .create-bin {
+      flex-direction: column;
+    }
+
+    .create-bin .form-input {
+      max-width: none;
+    }
+
+    .parts-list li {
+      width: 100%;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+  }
 </style>

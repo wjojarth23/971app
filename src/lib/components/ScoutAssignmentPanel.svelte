@@ -2,23 +2,33 @@
   import { onMount } from 'svelte';
   import { userStore } from '$lib/stores/auth.js';
   import { getAuthHeader } from '$lib/supabase.js';
-  import notescoutConfig from '$lib/notescout.json';
-  let user; userStore.subscribe(v=> user=v);
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+
+  let user;
+  userStore.subscribe((v) => (user = v));
 
   export let scoutingType = 'data'; // 'data' | 'note'
-  export let permissionAdmin = 'DATA_SCOUT_ADMIN';
-  export let memberPerm = 'DATA_SCOUT_MEMBER';
 
-  let matches = []; // simplified structure: { key, red:[], blue:[] }
-  let assignments = {}; // key: match_key -> { team_key: { user_id, user_name } }
-  let users = []; // eligible users
+  let panelOpen = false;
+  let matches = []; // { key, red:[], blue:[] }
+  let eventKey = '';
+  let assignments = {}; // match_key -> team_key -> { user_id, user_name }
+  let users = []; // eligible assignees
   let loading = false;
   let saving = false;
   let errorMsg = '';
 
+  let capabilities = {
+    can_view: true,
+    can_edit: false,
+    can_be_assigned: false,
+    roster_keys: []
+  };
+
   let showModal = false;
-  let modalContext = { match_key:'', team_key:'', team_number:'', robot_color:'', alliance_index:0 };
+  let modalContext = { match_key: '', team_key: '', team_number: '' };
   let selectedUserId = '';
+  let lastUserId = null;
 
   async function authFetch(url, options = {}) {
     const headers = {
@@ -44,184 +54,303 @@
     permissions: Array.isArray(user?.permissions) ? user.permissions : user?.permissions
   });
 
-  async function loadEligibleUsers(){
+  async function loadCapabilities() {
     try {
-      const res = await authFetch('/api/admin?action=list-users');
+      const qs = new URLSearchParams({ scouting_type: scoutingType, capabilities: '1' });
+      const res = await authFetch(`/api/scout-assignments?${qs}`);
       const data = await res.json();
-      if(data?.success){
-        // filter by memberPerm
-        users = (data.data||[]).filter(u => (u.role==='admin') || (Array.isArray(u.permissions) && u.permissions.includes(memberPerm)));
+      if (data?.success && data?.data) {
+        capabilities = { ...capabilities, ...data.data };
       }
-    }catch(e){ /* ignore */ }
+    } catch {
+      capabilities = { ...capabilities, can_edit: false };
+    }
   }
 
-  async function loadMatches(){
-    if(!notescoutConfig?.event_key){ errorMsg='No event configured'; return; }
+  async function loadEligibleUsers() {
+    if (!capabilities.can_edit) {
+      users = [];
+      return;
+    }
+
     try {
-      loading = true; errorMsg='';
-      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(notescoutConfig.event_key)}&comp_level=qm`);
+      const qs = new URLSearchParams({ scouting_type: scoutingType, eligible: '1' });
+      const res = await authFetch(`/api/scout-assignments?${qs}`);
+      const data = await res.json();
+      if (data?.success) {
+        users = data.data || [];
+      }
+    } catch {
+      users = [];
+    }
+  }
+
+  async function loadMatches() {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    if (!eventKey) {
+      errorMsg = 'No event configured';
+      return;
+    }
+
+    try {
+      loading = true;
+      errorMsg = '';
+      const res = await fetch(
+        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`
+      );
+
       let data;
-      try { data = await res.json(); } catch(parseErr){
+      try {
+        data = await res.json();
+      } catch {
         const text = await res.text();
-        errorMsg = 'Non-JSON response ('+res.status+'): '+text.slice(0,100);
+        errorMsg = `Non-JSON response (${res.status}): ${text.slice(0, 100)}`;
         return;
       }
-      if(!data?.success){ errorMsg=data?.error||'Failed to load matches'; return; }
-      matches = (data.data||[]).map(m=>({
+
+      if (!data?.success) {
+        errorMsg = data?.error || 'Failed to load matches';
+        return;
+      }
+
+      matches = (data.data || []).map((m) => ({
         key: m.key,
         match_number: m.match_number,
-        red: m.alliances?.red?.team_keys||[],
-        blue: m.alliances?.blue?.team_keys||[]
+        red: m.alliances?.red?.team_keys || [],
+        blue: m.alliances?.blue?.team_keys || []
       }));
-    }catch(e){ errorMsg=e.message||'Load error'; }
-    finally{ loading=false; }
+    } catch (e) {
+      errorMsg = e.message || 'Load error';
+    } finally {
+      loading = false;
+    }
   }
 
-  async function loadAssignments(){
+  async function loadAssignments() {
     try {
       const qs = new URLSearchParams({ scouting_type: scoutingType });
       const res = await authFetch(`/api/scout-assignments?${qs}`);
       const data = await res.json();
-      if(data?.success){
-        assignments = {};
-        for(const row of data.data){
-          if(!assignments[row.match_key]) assignments[row.match_key]={};
-            assignments[row.match_key][row.team_key] = { user_id: row.assigned_user, user_name: row.user_name };
-        }
+      if (!data?.success) return;
+
+      assignments = {};
+      for (const row of data.data || []) {
+        if (!assignments[row.match_key]) assignments[row.match_key] = {};
+        assignments[row.match_key][row.team_key] = {
+          user_id: row.assigned_user,
+          user_name: row.user_name
+        };
       }
-    }catch(e){ /* ignore */ }
+    } catch {
+      assignments = {};
+    }
   }
 
-  function displayTeam(t){ return t? String(t).replace(/^frc/i,''):''; }
-
-  function openAssign(match_key, team_key){
+  function openAssign(match_key, team_key) {
+    if (!capabilities.can_edit) return;
     modalContext = { match_key, team_key, team_number: displayTeam(team_key) };
     selectedUserId = assignments?.[match_key]?.[team_key]?.user_id || '';
-    showModal=true;
+    showModal = true;
   }
 
-  async function saveAssignment(applyToAll=false){
-    if(!selectedUserId){ return; }
-    saving=true;
+  async function saveAssignment(applyToAll = false) {
+    if (!selectedUserId || !capabilities.can_edit) return;
+    saving = true;
+
     try {
       if (applyToAll) {
-        // Build items for every match where this team appears (use loaded matches from TBA)
         const team_key = modalContext.team_key;
         const items = [];
+
         for (const m of matches) {
           if ((m.blue || []).includes(team_key) || (m.red || []).includes(team_key)) {
             items.push({ match_key: m.key, team_key, user_id: selectedUserId });
           }
         }
+
         if (items.length === 0) {
           alert('No matches found for that robot');
         } else {
           const body = { action: 'bulk-assign', scouting_type: scoutingType, items };
-          const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+          const res = await authFetch('/api/scout-assignments', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
           const data = await res.json();
-          if(!data?.success){ alert('Save failed: '+(data?.error||'unknown')); }
-          else { await loadAssignments(); showModal=false; }
+          if (!data?.success) {
+            alert(`Save failed: ${data?.error || 'unknown'}`);
+          } else {
+            await loadAssignments();
+            showModal = false;
+          }
         }
       } else {
-        const body={ action: 'assign-single', scouting_type: scoutingType, match_key: modalContext.match_key, team_key: modalContext.team_key, user_id: selectedUserId };
-  const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+        const body = {
+          action: 'assign-single',
+          scouting_type: scoutingType,
+          match_key: modalContext.match_key,
+          team_key: modalContext.team_key,
+          user_id: selectedUserId
+        };
+
+        const res = await authFetch('/api/scout-assignments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        });
         const data = await res.json();
-        if(!data?.success){ alert('Save failed: '+(data?.error||'unknown')); }
-        else { await loadAssignments(); showModal=false; }
+        if (!data?.success) {
+          alert(`Save failed: ${data?.error || 'unknown'}`);
+        } else {
+          await loadAssignments();
+          showModal = false;
+        }
       }
-    }catch(e){ alert('Error: '+e.message); }
-    finally{ saving=false; }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      saving = false;
+    }
   }
 
-  function randomize(){
-    // Flatten all cells; assign eligible users round-robin ensuring per-match uniqueness
+  function randomize() {
+    if (!capabilities.can_edit) return;
+
     const eligible = [...users];
-    if(eligible.length===0) return;
+    if (eligible.length === 0) return;
+
     const newAssignments = {};
-    for(const m of matches){
+    for (const m of matches) {
       const usedInMatch = new Set();
       const teams = [...m.blue, ...m.red];
-      for(const t of teams){
-        // pick a user not yet used this match
-        const shuffled = [...eligible].sort(()=> Math.random()-0.5);
-        const u = shuffled.find(x=> !usedInMatch.has(x.id));
+      for (const t of teams) {
+        const shuffled = [...eligible].sort(() => Math.random() - 0.5);
+        const u = shuffled.find((x) => !usedInMatch.has(x.id));
         const chosen = u || shuffled[0];
         usedInMatch.add(chosen.id);
-        if(!newAssignments[m.key]) newAssignments[m.key]={};
-        newAssignments[m.key][t] = { user_id: chosen.id, user_name: chosen.full_name || chosen.email };
+
+        if (!newAssignments[m.key]) newAssignments[m.key] = {};
+        newAssignments[m.key][t] = {
+          user_id: chosen.id,
+          user_name: chosen.full_name || chosen.email
+        };
       }
     }
-    // Bulk save via API
+
     bulkPersist(newAssignments);
   }
 
-  async function bulkPersist(map){
-    try{
-      const list=[];
-      for(const mk of Object.keys(map)){
-        for(const tk of Object.keys(map[mk])){
+  async function bulkPersist(map) {
+    try {
+      const list = [];
+      for (const mk of Object.keys(map)) {
+        for (const tk of Object.keys(map[mk])) {
           list.push({ match_key: mk, team_key: tk, user_id: map[mk][tk].user_id });
         }
       }
-      const body={ action:'bulk-assign', scouting_type: scoutingType, items:list };
-  const res = await authFetch('/api/scout-assignments', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+
+      const body = { action: 'bulk-assign', scouting_type: scoutingType, items: list };
+      const res = await authFetch('/api/scout-assignments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
       const data = await res.json();
-      if(!data?.success){ alert('Bulk save failed: '+(data?.error||'unknown')); }
-      else { await loadAssignments(); }
-    }catch(e){ alert('Error: '+e.message); }
+      if (!data?.success) {
+        alert(`Bulk save failed: ${data?.error || 'unknown'}`);
+      } else {
+        await loadAssignments();
+      }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    }
   }
 
-  onMount(()=>{ if(isAdmin){ loadEligibleUsers(); loadMatches().then(loadAssignments); } });
-  $: if (!bootstrapped && isAdmin) {
-    bootstrapped = true;
-    // Run loads once when admin status becomes true (after auth/profile arrives)
-    loadEligibleUsers();
-    loadMatches().then(loadAssignments);
+  async function refreshAll() {
+    await loadCapabilities();
+    await Promise.all([loadMatches(), loadAssignments()]);
+    await loadEligibleUsers();
+  }
+
+  onMount(() => {
+    refreshAll();
+  });
+
+  $: if (user?.id && user.id !== lastUserId) {
+    lastUserId = user.id;
+    refreshAll();
   }
 </script>
 
-{#if canAdmin()}
-  <div class="panel-header">
-    <h3 style="margin:0">{scoutingType==='note'?'Note':'Data'} Scouting Assignments</h3>
-    <div class="actions">
-      <button class="btn btn-secondary" on:click={randomize} disabled={matches.length===0 || users.length===0}>Randomize</button>
-      <button class="btn btn-outline" on:click={loadAssignments}>Refresh</button>
+<details class="assignment-accordion" bind:open={panelOpen}>
+  <summary class="summary-row">
+    <div class="summary-title">
+      {scoutingType === 'note' ? 'Note' : 'Data'} Scouting Assignments
+    </div>
+    <div class="summary-meta">
+      <span class="mode-pill" class:editable={capabilities.can_edit}>
+        {capabilities.can_edit ? 'Lead edit mode' : 'View only'}
+      </span>
+    </div>
+  </summary>
+
+  <div class="panel-body">
+    <div class="panel-header">
+      <div class="hint">
+        {#if capabilities.can_edit}
+          Click a team cell to reassign. "Set for Robot" applies assignment to all that team's matches.
+        {:else}
+          Assignments are read-only unless you are a scouting lead in Roster Studio.
+        {/if}
+      </div>
+      <div class="actions">
+        {#if capabilities.can_edit}
+          <button class="btn btn-secondary" on:click={randomize} disabled={matches.length === 0 || users.length === 0}>Randomize</button>
+        {/if}
+        <button class="btn btn-outline" on:click={refreshAll} disabled={loading}>Refresh</button>
+      </div>
+    </div>
+
+    {#if errorMsg}
+      <div class="error-note">{errorMsg}</div>
+    {/if}
+
+    <div class="scroll-x">
+      <table class="assignment-table">
+        <thead>
+          <tr>
+            <th colspan="3" class="alliance blue">Blue Alliance</th>
+            <th colspan="3" class="alliance red">Red Alliance</th>
+          </tr>
+          <tr>
+            {#each [1, 2, 3] as i}<th class="blue">B{i}</th>{/each}
+            {#each [1, 2, 3] as i}<th class="red">R{i}</th>{/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each matches as m}
+            <tr>
+              {#each m.blue as t}
+                <td class="cell blue" class:editable-cell={capabilities.can_edit} on:click={() => openAssign(m.key, t)}>
+                  <div class="team">{displayTeam(t)}</div>
+                  <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
+                </td>
+              {/each}
+              {#each m.red as t}
+                <td class="cell red" class:editable-cell={capabilities.can_edit} on:click={() => openAssign(m.key, t)}>
+                  <div class="team">{displayTeam(t)}</div>
+                  <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
+                </td>
+              {/each}
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
   </div>
-  {#if errorMsg}<div class="note" style="margin-bottom:0.5rem">{errorMsg}</div>{/if}
-  <div class="scroll-x">
-    <table class="assignment-table">
-      <thead>
-        <tr>
-          <th colspan="3" class="alliance blue">Blue Alliance</th>
-          <th colspan="3" class="alliance red">Red Alliance</th>
-        </tr>
-        <tr>
-          {#each [1,2,3] as i}<th class="blue">B{i}</th>{/each}
-          {#each [1,2,3] as i}<th class="red">R{i}</th>{/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each matches as m}
-          <tr>
-            {#each m.blue as t}
-              <td class="cell blue" on:click={() => openAssign(m.key, t)}>
-                <div class="team">{displayTeam(t)}</div>
-                <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
-              </td>
-            {/each}
-            {#each m.red as t}
-              <td class="cell red" on:click={() => openAssign(m.key, t)}>
-                <div class="team">{displayTeam(t)}</div>
-                <div class="scout">{assignments?.[m.key]?.[t]?.user_name || '-'}</div>
-              </td>
-            {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
-{/if}
+</details>
 
 {#if showModal}
   <div
@@ -229,8 +358,15 @@
     role="button"
     tabindex="0"
     aria-label="Close assignment dialog"
-    on:click|self={() => { if(!saving) showModal = false; }}
-    on:keydown={(e)=> { if(e.key==='Escape' || e.key==='Enter' || e.key===' ') { e.preventDefault(); if(!saving) showModal=false; } }}
+    on:click|self={() => {
+      if (!saving) showModal = false;
+    }}
+    on:keydown={(e) => {
+      if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (!saving) showModal = false;
+      }
+    }}
   >
     <div class="modal" style="--modal-width: 360px;" role="dialog" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
       <h4>Assign Scout – {modalContext.team_number}</h4>
@@ -240,10 +376,12 @@
           <option value={u.id}>{u.full_name || u.email}</option>
         {/each}
       </select>
-      <div class="btn-row" style="margin-top:0.75rem">
-        <button class="btn btn-primary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
-        <button class="btn btn-secondary" disabled={!selectedUserId||saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
-        <button class="btn btn-outline" on:click={() => { if(!saving) showModal=false; }}>Close</button>
+      <div class="btn-row modal-actions">
+        <button class="btn btn-primary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
+        <button class="btn btn-secondary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
+        <button class="btn btn-outline" on:click={() => {
+          if (!saving) showModal = false;
+        }}>Close</button>
       </div>
     </div>
   </div>
