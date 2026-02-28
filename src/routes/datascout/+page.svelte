@@ -35,6 +35,7 @@
   let finalClimbPos = "N/A";
   let shootingAccuracy = 3; // 1-5 default 3
   let shootingSpeed = 5; // 1-10 balls/sec default 5
+  let shootingAccuracyPct = 50; // 0-100% default 50
   let drivingRank = 3; // 1-5 default 3
 
   // History / Logs
@@ -51,7 +52,7 @@
   let shootingTimer;
 
   function handleButtonClick(e) {
-    if (e.currentTarget) {
+    if (e?.currentTarget) {
       e.currentTarget.blur();
     }
   }
@@ -144,6 +145,7 @@
     finalClimbPos = "N/A";
     shootingAccuracy = 3;
     shootingSpeed = 5;
+    shootingAccuracyPct = 50;
     drivingRank = 3;
     scoutingEvents = [];
     clearInterval(teleopTimerInterval);
@@ -301,19 +303,20 @@
     const isAutoLoser = teamAlliance !== autoWinner;
 
     if (isAutoLoser) {
-      if (teleopTimeRemaining > 102) {
+      const t = teleopTimeRemaining;
+      if (t > 102) {
         shiftName = "Transition Shift + Shift 1";
         shouldBeOnShift = true;
         nextBoundary = 102;
-      } else if (teleopTimeRemaining > 80) {
+      } else if (t > 80) {
         shiftName = "Shift 2";
         shouldBeOnShift = false;
         nextBoundary = 80;
-      } else if (teleopTimeRemaining > 52) {
+      } else if (t > 52) {
         shiftName = "Shift 3";
         shouldBeOnShift = true;
         nextBoundary = 52;
-      } else if (teleopTimeRemaining > 30) {
+      } else if (t > 30) {
         shiftName = "Shift 4";
         shouldBeOnShift = false;
         nextBoundary = 30;
@@ -322,20 +325,27 @@
         shouldBeOnShift = true;
         nextBoundary = 0;
       }
+
+      // Buffer for transitions where we go from ON to OFF
+      if (!shouldBeOnShift) {
+        if (t <= 102 && t > 102 - 3) shouldBeOnShift = true; // Buffer for (T+S1) end
+        if (t <= 52 && t > 52 - 3) shouldBeOnShift = true; // Buffer for S3 end
+      }
     } else {
-      if (teleopTimeRemaining > 127) {
+      const t = teleopTimeRemaining;
+      if (t > 127) {
         shiftName = "Transition Shift";
         shouldBeOnShift = true;
         nextBoundary = 127;
-      } else if (teleopTimeRemaining > 105) {
+      } else if (t > 105) {
         shiftName = "Shift 1";
         shouldBeOnShift = false;
         nextBoundary = 105;
-      } else if (teleopTimeRemaining > 77) {
+      } else if (t > 77) {
         shiftName = "Shift 2";
         shouldBeOnShift = true;
         nextBoundary = 77;
-      } else if (teleopTimeRemaining > 55) {
+      } else if (t > 55) {
         shiftName = "Shift 3";
         shouldBeOnShift = false;
         nextBoundary = 55;
@@ -343,6 +353,12 @@
         shiftName = "Shift 4 + Endgame";
         shouldBeOnShift = true;
         nextBoundary = 0;
+      }
+
+      // Buffer for transitions where we go from ON to OFF
+      if (!shouldBeOnShift) {
+        if (t <= 127 && t > 127 - 3) shouldBeOnShift = true; // Buffer for Transition Shift end
+        if (t <= 77 && t > 77 - 3) shouldBeOnShift = true; // Buffer for Shift 2 end
       }
     }
 
@@ -386,6 +402,7 @@
     await record("climb_pos", finalClimbPos);
     await record("rank_accuracy", shootingAccuracy);
     await record("rank_speed", shootingSpeed);
+    await record("rank_accuracy_pct", shootingAccuracyPct);
     await record("rank_driving", drivingRank);
     await record("phase", "finish_match");
     phase = "finished";
@@ -461,6 +478,41 @@
     viewMode = "scout";
   }
 
+  $: viewStats = (() => {
+    if (!teamEvents || teamEvents.length === 0) return null;
+
+    // Group by match to get the final rank per match
+    const matchMap = {};
+    teamEvents.forEach((e) => {
+      const matchLabel = e.match_key || `M${e.match_number}`;
+      if (!matchMap[matchLabel]) matchMap[matchLabel] = {};
+      if (e.event_type.startsWith("rank_")) {
+        matchMap[matchLabel][e.event_type] = Number(e.event_value);
+      }
+    });
+
+    const matches = Object.values(matchMap);
+    const validMatches = matches.filter((m) => Object.keys(m).length > 0);
+    if (validMatches.length === 0) return null;
+
+    const calcAvg = (key) => {
+      const vals = validMatches
+        .map((m) => m[key])
+        .filter((v) => v !== undefined);
+      if (vals.length === 0) return "—";
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return avg.toFixed(1);
+    };
+
+    return {
+      accuracy: calcAvg("rank_accuracy"),
+      speed: calcAvg("rank_speed"),
+      accuracyPct: calcAvg("rank_accuracy_pct"),
+      driving: calcAvg("rank_driving"),
+      matchCount: validMatches.length,
+    };
+  })();
+
   onMount(() => {
     fetchMatches();
     loadTeamsWithData();
@@ -531,11 +583,47 @@
       on:click={backToScout}>&larr; Back to Scout</button
     >
     <h3>Events: {displayTeam(selectedTeamForView)}</h3>
+
+    {#if viewStats}
+      <div class="stats-summary-grid">
+        <div class="stat-mini-card">
+          <span class="stat-label">Accuracy Rank</span>
+          <div class="stat-value">
+            {viewStats.accuracy}<small class="unit">/5</small>
+          </div>
+        </div>
+        <div class="stat-mini-card">
+          <span class="stat-label">Speed</span>
+          <div class="stat-value">
+            {viewStats.speed}<small class="unit">/10</small>
+          </div>
+        </div>
+        <div class="stat-mini-card">
+          <span class="stat-label">Shooting Accuracy</span>
+          <div class="stat-value">
+            {viewStats.accuracyPct}<small class="unit">%</small>
+          </div>
+        </div>
+        <div class="stat-mini-card">
+          <span class="stat-label">Driver Rank</span>
+          <div class="stat-value">
+            {viewStats.driving}<small class="unit">/5</small>
+          </div>
+        </div>
+      </div>
+      <div
+        class="sub-label"
+        style="text-align:center; margin-bottom: 1rem; font-size: 0.7rem;"
+      >
+        Averages across {viewStats.matchCount} matches
+      </div>
+    {/if}
+
     {#if teamEvents.length === 0}<div class="empty">No events found.</div>{/if}
     <div class="event-list">
       {#each teamEvents as e}
         <div class="event-item">
-          <span class="badg">{e.phase}</span>
+          <span class="badge">{e.phase}</span>
           <span class="match-badge"
             >M{e.match_number || e.match_key?.split("_").pop()}</span
           >
@@ -968,7 +1056,7 @@
           </div>
 
           <div class="form-group mt-1">
-            <span class="label">Shooting Accuracy</span>
+            <span class="label">Accuracy Rank (1-5)</span>
             <input
               type="range"
               min="1"
@@ -1019,6 +1107,26 @@
               <span>1</span><span>10</span>
             </div>
             <div class="current-val">{shootingSpeed}</div>
+          </div>
+
+          <div class="form-group mt-1">
+            <span class="label">Shooting Accuracy (%)</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="20"
+              list="pct-ticks"
+              bind:value={shootingAccuracyPct}
+              class="slider"
+            />
+            <datalist id="pct-ticks">
+              {#each Array(6) as _, i}<option value={i * 20}></option>{/each}
+            </datalist>
+            <div class="range-labels">
+              <span>0%</span><span>100%</span>
+            </div>
+            <div class="current-val">{shootingAccuracyPct}%</div>
           </div>
 
           <div class="form-group mt-1">
@@ -1399,6 +1507,47 @@
   .btn-selected {
     background: #6c757d !important;
     color: white !important;
+    border-color: #5a6268 !important;
+  }
+
+  /* Stats View */
+  .stats-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  @media (max-width: 600px) {
+    .stats-summary-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  .stat-mini-card {
+    background: #f1f3f5;
+    border-radius: 8px;
+    padding: 0.6rem 0.4rem;
+    text-align: center;
+    border: 1px solid #dee2e6;
+  }
+  .stat-label {
+    display: block;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: #6c757d;
+    margin-bottom: 0.2rem;
+  }
+  .stat-value {
+    font-size: 1.4rem;
+    font-weight: 900;
+    color: var(--scout-dark);
+    line-height: 1;
+  }
+  .stat-value .unit {
+    font-size: 0.7rem;
+    font-weight: normal;
+    color: #6c757d;
+    margin-left: 1px;
   }
 
   .btn-selected-blue {
@@ -1530,7 +1679,7 @@
     padding: 0.5rem;
     border-bottom: 1px solid var(--scout-border);
   }
-  .badg {
+  .badge {
     font-size: 0.7rem;
     background: #eee;
     padding: 2px 4px;
