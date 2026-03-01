@@ -33,7 +33,7 @@
 
   // Endgame State
   let finalClimbPos = "N/A";
-  let shootingSpeed = 5; // 1-10 balls/sec default 5
+  let shootingSpeed = 5; // 0-20 balls/sec default 5
   let shootingAccuracyPct = 50; // 0-100% default 50
   let drivingRank = 3; // 1-5 default 3
 
@@ -585,7 +585,7 @@
         <div class="stat-mini-card">
           <span class="stat-label">Speed</span>
           <div class="stat-value">
-            {viewStats.speed}<small class="unit">/10</small>
+            {viewStats.speed}<small class="unit">balls/s</small>
           </div>
         </div>
         <div class="stat-mini-card">
@@ -1046,7 +1046,7 @@
           </div>
 
           <div class="form-group mt-1">
-            <span class="label">Shooting Speed</span>
+            <span class="label">Shooting Speed (balls/sec)</span>
 
             <!-- Animation -->
             <div class="animation-stage">
@@ -1063,20 +1063,20 @@
 
             <input
               type="range"
-              min="1"
-              max="10"
-              step="1"
+              min="0"
+              max="20"
+              step="2"
               list="speed-ticks"
               bind:value={shootingSpeed}
               class="slider"
             />
             <datalist id="speed-ticks">
-              {#each Array(10) as _, i}<option value={i + 1}></option>{/each}
+              {#each Array(11) as _, i}<option value={i * 2}></option>{/each}
             </datalist>
             <div class="range-labels">
-              <span>1</span><span>10</span>
+              <span>0</span><span>20</span>
             </div>
-            <div class="current-val">{shootingSpeed}</div>
+            <div class="current-val">{shootingSpeed} balls/s</div>
           </div>
 
           <div class="form-group mt-1">
