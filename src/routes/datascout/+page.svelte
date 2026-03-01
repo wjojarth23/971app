@@ -33,7 +33,6 @@
 
   // Endgame State
   let finalClimbPos = "N/A";
-  let shootingAccuracy = 3; // 1-5 default 3
   let shootingSpeed = 5; // 1-10 balls/sec default 5
   let shootingAccuracyPct = 50; // 0-100% default 50
   let drivingRank = 3; // 1-5 default 3
@@ -143,7 +142,6 @@
     currentRole = "Scoring";
     shiftOn = true;
     finalClimbPos = "N/A";
-    shootingAccuracy = 3;
     shootingSpeed = 5;
     shootingAccuracyPct = 50;
     drivingRank = 3;
@@ -400,7 +398,6 @@
 
   async function submitMatch() {
     await record("climb_pos", finalClimbPos);
-    await record("rank_accuracy", shootingAccuracy);
     await record("rank_speed", shootingSpeed);
     await record("rank_accuracy_pct", shootingAccuracyPct);
     await record("rank_driving", drivingRank);
@@ -505,7 +502,6 @@
     };
 
     return {
-      accuracy: calcAvg("rank_accuracy"),
       speed: calcAvg("rank_speed"),
       accuracyPct: calcAvg("rank_accuracy_pct"),
       driving: calcAvg("rank_driving"),
@@ -586,12 +582,6 @@
 
     {#if viewStats}
       <div class="stats-summary-grid">
-        <div class="stat-mini-card">
-          <span class="stat-label">Accuracy Rank</span>
-          <div class="stat-value">
-            {viewStats.accuracy}<small class="unit">/5</small>
-          </div>
-        </div>
         <div class="stat-mini-card">
           <span class="stat-label">Speed</span>
           <div class="stat-value">
@@ -1053,26 +1043,6 @@
                 >
               {/each}
             </div>
-          </div>
-
-          <div class="form-group mt-1">
-            <span class="label">Accuracy Rank (1-5)</span>
-            <input
-              type="range"
-              min="1"
-              max="5"
-              step="1"
-              list="accuracy-ticks"
-              bind:value={shootingAccuracy}
-              class="slider"
-            />
-            <datalist id="accuracy-ticks">
-              {#each Array(5) as _, i}<option value={i + 1}></option>{/each}
-            </datalist>
-            <div class="range-labels">
-              <span>1</span><span>5</span>
-            </div>
-            <div class="current-val">{shootingAccuracy}</div>
           </div>
 
           <div class="form-group mt-1">
