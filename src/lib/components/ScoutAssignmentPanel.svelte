@@ -38,9 +38,21 @@
     return fetch(url, { ...options, headers });
   }
 
-  function displayTeam(t) {
-    return t ? String(t).replace(/^frc/i, '') : '';
+  function canAdmin(){
+    if(!user) return false;
+    // Require explicit per-scouting-type permission (no admin bypass)
+    const needed = scoutingType === 'note' ? 'NOTE_SCOUT_ADMIN' : 'DATA_SCOUT_ADMIN';
+    return Array.isArray(user.permissions) && user.permissions.includes(needed);
   }
+  $: isAdmin = canAdmin();
+  let bootstrapped = false;
+  // Debug admin gating in local console to verify visibility logic
+  $: (typeof window !== 'undefined') && console.debug('[ScoutAssignmentPanel]', {
+    scoutingType,
+    isAdmin,
+    role: user?.role,
+    permissions: Array.isArray(user?.permissions) ? user.permissions : user?.permissions
+  });
 
   async function loadCapabilities() {
     try {
@@ -356,7 +368,7 @@
       }
     }}
   >
-    <div class="modal" style="--modal-width: 360px;">
+    <div class="modal" style="--modal-width: 360px;" role="dialog" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
       <h4>Assign Scout - {modalContext.team_number}</h4>
       <select class="form-select" bind:value={selectedUserId} disabled={saving}>
         <option value="">-- choose user --</option>
@@ -376,163 +388,14 @@
 {/if}
 
 <style>
-  .assignment-accordion {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface-1);
-    overflow: hidden;
-  }
-
-  .summary-row {
-    list-style: none;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--gap-2);
-    cursor: pointer;
-    padding: var(--space-3) var(--space-4);
-    font-weight: 600;
-  }
-
-  .assignment-accordion[open] .summary-row {
-    border-bottom: 1px solid var(--border);
-  }
-
-  .summary-row::-webkit-details-marker {
-    display: none;
-  }
-
-  .summary-title {
-    font-size: var(--font-base);
-  }
-
-  .summary-meta {
-    display: flex;
-    align-items: center;
-  }
-
-  .mode-pill {
-    font-size: var(--font-xs);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    padding: var(--space-1) var(--space-2);
-    color: var(--text-muted);
-    background: var(--surface-2);
-  }
-
-  .mode-pill.editable {
-    color: var(--green-strong);
-    border-color: var(--green-strong);
-    background: var(--green-soft);
-  }
-
-  .panel-body {
-    padding: var(--space-4);
-    display: flex;
-    flex-direction: column;
-    gap: var(--gap-3);
-  }
-
-  .panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--gap-2);
-    flex-wrap: wrap;
-  }
-
-  .hint {
-    color: var(--text-muted);
-    font-size: var(--font-xs);
-  }
-
-  .error-note {
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--red-base);
-    background: var(--red-soft);
-    color: var(--red-strong);
-    padding: var(--space-2) var(--space-3);
-    font-size: var(--font-xs);
-    line-height: 1.4;
-  }
-
-  .actions {
-    display: flex;
-    gap: var(--gap-2);
-  }
-
-  .assignment-table {
-    border-collapse: separate;
-    border-spacing: 2px;
-    width: 100%;
-  }
-
-  .assignment-table th,
-  .assignment-table td {
-    padding: var(--space-1) var(--space-2);
-    font-size: var(--font-xs);
-    text-align: center;
-    background: var(--color-white);
-    border: 1px solid var(--border);
-    min-width: 70px;
-  }
-
-  .assignment-table th.alliance {
-    font-size: var(--font-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .assignment-table .blue {
-    background: var(--blue-soft);
-  }
-
-  .assignment-table .red {
-    background: var(--red-soft);
-  }
-
-  .assignment-table .team {
-    font-weight: 700;
-  }
-
-  .assignment-table .scout {
-    font-size: var(--font-xs);
-    margin-top: var(--space-1);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100px;
-  }
-
-  .editable-cell {
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-
-  .editable-cell:hover {
-    filter: brightness(0.95);
-  }
-
-  .scroll-x {
-    overflow-x: auto;
-  }
-
-  .modal-actions {
-    margin-top: var(--space-3);
-  }
-
-  @media (max-width: 768px) {
-    .summary-row {
-      padding: var(--space-2) var(--space-3);
-    }
-
-    .panel-body {
-      padding: var(--space-3);
-    }
-
-    .assignment-table th,
-    .assignment-table td {
-      min-width: 56px;
-    }
-  }
+  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2); }
+  .actions { display: flex; gap: var(--gap-2); }
+  .assignment-table { border-collapse: separate; border-spacing: 2px; }
+  .assignment-table th, .assignment-table td { padding: var(--space-1); font-size: var(--font-xs); text-align: center; background: var(--color-white); border: 1px solid var(--border); min-width: 70px; cursor: pointer; }
+  .assignment-table th.alliance { font-size: 0.65rem; }
+  .assignment-table .blue { background: var(--blue-soft); }
+  .assignment-table .red { background: var(--red-soft); }
+  .assignment-table .team { font-weight: 700; }
+  .assignment-table .scout { font-size: 0.6rem; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .scroll-x { overflow-x: auto; }
 </style>

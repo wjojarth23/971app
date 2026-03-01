@@ -25,6 +25,15 @@
 
   let users = [];
   let missedMatches = [];
+  let smartFuelModel = {
+    enabled: false,
+    match_count: 0,
+    residual_rmse: 0,
+    residual_mae: 0,
+    warning: '',
+    by_scout: []
+  };
+  let savingSmartFuel = false;
   let userSearch = '';
 
   let competitionRoleOptions = [];
@@ -66,13 +75,16 @@
     drafts = next;
   }
 
-  async function loadDashboard() {
+  async function loadDashboard(options = {}) {
+    const { silent = false } = options;
     if (!user?.id) return;
 
-    loading = true;
-    errorMsg = '';
-    successMsg = '';
-    warning = '';
+    if (!silent) {
+      loading = true;
+      errorMsg = '';
+      successMsg = '';
+      warning = '';
+    }
 
     try {
       const res = await authFetch('/api/scouting-admin');
@@ -94,11 +106,14 @@
       competitionRoleOptions = data.data?.competition_role_options || [];
       users = data.data?.users || [];
       missedMatches = data.data?.missed_matches || [];
+      smartFuelModel = data.data?.smart_fuel_model || smartFuelModel;
       initDrafts(users);
     } catch (e) {
       errorMsg = e.message || 'Failed to load scouting admin dashboard.';
     } finally {
-      loading = false;
+      if (!silent) {
+        loading = false;
+      }
     }
   }
 
@@ -185,11 +200,41 @@
       eventKey = data.data?.event_key || selectedEventKey;
       selectedEventKey = eventKey;
       successMsg = `Scouting event set to ${eventKey}.`;
-      await loadDashboard();
+      await loadDashboard({ silent: true });
     } catch (e) {
       errorMsg = e.message || 'Failed to update event key.';
     } finally {
       savingEvent = false;
+    }
+  }
+
+  async function setSmartFuelAlgorithmEnabled(enabled) {
+    savingSmartFuel = true;
+    errorMsg = '';
+    successMsg = '';
+    try {
+      const res = await authFetch('/api/scouting-admin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update-smart-fuel-algorithm',
+          enabled
+        })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `Failed to save smart algorithm setting (${res.status})`);
+      }
+      smartFuelModel = {
+        ...smartFuelModel,
+        enabled: !!data.data?.smart_fuel_algorithm_enabled
+      };
+      successMsg = `Smart fuel calibration ${enabled ? 'enabled' : 'disabled'}.`;
+      await loadDashboard({ silent: true });
+    } catch (e) {
+      errorMsg = e.message || 'Failed to update smart fuel calibration.';
+    } finally {
+      savingSmartFuel = false;
     }
   }
 
@@ -355,6 +400,79 @@
       <ScoutAssignmentPanel scoutingType="data" />
       <ScoutAssignmentPanel scoutingType="note" />
     </div>
+
+    <details class="role-accordion">
+      <summary class="role-summary">
+        <span class="role-summary-title">Smart Fuel Calibration</span>
+      </summary>
+      <div class="role-body">
+        <div class="smart-toolbar">
+          <div class="smart-toggle-copy">
+            <div class="smart-title">Smart regression model</div>
+            <div class="text-muted">
+              Fits per-scout adjustment factors to reduce blue alliance fuel residual.
+            </div>
+          </div>
+          <button
+            class="btn btn-secondary"
+            disabled={savingSmartFuel}
+            on:click={() => setSmartFuelAlgorithmEnabled(!smartFuelModel.enabled)}
+          >
+            {savingSmartFuel
+              ? 'Saving...'
+              : smartFuelModel.enabled
+                ? 'Disable Algorithm'
+                : 'Enable Algorithm'}
+          </button>
+        </div>
+
+        <div class="smart-stats">
+          <div class="smart-stat"><span>Status</span><strong>{smartFuelModel.enabled ? 'Enabled' : 'Disabled'}</strong></div>
+          <div class="smart-stat"><span>Matches Fit</span><strong>{smartFuelModel.match_count || 0}</strong></div>
+          <div class="smart-stat"><span>Residual RMSE</span><strong>{smartFuelModel.residual_rmse || 0}</strong></div>
+          <div class="smart-stat"><span>Residual MAE</span><strong>{smartFuelModel.residual_mae || 0}</strong></div>
+        </div>
+
+        {#if smartFuelModel.warning}
+          <div class="status-message status-warning">{smartFuelModel.warning}</div>
+        {/if}
+
+        <div class="table-wrap">
+          <div class="table-container">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Scout</th>
+                  <th>Adjustment Factor</th>
+                  <th>Residual RMSE</th>
+                  <th>Residual MAE</th>
+                  <th>Residual Bias</th>
+                  <th>Sample Matches</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#if !smartFuelModel.by_scout?.length}
+                  <tr>
+                    <td colspan="6" class="empty">No scout calibration rows available yet.</td>
+                  </tr>
+                {:else}
+                  {#each smartFuelModel.by_scout as row}
+                    <tr>
+                      <td>{row.scout_name || row.scout_id}</td>
+                      <td>{row.adjustment_factor}</td>
+                      <td>{row.residual_rmse}</td>
+                      <td>{row.residual_mae}</td>
+                      <td>{row.residual_bias}</td>
+                      <td>{row.sample_matches}</td>
+                    </tr>
+                  {/each}
+                {/if}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </details>
 
     <details class="role-accordion">
       <summary class="role-summary">
@@ -589,6 +707,35 @@
     max-width: 320px;
   }
 
+  .smart-toolbar {
+    display: flex;
+    gap: var(--gap-3);
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .smart-title {
+    font-size: var(--font-sm);
+    font-weight: 700;
+  }
+
+  .smart-stats {
+    display: grid;
+    gap: var(--gap-2);
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .smart-stat {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-1);
+    font-size: var(--font-xs);
+  }
+
   @media (max-width: 768px) {
     .scouting-admin-page {
       gap: var(--gap-4);
@@ -608,3 +755,4 @@
     }
   }
 </style>
+

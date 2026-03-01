@@ -64,6 +64,278 @@ function userSlotKey(userId, matchKey, teamKey) {
   return `${userId}::${matchKey}::${teamKey}`;
 }
 
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseTimestampMs(value) {
+  const ms = Date.parse(String(value || ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function toRound(value, digits = 4) {
+  const n = safeNumber(value, 0);
+  const p = 10 ** digits;
+  return Math.round(n * p) / p;
+}
+
+function avg(list) {
+  if (!Array.isArray(list) || !list.length) return 0;
+  return list.reduce((sum, v) => sum + safeNumber(v, 0), 0) / list.length;
+}
+
+function solveLinearSystem(a, b) {
+  const n = a.length;
+  if (!n || b.length !== n) return [];
+
+  const mat = a.map((row) => row.slice());
+  const rhs = b.slice();
+  const EPS = 1e-9;
+
+  for (let col = 0; col < n; col += 1) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row += 1) {
+      if (Math.abs(mat[row][col]) > Math.abs(mat[pivot][col])) pivot = row;
+    }
+
+    if (Math.abs(mat[pivot][col]) < EPS) {
+      mat[col][col] = mat[col][col] + EPS;
+      continue;
+    }
+
+    if (pivot !== col) {
+      [mat[col], mat[pivot]] = [mat[pivot], mat[col]];
+      [rhs[col], rhs[pivot]] = [rhs[pivot], rhs[col]];
+    }
+
+    const div = mat[col][col];
+    for (let j = col; j < n; j += 1) mat[col][j] /= div;
+    rhs[col] /= div;
+
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) continue;
+      const factor = mat[row][col];
+      if (Math.abs(factor) < EPS) continue;
+      for (let j = col; j < n; j += 1) {
+        mat[row][j] -= factor * mat[col][j];
+      }
+      rhs[row] -= factor * rhs[col];
+    }
+  }
+
+  return rhs.map((v) => safeNumber(v, 1));
+}
+
+function extractBlueFuelCount(match) {
+  const blue = match?.score_breakdown?.blue;
+  if (!blue || typeof blue !== 'object') return null;
+
+  const countKeys = ['autoFuelLow', 'autoFuelHigh', 'teleopFuelLow', 'teleopFuelHigh'];
+  const hasAllCountKeys = countKeys.every((k) => Number.isFinite(Number(blue[k])));
+  if (hasAllCountKeys) {
+    return countKeys.reduce((sum, key) => sum + safeNumber(blue[key], 0), 0);
+  }
+
+  const pointKeys = ['totalFuelPoints', 'fuelPoints', 'teleopFuelPoints', 'autoFuelPoints'];
+  for (const key of pointKeys) {
+    if (Number.isFinite(Number(blue[key]))) return safeNumber(blue[key], 0);
+  }
+
+  return null;
+}
+
+function buildTeamScoutFuelEstimates(rows) {
+  const byTeamScoutMatch = new Map();
+  for (const row of rows || []) {
+    const matchKey = String(row?.match_key || '');
+    const teamKey = String(row?.team_key || '');
+    const scoutId = String(row?.created_by || '');
+    if (!matchKey || !teamKey || !scoutId) continue;
+
+    const key = `${matchKey}::${teamKey}::${scoutId}`;
+    if (!byTeamScoutMatch.has(key)) {
+      byTeamScoutMatch.set(key, {
+        match_key: matchKey,
+        team_key: teamKey,
+        scout_id: scoutId,
+        speed_values: [],
+        accuracy_values: [],
+        open_shoot_starts: [],
+        shooting_seconds: 0
+      });
+    }
+    const agg = byTeamScoutMatch.get(key);
+    const eventType = String(row?.event_type || '').trim();
+    const eventValue = safeNumber(row?.event_value, 0);
+
+    if (eventType === 'rank_speed') {
+      if (eventValue > 0) agg.speed_values.push(eventValue);
+      continue;
+    }
+
+    if (eventType === 'rank_accuracy') {
+      if (eventValue > 0) agg.accuracy_values.push(eventValue);
+      continue;
+    }
+
+    const ts = parseTimestampMs(row?.created_at);
+    if (eventType === 'shooting_start') {
+      if (ts !== null) agg.open_shoot_starts.push(ts);
+      continue;
+    }
+
+    if (eventType === 'shooting_end') {
+      if (ts === null || agg.open_shoot_starts.length === 0) continue;
+      const start = agg.open_shoot_starts.shift();
+      const deltaSec = Math.max(0, (ts - start) / 1000);
+      if (deltaSec > 0) agg.shooting_seconds += deltaSec;
+    }
+  }
+
+  const estimates = [];
+  for (const agg of byTeamScoutMatch.values()) {
+    const avgSpeed = avg(agg.speed_values);
+    const avgAccuracy = avg(agg.accuracy_values);
+    const shootTime = safeNumber(agg.shooting_seconds, 0);
+    const baseEstimate = avgSpeed * shootTime * avgAccuracy;
+    if (!Number.isFinite(baseEstimate) || baseEstimate <= 0) continue;
+    estimates.push({
+      match_key: agg.match_key,
+      team_key: agg.team_key,
+      scout_id: agg.scout_id,
+      base_estimate: baseEstimate
+    });
+  }
+  return estimates;
+}
+
+function computeSmartScoutAdjustment({ matches, dataEvents, userNameMap, enabled }) {
+  const matchBlueTeams = new Map();
+  for (const match of matches || []) {
+    matchBlueTeams.set(match?.key, new Set(match?.alliances?.blue?.team_keys || []));
+  }
+
+  const teamScoutRows = buildTeamScoutFuelEstimates(dataEvents);
+  const rowsByMatch = new Map();
+  const scoutIds = new Set();
+
+  for (const row of teamScoutRows) {
+    if (!matchBlueTeams.get(row.match_key)?.has(row.team_key)) continue;
+    if (!rowsByMatch.has(row.match_key)) rowsByMatch.set(row.match_key, new Map());
+    const scoutMap = rowsByMatch.get(row.match_key);
+    const prev = scoutMap.get(row.scout_id) || 0;
+    scoutMap.set(row.scout_id, prev + safeNumber(row.base_estimate, 0));
+    scoutIds.add(row.scout_id);
+  }
+
+  const matchRows = [];
+  for (const match of matches || []) {
+    const y = extractBlueFuelCount(match);
+    const scoutMap = rowsByMatch.get(match?.key) || new Map();
+    if (!Number.isFinite(y) || y === null || scoutMap.size === 0) continue;
+    matchRows.push({
+      match_key: match.key,
+      target_fuel: safeNumber(y, 0),
+      scout_inputs: scoutMap
+    });
+  }
+
+  const scoutList = [...scoutIds].sort((a, b) => a.localeCompare(b));
+  const scoutIndex = new Map(scoutList.map((id, idx) => [id, idx]));
+  const n = scoutList.length;
+  const factors = Array(n).fill(1);
+
+  if (enabled && n > 0 && matchRows.length > 0) {
+    const lambda = 0.25;
+    const gram = Array.from({ length: n }, () => Array(n).fill(0));
+    const rhs = Array(n).fill(0);
+
+    for (const row of matchRows) {
+      const entries = [...row.scout_inputs.entries()];
+      for (const [scoutI, xi] of entries) {
+        const i = scoutIndex.get(scoutI);
+        if (i === undefined) continue;
+        rhs[i] += xi * row.target_fuel;
+        for (const [scoutJ, xj] of entries) {
+          const j = scoutIndex.get(scoutJ);
+          if (j === undefined) continue;
+          gram[i][j] += xi * xj;
+        }
+      }
+    }
+
+    for (let i = 0; i < n; i += 1) {
+      gram[i][i] += lambda;
+      rhs[i] += lambda;
+    }
+
+    const solved = solveLinearSystem(gram, rhs);
+    for (let i = 0; i < n; i += 1) {
+      factors[i] = Math.max(0, safeNumber(solved[i], 1));
+    }
+  }
+
+  const residuals = [];
+  const scoutResidualMap = new Map();
+
+  for (const row of matchRows) {
+    let predicted = 0;
+    for (const [scoutId, x] of row.scout_inputs.entries()) {
+      const idx = scoutIndex.get(scoutId);
+      predicted += safeNumber(x, 0) * safeNumber(factors[idx], 1);
+    }
+    const residual = row.target_fuel - predicted;
+    residuals.push(residual);
+
+    for (const [scoutId] of row.scout_inputs.entries()) {
+      if (!scoutResidualMap.has(scoutId)) scoutResidualMap.set(scoutId, []);
+      scoutResidualMap.get(scoutId).push(residual);
+    }
+  }
+
+  const rmse =
+    residuals.length > 0
+      ? Math.sqrt(residuals.reduce((sum, r) => sum + r * r, 0) / residuals.length)
+      : 0;
+  const mae =
+    residuals.length > 0
+      ? residuals.reduce((sum, r) => sum + Math.abs(r), 0) / residuals.length
+      : 0;
+
+  const byScout = scoutList
+    .map((scoutId, idx) => {
+      const rs = scoutResidualMap.get(scoutId) || [];
+      const rMae = rs.length ? rs.reduce((sum, r) => sum + Math.abs(r), 0) / rs.length : 0;
+      const rBias = rs.length ? rs.reduce((sum, r) => sum + r, 0) / rs.length : 0;
+      const rRmse = rs.length ? Math.sqrt(rs.reduce((sum, r) => sum + r * r, 0) / rs.length) : 0;
+      return {
+        scout_id: scoutId,
+        scout_name: userNameMap.get(scoutId) || scoutId,
+        adjustment_factor: toRound(factors[idx], 4),
+        residual_mae: toRound(rMae, 3),
+        residual_bias: toRound(rBias, 3),
+        residual_rmse: toRound(rRmse, 3),
+        sample_matches: rs.length
+      };
+    })
+    .sort((a, b) => a.scout_name.localeCompare(b.scout_name));
+
+  const warning =
+    matchRows.length === 0
+      ? 'No qualification matches had both blue alliance fuel data and scout input data.'
+      : null;
+
+  return {
+    enabled: !!enabled,
+    match_count: matchRows.length,
+    residual_rmse: toRound(rmse, 3),
+    residual_mae: toRound(mae, 3),
+    warning,
+    by_scout: byScout
+  };
+}
+
 async function fetchActorProfile(authSupa) {
   const { data } = await authSupa.auth.getUser();
   const actorId = data?.user?.id || null;
@@ -78,15 +350,37 @@ async function fetchActorProfile(authSupa) {
   return { actorId, profile: profile || null };
 }
 
-async function getActiveEventKey(db) {
-  const { data, error } = await db
+async function getScoutingSettings(db) {
+  const emptySettings = {
+    event_key: fallbackEventKey(),
+    smart_fuel_algorithm_enabled: false
+  };
+
+  const primary = await db
+    .from('scouting_settings')
+    .select('event_key, smart_fuel_algorithm_enabled')
+    .eq('id', 1)
+    .maybeSingle();
+
+  if (!primary.error) {
+    return {
+      event_key: String(primary.data?.event_key || '').trim() || fallbackEventKey(),
+      smart_fuel_algorithm_enabled: !!primary.data?.smart_fuel_algorithm_enabled
+    };
+  }
+
+  // Backward compatibility before the migration has been applied.
+  const fallback = await db
     .from('scouting_settings')
     .select('event_key')
     .eq('id', 1)
     .maybeSingle();
 
-  if (error) return fallbackEventKey();
-  return String(data?.event_key || '').trim() || fallbackEventKey();
+  if (fallback.error) return emptySettings;
+  return {
+    event_key: String(fallback.data?.event_key || '').trim() || fallbackEventKey(),
+    smart_fuel_algorithm_enabled: false
+  };
 }
 
 async function fetchCompetitionRoleKeys(db) {
@@ -399,7 +693,9 @@ export async function GET({ request }) {
 
     if (!actorId) return json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageScouting(profile, actorRosterKeys)) return json({ error: 'Forbidden' }, { status: 403 });
-    const eventKey = await getActiveEventKey(db);
+    const settings = await getScoutingSettings(db);
+    const eventKey = settings.event_key;
+    const smartFuelEnabled = settings.smart_fuel_algorithm_enabled;
 
     const [upcomingRes, matchesRes, usersRes, assignmentsRes, pitRes, competitionRoleKeys] = await Promise.all([
       fetchUpcomingEvents(),
@@ -450,7 +746,7 @@ export async function GET({ request }) {
     const dataEventsRes = matchKeys.length
       ? await db
           .from('scout_data_events')
-          .select('match_key, team_key, created_by')
+          .select('match_key, team_key, created_by, event_type, event_value, created_at')
           .in('match_key', matchKeys)
       : { data: [], error: null };
 
@@ -512,11 +808,18 @@ export async function GET({ request }) {
     const missedMatches = computeMissedMatchList(dataMetrics.missed_assignments, noteMetrics.missed_assignments);
 
     const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
+    const smartFuelModel = computeSmartScoutAdjustment({
+      matches,
+      dataEvents: dataEventsRes.data || [],
+      userNameMap,
+      enabled: smartFuelEnabled
+    });
 
     return json({
       success: true,
       data: {
         event_key: eventKey || null,
+        smart_fuel_algorithm_enabled: smartFuelEnabled,
         upcoming_events: upcomingRes.events || [],
         warning,
         competition_role_options: competitionRoleOptions,
@@ -560,7 +863,8 @@ export async function GET({ request }) {
             )
           }
         },
-        missed_matches: missedMatches
+        missed_matches: missedMatches,
+        smart_fuel_model: smartFuelModel
       }
     });
   } catch (e) {
@@ -592,6 +896,41 @@ export async function POST({ request }) {
 
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data: { event_key: data?.event_key || eventKey } });
+    }
+
+    if (action === 'update-smart-fuel-algorithm') {
+      const enabled = !!body?.enabled;
+      const update = await db
+        .from('scouting_settings')
+        .upsert(
+          {
+            id: 1,
+            smart_fuel_algorithm_enabled: enabled,
+            updated_by: actorId,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: 'id' }
+        )
+        .select('smart_fuel_algorithm_enabled')
+        .single();
+
+      if (update.error) {
+        return json(
+          {
+            error:
+              update.error.message ||
+              'Failed to update smart_fuel_algorithm_enabled. Run the latest migration first.'
+          },
+          { status: 500 }
+        );
+      }
+
+      return json({
+        success: true,
+        data: {
+          smart_fuel_algorithm_enabled: !!update.data?.smart_fuel_algorithm_enabled
+        }
+      });
     }
 
     if (action !== 'update-competition-role') {

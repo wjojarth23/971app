@@ -6,7 +6,7 @@
     "cad": true,
     "purchasing": true,
     "notescout": true,
-    "datascout": true,
+    "teamview": true,
     "pitscout": true,
     "scouting-admin": true
   }

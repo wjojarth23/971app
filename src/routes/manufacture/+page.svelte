@@ -71,6 +71,7 @@
   let editWorkflow = '';
   let editStock = '';
   let editCustomStock = '';
+  let editQuantity = 1;
   
   // Part Preview Modal State
   let showPreviewModal = false;
@@ -82,6 +83,7 @@
   let previewWorkflow = '';
   let previewStock = '';
   let previewCustomStock = '';
+  let previewQuantity = 1;
   
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
   $: projectIds = Array.from(new Set(parts.filter(p => p.status !== 'complete' && p.project_id).map(p => p.project_id))).sort();
@@ -784,6 +786,7 @@
     editWorkflow = part.workflow || '';
     editStock = part.stock_assignment || '';
     editCustomStock = '';
+    editQuantity = part.quantity || 1;
     showEditModal = true;
   }
 
@@ -855,6 +858,7 @@
     previewWorkflow = part.workflow || '';
     previewStock = part.stock_assignment || '';
     previewCustomStock = '';
+    previewQuantity = part.quantity || 1;
     
     // Check if we have a cached preview image URL first
     if (part.preview_image_url) {
@@ -970,6 +974,7 @@
     previewWorkflow = '';
     previewStock = '';
     previewCustomStock = '';
+    previewQuantity = 1;
   }
 
   async function savePreviewEdits() {
@@ -978,6 +983,7 @@
     const update = {
       status: previewStatus === 'cam_review' ? 'in-progress' : previewStatus,
       workflow: previewWorkflow,
+      quantity: Math.max(1, Number(previewQuantity) || 1),
       updated_at: new Date().toISOString()
     };
     if (effectiveStock) update.stock_assignment = effectiveStock;
@@ -1050,6 +1056,7 @@
       // immediately as CAM Reviewed; keep it as 'in-progress' instead.
       status: editStatus === 'cam_review' ? 'in-progress' : editStatus,
       workflow: editWorkflow,
+      quantity: Math.max(1, Number(editQuantity) || 1),
       updated_at: new Date().toISOString()
     };
     if (effectiveStock) update.stock_assignment = effectiveStock;
@@ -1684,6 +1691,10 @@
           </select>
         </div>
         <div class="form-group">
+          <label class="form-label" for="edit-quantity">Quantity</label>
+          <input id="edit-quantity" class="form-input" type="number" min="1" step="1" bind:value={editQuantity} />
+        </div>
+        <div class="form-group">
           <label class="form-label" for="edit-stock">Stock</label>
           <select id="edit-stock" class="form-select" bind:value={editStock}>
             <option value="">—</option>
@@ -1786,6 +1797,10 @@
                   <option value={w.value}>{w.label}</option>
                 {/each}
               </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="preview-quantity">Quantity</label>
+              <input id="preview-quantity" class="form-input" type="number" min="1" step="1" bind:value={previewQuantity} />
             </div>
             <div class="form-group">
               <label class="form-label" for="preview-stock">Stock</label>

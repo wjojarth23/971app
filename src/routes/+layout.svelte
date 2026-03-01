@@ -162,6 +162,7 @@
     if (compact.startsWith('purchase') || compact.startsWith('purchasing')) return 'purchasing';
     if (compact.startsWith('notescout')) return 'notescout';
     if (compact.startsWith('datascout')) return 'datascout';
+    if (compact.startsWith('teamview')) return 'teamview';
     if (compact.startsWith('pitscout')) return 'pitscout';
     if (compact === 'scoutingadmin' || compact === 'scoutadmin') return 'scouting-admin';
     return compact;
@@ -174,6 +175,7 @@
     build: '/cad/build',
     purchasing: '/cad/purchasing',
     notescout: '/notescout',
+    teamview: '/teamview',
     datascout: '/datascout',
     pitscout: '/pitscout',
     'scouting-admin': '/scouting-admin',
@@ -189,6 +191,7 @@
     build: Wrench,
     purchasing: Receipt,
     notescout: Coins,
+    teamview: Coins,
     datascout: Coins,
     pitscout: Camera,
     'scouting-admin': Briefcase,
@@ -204,6 +207,7 @@
     build: 'Build',
     purchasing: 'Purchasing',
     notescout: 'Note Scouting',
+    teamview: 'Team View',
     datascout: 'Data Scouting',
     pitscout: 'Pit Scouting',
     'scouting-admin': 'Scouting Admin',
@@ -291,7 +295,9 @@
     tabs.push({ key: 'purchasing', label: 'Purchasing' });
     if (scoutingEventKey) {
       if (navConfig?.tabs?.notescout !== false) tabs.push({ key: 'notescout', label: 'Note Scouting' });
-      if (navConfig?.tabs?.datascout !== false) tabs.push({ key: 'datascout', label: 'Data Scouting' });
+      const hasLegacyDatascoutFlag = Object.prototype.hasOwnProperty.call(navConfig?.tabs || {}, 'datascout');
+      const teamViewEnabled = navConfig?.tabs?.teamview !== false || (hasLegacyDatascoutFlag && navConfig?.tabs?.datascout !== false);
+      if (teamViewEnabled) tabs.push({ key: 'teamview', label: 'Team View' });
       if (navConfig?.tabs?.pitscout !== false) tabs.push({ key: 'pitscout', label: 'Pit Scouting' });
       if (activeProfile?.team_role === 'Competition Lead') tabs.push({ key: 'scouting-admin', label: 'Scouting Admin' });
     }

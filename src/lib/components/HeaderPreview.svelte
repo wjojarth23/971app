@@ -13,6 +13,7 @@
     build: Wrench,
     purchasing: Receipt,
     notescout: Coins,
+    teamview: Coins,
     datascout: Coins,
     pitscout: Camera,
     'scouting-admin': Briefcase,
