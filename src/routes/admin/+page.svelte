@@ -480,20 +480,37 @@
   }
 
   const currentUser = userStore;
-  
+  let adminAccessChecked = false;
   // Check if user has admin access (only leads can access this page)
-  $: canAccessAdmin = $currentUser && hasPermission($currentUser, 'VIEW_ADMIN_PANEL');
+  $: canAccessAdmin = !!($currentUser && hasPermission($currentUser, 'VIEW_ADMIN_PANEL'));
 
   onMount(async () => {
-    // Wait for user profile to load
-    const user = get(currentUser);
-    
-    // Check if user has VIEW_ADMIN_PANEL permission (only leads have this)
+    adminAccessChecked = false;
+    // Prefer the hydrated profile store; fall back to session/profile fetch if needed.
+    let user = get(currentUser);
+    if (!user) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUser = sessionData?.session?.user || null;
+      if (authUser?.id) {
+        user = await fetchUserProfile(authUser.id);
+      }
+    }
+
+    // Refresh once before denying in case store data is stale.
+    if (user?.id && !hasPermission(user, 'VIEW_ADMIN_PANEL')) {
+      const refreshed = await fetchUserProfile(user.id);
+      if (refreshed) user = refreshed;
+    }
+
+    // Check admin access only after profile is hydrated.
     if (!user || !hasPermission(user, 'VIEW_ADMIN_PANEL')) {
+      adminAccessChecked = true;
       toastActions.show('Access denied: Only leads can access the admin panel');
       goto('/');
       return;
     }
+
+    adminAccessChecked = true;
     
     await loadUsers();
     await loadRosters();
@@ -1246,7 +1263,13 @@
   <title>Admin Control Center</title>
 </svelte:head>
 
-{#if !canAccessAdmin}
+{#if !adminAccessChecked}
+  <div class="container">
+    <div class="access-denied">
+      <p>Checking admin access…</p>
+    </div>
+  </div>
+{:else if !canAccessAdmin}
   <div class="container">
     <div class="access-denied">
       <h2>Access Denied</h2>

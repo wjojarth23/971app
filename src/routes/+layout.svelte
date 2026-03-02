@@ -304,12 +304,28 @@
     return tabs;
   }
 
+  function hasTabKey(items, wantedKey) {
+    if (!Array.isArray(items)) return false;
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const key = normalizeKey(item.key || item.label);
+      if (key === wantedKey) return true;
+      if (item.type === 'folder' && hasTabKey(item.children, wantedKey)) return true;
+    }
+    return false;
+  }
+
+  function addAdminTabIfAllowed(tabs) {
+    const list = Array.isArray(tabs) ? [...tabs] : [];
+    if (!can('VIEW_ADMIN_PANEL')) return list;
+    if (hasTabKey(list, 'admin')) return list;
+    list.push({ key: 'admin', label: 'Admin' });
+    return list;
+  }
+
   $: customTabs = sanitizeTabs(activeProfile?.header_tabs);
-  $: baseNavTabs = customTabs ?? fallbackTabs();
+  $: baseNavTabs = addAdminTabIfAllowed(customTabs ?? fallbackTabs());
   $: navItems = isApproved ? buildNavItems(baseNavTabs) : [];
-  $: adminNavItem = can('VIEW_ADMIN_PANEL')
-    ? { key: 'admin', href: '/admin', label: 'Admin', icon: Briefcase }
-    : null;
   $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || 'Profile';
 </script>
 
@@ -361,12 +377,6 @@
             {/if}
           {/each}
 
-          {#if adminNavItem}
-            <a href={adminNavItem.href} class="nav-item" class:active={isActive(adminNavItem.href)} on:click={closeDesktopFolders}>
-              <svelte:component this={adminNavItem.icon} size={16} />
-              <span>{adminNavItem.label}</span>
-            </a>
-          {/if}
         {/if}
       </nav>
 
@@ -431,12 +441,6 @@
         {/if}
       {/each}
 
-      {#if adminNavItem}
-        <a href={adminNavItem.href} class="mobile-link" class:active={isActive(adminNavItem.href)} on:click={closeMobileMenu}>
-          <svelte:component this={adminNavItem.icon} size={18} />
-          <span>{adminNavItem.label}</span>
-        </a>
-      {/if}
     {/if}
 
     <div class="mobile-divider"></div>
