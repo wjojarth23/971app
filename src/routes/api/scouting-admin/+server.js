@@ -530,6 +530,26 @@ async function fetchEventMatches(eventKey) {
   }
 }
 
+async function fetchEventTeams(eventKey) {
+  if (!eventKey) return { teamKeys: [] };
+
+  const authKey = env.TBA_API_KEY || env.VITE_TBA_API_KEY || env.PUBLIC_TBA_API_KEY;
+  if (!authKey) return { teamKeys: [] };
+
+  try {
+    const resp = await fetch(`https://www.thebluealliance.com/api/v3/event/${encodeURIComponent(eventKey)}/teams/simple`, {
+      headers: { 'X-TBA-Auth-Key': authKey }
+    });
+    if (!resp.ok) return { teamKeys: [] };
+
+    const raw = await resp.json();
+    const teamKeys = (raw || []).map((t) => t?.key).filter(Boolean);
+    return { teamKeys };
+  } catch {
+    return { teamKeys: [] };
+  }
+}
+
 async function fetchUpcomingEvents() {
   const authKey = env.TBA_API_KEY || env.VITE_TBA_API_KEY || env.PUBLIC_TBA_API_KEY;
   if (!authKey) return { events: [], warning: null };
@@ -862,9 +882,10 @@ export async function GET({ request }) {
     const eventKey = settings.event_key;
     const smartFuelEnabled = settings.smart_fuel_algorithm_enabled;
 
-    const [upcomingRes, matchesRes, usersRes, assignmentsRes, pitRes, competitionRoleKeys] = await Promise.all([
+    const [upcomingRes, matchesRes, eventTeamsRes, usersRes, assignmentsRes, pitRes, competitionRoleKeys] = await Promise.all([
       fetchUpcomingEvents(),
       fetchEventMatches(eventKey),
+      fetchEventTeams(eventKey),
       db
         .from('user_profiles')
         .select('id, full_name, email, role, team_role, frc_team, banned')
@@ -895,6 +916,17 @@ export async function GET({ request }) {
     const matchKeys = matches.map((m) => m.key);
     const slotTeamsByMatch = new Map();
     const teamSet = new Set();
+
+    // Seed from the event's registered team list so pit metrics are correct
+    // even before any matches are posted to TBA.
+    for (const teamKey of (eventTeamsRes.teamKeys || [])) teamSet.add(teamKey);
+
+    // Fallback: include any teams that already have pit scout entries so progress shows
+    // even if TBA calls fail or the event team list is empty.
+    const pitRowsForTeamSeed = pitRes.data || [];
+    for (const row of pitRowsForTeamSeed) {
+      if (row?.team_key) teamSet.add(row.team_key);
+    }
 
     for (const match of matches) {
       const teams = [

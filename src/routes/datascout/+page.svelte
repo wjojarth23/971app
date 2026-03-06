@@ -35,6 +35,7 @@
   // Endgame State
   let finalClimbPos = "N/A";
   let autoClimbPos = "N/A";
+  let autoDead = false;
   let shootingAccuracy = 3; // 1-5 default 3
   let shootingSpeed = 6; // 1-20 balls/sec default 5
   let drivingRank = 2; // 1-3 default Good
@@ -303,6 +304,7 @@
     submittingMatch = false;
     finalClimbPos = "N/A";
     autoClimbPos = "N/A";
+    autoDead = false;
     shootingAccuracy = 3;
     shootingSpeed = 5;
     drivingRank = 2;
@@ -366,6 +368,11 @@
     // Remove from local state
     scoutingEvents = scoutingEvents.slice(0, -1);
 
+    // Auto Dead Reversion Logic
+    if (lastEvent.event_type === "dead_auto") {
+      autoDead = lastEvent.event_value !== "true";
+    }
+
     // Phase Reversion Logic
     if (lastEvent.event_type === "phase") {
       if (lastEvent.event_value === "begin_auto") phase = "pre";
@@ -428,6 +435,10 @@
   }
 
   // Phase Actions
+  function toggleAutoDead() {
+    autoDead = !autoDead;
+    record("dead_auto", String(autoDead));
+  }
   function recordPickup(source) {
     record("pickup", source);
   }
@@ -764,6 +775,12 @@
       }
     }
 
+    // --- Dead in Auto ---
+    const autoDeadMatches = matchKeys.filter((mk) =>
+      byMatch[mk].some((e) => e.event_type === "dead_auto" && e.event_value === "true")
+    ).length;
+    const autoDeadRate = matchCount > 0 ? autoDeadMatches / matchCount : 0;
+
     // --- Auto climb rate / avg time ---
     let autoClimbTimeTotal = 0, autoClimbTimeCount = 0, autoClimbedCount = 0;
     for (const mk of matchKeys) {
@@ -914,6 +931,8 @@
       },
       autoClimbDist,
       teleopClimbDist,
+      autoDeadMatches,
+      autoDeadRate,
       roleTimesByMatch,
       shootingDistAutoByMatch,
       shootingDistTeleopByMatch,
@@ -1135,6 +1154,10 @@
         <div class="stat-card">
           <div class="stat-label">Auto Climb Rate</div>
           <div class="stat-value">{viewStats.autoClimbRate.toFixed(2)}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Dead in Auto</div>
+          <div class="stat-value">{viewStats.autoDeadMatches}<span class="stat-suffix"> / {viewStats.matchCount}</span></div>
         </div>
       </div>
 
@@ -1744,13 +1767,14 @@
           bind:this={autoTopSection}
         >
           <div class="auto-live-zone">
-            <div class="auto-live-middle">
+            <div class="auto-live-middle" class:auto-disabled={autoDead}>
               <span class="label">Pick Up</span>
               <div class="btn-grid auto-grid auto-pickup-grid auto-panel">
                 <button
                   class="btn {holdTimers['pickup_ground']
                     ? 'btn-selected'
                     : 'btn-outline'} big-btn"
+                  disabled={autoDead}
                   on:mousedown={() =>
                     startVisualAction("pickup_ground", () =>
                       recordPickup("ground"),
@@ -1768,6 +1792,7 @@
                   class="btn {holdTimers['pickup_depot']
                     ? 'btn-selected'
                     : 'btn-outline'} big-btn"
+                  disabled={autoDead}
                   on:mousedown={() =>
                     startVisualAction("pickup_depot", () =>
                       recordPickup("depot"))}
@@ -1783,6 +1808,7 @@
                   class="btn {holdTimers['pickup_outpost']
                     ? 'btn-selected'
                     : 'btn-outline'} big-btn"
+                  disabled={autoDead}
                   on:mousedown={() =>
                     startVisualAction("pickup_outpost", () =>
                       recordPickup("outpost"),
@@ -1799,13 +1825,14 @@
               </div>
             </div>
 
-            <div class="auto-live-middle">
+            <div class="auto-live-middle" class:auto-disabled={autoDead}>
               <span class="label">Shooting (Hold)</span>
               <div class="btn-grid auto-grid auto-shoot-grid auto-panel">
                 <button
                   class="btn {holdTimers['shooting_shuttling']
                     ? 'btn-selected-blue'
                     : 'btn-outline'} big-btn"
+                  disabled={autoDead}
                   on:mousedown={() => startAction("shooting", "shuttling")}
                   on:mouseup={() => endAction("shooting", "shuttling")}
                   on:touchstart|preventDefault={() =>
@@ -1818,6 +1845,7 @@
                   class="btn {holdTimers['shooting_scoring']
                     ? 'btn-selected-blue'
                     : 'btn-outline'} big-btn"
+                  disabled={autoDead}
                   on:mousedown={() => startAction("shooting", "scoring")}
                   on:mouseup={() => endAction("shooting", "scoring")}
                   on:touchstart|preventDefault={() =>
@@ -1834,6 +1862,7 @@
                 class="btn {holdTimers['climbing_generic']
                   ? 'btn-selected-blue'
                   : 'btn-outline'} big-btn full-width auto-climb-btn"
+                disabled={autoDead}
                 on:mousedown={() => startAction("climbing", "generic")}
                 on:mouseup={() => endAction("climbing", "generic")}
                 on:touchstart|preventDefault={() =>
@@ -1851,6 +1880,7 @@
                         class="btn {autoClimbPos === p
                           ? 'btn-selected'
                           : 'btn-outline'} big-btn"
+                        disabled={autoDead}
                         on:click={(e) => {
                           handleButtonClick(e);
                           autoClimbPos = p;
@@ -1860,8 +1890,18 @@
                   </div>
                 </div>
 
+              <div class="auto-bottom-row">
                 <button
-                  class="btn btn-success action-btn full-width auto-next-btn"
+                  class="btn {autoDead ? 'btn-danger' : 'btn-outline'} action-btn auto-dead-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    toggleAutoDead();
+                  }}
+                >
+                  {autoDead ? "DEAD" : "DEAD"}
+                </button>
+                <button
+                  class="btn btn-success action-btn auto-next-btn"
                   on:click={(e) => {
                     handleButtonClick(e);
                     endAuto();
@@ -1869,6 +1909,7 @@
                 >
                   START TELEOP
                 </button>
+              </div>
               </div>
             </div>
           </div>
@@ -2520,6 +2561,27 @@
     min-height: calc(100dvh - 12rem);
     padding: 0.1rem 0.1rem 0.35rem;
   }
+  .auto-bottom-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+  }
+  .auto-bottom-row .auto-dead-btn {
+    flex: 0 0 30%;
+    /* match the height of the START TELEOP button */
+    min-height: clamp(4.5rem, 10dvh, 6rem);
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .auto-bottom-row .auto-next-btn {
+    flex: 1 1 70%;
+  }
+  .auto-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
   .auto-live-middle,
   .teleop-live-middle {
     display: flex;
@@ -2592,7 +2654,9 @@
   .teleop-climb-btn {
     min-height: clamp(5.75rem, 13dvh, 8rem);
   }
-  .auto-next-btn,
+  .auto-next-btn {
+    min-height: clamp(4.5rem, 10dvh, 6rem);
+  }
   .teleop-submit-btn {
     min-height: clamp(4.5rem, 10dvh, 6rem);
   }
