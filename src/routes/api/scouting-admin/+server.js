@@ -5,9 +5,11 @@ import { env } from '$env/dynamic/private';
 import notescoutConfig from '$lib/notescout.json';
 import { FRC_TEAMS, TEAM_ROLES } from '$lib/permissions.js';
 import { getSupabase } from '$lib/server/971bot.js';
+import { selectPitScoutEntries } from '$lib/server/pitScoutingSchema.js';
 
 const COMPETITION_LEAD = String(TEAM_ROLES.COMPETITION_LEAD || 'Competition Lead');
 const ALL_FRC_TEAMS = new Set(Object.values(FRC_TEAMS).map(String));
+const PIT_SCOUT_PHOTO_BUCKET = 'pit-scout-photos';
 const COMPETITION_ROLE_PRIORITY = [
   'Scouting Lead',
   'Data Scout Lead',
@@ -204,7 +206,8 @@ function buildTeamScoutFuelEstimates(rows) {
       match_key: agg.match_key,
       team_key: agg.team_key,
       scout_id: agg.scout_id,
-      base_estimate: baseEstimate
+      base_estimate: baseEstimate,
+      shooting_seconds: shootTime
     });
   }
   return estimates;
@@ -224,8 +227,11 @@ function computeSmartScoutAdjustment({ matches, dataEvents, userNameMap, enabled
     if (!matchBlueTeams.get(row.match_key)?.has(row.team_key)) continue;
     if (!rowsByMatch.has(row.match_key)) rowsByMatch.set(row.match_key, new Map());
     const scoutMap = rowsByMatch.get(row.match_key);
-    const prev = scoutMap.get(row.scout_id) || 0;
-    scoutMap.set(row.scout_id, prev + safeNumber(row.base_estimate, 0));
+    const prev = scoutMap.get(row.scout_id) || { base_estimate: 0, shooting_seconds: 0 };
+    scoutMap.set(row.scout_id, {
+      base_estimate: prev.base_estimate + safeNumber(row.base_estimate, 0),
+      shooting_seconds: prev.shooting_seconds + safeNumber(row.shooting_seconds, 0)
+    });
     scoutIds.add(row.scout_id);
   }
 
@@ -253,11 +259,13 @@ function computeSmartScoutAdjustment({ matches, dataEvents, userNameMap, enabled
 
     for (const row of matchRows) {
       const entries = [...row.scout_inputs.entries()];
-      for (const [scoutI, xi] of entries) {
+      for (const [scoutI, payloadI] of entries) {
+        const xi = safeNumber(payloadI?.base_estimate, 0);
         const i = scoutIndex.get(scoutI);
         if (i === undefined) continue;
         rhs[i] += xi * row.target_fuel;
-        for (const [scoutJ, xj] of entries) {
+        for (const [scoutJ, payloadJ] of entries) {
+          const xj = safeNumber(payloadJ?.base_estimate, 0);
           const j = scoutIndex.get(scoutJ);
           if (j === undefined) continue;
           gram[i][j] += xi * xj;
@@ -278,12 +286,19 @@ function computeSmartScoutAdjustment({ matches, dataEvents, userNameMap, enabled
 
   const residuals = [];
   const scoutResidualMap = new Map();
+  const scoutBalancedBallCount = new Map();
+  const scoutShootingSeconds = new Map();
 
   for (const row of matchRows) {
     let predicted = 0;
-    for (const [scoutId, x] of row.scout_inputs.entries()) {
+    for (const [scoutId, payload] of row.scout_inputs.entries()) {
+      const x = safeNumber(payload?.base_estimate, 0);
+      const shootingSeconds = safeNumber(payload?.shooting_seconds, 0);
       const idx = scoutIndex.get(scoutId);
-      predicted += safeNumber(x, 0) * safeNumber(factors[idx], 1);
+      const balancedCount = x * safeNumber(factors[idx], 1);
+      predicted += balancedCount;
+      scoutBalancedBallCount.set(scoutId, (scoutBalancedBallCount.get(scoutId) || 0) + balancedCount);
+      scoutShootingSeconds.set(scoutId, (scoutShootingSeconds.get(scoutId) || 0) + shootingSeconds);
     }
     const residual = row.target_fuel - predicted;
     residuals.push(residual);
@@ -309,10 +324,16 @@ function computeSmartScoutAdjustment({ matches, dataEvents, userNameMap, enabled
       const rMae = rs.length ? rs.reduce((sum, r) => sum + Math.abs(r), 0) / rs.length : 0;
       const rBias = rs.length ? rs.reduce((sum, r) => sum + r, 0) / rs.length : 0;
       const rRmse = rs.length ? Math.sqrt(rs.reduce((sum, r) => sum + r * r, 0) / rs.length) : 0;
+      const balancedBallCount = safeNumber(scoutBalancedBallCount.get(scoutId), 0);
+      const shootingSeconds = safeNumber(scoutShootingSeconds.get(scoutId), 0);
+      const estimatedBps = shootingSeconds > 0 ? balancedBallCount / shootingSeconds : 0;
       return {
         scout_id: scoutId,
         scout_name: userNameMap.get(scoutId) || scoutId,
         adjustment_factor: toRound(factors[idx], 4),
+        balanced_ball_count: toRound(balancedBallCount, 3),
+        shooting_seconds: toRound(shootingSeconds, 3),
+        estimated_bps: toRound(estimatedBps, 4),
         residual_mae: toRound(rMae, 3),
         residual_bias: toRound(rBias, 3),
         residual_rmse: toRound(rRmse, 3),
@@ -684,6 +705,150 @@ function computeMissedMatchList(dataMissed, noteMissed) {
   return [...byMatch.values()].sort((a, b) => (a.match_number || 0) - (b.match_number || 0));
 }
 
+function chunk(list, size) {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) {
+    out.push(list.slice(i, i + size));
+  }
+  return out;
+}
+
+async function countAllRows(db, tableName) {
+  const { count, error } = await db
+    .from(tableName)
+    .select('id', { count: 'exact', head: true })
+    .not('id', 'is', null);
+
+  if (error) throw error;
+  return Number(count) || 0;
+}
+
+async function deleteAllRows(db, tableName) {
+  const count = await countAllRows(db, tableName);
+  if (count === 0) return 0;
+
+  const { error } = await db
+    .from(tableName)
+    .delete()
+    .not('id', 'is', null);
+
+  if (error) throw error;
+  return count;
+}
+
+async function fetchAllStorageObjectNames(db, bucketId) {
+  const pageSize = 1000;
+  const names = [];
+
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await db
+      .schema('storage')
+      .from('objects')
+      .select('name')
+      .eq('bucket_id', bucketId)
+      .range(offset, offset + pageSize - 1);
+
+    if (page.error) return { data: null, error: page.error };
+
+    const rows = page.data || [];
+    names.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+
+  return { data: names, error: null };
+}
+
+async function fetchAllPitEntryPhotoRows(db) {
+  const pageSize = 1000;
+  const rows = [];
+
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await db
+      .from('pit_scout_entries')
+      .select('photo_paths')
+      .range(offset, offset + pageSize - 1);
+
+    if (page.error) return { data: null, error: page.error };
+
+    const pageRows = page.data || [];
+    rows.push(...pageRows);
+    if (pageRows.length < pageSize) break;
+  }
+
+  return { data: rows, error: null };
+}
+
+async function fetchPitPhotoPaths(db) {
+  const bucketRows = await fetchAllStorageObjectNames(db, PIT_SCOUT_PHOTO_BUCKET);
+
+  if (!bucketRows.error) {
+    return {
+      paths: [...new Set((bucketRows.data || []).map((row) => String(row?.name || '').trim()).filter(Boolean))],
+      warning: null
+    };
+  }
+
+  const entryRows = await fetchAllPitEntryPhotoRows(db);
+
+  if (entryRows.error) throw entryRows.error;
+
+  return {
+    paths: [
+      ...new Set(
+        (entryRows.data || [])
+          .flatMap((row) => (Array.isArray(row?.photo_paths) ? row.photo_paths : []))
+          .map((value) => String(value || '').trim())
+          .filter(Boolean)
+      )
+    ],
+    warning: 'Scouting rows were cleared, but pit photo cleanup could only use paths stored on pit entries.'
+  };
+}
+
+async function removePitPhotos(db, photoPaths) {
+  let removed = 0;
+  const warnings = [];
+
+  for (const batch of chunk(photoPaths, 100)) {
+    if (!batch.length) continue;
+    const { error } = await db.storage.from(PIT_SCOUT_PHOTO_BUCKET).remove(batch);
+    if (error) {
+      warnings.push(`Failed to remove some pit photos: ${error.message}`);
+      continue;
+    }
+    removed += batch.length;
+  }
+
+  return { removed, warnings };
+}
+
+async function clearAllScoutingData(db) {
+  const pitPhotosResult = await fetchPitPhotoPaths(db);
+  const warningParts = [];
+  if (pitPhotosResult.warning) warningParts.push(pitPhotosResult.warning);
+
+  const [dataEventsDeleted, notesDeleted, assignmentsDeleted, pitEntriesDeleted] = await Promise.all([
+    deleteAllRows(db, 'scout_data_events'),
+    deleteAllRows(db, 'scout_notes'),
+    deleteAllRows(db, 'scout_match_assignments'),
+    deleteAllRows(db, 'pit_scout_entries')
+  ]);
+
+  const pitPhotoRemoval = await removePitPhotos(db, pitPhotosResult.paths || []);
+  warningParts.push(...pitPhotoRemoval.warnings);
+
+  return {
+    deleted: {
+      data_events: dataEventsDeleted,
+      notes: notesDeleted,
+      assignments: assignmentsDeleted,
+      pit_entries: pitEntriesDeleted,
+      pit_photos: pitPhotoRemoval.removed
+    },
+    warning: warningParts.filter(Boolean).join(' ')
+  };
+}
+
 export async function GET({ request }) {
   try {
     const authSupa = getClientFromRequest(request);
@@ -709,11 +874,8 @@ export async function GET({ request }) {
         .select('scouting_type, match_key, team_key, assigned_user, completed_at')
         .in('scouting_type', ['data', 'note']),
       eventKey
-        ? db
-            .from('pit_scout_entries')
-            .select('team_key, drivebase_type, shooter_type, hopper_type, human_player_balls_in_auto')
-            .eq('event_key', eventKey)
-        : Promise.resolve({ data: [], error: null }),
+        ? selectPitScoutEntries(db, (query) => query.eq('event_key', eventKey))
+        : Promise.resolve({ data: [], error: null, schema: null, warning: null }),
       ensureCompetitionRoleKeys(db)
     ]);
 
@@ -728,7 +890,7 @@ export async function GET({ request }) {
     const competitionRolesByUser = await fetchCompetitionRolesByUser(db, competitionRoleKeyIds);
 
     const matches = matchesRes.matches || [];
-    const warning = matchesRes.warning || upcomingRes.warning || null;
+    const warning = [matchesRes.warning, upcomingRes.warning, pitRes.warning].filter(Boolean).join(' ') || null;
 
     const matchKeys = matches.map((m) => m.key);
     const slotTeamsByMatch = new Map();
@@ -795,9 +957,21 @@ export async function GET({ request }) {
     });
 
     const pitRows = pitRes.data || [];
+    const pitSchema = pitRes.schema || {};
     const pitCompleteSet = new Set(
       pitRows
-        .filter((row) => row?.drivebase_type && row?.shooter_type && row?.hopper_type && row?.human_player_balls_in_auto)
+        .filter((row) => {
+          const climbOptions = Array.isArray(row?.climb_options) ? row.climb_options.filter(Boolean) : [];
+          return Boolean(
+            row?.drivebase_type &&
+            row?.shooter_type &&
+            row?.hopper_type &&
+            row?.human_player_balls_in_auto &&
+            (!pitSchema.likely_breaking_component || String(row?.likely_breaking_component || '').trim()) &&
+            (!pitSchema.estimated_bps || (row?.estimated_bps !== null && row?.estimated_bps !== undefined)) &&
+            (!pitSchema.climb_options || climbOptions.length)
+          );
+        })
         .map((row) => row.team_key)
     );
 
@@ -930,6 +1104,14 @@ export async function POST({ request }) {
         data: {
           smart_fuel_algorithm_enabled: !!update.data?.smart_fuel_algorithm_enabled
         }
+      });
+    }
+
+    if (action === 'delete-all-scouting-data') {
+      const cleared = await clearAllScoutingData(db);
+      return json({
+        success: true,
+        data: cleared
       });
     }
 

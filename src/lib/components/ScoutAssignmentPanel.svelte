@@ -12,11 +12,14 @@
   let panelOpen = false;
   let matches = []; // { key, red:[], blue:[] }
   let eventKey = '';
+  let publishedAssignments = {}; // match_key -> team_key -> { user_id, user_name }
   let assignments = {}; // match_key -> team_key -> { user_id, user_name }
   let users = []; // eligible assignees
   let loading = false;
   let saving = false;
   let errorMsg = '';
+  let statusMsg = '';
+  let hasDraftChanges = false;
 
   let capabilities = {
     can_view: true,
@@ -38,21 +41,55 @@
     return fetch(url, { ...options, headers });
   }
 
-  function canAdmin(){
-    if(!user) return false;
-    // Require explicit per-scouting-type permission (no admin bypass)
-    const needed = scoutingType === 'note' ? 'NOTE_SCOUT_ADMIN' : 'DATA_SCOUT_ADMIN';
-    return Array.isArray(user.permissions) && user.permissions.includes(needed);
+  function displayTeam(teamKey) {
+    return teamKey ? String(teamKey).replace(/^frc/i, '') : '';
   }
-  $: isAdmin = canAdmin();
-  let bootstrapped = false;
-  // Debug admin gating in local console to verify visibility logic
-  $: (typeof window !== 'undefined') && console.debug('[ScoutAssignmentPanel]', {
-    scoutingType,
-    isAdmin,
-    role: user?.role,
-    permissions: Array.isArray(user?.permissions) ? user.permissions : user?.permissions
-  });
+
+  function cloneAssignments(map) {
+    const next = {};
+    for (const [matchKey, teamMap] of Object.entries(map || {})) {
+      next[matchKey] = {};
+      for (const [teamKey, value] of Object.entries(teamMap || {})) {
+        next[matchKey][teamKey] = { ...value };
+      }
+    }
+    return next;
+  }
+
+  function serializeAssignments(map) {
+    return Object.entries(map || {})
+      .flatMap(([matchKey, teamMap]) =>
+        Object.entries(teamMap || {}).map(
+          ([teamKey, value]) => `${matchKey}::${teamKey}::${value?.user_id || ''}`
+        )
+      )
+      .sort()
+      .join('|');
+  }
+
+  function findUserName(userId) {
+    const matched = users.find((userRow) => userRow.id === userId);
+    return matched?.full_name || matched?.email || null;
+  }
+
+  function stageAssignments(nextAssignments, message) {
+    assignments = cloneAssignments(nextAssignments);
+    statusMsg = message || '';
+    errorMsg = '';
+  }
+
+  function stageSingleAssignment(matchKey, teamKey, userId) {
+    const nextAssignments = cloneAssignments(assignments);
+    if (!nextAssignments[matchKey]) nextAssignments[matchKey] = {};
+    nextAssignments[matchKey][teamKey] = {
+      user_id: userId,
+      user_name: findUserName(userId) || assignments?.[matchKey]?.[teamKey]?.user_name || null
+    };
+    stageAssignments(
+      nextAssignments,
+      'Assignment drafts are staged locally. Publish assignments to send notifications.'
+    );
+  }
 
   async function loadCapabilities() {
     try {
@@ -133,15 +170,19 @@
       const data = await res.json();
       if (!data?.success) return;
 
-      assignments = {};
+      const nextAssignments = {};
       for (const row of data.data || []) {
-        if (!assignments[row.match_key]) assignments[row.match_key] = {};
-        assignments[row.match_key][row.team_key] = {
+        if (!nextAssignments[row.match_key]) nextAssignments[row.match_key] = {};
+        nextAssignments[row.match_key][row.team_key] = {
           user_id: row.assigned_user,
           user_name: row.user_name
         };
       }
+      publishedAssignments = cloneAssignments(nextAssignments);
+      assignments = cloneAssignments(nextAssignments);
+      statusMsg = '';
     } catch {
+      publishedAssignments = {};
       assignments = {};
     }
   }
@@ -153,65 +194,40 @@
     showModal = true;
   }
 
-  async function saveAssignment(applyToAll = false) {
+  function saveAssignment(applyToAll = false) {
     if (!selectedUserId || !capabilities.can_edit) return;
-    saving = true;
 
-    try {
-      if (applyToAll) {
-        const team_key = modalContext.team_key;
-        const items = [];
+    if (applyToAll) {
+      const team_key = modalContext.team_key;
+      const nextAssignments = cloneAssignments(assignments);
+      let foundMatch = false;
 
-        for (const m of matches) {
-          if ((m.blue || []).includes(team_key) || (m.red || []).includes(team_key)) {
-            items.push({ match_key: m.key, team_key, user_id: selectedUserId });
-          }
-        }
-
-        if (items.length === 0) {
-          alert('No matches found for that robot');
-        } else {
-          const body = { action: 'bulk-assign', scouting_type: scoutingType, items };
-          const res = await authFetch('/api/scout-assignments', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body)
-          });
-          const data = await res.json();
-          if (!data?.success) {
-            alert(`Save failed: ${data?.error || 'unknown'}`);
-          } else {
-            await loadAssignments();
-            showModal = false;
-          }
-        }
-      } else {
-        const body = {
-          action: 'assign-single',
-          scouting_type: scoutingType,
-          match_key: modalContext.match_key,
-          team_key: modalContext.team_key,
-          user_id: selectedUserId
-        };
-
-        const res = await authFetch('/api/scout-assignments', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        const data = await res.json();
-        if (!data?.success) {
-          alert(`Save failed: ${data?.error || 'unknown'}`);
-        } else {
-          await loadAssignments();
-          showModal = false;
+      for (const m of matches) {
+        if ((m.blue || []).includes(team_key) || (m.red || []).includes(team_key)) {
+          if (!nextAssignments[m.key]) nextAssignments[m.key] = {};
+          nextAssignments[m.key][team_key] = {
+            user_id: selectedUserId,
+            user_name: findUserName(selectedUserId) || null
+          };
+          foundMatch = true;
         }
       }
-    } catch (e) {
-      alert(`Error: ${e.message}`);
-    } finally {
-      saving = false;
+
+      if (!foundMatch) {
+        alert('No matches found for that robot');
+        return;
+      }
+
+      stageAssignments(
+        nextAssignments,
+        'Robot assignment drafts updated. Publish assignments to send notifications.'
+      );
+      showModal = false;
+      return;
     }
+
+    stageSingleAssignment(modalContext.match_key, modalContext.team_key, selectedUserId);
+    showModal = false;
   }
 
   function randomize() {
@@ -238,18 +254,29 @@
       }
     }
 
-    bulkPersist(newAssignments);
+    stageAssignments(
+      newAssignments,
+      'Randomized assignments are staged locally. Publish assignments when ready.'
+    );
   }
 
   async function bulkPersist(map) {
-    try {
-      const list = [];
-      for (const mk of Object.keys(map)) {
-        for (const tk of Object.keys(map[mk])) {
-          list.push({ match_key: mk, team_key: tk, user_id: map[mk][tk].user_id });
-        }
+    const list = [];
+    for (const mk of Object.keys(map || {})) {
+      for (const tk of Object.keys(map[mk] || {})) {
+        const userId = map[mk][tk]?.user_id;
+        if (!userId) continue;
+        list.push({ match_key: mk, team_key: tk, user_id: userId });
       }
+    }
 
+    if (list.length === 0) {
+      statusMsg = 'No assignments to publish.';
+      return;
+    }
+
+    saving = true;
+    try {
       const body = { action: 'bulk-assign', scouting_type: scoutingType, items: list };
       const res = await authFetch('/api/scout-assignments', {
         method: 'POST',
@@ -259,29 +286,48 @@
 
       const data = await res.json();
       if (!data?.success) {
-        alert(`Bulk save failed: ${data?.error || 'unknown'}`);
+        throw new Error(data?.error || 'unknown');
       } else {
         await loadAssignments();
+        statusMsg = 'Assignments published.';
       }
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      errorMsg = `Publish failed: ${e.message}`;
+    } finally {
+      saving = false;
     }
   }
 
-  async function refreshAll() {
+  async function publishAssignments() {
+    if (!capabilities.can_edit || !hasDraftChanges || saving) return;
+    errorMsg = '';
+    await bulkPersist(assignments);
+  }
+
+  async function refreshAll({ force = false } = {}) {
+    if (!force && hasDraftChanges) {
+      const discard = confirm(
+        'Discard unpublished scouting assignment drafts and reload the published assignments?'
+      );
+      if (!discard) return;
+    }
+
     await loadCapabilities();
     await Promise.all([loadMatches(), loadAssignments()]);
     await loadEligibleUsers();
   }
 
   onMount(() => {
-    refreshAll();
+    refreshAll({ force: true });
   });
 
   $: if (user?.id && user.id !== lastUserId) {
     lastUserId = user.id;
-    refreshAll();
+    refreshAll({ force: true });
   }
+
+  $: hasDraftChanges =
+    serializeAssignments(assignments) !== serializeAssignments(publishedAssignments);
 </script>
 
 <details class="assignment-accordion" bind:open={panelOpen}>
@@ -300,21 +346,34 @@
     <div class="panel-header">
       <div class="hint">
         {#if capabilities.can_edit}
-          Click a team cell to reassign. "Set for Robot" applies assignment to all that team's matches.
+          Click a team cell to stage changes. Nothing is sent to scouts until you publish assignments.
         {:else}
           Assignments are read-only unless you are a scouting lead in Roster Studio.
         {/if}
       </div>
       <div class="actions">
         {#if capabilities.can_edit}
-          <button class="btn btn-secondary" on:click={randomize} disabled={matches.length === 0 || users.length === 0}>Randomize</button>
+          <button class="btn btn-secondary" on:click={randomize} disabled={matches.length === 0 || users.length === 0 || saving}>Randomize</button>
+          <button class="btn btn-primary" on:click={publishAssignments} disabled={!hasDraftChanges || saving}>
+            {saving ? 'Publishing...' : 'Publish Assignments'}
+          </button>
         {/if}
-        <button class="btn btn-outline" on:click={refreshAll} disabled={loading}>Refresh</button>
+        <button class="btn btn-outline" on:click={() => refreshAll()} disabled={loading || saving}>Refresh</button>
       </div>
     </div>
 
     {#if errorMsg}
       <div class="error-note">{errorMsg}</div>
+    {/if}
+
+    {#if capabilities.can_edit && (statusMsg || hasDraftChanges)}
+      <div class="status-note" class:pending={hasDraftChanges}>
+        {#if hasDraftChanges}
+          Draft changes pending. Publish assignments to make them live.
+        {:else}
+          {statusMsg}
+        {/if}
+      </div>
     {/if}
 
     <div class="scroll-x">
@@ -377,8 +436,8 @@
         {/each}
       </select>
       <div class="btn-row modal-actions">
-        <button class="btn btn-primary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(false)}>Set for this Match</button>
-        <button class="btn btn-secondary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(true)}>Set for Robot</button>
+        <button class="btn btn-primary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(false)}>Stage this Match</button>
+        <button class="btn btn-secondary" disabled={!selectedUserId || saving} on:click={() => saveAssignment(true)}>Stage Robot</button>
         <button class="btn btn-outline" on:click={() => {
           if (!saving) showModal = false;
         }}>Close</button>
@@ -388,14 +447,185 @@
 {/if}
 
 <style>
-  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2); }
-  .actions { display: flex; gap: var(--gap-2); }
-  .assignment-table { border-collapse: separate; border-spacing: 2px; }
-  .assignment-table th, .assignment-table td { padding: var(--space-1); font-size: var(--font-xs); text-align: center; background: var(--color-white); border: 1px solid var(--border); min-width: 70px; cursor: pointer; }
-  .assignment-table th.alliance { font-size: 0.65rem; }
-  .assignment-table .blue { background: var(--blue-soft); }
-  .assignment-table .red { background: var(--red-soft); }
-  .assignment-table .team { font-weight: 700; }
-  .assignment-table .scout { font-size: 0.6rem; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .scroll-x { overflow-x: auto; }
+  /* Accordion container */
+  .assignment-accordion {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+
+  /* Summary row (collapsed header) */
+  .summary-row {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-2);
+    cursor: pointer;
+    padding: var(--space-3) var(--space-4);
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .summary-row::-webkit-details-marker {
+    display: none;
+  }
+
+  .summary-title {
+    font-size: var(--font-md);
+  }
+
+  .summary-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+
+  .mode-pill {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--radius-full, 9999px);
+    background: var(--surface-2, rgba(0, 0, 0, 0.06));
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .mode-pill.editable {
+    background: var(--accent-subtle, rgba(34, 197, 94, 0.12));
+    color: var(--accent-strong, #16a34a);
+  }
+
+  /* Open state border */
+  .assignment-accordion[open] .summary-row {
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Panel body */
+  .panel-body {
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-3);
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--gap-2);
+    flex-wrap: wrap;
+  }
+
+  .hint {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    flex: 1;
+    min-width: 0;
+  }
+
+  .actions {
+    display: flex;
+    gap: var(--gap-2);
+    flex-wrap: wrap;
+  }
+
+  .error-note {
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: var(--red-soft, rgba(239, 68, 68, 0.1));
+    color: var(--red-strong, #dc2626);
+    font-size: var(--font-xs);
+    font-weight: 500;
+  }
+
+  .status-note {
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: rgba(9, 62, 109, 0.08);
+    color: var(--text);
+    font-size: var(--font-xs);
+  }
+
+  .status-note.pending {
+    background: rgba(255, 193, 7, 0.16);
+  }
+
+  /* Assignment table */
+  .scroll-x {
+    overflow-x: auto;
+  }
+
+  .assignment-table {
+    border-collapse: separate;
+    border-spacing: 2px;
+    width: 100%;
+  }
+
+  .assignment-table th,
+  .assignment-table td {
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-xs);
+    text-align: center;
+    background: var(--color-white, #fff);
+    border: 1px solid var(--border);
+    min-width: 70px;
+  }
+
+  .assignment-table th.alliance {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .assignment-table .blue {
+    background: var(--blue-soft);
+  }
+
+  .assignment-table .red {
+    background: var(--red-soft);
+  }
+
+  .assignment-table .team {
+    font-weight: 700;
+  }
+
+  .assignment-table .scout {
+    font-size: 0.6rem;
+    margin-top: var(--space-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-muted);
+  }
+
+  .editable-cell {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .editable-cell:hover {
+    filter: brightness(0.93);
+  }
+
+  @media (max-width: 768px) {
+    .panel-header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .actions {
+      justify-content: stretch;
+    }
+
+    .actions .btn {
+      flex: 1;
+    }
+
+    .summary-row {
+      padding: var(--space-2) var(--space-3);
+    }
+  }
 </style>

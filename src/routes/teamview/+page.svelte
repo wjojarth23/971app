@@ -57,6 +57,34 @@
   const isTeleop = (p) => p === 'teleop' || p === 'endgame';
   const photoUrl = (path) => (path ? supabase.storage.from('pit-scout-photos').getPublicUrl(path)?.data?.publicUrl || '' : '');
 
+  function normalizeAutoOptions(input) {
+    if (!Array.isArray(input)) return [];
+    return input
+      .map((option) => ({
+        name: String(option?.name || '').trim().slice(0, 60),
+        description: String(option?.description || '').trim().slice(0, 220)
+      }))
+      .filter((option) => option.name && option.description);
+  }
+
+  function normalizeClimbOptions(input) {
+    const allowed = ['L1 Auto', 'L1', 'L2', 'L3'];
+    if (!Array.isArray(input)) return [];
+    const selected = new Set(
+      input
+        .map((option) => String(option || '').trim())
+        .filter((option) => allowed.includes(option))
+    );
+    return allowed.filter((option) => selected.has(option));
+  }
+
+  function formatEstimatedBps(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return '-';
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(parsed);
+  }
+
   function parseShift(v) {
     if (v === true || v === 'true' || v === 1 || v === '1') return true;
     if (v === false || v === 'false' || v === 0 || v === '0') return false;
@@ -251,6 +279,8 @@
   $: selectedTeamName = selectedTeam ? teamDisplayName(selectedTeam) : '';
   $: viewMatchKeys = [...new Set(teamEvents.map((e) => e.match_key).filter(Boolean))].sort((a, b) => (parseInt(a.split('_').pop().replace(/\D/g, ''), 10) || 0) - (parseInt(b.split('_').pop().replace(/\D/g, ''), 10) || 0));
   $: primaryPhoto = pitEntry?.photo_paths?.[0] || '';
+  $: pitAutoOptions = normalizeAutoOptions(pitEntry?.auto_options || []);
+  $: pitClimbOptions = normalizeClimbOptions(pitEntry?.climb_options || []);
 
   $: viewStats = (() => {
     const selectedMatches = viewMatchKeys;
@@ -502,7 +532,25 @@
             <div><strong>Shooter:</strong> {pitEntry.shooter_type || '-'}</div>
             <div><strong>Hopper:</strong> {pitEntry.hopper_type || '-'}</div>
             <div><strong>HP Balls In Auto:</strong> {pitEntry.human_player_balls_in_auto || '-'}</div>
+            <div><strong>Estimated BPS:</strong> {formatEstimatedBps(pitEntry.estimated_bps)}</div>
+            <div><strong>Climb Options:</strong> {pitClimbOptions.length ? pitClimbOptions.join(', ') : '-'}</div>
+            <div class="pit-long-answer">
+              <strong>Most Likely Break Point:</strong> {pitEntry.likely_breaking_component || '-'}
+            </div>
           </div>
+          {#if pitAutoOptions.length}
+            <div class="pit-auto-group">
+              <div class="pit-auto-heading">Auto Options ({pitAutoOptions.length})</div>
+              <div class="pit-auto-list">
+                {#each pitAutoOptions as option}
+                  <div class="pit-auto-card" title={`${option.name}: ${option.description}`}>
+                    <div class="pit-auto-name">{option.name}</div>
+                    <div class="pit-auto-description">{option.description}</div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
         {/if}
       </div>
     </div>
@@ -620,6 +668,13 @@
   .team-image { object-fit: cover; }
   .image-empty { display: grid; place-items: center; color: var(--text-muted); font-size: var(--font-sm); background: var(--surface); }
   .pit-fields { display: grid; gap: var(--gap-1); margin-top: var(--space-2); font-size: var(--font-sm); }
+  .pit-long-answer { white-space: pre-wrap; line-height: 1.4; }
+  .pit-auto-group { display: grid; gap: var(--gap-2); margin-top: var(--space-2); }
+  .pit-auto-heading { font-size: var(--font-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+  .pit-auto-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--gap-2); }
+  .pit-auto-card { display: grid; gap: 0.25rem; min-width: 0; padding: var(--space-2); border: 1px solid color-mix(in srgb, var(--border) 85%, transparent); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--surface) 92%, transparent); }
+  .pit-auto-name { font-size: var(--font-sm); font-weight: 700; line-height: 1.2; }
+  .pit-auto-description { font-size: var(--font-xs); color: var(--text-muted); line-height: 1.35; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .main-split { display: grid; grid-template-columns: minmax(0, 7fr) minmax(300px, 3fr); gap: var(--gap-3); }
   .data-panel { display: grid; gap: var(--gap-3); }
   .stat-block, .breakdown-block { border: none; border-radius: var(--radius-md); padding: var(--space-1) 0; display: grid; gap: var(--gap-3); }

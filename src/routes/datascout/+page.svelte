@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
   import { fetchActiveScoutingEventKey } from "$lib/scoutingEvent.js";
@@ -10,40 +10,49 @@
   // Match / Team State
   let matches = [];
   let teamsCurrentMatch = [];
+  let eventTeams = [];
   let selectedMatchKey = "";
   let selectedMatch = null;
   let selectedTeam = "";
+  let manualMatchLabel = "";
+  let manualTeamInput = "";
   let loadNote = "";
   let loadingMatches = false;
   let eventKey = "";
 
   // Session State
   let phase = "pre"; // pre, auto, teleop, endgame, finished
-  let startPosition = ""; // center, left, right
+  let startPosition = ""; // left trench, left mound, center, right mound, right trench
 
   // Teleop Specific State
   let currentRole = "Scoring";
   let shiftOn = true;
+  let autoTopSection;
+  let teleopTopSection;
+  let matchNotes = "";
+  let submittingMatch = false;
 
   // Endgame State
   let finalClimbPos = "N/A";
   let autoClimbPos = "N/A";
   let shootingAccuracy = 3; // 1-5 default 3
   let shootingSpeed = 6; // 1-20 balls/sec default 5
-  let drivingRank = 3; // 1-5 default 3
+  let drivingRank = 2; // 1-3 default Good
 
   // History / Logs
   let scoutingEvents = []; // current session events
 
-  // Data Viewing
+  // Secondary Views
   let allCompetitionTeams = [];
   let teamsWithData = [];
   let selectedTeamForView = "";
-  let viewMode = "scout"; // scout | view
+  let viewMode = "scout"; // scout | schedule | view
   let teamEvents = [];
   let viewFilterMatch = "all";
   let viewLoading = false;
   let expandedSections = {};
+  let myDataAssignments = {};
+  let lastAssignmentUserId = null;
   function teamSort(a, b) {
     const numA = parseInt(String(a).replace(/\D/g, "")) || 0;
     const numB = parseInt(String(b).replace(/\D/g, "")) || 0;
@@ -57,6 +66,8 @@
   function toggleSection(id) {
     expandedSections = { ...expandedSections, [id]: !expandedSections[id] };
   }
+
+  $: myAssignmentCount = Object.keys(myDataAssignments).length;
 
   // Animation State
   let animatedBalls = [];
@@ -88,9 +99,63 @@
 
   const ROLES = ["Scoring", "Shuttling", "Defense", "Counter Defense", "Dead"];
   const CLIMB_POSITIONS = ["N/A", "L1", "L2", "L3", "Failed"];
+  const SUBJECTIVE_SCORES = [
+    { label: "Bad", value: 1 },
+    { label: "Good", value: 2 },
+    { label: "Great", value: 3 },
+  ];
+
+  function subjectiveScoreLabel(value) {
+    return SUBJECTIVE_SCORES.find((score) => score.value === Number(value))
+      ?.label || "Good";
+  }
 
   function displayTeam(t) {
     return t ? String(t).replace(/^frc/i, "") : "";
+  }
+
+  function normalizeTeamKey(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return "";
+    if (raw.startsWith("frc")) return raw;
+    const digits = raw.replace(/\D/g, "");
+    return digits ? `frc${digits}` : raw;
+  }
+
+  function slugifyMatchLabel(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function buildManualMatch(label) {
+    const trimmed = String(label || "").trim();
+    const slug = slugifyMatchLabel(trimmed);
+    if (!trimmed || !slug) return null;
+    const numeric = parseInt(trimmed.replace(/\D/g, ""), 10);
+    return {
+      key: `${eventKey || "manual"}_manual_${slug}`,
+      match_number: Number.isFinite(numeric) ? numeric : null,
+      manual_label: trimmed,
+      manual: true,
+    };
+  }
+
+  function formatMatchLabel(match) {
+    if (!match) return "";
+    if (match.manual_label) return match.manual_label;
+    const level = String(match.comp_level || "").toLowerCase();
+    const setNumber = Number(match.set_number) || 1;
+    const matchNumber = Number(match.match_number) || 0;
+    if (level === "pm") return `Practice ${matchNumber}`;
+    if (level === "qm") return `Qual ${matchNumber}`;
+    if (level === "ef") return `Eighthfinal ${setNumber}-${matchNumber}`;
+    if (level === "qf") return `Quarterfinal ${setNumber}-${matchNumber}`;
+    if (level === "sf") return `Semifinal ${setNumber}-${matchNumber}`;
+    if (level === "f") return `Final ${matchNumber}`;
+    return match.key?.split("_").pop() || match.key || "";
   }
 
   async function authFetch(url, options = {}) {
@@ -101,6 +166,65 @@
     return fetch(url, { ...options, headers });
   }
 
+  function assignmentLookupKey(matchKey, teamKey) {
+    return `${matchKey}::${teamKey}`;
+  }
+
+  function isMyAssignedRobot(matchKey, teamKey) {
+    return !!myDataAssignments[assignmentLookupKey(matchKey, teamKey)];
+  }
+
+  function openSchedule() {
+    viewMode = "schedule";
+  }
+
+  async function loadMyAssignments() {
+    if (!user?.id) {
+      myDataAssignments = {};
+      return;
+    }
+
+    try {
+      const res = await authFetch(
+        `/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`,
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `Failed to load assignments (${res.status})`);
+      }
+
+      const nextAssignments = {};
+      for (const row of data.data || []) {
+        if (row?.completed_at) continue;
+        nextAssignments[assignmentLookupKey(row.match_key, row.team_key)] = true;
+      }
+      myDataAssignments = nextAssignments;
+    } catch {
+      myDataAssignments = {};
+    }
+  }
+
+  async function completeMyAssignment(matchKey, teamKey) {
+    if (!user?.id || !isMyAssignedRobot(matchKey, teamKey)) return;
+
+    try {
+      await authFetch("/api/scout-assignments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "complete",
+          scouting_type: "data",
+          match_key: matchKey,
+          team_key: teamKey,
+          user_id: user.id,
+        }),
+      });
+      await loadMyAssignments();
+    } catch {
+      // Ignore completion failures here; the submitted scouting data is more important.
+    }
+  }
+
   async function fetchMatches() {
     loadNote = "";
     eventKey = (await fetchActiveScoutingEventKey()) || "";
@@ -108,10 +232,10 @@
       loadNote = "No event configured.";
       return;
     }
-    loadingMatches = true;
+      loadingMatches = true;
     try {
       const res = await fetch(
-        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`,
+        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=all`,
       );
       if (!res.ok) {
         const js = await res.json().catch(() => null);
@@ -124,6 +248,14 @@
         return;
       }
       matches = (js.data || []).slice();
+      eventTeams = [
+        ...new Set(
+          matches.flatMap((m) => [
+            ...(m.alliances?.red?.team_keys || []),
+            ...(m.alliances?.blue?.team_keys || []),
+          ]),
+        ),
+      ].sort(teamSort);
     } catch (e) {
       loadNote = e.message || "Load error";
     } finally {
@@ -132,6 +264,14 @@
   }
 
   function onSelectMatchByKey() {
+    if (selectedMatchKey === "__manual__") {
+      selectedMatch = buildManualMatch(manualMatchLabel);
+      const teamKey = normalizeTeamKey(manualTeamInput);
+      teamsCurrentMatch = teamKey ? [teamKey] : [];
+      selectedTeam = teamKey;
+      resetSessionState();
+      return;
+    }
     const m = matches.find((x) => x.key === selectedMatchKey);
     selectedMatch = m || null;
     if (m) {
@@ -147,16 +287,25 @@
     resetSessionState();
   }
 
+  $: if (selectedMatchKey === "__manual__") {
+    selectedMatch = buildManualMatch(manualMatchLabel);
+    const teamKey = normalizeTeamKey(manualTeamInput);
+    teamsCurrentMatch = teamKey ? [teamKey] : [];
+    selectedTeam = teamKey;
+  }
+
   function resetSessionState() {
     phase = "pre";
     startPosition = "";
     currentRole = "Scoring";
     shiftOn = true;
+    matchNotes = "";
+    submittingMatch = false;
     finalClimbPos = "N/A";
     autoClimbPos = "N/A";
     shootingAccuracy = 3;
     shootingSpeed = 5;
-    drivingRank = 3;
+    drivingRank = 2;
     scoutingEvents = [];
     holdTimers = {};
   }
@@ -220,8 +369,14 @@
     // Phase Reversion Logic
     if (lastEvent.event_type === "phase") {
       if (lastEvent.event_value === "begin_auto") phase = "pre";
-      else if (lastEvent.event_value === "end_auto") phase = "auto";
-      else if (lastEvent.event_value === "finish_match") phase = "teleop";
+      else if (lastEvent.event_value === "end_auto") {
+        phase = "auto";
+        void scrollAutoToTop();
+      }
+      else if (lastEvent.event_value === "finish_match") {
+        phase = "teleop";
+        void scrollTeleopToTop();
+      }
     }
 
     if (lastEvent.id) {
@@ -286,10 +441,12 @@
   }
   function beginAuto() {
     phase = "auto";
+    void scrollAutoToTop();
     record("phase", "begin_auto");
   }
   function endAuto() {
     phase = "teleop";
+    void scrollTeleopToTop();
     record("phase", "end_auto");
     record("role_update", currentRole);
     record("shift_update", String(shiftOn));
@@ -300,13 +457,77 @@
     record("phase", "begin_endgame");
   }
 
+  async function scrollSectionToTop(sectionOrGetter) {
+    await tick();
+    if (typeof window === "undefined") return;
+    await new Promise((resolve) =>
+      window.requestAnimationFrame(() =>
+        window.requestAnimationFrame(resolve),
+      ));
+    const section = typeof sectionOrGetter === "function"
+      ? sectionOrGetter()
+      : sectionOrGetter;
+    if (!section) return;
+    const top = section.getBoundingClientRect().top + window.scrollY;
+    const navHeader = document.querySelector(".nav-header");
+    const headerOffset = navHeader instanceof HTMLElement
+      ? navHeader.getBoundingClientRect().height + 8
+      : 0;
+    window.scrollTo({ top: Math.max(0, top - headerOffset), behavior: "smooth" });
+  }
+
+  async function scrollAutoToTop() {
+    await scrollSectionToTop(() => autoTopSection);
+  }
+
+  async function scrollTeleopToTop() {
+    await scrollSectionToTop(() => teleopTopSection);
+  }
+
+  async function saveMatchNotes() {
+    const trimmedNotes = String(matchNotes || "").trim();
+    if (!trimmedNotes || !selectedMatch || !selectedTeam) return;
+
+    const payload = {
+      action: "save-note",
+      match_key: selectedMatch.key,
+      match_number: selectedMatch.match_number,
+      team_key: selectedTeam,
+      notes: trimmedNotes,
+      user_id: user?.id || null,
+    };
+
+    const res = await authFetch("/notescout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) {
+      throw new Error(data?.error || `Failed to save notes (${res.status})`);
+    }
+  }
+
   async function submitMatch() {
-    await record("climb_pos", finalClimbPos);
-    await record("rank_accuracy", shootingAccuracy);
-    await record("rank_speed", shootingSpeed);
-    await record("rank_driving", drivingRank);
-    await record("phase", "finish_match");
-    phase = "finished";
+    if (submittingMatch || !selectedMatch || !selectedTeam) return;
+
+    submittingMatch = true;
+    loadNote = "";
+
+    try {
+      await saveMatchNotes();
+      await record("climb_pos", finalClimbPos);
+      await record("rank_accuracy", shootingAccuracy);
+      await record("rank_speed", shootingSpeed);
+      await record("rank_driving", drivingRank);
+      await record("phase", "finish_match");
+      await completeMyAssignment(selectedMatch.key, selectedTeam);
+      phase = "finished";
+    } catch (e) {
+      loadNote = e.message || "Failed to submit match";
+    } finally {
+      submittingMatch = false;
+    }
   }
 
   // Hold-to-record Handlers (Shooting, Climbing, Pick Up, Pushing)
@@ -723,8 +944,16 @@
 
   onMount(() => {
     fetchMatches();
-    loadTeamsWithData();
+    loadMyAssignments();
   });
+
+  $: {
+    const currentAssignmentUserId = user?.id || null;
+    if (currentAssignmentUserId !== lastAssignmentUserId) {
+      lastAssignmentUserId = currentAssignmentUserId;
+      loadMyAssignments();
+    }
+  }
 </script>
 
 <svelte:window on:contextmenu|preventDefault />
@@ -750,35 +979,103 @@
         disabled={loadingMatches}
       >
         <option value="">-- choose --</option>
+        <option value="__manual__">Manual / Unofficial Match</option>
         {#each matches as m}<option value={m.key}
-            >{m.key.split("_").pop()}</option
+            >{formatMatchLabel(m)}</option
           >{/each}
       </select>
     </div>
-
-    <div class="form-group team-view">
-      <span class="label" for="viewTeamSelect">View Data</span>
-      <div class="row">
-        <select
-          id="viewTeamSelect"
-          class="form-select"
-          bind:value={selectedTeamForView}
-        >
-          <option value="">-- team --</option>
-          {#each teamsForViewDropdown as t}<option value={t}>{displayTeam(t)}</option
-            >{/each}
-        </select>
+    <div class="schedule-action">
+      {#if viewMode === "schedule"}
+        <button class="btn btn-secondary" on:click={backToScout}>
+          &larr; Back to Scout
+        </button>
+      {:else}
         <button
           class="btn btn-secondary"
-          on:click={viewTeamEvents}
-          disabled={!selectedTeamForView}>View</button
+          on:click={openSchedule}
+          disabled={loadingMatches || matches.length === 0}
         >
-      </div>
+          Schedule
+        </button>
+      {/if}
     </div>
   </div>
 </div>
 
-{#if viewMode === "view"}
+{#if viewMode === "schedule"}
+  <div class="card">
+    <div class="schedule-header">
+      <div>
+        <h3 style="margin:0">Match Schedule</h3>
+        <p class="schedule-copy">
+          {#if user?.id}
+            Robots highlighted in yellow are your data scouting assignments.
+          {:else}
+            Sign in to see your highlighted scouting assignments.
+          {/if}
+        </p>
+      </div>
+      {#if user?.id}
+        <div class="schedule-count">
+          {myAssignmentCount} assignment{myAssignmentCount === 1 ? "" : "s"} highlighted
+        </div>
+      {/if}
+    </div>
+
+    {#if loadingMatches}
+      <div class="empty-state">Loading schedule...</div>
+    {:else if matches.length === 0}
+      <div class="empty-state">No matches available for this event.</div>
+    {:else}
+      <div class="scroll-x">
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th>Match</th>
+              <th colspan="3" class="alliance blue">Blue Alliance</th>
+              <th colspan="3" class="alliance red">Red Alliance</th>
+            </tr>
+            <tr>
+              <th></th>
+              {#each [1, 2, 3] as i}<th class="blue">B{i}</th>{/each}
+              {#each [1, 2, 3] as i}<th class="red">R{i}</th>{/each}
+            </tr>
+          </thead>
+          <tbody>
+            {#each matches as m}
+              <tr>
+                <td class="match-label-cell">{formatMatchLabel(m)}</td>
+                {#each m.alliances?.blue?.team_keys || [] as t}
+                  <td
+                    class="schedule-cell blue"
+                    class:assigned-cell={isMyAssignedRobot(m.key, t)}
+                  >
+                    <div class="schedule-team">{displayTeam(t)}</div>
+                    {#if isMyAssignedRobot(m.key, t)}
+                      <div class="schedule-tag">Your robot</div>
+                    {/if}
+                  </td>
+                {/each}
+                {#each m.alliances?.red?.team_keys || [] as t}
+                  <td
+                    class="schedule-cell red"
+                    class:assigned-cell={isMyAssignedRobot(m.key, t)}
+                  >
+                    <div class="schedule-team">{displayTeam(t)}</div>
+                    {#if isMyAssignedRobot(m.key, t)}
+                      <div class="schedule-tag">Your robot</div>
+                    {/if}
+                  </td>
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
+{:else if viewMode === "view"}
   <!-- View Mode -->
   <div class="card">
     <div class="view-header">
@@ -1318,26 +1615,70 @@
 {:else}
   <!-- Scouting Console -->
   <div class="card console">
-    {#if !selectedMatch}
-      <div class="empty-state">Please select a match to begin scouting.</div>
+    {#if selectedMatchKey === "__manual__"}
+      <div class="manual-match-setup">
+        <div class="form-group">
+          <label class="label" for="manualMatchLabel">Manual Match Label</label>
+          <input
+            id="manualMatchLabel"
+            class="form-input"
+            bind:value={manualMatchLabel}
+            placeholder="Practice 1"
+          />
+        </div>
+        <div class="form-group">
+          <label class="label" for="manualTeamInput">Team</label>
+          <input
+            id="manualTeamInput"
+            class="form-input"
+            bind:value={manualTeamInput}
+            list="event-team-options"
+            placeholder="971 or frc971"
+          />
+          <datalist id="event-team-options">
+            {#each eventTeams as team}
+              <option value={displayTeam(team)}></option>
+              <option value={team}></option>
+            {/each}
+          </datalist>
+        </div>
+      </div>
+    {/if}
+
+    {#if !selectedMatch || !selectedTeam}
+      {#if selectedMatchKey === "__manual__"}
+        <div class="empty-state">Enter a manual match label and team to begin scouting.</div>
+      {:else}
+        <div class="empty-state">Please select a match to begin scouting.</div>
+      {/if}
     {:else}
       <!-- Header Info -->
       <div class="console-header">
         <div class="info-block">
           <span class="label">Match</span>
-          <div class="val">{selectedMatch.key.split("_").pop()}</div>
+          <div class="val">{formatMatchLabel(selectedMatch)}</div>
         </div>
         <div class="info-block" style="flex-grow:1">
           <span class="label" for="teamScout">Team</span>
-          <select
-            id="teamScout"
-            class="form-select large"
-            bind:value={selectedTeam}
-          >
-            {#each teamsCurrentMatch as t}<option value={t}
-                >{displayTeam(t)}</option
-              >{/each}
-          </select>
+          {#if selectedMatchKey === "__manual__"}
+            <input
+              id="teamScout"
+              class="form-input large"
+              bind:value={manualTeamInput}
+              list="event-team-options"
+              placeholder="971 or frc971"
+            />
+          {:else}
+            <select
+              id="teamScout"
+              class="form-select large"
+              bind:value={selectedTeam}
+            >
+              {#each teamsCurrentMatch as t}<option value={t}
+                  >{displayTeam(t)}</option
+                >{/each}
+            </select>
+          {/if}
         </div>
         <div class="info-block">
           <span class="label">Phase</span>
@@ -1365,15 +1706,21 @@
         <div class="phase-section pre-state">
           <span class="label">Auto Start Position</span>
           <div class="btn-row">
-            {#each ["Left", "Center", "Right"] as p}
+            {#each [
+              { label: "Left Trench", value: "left trench" },
+              { label: "Left Mound", value: "left mound" },
+              { label: "Center", value: "center" },
+              { label: "Right Mound", value: "right mound" },
+              { label: "Right Trench", value: "right trench" },
+            ] as p}
               <button
-                class="btn {startPosition === p.toLowerCase()
+                class="btn {startPosition === p.value
                   ? 'btn-selected'
                   : 'btn-outline'} big-btn"
                 on:click={(e) => {
                   handleButtonClick(e);
-                  chooseStart(p.toLowerCase());
-                }}>{p}</button
+                  chooseStart(p.value);
+                }}>{p.label}</button
               >
             {/each}
           </div>
@@ -1392,299 +1739,260 @@
 
       <!-- AUTO PHASE -->
       {#if phase === "auto"}
-        <div class="phase-section">
-          <span class="label">Pick Up</span>
-          <div class="btn-row">
-            <button
-              class="btn {holdTimers['pickup_ground']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pickup_ground", () =>
-                  recordPickup("ground"),
-                )}
-              on:mouseup={() => endVisualAction("pickup_ground")}
-              on:mouseleave={() => endVisualAction("pickup_ground")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pickup_ground", () =>
-                  recordPickup("ground"),
-                )}
-              on:touchend|preventDefault={() =>
-                endVisualAction("pickup_ground")}>Ground</button
-            >
-            <button
-              class="btn {holdTimers['pickup_depot']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pickup_depot", () => recordPickup("depot"))}
-              on:mouseup={() => endVisualAction("pickup_depot")}
-              on:mouseleave={() => endVisualAction("pickup_depot")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pickup_depot", () => recordPickup("depot"))}
-              on:touchend|preventDefault={() => endVisualAction("pickup_depot")}
-              >Depot</button
-            >
-            <button
-              class="btn {holdTimers['pickup_outpost']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pickup_outpost", () =>
-                  recordPickup("outpost"),
-                )}
-              on:mouseup={() => endVisualAction("pickup_outpost")}
-              on:mouseleave={() => endVisualAction("pickup_outpost")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pickup_outpost", () =>
-                  recordPickup("outpost"),
-                )}
-              on:touchend|preventDefault={() =>
-                endVisualAction("pickup_outpost")}>Outpost</button
-            >
-          </div>
-
-          <span class="label">Shooting (Hold)</span>
-          <div class="btn-row">
-            <button
-              class="btn {holdTimers['shooting_shuttling']
-                ? 'btn-selected-blue'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() => startAction("shooting", "shuttling")}
-              on:mouseup={() => endAction("shooting", "shuttling")}
-              on:touchstart|preventDefault={() =>
-                startAction("shooting", "shuttling")}
-              on:touchend|preventDefault={() =>
-                endAction("shooting", "shuttling")}>Shuttling</button
-            >
-
-            <button
-              class="btn {holdTimers['shooting_scoring']
-                ? 'btn-selected-blue'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() => startAction("shooting", "scoring")}
-              on:mouseup={() => endAction("shooting", "scoring")}
-              on:touchstart|preventDefault={() =>
-                startAction("shooting", "scoring")}
-              on:touchend|preventDefault={() =>
-                endAction("shooting", "scoring")}>Scoring</button
-            >
-          </div>
-
-          <span class="label">Climbing (Hold)</span>
-          <button
-            class="btn {holdTimers['climbing_generic']
-              ? 'btn-selected-blue'
-              : 'btn-outline'} big-btn full-width"
-            on:mousedown={() => startAction("climbing", "generic")}
-            on:mouseup={() => endAction("climbing", "generic")}
-            on:touchstart|preventDefault={() =>
-              startAction("climbing", "generic")}
-            on:touchend|preventDefault={() =>
-              endAction("climbing", "generic")}
-            >Climbing</button
-          >
-
-          <div class="form-group mt-1">
-            <span class="label">Auto Climb Position</span>
-            <div class="btn-row">
-              {#each ["N/A", "L1", "Failed"] as p}
+        <div
+          class="phase-section auto-phase auto-phase-main"
+          bind:this={autoTopSection}
+        >
+          <div class="auto-live-zone">
+            <div class="auto-live-middle">
+              <span class="label">Pick Up</span>
+              <div class="btn-grid auto-grid auto-pickup-grid auto-panel">
                 <button
-                  class="btn {autoClimbPos === p
+                  class="btn {holdTimers['pickup_ground']
                     ? 'btn-selected'
                     : 'btn-outline'} big-btn"
+                  on:mousedown={() =>
+                    startVisualAction("pickup_ground", () =>
+                      recordPickup("ground"),
+                    )}
+                  on:mouseup={() => endVisualAction("pickup_ground")}
+                  on:mouseleave={() => endVisualAction("pickup_ground")}
+                  on:touchstart|preventDefault={() =>
+                    startVisualAction("pickup_ground", () =>
+                      recordPickup("ground"),
+                    )}
+                  on:touchend|preventDefault={() =>
+                    endVisualAction("pickup_ground")}>Ground</button
+                >
+                <button
+                  class="btn {holdTimers['pickup_depot']
+                    ? 'btn-selected'
+                    : 'btn-outline'} big-btn"
+                  on:mousedown={() =>
+                    startVisualAction("pickup_depot", () =>
+                      recordPickup("depot"))}
+                  on:mouseup={() => endVisualAction("pickup_depot")}
+                  on:mouseleave={() => endVisualAction("pickup_depot")}
+                  on:touchstart|preventDefault={() =>
+                    startVisualAction("pickup_depot", () =>
+                      recordPickup("depot"))}
+                  on:touchend|preventDefault={() =>
+                    endVisualAction("pickup_depot")}>Depot</button
+                >
+                <button
+                  class="btn {holdTimers['pickup_outpost']
+                    ? 'btn-selected'
+                    : 'btn-outline'} big-btn"
+                  on:mousedown={() =>
+                    startVisualAction("pickup_outpost", () =>
+                      recordPickup("outpost"),
+                    )}
+                  on:mouseup={() => endVisualAction("pickup_outpost")}
+                  on:mouseleave={() => endVisualAction("pickup_outpost")}
+                  on:touchstart|preventDefault={() =>
+                    startVisualAction("pickup_outpost", () =>
+                      recordPickup("outpost"),
+                    )}
+                  on:touchend|preventDefault={() =>
+                    endVisualAction("pickup_outpost")}>Outpost</button
+                >
+              </div>
+            </div>
+
+            <div class="auto-live-middle">
+              <span class="label">Shooting (Hold)</span>
+              <div class="btn-grid auto-grid auto-shoot-grid auto-panel">
+                <button
+                  class="btn {holdTimers['shooting_shuttling']
+                    ? 'btn-selected-blue'
+                    : 'btn-outline'} big-btn"
+                  on:mousedown={() => startAction("shooting", "shuttling")}
+                  on:mouseup={() => endAction("shooting", "shuttling")}
+                  on:touchstart|preventDefault={() =>
+                    startAction("shooting", "shuttling")}
+                  on:touchend|preventDefault={() =>
+                    endAction("shooting", "shuttling")}>Shuttling</button
+                >
+
+                <button
+                  class="btn {holdTimers['shooting_scoring']
+                    ? 'btn-selected-blue'
+                    : 'btn-outline'} big-btn"
+                  on:mousedown={() => startAction("shooting", "scoring")}
+                  on:mouseup={() => endAction("shooting", "scoring")}
+                  on:touchstart|preventDefault={() =>
+                    startAction("shooting", "scoring")}
+                  on:touchend|preventDefault={() =>
+                    endAction("shooting", "scoring")}>Scoring</button
+                >
+              </div>
+            </div>
+
+            <div class="auto-live-bottom">
+              <span class="label">Climbing (Hold)</span>
+              <button
+                class="btn {holdTimers['climbing_generic']
+                  ? 'btn-selected-blue'
+                  : 'btn-outline'} big-btn full-width auto-climb-btn"
+                on:mousedown={() => startAction("climbing", "generic")}
+                on:mouseup={() => endAction("climbing", "generic")}
+                on:touchstart|preventDefault={() =>
+                  startAction("climbing", "generic")}
+                on:touchend|preventDefault={() =>
+                  endAction("climbing", "generic")}>Climbing</button
+              >
+
+              <div class="auto-panel">
+                <div class="form-group">
+                  <span class="label">Auto Climb Position</span>
+                  <div class="btn-grid auto-grid auto-climb-grid">
+                    {#each ["N/A", "L1", "Failed"] as p}
+                      <button
+                        class="btn {autoClimbPos === p
+                          ? 'btn-selected'
+                          : 'btn-outline'} big-btn"
+                        on:click={(e) => {
+                          handleButtonClick(e);
+                          autoClimbPos = p;
+                        }}>{p}</button
+                      >
+                    {/each}
+                  </div>
+                </div>
+
+                <button
+                  class="btn btn-success action-btn full-width auto-next-btn"
                   on:click={(e) => {
                     handleButtonClick(e);
-                    autoClimbPos = p;
-                  }}>{p}</button
+                    endAuto();
+                  }}
                 >
-              {/each}
+                  START TELEOP
+                </button>
+              </div>
             </div>
           </div>
-
-          <div class="spacer"></div>
-          <button
-            class="btn btn-success action-btn full-width"
-            on:click={(e) => {
-              handleButtonClick(e);
-              endAuto();
-            }}
-          >
-            START TELEOP
-          </button>
         </div>
       {/if}
 
       <!-- TELEOP PHASE -->
       {#if phase === "teleop"}
-        <div class="phase-section">
-          <!-- Roles & Shift -->
-          <div class="teleop-config">
-            <div class="role-selector">
-              <span class="label">Current Robot Role</span>
-              <div class="btn-row">
-                {#each ROLES as r}
+        <div
+          class="phase-section teleop-phase teleop-phase-main"
+          bind:this={teleopTopSection}
+        >
+          <div class="teleop-live-zone">
+            <div class="teleop-config teleop-panel">
+              <div class="shift-selector">
+                <span class="label">Shift Status</span>
+                <div class="btn-grid teleop-option-grid teleop-shift-grid">
                   <button
-                    class="btn {currentRole === r
+                    class="btn {shiftOn ? 'btn-selected' : 'btn-outline'} big-btn"
+                    on:click={(e) => {
+                      handleButtonClick(e);
+                      setShift(true);
+                    }}>On Shift</button
+                  >
+                  <button
+                    class="btn {!shiftOn
                       ? 'btn-selected'
                       : 'btn-outline'} big-btn"
                     on:click={(e) => {
                       handleButtonClick(e);
-                      setRole(r);
-                    }}>{r}</button
+                      setShift(false);
+                    }}>Off Shift</button
                   >
-                {/each}
+                </div>
+              </div>
+
+              <div class="role-selector">
+                <span class="label">Current Robot Role</span>
+                <div class="btn-grid teleop-option-grid teleop-role-grid">
+                  {#each ROLES as r}
+                    <button
+                      class="btn {currentRole === r
+                        ? 'btn-selected'
+                        : 'btn-outline'} big-btn"
+                      on:click={(e) => {
+                        handleButtonClick(e);
+                        setRole(r);
+                      }}>{r}</button
+                    >
+                  {/each}
+                </div>
               </div>
             </div>
 
-            <div class="shift-selector">
-              <span class="label">Shift Status</span>
-              <div class="btn-row">
+            <div class="teleop-live-middle">
+              <span class="label">Shooting / Outtake (Hold)</span>
+              <div class="btn-grid teleop-action-grid teleop-panel">
                 <button
-                  class="btn {shiftOn ? 'btn-selected' : 'btn-outline'} big-btn"
-                  on:click={(e) => {
-                    handleButtonClick(e);
-                    setShift(true);
-                  }}>On Shift</button
+                  class="btn {holdTimers['shooting_shuttling']
+                    ? 'btn-selected-blue'
+                    : 'btn-outline'} big-btn"
+                  on:mousedown={() => startAction("shooting", "shuttling")}
+                  on:mouseup={() => endAction("shooting", "shuttling")}
+                  on:touchstart|preventDefault={() =>
+                    startAction("shooting", "shuttling")}
+                  on:touchend|preventDefault={() =>
+                    endAction("shooting", "shuttling")}>Shuttling</button
                 >
+
                 <button
-                  class="btn {!shiftOn
+                  class="btn {holdTimers['pushing_outpost_tele']
                     ? 'btn-selected'
                     : 'btn-outline'} big-btn"
-                  on:click={(e) => {
-                    handleButtonClick(e);
-                    setShift(false);
-                  }}>Off Shift</button
+                  on:mousedown={() =>
+                    startVisualAction("pushing_outpost_tele", () =>
+                      recordPushing(),
+                    )}
+                  on:mouseup={() => endVisualAction("pushing_outpost_tele")}
+                  on:mouseleave={() => endVisualAction("pushing_outpost_tele")}
+                  on:touchstart|preventDefault={() =>
+                    startVisualAction("pushing_outpost_tele", () =>
+                      recordPushing(),
+                    )}
+                  on:touchend|preventDefault={() =>
+                    endVisualAction("pushing_outpost_tele")}
+                  >Outtake Push</button
+                >
+                <button
+                  class="btn {holdTimers['shooting_scoring']
+                    ? 'btn-selected-blue'
+                    : 'btn-outline'} big-btn teleop-action-wide"
+                  on:mousedown={() => startAction("shooting", "scoring")}
+                  on:mouseup={() => endAction("shooting", "scoring")}
+                  on:touchstart|preventDefault={() =>
+                    startAction("shooting", "scoring")}
+                  on:touchend|preventDefault={() =>
+                    endAction("shooting", "scoring")}>Scoring</button
                 >
               </div>
             </div>
-          </div>
 
-          <hr class="divider-sm" />
-
-          <span class="label">Pick Up</span>
-          <div class="btn-row">
-            <button
-              class="btn {holdTimers['pickup_ground_tele']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pickup_ground_tele", () =>
-                  recordPickup("ground"),
-                )}
-              on:mouseup={() => endVisualAction("pickup_ground_tele")}
-              on:mouseleave={() => endVisualAction("pickup_ground_tele")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pickup_ground_tele", () =>
-                  recordPickup("ground"),
-                )}
-              on:touchend|preventDefault={() =>
-                endVisualAction("pickup_ground_tele")}>Ground</button
-            >
-            <button
-              class="btn {holdTimers['pickup_depot_tele']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pickup_depot_tele", () =>
-                  recordPickup("depot"),
-                )}
-              on:mouseup={() => endVisualAction("pickup_depot_tele")}
-              on:mouseleave={() => endVisualAction("pickup_depot_tele")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pickup_depot_tele", () =>
-                  recordPickup("depot"),
-                )}
-              on:touchend|preventDefault={() =>
-                endVisualAction("pickup_depot_tele")}>Depot</button
-            >
-            <button
-              class="btn {holdTimers['pickup_outpost_tele']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pickup_outpost_tele", () =>
-                  recordPickup("outpost"),
-                )}
-              on:mouseup={() => endVisualAction("pickup_outpost_tele")}
-              on:mouseleave={() => endVisualAction("pickup_outpost_tele")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pickup_outpost_tele", () =>
-                  recordPickup("outpost"),
-                )}
-              on:touchend|preventDefault={() =>
-                endVisualAction("pickup_outpost_tele")}>Outpost</button
-            >
-          </div>
-
-          <span class="label">Shooting (Hold)</span>
-          <div class="btn-row">
-            <button
-              class="btn {holdTimers['shooting_shuttling']
-                ? 'btn-selected-blue'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() => startAction("shooting", "shuttling")}
-              on:mouseup={() => endAction("shooting", "shuttling")}
-              on:touchstart|preventDefault={() =>
-                startAction("shooting", "shuttling")}
-              on:touchend|preventDefault={() =>
-                endAction("shooting", "shuttling")}>Shuttling</button
-            >
-
-            <button
-              class="btn {holdTimers['shooting_scoring']
-                ? 'btn-selected-blue'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() => startAction("shooting", "scoring")}
-              on:mouseup={() => endAction("shooting", "scoring")}
-              on:touchstart|preventDefault={() =>
-                startAction("shooting", "scoring")}
-              on:touchend|preventDefault={() =>
-                endAction("shooting", "scoring")}>Scoring</button
-            >
-          </div>
-
-          <span class="label">Pushing</span>
-          <div class="btn-row">
-            <button
-              class="btn {holdTimers['pushing_outpost_tele']
-                ? 'btn-selected'
-                : 'btn-outline'} big-btn"
-              on:mousedown={() =>
-                startVisualAction("pushing_outpost_tele", () =>
-                  recordPushing(),
-                )}
-              on:mouseup={() => endVisualAction("pushing_outpost_tele")}
-              on:mouseleave={() => endVisualAction("pushing_outpost_tele")}
-              on:touchstart|preventDefault={() =>
-                startVisualAction("pushing_outpost_tele", () =>
-                  recordPushing(),
-                )}
-              on:touchend|preventDefault={() =>
-                endVisualAction("pushing_outpost_tele")}>Outpost</button
-            >
+            <div class="teleop-live-bottom">
+              <span class="label">Climbing (Hold)</span>
+              <button
+                class="btn {holdTimers['climbing_generic']
+                  ? 'btn-selected-blue'
+                  : 'btn-outline'} big-btn full-width teleop-climb-btn"
+                on:mousedown={() => startAction("climbing", "generic")}
+                on:mouseup={() => endAction("climbing", "generic")}
+                on:touchstart|preventDefault={() =>
+                  startAction("climbing", "generic")}
+                on:touchend|preventDefault={() =>
+                  endAction("climbing", "generic")}>Climbing</button
+              >
+            </div>
           </div>
         </div>
 
         <hr class="divider" />
 
-        <div class="phase-section">
-          <span class="label">Climbing (Hold)</span>
-          <button
-            class="btn {holdTimers['climbing_generic']
-              ? 'btn-selected-blue'
-              : 'btn-outline'} big-btn full-width"
-            on:mousedown={() => startAction("climbing", "generic")}
-            on:mouseup={() => endAction("climbing", "generic")}
-            on:touchstart|preventDefault={() =>
-              startAction("climbing", "generic")}
-            on:touchend|preventDefault={() => endAction("climbing", "generic")}
-            >Climbing</button
-          >
-
+        <div class="phase-section teleop-phase teleop-phase-secondary">
           <div class="form-group mt-1">
             <span class="label">Climb Position</span>
-            <div class="btn-row">
+            <div class="btn-grid teleop-option-grid teleop-climb-grid">
               {#each CLIMB_POSITIONS as p}
                 <button
                   class="btn {finalClimbPos === p
@@ -1754,35 +2062,45 @@
           </div>
 
           <div class="form-group mt-1">
-            <span class="label">Driving Rank</span>
-            <input
-              type="range"
-              min="1"
-              max="5"
-              step="1"
-              list="rank-ticks"
-              bind:value={drivingRank}
-              class="slider"
-            />
-            <datalist id="rank-ticks">
-              {#each Array(5) as _, i}<option value={i + 1}></option>{/each}
-            </datalist>
-            <div class="range-labels">
-              <span>BAD</span><span>GODLIKE</span>
+            <span class="label">Subjective Score</span>
+            <div class="btn-grid teleop-option-grid subjective-score-grid">
+              {#each SUBJECTIVE_SCORES as score}
+                <button
+                  class="btn {drivingRank === score.value
+                    ? 'btn-selected'
+                    : 'btn-outline'} big-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    drivingRank = score.value;
+                  }}>{score.label}</button
+                >
+              {/each}
             </div>
-            <div class="current-val">{drivingRank}</div>
+            <div class="current-val">{subjectiveScoreLabel(drivingRank)}</div>
+          </div>
+
+          <div class="form-group mt-1">
+            <label class="label" for="matchNotes">Notes</label>
+            <textarea
+              id="matchNotes"
+              class="form-input match-notes-input"
+              rows="4"
+              bind:value={matchNotes}
+              placeholder="Anything important for note scouting?"
+            ></textarea>
           </div>
 
           <div class="spacer"></div>
           <button
-            class="btn btn-success action-btn full-width"
+            class="btn btn-success action-btn full-width teleop-submit-btn"
             style="margin-bottom: 2rem;"
+            disabled={submittingMatch}
             on:click={(e) => {
               handleButtonClick(e);
               submitMatch();
             }}
           >
-            SUBMIT MATCH
+            {submittingMatch ? "SUBMITTING..." : "SUBMIT MATCH"}
           </button>
         </div>
       {/if}
@@ -1823,6 +2141,13 @@
 {/if}
 
 <style>
+  .manual-match-setup {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--gap-3);
+    margin-bottom: var(--gap-3);
+  }
+
   /* Reuse main variables from global css if available, else standard fallback */
   :root {
     --scout-primary: #0d6efd;
@@ -2149,6 +2474,12 @@
     flex: 0 0 calc(33.33% - 0.15rem);
     min-width: 0;
   }
+  .btn-grid {
+    display: grid;
+    width: 100%;
+    gap: 0.35rem;
+    margin-bottom: 0.25rem;
+  }
   .big-btn {
     flex: 1;
     min-width: 70px;
@@ -2163,11 +2494,107 @@
     letter-spacing: 1px;
   }
 
-  /* Teleop Specific */
+  /* Live Phase Layout */
   .teleop-config {
     display: flex;
     flex-direction: column;
+    gap: 0.6rem;
+  }
+  .auto-phase,
+  .teleop-phase {
+    gap: 0.6rem;
+  }
+  .auto-phase-main,
+  .teleop-phase-main {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    min-height: calc(100dvh - 12rem);
+  }
+  .auto-live-zone,
+  .teleop-live-zone {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    min-height: calc(100dvh - 12rem);
+    padding: 0.1rem 0.1rem 0.35rem;
+  }
+  .auto-live-middle,
+  .teleop-live-middle {
+    display: flex;
+    flex-direction: column;
     gap: 0.25rem;
+    flex: 1 1 auto;
+  }
+  .auto-live-bottom,
+  .teleop-live-bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-top: auto;
+  }
+  .teleop-phase-secondary {
+    min-height: 0;
+  }
+  .auto-panel,
+  .teleop-panel {
+    border: 1px solid var(--scout-border);
+    background: #f8f9fb;
+    border-radius: 10px;
+    padding: 0.5rem;
+  }
+  .auto-pickup-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: minmax(clamp(4.75rem, 11dvh, 7rem), 1fr);
+    align-items: stretch;
+  }
+  .auto-shoot-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(clamp(4.75rem, 11dvh, 7rem), 1fr);
+    align-items: stretch;
+  }
+  .auto-climb-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .teleop-option-grid {
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    grid-auto-flow: dense;
+  }
+  .teleop-shift-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .teleop-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(clamp(4.75rem, 11dvh, 7rem), 1fr);
+    align-items: stretch;
+  }
+  .teleop-action-wide {
+    grid-column: 1 / -1;
+  }
+  .teleop-climb-grid {
+    grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  }
+  .subjective-score-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .auto-phase .big-btn,
+  .teleop-phase .big-btn {
+    min-height: clamp(4.2rem, 9dvh, 6rem);
+    padding: 0.85rem 0.45rem;
+    font-size: clamp(0.9rem, 2.2vw, 1.05rem);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .auto-climb-btn,
+  .teleop-climb-btn {
+    min-height: clamp(5.75rem, 13dvh, 8rem);
+  }
+  .auto-next-btn,
+  .teleop-submit-btn {
+    min-height: clamp(4.5rem, 10dvh, 6rem);
   }
   .chip-grid {
     display: flex;
@@ -2212,6 +2639,11 @@
     width: 100%;
     margin: 0.25rem 0;
     height: 12px;
+  }
+  .match-notes-input {
+    width: 100%;
+    min-height: 6.5rem;
+    resize: vertical;
   }
 
   /* Form Selects */
@@ -2496,6 +2928,13 @@
       flex-direction: column;
       gap: 0.25rem;
     }
+    .schedule-header {
+      flex-direction: column;
+    }
+    .schedule-count {
+      width: 100%;
+      text-align: center;
+    }
     .stat-value {
       font-size: 1.5rem;
     }
@@ -2511,7 +2950,8 @@
       flex-direction: column;
     }
     .page-actions .form-group,
-    .page-actions .row {
+    .page-actions .row,
+    .schedule-action {
       width: 100%;
     }
     .row select,
@@ -2561,6 +3001,30 @@
       min-width: 45%;
       padding: 0.8rem 0.25rem;
       font-size: 0.85rem;
+    }
+    .auto-live-zone,
+    .teleop-live-zone {
+      min-height: calc(100dvh - 10.5rem);
+      gap: 0.5rem;
+      padding-bottom: 0.25rem;
+    }
+    .auto-pickup-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .auto-pickup-grid .btn:last-child {
+      grid-column: 1 / -1;
+    }
+    .teleop-option-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .auto-climb-grid,
+    .teleop-climb-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .auto-phase .big-btn,
+    .teleop-phase .big-btn {
+      min-height: clamp(4.5rem, 10dvh, 6rem);
+      font-size: 0.95rem;
     }
     .action-btn {
       padding: 1rem;
@@ -2645,6 +3109,91 @@
     100% {
       transform: translateY(0);
     }
+  }
+
+  .scroll-x {
+    overflow-x: auto;
+  }
+
+  .schedule-action {
+    align-self: flex-end;
+  }
+
+  .schedule-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .schedule-copy {
+    margin: 0.35rem 0 0;
+    color: var(--secondary);
+  }
+
+  .schedule-count {
+    flex: 0 0 auto;
+    padding: 0.5rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(255, 193, 7, 0.18);
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .schedule-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: separate;
+    border-spacing: 0.35rem;
+  }
+
+  .schedule-table th,
+  .schedule-table td {
+    padding: 0.75rem 0.5rem;
+    border: 1px solid var(--scout-border);
+    border-radius: 0.9rem;
+    text-align: center;
+  }
+
+  .schedule-table .alliance.blue,
+  .schedule-table .schedule-cell.blue {
+    background: var(--blue-soft);
+  }
+
+  .schedule-table .alliance.red,
+  .schedule-table .schedule-cell.red {
+    background: var(--red-soft);
+  }
+
+  .match-label-cell {
+    min-width: 8rem;
+    font-weight: 700;
+    background: rgba(9, 62, 109, 0.08);
+  }
+
+  .schedule-cell {
+    min-width: 6.5rem;
+  }
+
+  .schedule-cell.assigned-cell {
+    background: #ffe066;
+    border-color: #d1a100;
+    box-shadow: inset 0 0 0 1px rgba(209, 161, 0, 0.35);
+  }
+
+  .schedule-team {
+    font-size: 1rem;
+    font-weight: 800;
+  }
+
+  .schedule-tag {
+    margin-top: 0.35rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #6f5300;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
   .flex-1 {

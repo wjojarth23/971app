@@ -15,6 +15,7 @@
   let upcomingEvents = [];
   let selectedEventKey = '';
   let savingEvent = false;
+  let deletingAllScoutingData = false;
 
   let metrics = {
     pit: { percent: 0, scouted_teams: 0, total_teams: 0 },
@@ -238,6 +239,62 @@
     }
   }
 
+  function buildDeleteSummary(deleted = {}) {
+    const segments = [
+      `${deleted.data_events || 0} data events`,
+      `${deleted.notes || 0} notes`,
+      `${deleted.assignments || 0} assignments`,
+      `${deleted.pit_entries || 0} pit entries`,
+      `${deleted.pit_photos || 0} pit photos`
+    ];
+    return `Deleted all scouting data (${segments.join(', ')}).`;
+  }
+
+  async function deleteAllScoutingData() {
+    if (
+      !confirm(
+        'Delete all scouting data? This permanently removes scouting notes, assignments, data events, pit entries, and pit scout photos.'
+      )
+    ) {
+      return;
+    }
+
+    const typed = prompt('Type DELETE to permanently clear all scouting data.');
+    if (typed === null) return;
+    if (typed.trim() !== 'DELETE') {
+      warning = 'Delete cancelled. Type DELETE exactly to confirm.';
+      return;
+    }
+
+    deletingAllScoutingData = true;
+    errorMsg = '';
+    successMsg = '';
+
+    try {
+      const res = await authFetch('/api/scouting-admin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete-all-scouting-data'
+        })
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `Failed to delete scouting data (${res.status})`);
+      }
+
+      await loadDashboard({ silent: true });
+      const dashboardWarning = warning;
+      successMsg = buildDeleteSummary(data.data?.deleted || {});
+      warning = [dashboardWarning, data.data?.warning].filter(Boolean).join(' ');
+    } catch (e) {
+      errorMsg = e.message || 'Failed to delete scouting data.';
+    } finally {
+      deletingAllScoutingData = false;
+    }
+  }
+
   onMount(() => {
     loadDashboard();
   });
@@ -444,6 +501,9 @@
                 <tr>
                   <th>Scout</th>
                   <th>Adjustment Factor</th>
+                  <th>Balanced Ball Count</th>
+                  <th>Shooting Time (s)</th>
+                  <th>Estimated BPS</th>
                   <th>Residual RMSE</th>
                   <th>Residual MAE</th>
                   <th>Residual Bias</th>
@@ -453,13 +513,16 @@
               <tbody>
                 {#if !smartFuelModel.by_scout?.length}
                   <tr>
-                    <td colspan="6" class="empty">No scout calibration rows available yet.</td>
+                    <td colspan="9" class="empty">No scout calibration rows available yet.</td>
                   </tr>
                 {:else}
                   {#each smartFuelModel.by_scout as row}
                     <tr>
                       <td>{row.scout_name || row.scout_id}</td>
                       <td>{row.adjustment_factor}</td>
+                      <td>{row.balanced_ball_count || 0}</td>
+                      <td>{row.shooting_seconds || 0}</td>
+                      <td>{row.estimated_bps || 0}</td>
                       <td>{row.residual_rmse}</td>
                       <td>{row.residual_mae}</td>
                       <td>{row.residual_bias}</td>
@@ -485,7 +548,7 @@
 
         <div class="table-wrap">
           <div class="table-container">
-            <table class="table">
+            <table class="table role-assignment-table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -504,16 +567,26 @@
                     <tr>
                       <td>{row.full_name || '-'}</td>
                       <td>{row.email || '-'}</td>
-                      <td>
-                        <select class="form-select" bind:value={drafts[row.id].competition_role} on:change={() => queueSaveRole(row)}>
+                      <td class="role-cell">
+                        <select
+                          class="form-select assignment-select competition-role-select"
+                          data-filled={drafts[row.id].competition_role ? 'true' : 'false'}
+                          bind:value={drafts[row.id].competition_role}
+                          on:change={() => queueSaveRole(row)}
+                        >
                           <option value="">Not Assigned</option>
                           {#each competitionRoleOptions as opt}
                             <option value={opt}>{opt}</option>
                           {/each}
                         </select>
                       </td>
-                      <td>
-                        <select class="form-select" bind:value={drafts[row.id].frc_team} on:change={() => queueSaveRole(row)}>
+                      <td class="team-cell">
+                        <select
+                          class="form-select assignment-select team-assignment-select"
+                          data-filled={drafts[row.id].frc_team ? 'true' : 'false'}
+                          bind:value={drafts[row.id].frc_team}
+                          on:change={() => queueSaveRole(row)}
+                        >
                           <option value="">Not Set</option>
                           {#each frcTeamOptions as opt}
                             <option value={opt}>{opt}</option>
@@ -529,6 +602,22 @@
         </div>
       </div>
     </details>
+
+    <div class="card danger-card">
+      <div class="danger-copy">
+        <h3>Scouting Data Reset</h3>
+        <p class="text-muted">
+          Permanently deletes scouting notes, assignments, data events, pit scouting entries, and pit scout photos.
+        </p>
+      </div>
+      <button
+        class="btn btn-outline-danger btn-nowrap danger-action"
+        disabled={deletingAllScoutingData}
+        on:click={deleteAllScoutingData}
+      >
+        {deletingAllScoutingData ? 'Deleting...' : 'Delete Scouting Data'}
+      </button>
+    </div>
   </div>
 {/if}
 
@@ -567,6 +656,48 @@
     display: flex;
     flex-direction: column;
     gap: var(--gap-3);
+  }
+
+  .danger-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    flex-wrap: wrap;
+    margin-top: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-color: var(--border);
+    background: var(--surface-2);
+  }
+
+  .danger-copy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-1);
+    max-width: 42rem;
+  }
+
+  .danger-copy h3,
+  .danger-copy p {
+    margin: 0;
+  }
+
+  .danger-copy h3 {
+    font-size: var(--font-base);
+    font-weight: 600;
+  }
+
+  .danger-copy p {
+    font-size: var(--font-xs);
+    line-height: 1.5;
+  }
+
+  .danger-action {
+    --btn-height: 28px;
+    --btn-padding: 0 0.65rem;
+    --btn-font-size: var(--font-xs);
+    align-self: center;
+    flex-shrink: 0;
   }
 
   .event-controls {
@@ -736,6 +867,57 @@
     font-size: var(--font-xs);
   }
 
+  .role-assignment-table th:nth-child(3),
+  .role-assignment-table td:nth-child(3) {
+    min-width: 220px;
+  }
+
+  .role-assignment-table th:nth-child(4),
+  .role-assignment-table td:nth-child(4) {
+    min-width: 180px;
+  }
+
+  .assignment-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+      linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position:
+      calc(100% - 14px) calc(50% - 1px),
+      calc(100% - 9px) calc(50% - 1px);
+    background-repeat: no-repeat;
+    background-size: 5px 5px;
+    border-color: var(--border);
+    padding-right: 2rem !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+  }
+
+  .assignment-select option {
+    color: var(--text);
+    background: var(--primary);
+  }
+
+  .competition-role-select[data-filled='true'] {
+    background-color: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+
+  .team-assignment-select[data-filled='true'] {
+    background-color: var(--blue-soft);
+    border-color: var(--blue-base);
+    color: var(--blue-strong);
+    font-weight: 600;
+  }
+
+  .assignment-select:focus {
+    background-color: var(--primary);
+    color: var(--text);
+  }
+
   @media (max-width: 768px) {
     .scouting-admin-page {
       gap: var(--gap-4);
@@ -750,8 +932,19 @@
       width: 100%;
     }
 
+    .danger-card .btn {
+      width: 100%;
+    }
+
     .user-search {
       max-width: 100%;
+    }
+
+    .role-assignment-table th:nth-child(3),
+    .role-assignment-table td:nth-child(3),
+    .role-assignment-table th:nth-child(4),
+    .role-assignment-table td:nth-child(4) {
+      min-width: 160px;
     }
   }
 </style>

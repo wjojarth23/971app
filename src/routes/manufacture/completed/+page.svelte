@@ -35,6 +35,7 @@
   $: filteredParts = parts.filter(p => {
     const matchesSearch = !searchTerm ||
       (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.material || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.requester || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.project_id || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesWorkflow = !filterWorkflow || p.workflow === filterWorkflow;
@@ -67,7 +68,7 @@
   <div class="filters" style="--filters-columns: 2fr 1fr;">
     <div class="form-group">
       <label class="form-label" for="completed-search">Search</label>
-      <input id="completed-search" class="form-input" placeholder="Search by name, requester, or project ID..." bind:value={searchTerm} />
+      <input id="completed-search" class="form-input" placeholder="Search by name, material, requester, or project ID..." bind:value={searchTerm} />
     </div>
     <div class="form-group">
       <label class="form-label" for="completed-workflow">Workflow</label>
@@ -91,6 +92,7 @@
       <thead>
         <tr>
           <th>Name</th>
+          <th>Material</th>
           <th>Workflow</th>
           <th class="mono">Project ID</th>
           <th>Qty</th>
@@ -102,6 +104,7 @@
         {#each filteredParts as part (part.id)}
           <tr>
             <td><strong>{part.name}</strong></td>
+            <td class="text-muted">{part.material || '-'}</td>
             <td class="text-muted">{part.workflow}</td>
             <td class="mono">{part.project_id}</td>
             <td>{part.quantity || 1}</td>
@@ -117,6 +120,7 @@
     {#each filteredParts as part (part.id)}
       <div class="card mobile-completed-card">
         <div><strong>{part.name}</strong></div>
+        <div>Material: {part.material || '-'}</div>
         <div class="text-muted">{part.workflow}</div>
         <div class="mono">{part.project_id}</div>
         <div>Qty: {part.quantity || 1}</div>

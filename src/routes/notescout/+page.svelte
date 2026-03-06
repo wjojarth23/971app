@@ -11,6 +11,9 @@
   let selectedMatch = null;
   let selectedMatchKey = '';
   let selectedTeam = '';
+  let eventTeams = [];
+  let manualMatchLabel = '';
+  let manualTeamInput = '';
   let viewMode = 'editor'; // 'editor' or 'view-notes'
   let teams = [];
   let teamsWithNotes = [];
@@ -33,7 +36,53 @@
     return String(t).replace(/^frc/i, '');
   }
 
-  // Load qualification matches via server proxy to The Blue Alliance
+  function normalizeTeamKey(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw.startsWith('frc')) return raw;
+    const digits = raw.replace(/\D/g, '');
+    return digits ? `frc${digits}` : raw;
+  }
+
+  function slugifyMatchLabel(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function buildManualMatch(label) {
+    const trimmed = String(label || '').trim();
+    const slug = slugifyMatchLabel(trimmed);
+    if (!trimmed || !slug) return null;
+    const numeric = parseInt(trimmed.replace(/\D/g, ''), 10);
+    return {
+      match_key: `${eventKey || 'manual'}_manual_${slug}`,
+      match_number: Number.isFinite(numeric) ? numeric : null,
+      manual_label: trimmed,
+      manual: true,
+      red_team_keys: [],
+      blue_team_keys: []
+    };
+  }
+
+  function formatMatchLabel(match) {
+    if (!match) return '';
+    if (match.manual_label) return match.manual_label;
+    const level = String(match.comp_level || '').toLowerCase();
+    const setNumber = Number(match.set_number) || 1;
+    const matchNumber = Number(match.match_number) || 0;
+    if (level === 'pm') return `Practice ${matchNumber}`;
+    if (level === 'qm') return `Qual ${matchNumber}`;
+    if (level === 'ef') return `Eighthfinal ${setNumber}-${matchNumber}`;
+    if (level === 'qf') return `Quarterfinal ${setNumber}-${matchNumber}`;
+    if (level === 'sf') return `Semifinal ${setNumber}-${matchNumber}`;
+    if (level === 'f') return `Final ${matchNumber}`;
+    return match.match_key?.split('_').pop() || match.key?.split('_').pop() || '';
+  }
+
+  // Load event matches via server proxy to The Blue Alliance
   async function loadMatches() {
     apiNote = '';
     eventKey = (await fetchActiveScoutingEventKey()) || '';
@@ -43,7 +92,7 @@
       return;
     }
     try {
-      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`);
+      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}`);
       let data;
       try { data = await res.json(); } catch(parseErr){
         const text = await res.text();
@@ -58,9 +107,16 @@
       matches = (data.data || []).map(m => ({
         match_key: m.key,
         match_number: m.match_number,
+        comp_level: m.comp_level,
+        set_number: m.set_number,
         red_team_keys: m.alliances?.red?.team_keys || [],
         blue_team_keys: m.alliances?.blue?.team_keys || []
       }));
+      eventTeams = [...new Set(matches.flatMap((m) => [...(m.red_team_keys || []), ...(m.blue_team_keys || [])]))].sort((a, b) => {
+        const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
+        const numB = parseInt(String(b).replace(/\D/g, '')) || 0;
+        return numA - numB;
+      });
     } catch (e) { apiNote = e.message || 'Failed to load matches'; matches = []; }
   }
 
@@ -73,8 +129,20 @@
   }
 
   function onSelectMatchByKey() {
+    if (selectedMatchKey === '__manual__') {
+      selectedMatch = buildManualMatch(manualMatchLabel);
+      teams = [];
+      selectedTeam = normalizeTeamKey(manualTeamInput);
+      return;
+    }
     const m = matches.find((x) => x.match_key === selectedMatchKey);
     onSelectMatch(m);
+  }
+
+  $: if (selectedMatchKey === '__manual__') {
+    selectedMatch = buildManualMatch(manualMatchLabel);
+    teams = [];
+    selectedTeam = normalizeTeamKey(manualTeamInput);
   }
 
   // Load list of teams that have notes
@@ -154,9 +222,10 @@
       <label class="form-label" for="matchSelect">Match</label>
       <select class="form-select" id="matchSelect" bind:value={selectedMatchKey} on:change={onSelectMatchByKey}>
         <option value="">-- choose match --</option>
+        <option value="__manual__">Manual / Unofficial Match</option>
         {#each matches as m}
           {#key m.match_key}
-            <option value={m.match_key}>{m.match_key?.split('_').pop() || m.match_key}</option>
+            <option value={m.match_key}>{formatMatchLabel(m)}</option>
           {/key}
         {/each}
       </select>
@@ -180,19 +249,42 @@
 <div class="grid grid-2">
   <div class="card">
     <h3 style="margin-top:0">Scouting Editor</h3>
+    {#if selectedMatchKey === '__manual__'}
+      <div class="manual-entry-grid">
+        <div class="form-group">
+          <label class="form-label" for="manualMatchLabel">Manual Match Label</label>
+          <input id="manualMatchLabel" class="form-input" bind:value={manualMatchLabel} placeholder="Practice 1" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="manualTeamInput">Team</label>
+          <input id="manualTeamInput" class="form-input" bind:value={manualTeamInput} list="note-event-team-options" placeholder="971 or frc971" />
+          <datalist id="note-event-team-options">
+            {#each eventTeams as t}
+              <option value={displayTeam(t)}></option>
+              <option value={t}></option>
+            {/each}
+          </datalist>
+        </div>
+      </div>
+    {/if}
+
     {#if selectedMatch}
       <div class="form-group">
         <div class="form-label">Match</div>
-        <div><strong>{selectedMatch.match_key?.split('_').pop() || selectedMatch.match_key}</strong></div>
+        <div><strong>{formatMatchLabel(selectedMatch)}</strong></div>
       </div>
 
       <div class="form-group">
   <label class="form-label" for="teamSelect">Team</label>
-  <select id="teamSelect" class="form-select" bind:value={selectedTeam}>
-          {#each teams as t}
-            <option value={t}>{displayTeam(t)}</option>
-          {/each}
-        </select>
+  {#if selectedMatchKey === '__manual__'}
+        <input id="teamSelect" class="form-input" bind:value={manualTeamInput} list="note-event-team-options" placeholder="971 or frc971" />
+      {:else}
+        <select id="teamSelect" class="form-select" bind:value={selectedTeam}>
+            {#each teams as t}
+              <option value={t}>{displayTeam(t)}</option>
+            {/each}
+          </select>
+      {/if}
       </div>
 
       <div class="form-group">
@@ -201,11 +293,11 @@
       </div>
 
       <div class="page-actions">
-        <button class="btn btn-primary" on:click={saveNote} disabled={saving || !selectedTeam}>Save</button>
+        <button class="btn btn-primary" on:click={saveNote} disabled={saving || !selectedTeam || !selectedMatch?.match_key}>Save</button>
         <button class="btn btn-outline" on:click={() => { noteText=''; }} disabled={!noteText}>Clear</button>
       </div>
     {:else}
-      <div class="empty">Select a match to start</div>
+      <div class="empty">{selectedMatchKey === '__manual__' ? 'Enter a manual match label and team to start.' : 'Select a match to start'}</div>
     {/if}
   </div>
 
@@ -234,6 +326,11 @@
 
 <style>
   /* Uses global .empty */
+  .manual-entry-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--gap-3);
+  }
   
   /* Mobile Responsive Styles */
   @media (max-width: 768px) {

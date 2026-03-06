@@ -22,6 +22,11 @@ function isLocalHost(url) {
   return url?.hostname === 'localhost' || url?.hostname === '127.0.0.1';
 }
 
+function isPublicReadRequest(url) {
+  const teamKey = String(url.searchParams.get('team_key') || '').trim();
+  return url.searchParams.has('list_teams') || Boolean(teamKey);
+}
+
 async function getActor(authSupa) {
   const { data } = await authSupa.auth.getUser();
   return data?.user || null;
@@ -71,8 +76,9 @@ export async function GET({ url, request }) {
     const db = getDbClient(authSupa);
     const actor = await getActor(authSupa);
     const isLocal = isLocalHost(url);
+    const canReadPublic = isPublicReadRequest(url);
 
-    if (!isLocal && !actor?.id) return json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isLocal && !actor?.id && !canReadPublic) return json({ error: 'Unauthorized' }, { status: 401 });
 
     const team_key = url.searchParams.get('team_key');
     if (team_key) {
