@@ -350,19 +350,6 @@
     const normalizedEstimatedBps = hasEstimatedBps(estimated_bps) ? Math.round(Number(estimated_bps) * 100) / 100 : null;
     const normalizedClimbOptions = normalizeClimbOptions(climb_options);
 
-    if (
-      !drivebase_type ||
-      !shooter_type ||
-      !hopper_type ||
-      !human_player_balls_in_auto ||
-      (pitSchema.likely_breaking_component && !normalizedLikelyBreakingComponent) ||
-      (pitSchema.estimated_bps && !hasEstimatedBps(normalizedEstimatedBps)) ||
-      (pitSchema.climb_options && !normalizedClimbOptions.length)
-    ) {
-      alert('Please fill all pit scout fields before submitting.');
-      return;
-    }
-
     const normalizedAutoOptions = getFilledAutoOptions(autoOptions);
     if (normalizedAutoOptions.some((option) => !option.name || !option.description)) {
       alert('Each auto option needs both a name and description.');
