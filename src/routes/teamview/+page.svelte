@@ -68,14 +68,16 @@
   }
 
   function normalizeClimbOptions(input) {
-    const allowed = ['L1 Auto', 'L1', 'L2', 'L3'];
+    const noClimbOption = 'No Climb';
+    const allowed = [noClimbOption, 'L1 Auto', 'L1', 'L2', 'L3'];
     if (!Array.isArray(input)) return [];
     const selected = new Set(
       input
         .map((option) => String(option || '').trim())
         .filter((option) => allowed.includes(option))
     );
-    return allowed.filter((option) => selected.has(option));
+    if (selected.has(noClimbOption)) return [noClimbOption];
+    return allowed.filter((option) => option !== noClimbOption && selected.has(option));
   }
 
   function formatEstimatedBps(value) {

@@ -7,7 +7,8 @@
   const SHOOTER_OPTIONS = ['Single Fixed', 'Multi Fixed', 'Wide', 'Turret', 'Double Turret'];
   const HOPPER_OPTIONS = ['Spindexer', 'Dye Rotor', 'Belted'];
   const HUMAN_PLAYER_AUTO_OPTIONS = ['0-10', '10-20', '20+'];
-  const CLIMB_OPTIONS = ['L1 Auto', 'L1', 'L2', 'L3'];
+  const NO_CLIMB_OPTION = 'No Climb';
+  const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
   const MAX_AUTO_OPTIONS = 8;
   const MAX_AUTO_NAME_LENGTH = 60;
   const MAX_AUTO_DESCRIPTION_LENGTH = 220;
@@ -65,7 +66,21 @@
         .map((option) => String(option || '').trim())
         .filter((option) => CLIMB_OPTIONS.includes(option))
     );
-    return CLIMB_OPTIONS.filter((option) => selected.has(option));
+    if (selected.has(NO_CLIMB_OPTION)) return [NO_CLIMB_OPTION];
+    return CLIMB_OPTIONS.filter((option) => option !== NO_CLIMB_OPTION && selected.has(option));
+  }
+
+  function setClimbOption(option, checked) {
+    if (option === NO_CLIMB_OPTION) {
+      climb_options = checked ? [NO_CLIMB_OPTION] : [];
+      return;
+    }
+
+    const selected = new Set(normalizeClimbOptions(climb_options));
+    selected.delete(NO_CLIMB_OPTION);
+    if (checked) selected.add(option);
+    else selected.delete(option);
+    climb_options = CLIMB_OPTIONS.filter((value) => value !== NO_CLIMB_OPTION && selected.has(value));
   }
 
   function normalizeLikelyBreakingComponent(value) {
@@ -591,7 +606,12 @@
         <div class="climb-options-grid">
           {#each CLIMB_OPTIONS as option}
             <label class="form-checkbox climb-option">
-              <input type="checkbox" bind:group={climb_options} value={option} />
+              <input
+                type="checkbox"
+                checked={climb_options.includes(option)}
+                disabled={option !== NO_CLIMB_OPTION && climb_options.includes(NO_CLIMB_OPTION)}
+                on:change={(event) => setClimbOption(option, event.currentTarget.checked)}
+              />
               <span>{option}</span>
             </label>
           {/each}

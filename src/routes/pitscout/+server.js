@@ -4,7 +4,8 @@ import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/publi
 import { getSupabase } from '$lib/server/971bot.js';
 import { selectPitScoutEntries, upsertPitScoutEntry } from '$lib/server/pitScoutingSchema.js';
 
-const CLIMB_OPTIONS = ['L1 Auto', 'L1', 'L2', 'L3'];
+const NO_CLIMB_OPTION = 'No Climb';
+const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
 
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
@@ -88,7 +89,8 @@ function sanitizeClimbOptions(input) {
       .map((value) => String(value || '').trim())
       .filter((value) => CLIMB_OPTIONS.includes(value))
   );
-  return CLIMB_OPTIONS.filter((value) => selected.has(value));
+  if (selected.has(NO_CLIMB_OPTION)) return [NO_CLIMB_OPTION];
+  return CLIMB_OPTIONS.filter((value) => value !== NO_CLIMB_OPTION && selected.has(value));
 }
 
 export async function POST({ request, url }) {
