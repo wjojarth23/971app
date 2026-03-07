@@ -132,34 +132,40 @@ export async function GET({ url, request }) {
 
     const team_key = url.searchParams.get('team_key');
     const match_key = url.searchParams.get('match_key');
+    const event_key = String(url.searchParams.get('event_key') || '').trim();
+    const applyEventFilter = (query) => (event_key ? query.ilike('match_key', `${event_key}_%`) : query);
 
     if (team_key && match_key) {
-      const { data, error } = await db
+      let query = db
         .from('scout_data_events')
         .select('*')
         .eq('team_key', team_key)
-        .eq('match_key', match_key)
-        .order('created_at', { ascending: true });
+        .eq('match_key', match_key);
+      query = applyEventFilter(query);
+      const { data, error } = await query.order('created_at', { ascending: true });
 
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data });
     }
 
     if (team_key) {
-      const { data, error } = await db
+      let query = db
         .from('scout_data_events')
         .select('*')
-        .eq('team_key', team_key)
-        .order('created_at', { ascending: true });
+        .eq('team_key', team_key);
+      query = applyEventFilter(query);
+      const { data, error } = await query.order('created_at', { ascending: true });
 
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data });
     }
 
     if (url.searchParams.get('list_teams')) {
-      const { data, error } = await db
+      let query = db
         .from('scout_data_events')
-        .select('team_key')
+        .select('team_key');
+      query = applyEventFilter(query);
+      const { data, error } = await query
         .order('team_key', { ascending: true })
         .limit(2000);
 

@@ -119,8 +119,8 @@
     const [eventRes, eventTeamsRes, dataListRes, noteListRes, pitListRes] = await Promise.all([
       fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`).catch(() => null),
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
-      authFetch('/datascout?list_teams=1').catch(() => null),
-      authFetch('/notescout?list_teams=1').catch(() => null),
+      authFetch(`/datascout?list_teams=1&event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
+      authFetch(`/notescout?list_teams=1&event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
       authFetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}`).catch(() => null)
     ]);
 
@@ -178,9 +178,9 @@
 
     try {
       const [eventsRes, pitRes, notesRes] = await Promise.all([
-        authFetch(`/datascout?team_key=${encodeURIComponent(selectedTeam)}`),
+        authFetch(`/datascout?team_key=${encodeURIComponent(selectedTeam)}&event_key=${encodeURIComponent(eventKey)}`),
         authFetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}&team_key=${encodeURIComponent(selectedTeam)}`),
-        authFetch(`/notescout?team_key=${encodeURIComponent(selectedTeam)}`)
+        authFetch(`/notescout?team_key=${encodeURIComponent(selectedTeam)}&event_key=${encodeURIComponent(eventKey)}`)
       ]);
 
       const [eventsData, pitData, notesData] = await Promise.all([

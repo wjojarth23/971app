@@ -58,6 +58,13 @@ function matchNumberForKey(matchKey) {
   return m ? Number(m[1]) : null;
 }
 
+function isMatchKeyForEvent(matchKey, eventKey) {
+  const mk = String(matchKey || '').trim().toLowerCase();
+  const ek = String(eventKey || '').trim().toLowerCase();
+  if (!mk || !ek) return false;
+  return mk.startsWith(`${ek}_`);
+}
+
 function slotKey(matchKey, teamKey) {
   return `${matchKey}::${teamKey}`;
 }
@@ -910,10 +917,9 @@ export async function GET({ request }) {
       .filter(Boolean);
     const competitionRolesByUser = await fetchCompetitionRolesByUser(db, competitionRoleKeyIds);
 
-    const matches = matchesRes.matches || [];
+    const matches = [...(matchesRes.matches || [])];
     const warning = [matchesRes.warning, upcomingRes.warning, pitRes.warning].filter(Boolean).join(' ') || null;
-
-    const matchKeys = matches.map((m) => m.key);
+    const matchKeys = matches.map((m) => m.key).filter(Boolean);
     const slotTeamsByMatch = new Map();
     const teamSet = new Set();
 
@@ -937,23 +943,71 @@ export async function GET({ request }) {
       for (const teamKey of teams) teamSet.add(teamKey);
     }
 
-    const dataEventsRes = matchKeys.length
+    const dataEventsRes = eventKey
       ? await db
           .from('scout_data_events')
           .select('match_key, team_key, created_by, event_type, event_value, created_at')
-          .in('match_key', matchKeys)
-      : { data: [], error: null };
+          .ilike('match_key', `${eventKey}_%`)
+      : matchKeys.length
+        ? await db
+            .from('scout_data_events')
+            .select('match_key, team_key, created_by, event_type, event_value, created_at')
+            .in('match_key', matchKeys)
+        : { data: [], error: null };
 
     if (dataEventsRes.error) return json({ error: dataEventsRes.error.message }, { status: 500 });
 
-    const noteEventsRes = matchKeys.length
+    const noteEventsRes = eventKey
       ? await db
           .from('scout_notes')
           .select('match_key, team_key, created_by')
-          .in('match_key', matchKeys)
-      : { data: [], error: null };
+          .ilike('match_key', `${eventKey}_%`)
+      : matchKeys.length
+        ? await db
+            .from('scout_notes')
+            .select('match_key, team_key, created_by')
+            .in('match_key', matchKeys)
+        : { data: [], error: null };
 
     if (noteEventsRes.error) return json({ error: noteEventsRes.error.message }, { status: 500 });
+
+    const dataEvidenceRows = dataEventsRes.data || [];
+    const noteEvidenceRows = noteEventsRes.data || [];
+
+    const assignments = (assignmentsRes.data || []).filter((row) => isMatchKeyForEvent(row?.match_key, eventKey));
+
+    const localSlotsByMatch = new Map();
+    const addLocalSlot = (matchKey, teamKey) => {
+      if (!isMatchKeyForEvent(matchKey, eventKey)) return;
+      if (!teamKey) return;
+      if (slotTeamsByMatch.has(matchKey)) return;
+      if (!localSlotsByMatch.has(matchKey)) localSlotsByMatch.set(matchKey, new Set());
+      localSlotsByMatch.get(matchKey).add(teamKey);
+    };
+
+    for (const row of assignments) addLocalSlot(row?.match_key, row?.team_key);
+    for (const row of dataEvidenceRows) addLocalSlot(row?.match_key, row?.team_key);
+    for (const row of noteEvidenceRows) addLocalSlot(row?.match_key, row?.team_key);
+
+    for (const [localMatchKey, teamKeys] of localSlotsByMatch.entries()) {
+      const teams = [...teamKeys];
+      slotTeamsByMatch.set(localMatchKey, teams);
+      matches.push({
+        key: localMatchKey,
+        match_number: matchNumberForKey(localMatchKey),
+        alliances: { blue: { team_keys: [] }, red: { team_keys: [] } }
+      });
+      for (const teamKey of teams) teamSet.add(teamKey);
+    }
+
+    matches.sort((a, b) => {
+      const aNum = matchNumberForKey(a?.key);
+      const bNum = matchNumberForKey(b?.key);
+      if (aNum !== null && bNum !== null && aNum !== bNum) return aNum - bNum;
+      if (aNum !== null && bNum === null) return -1;
+      if (aNum === null && bNum !== null) return 1;
+      return String(a?.key || '').localeCompare(String(b?.key || ''));
+    });
 
     const users = (usersRes.data || [])
       .filter((u) => !u?.banned)
@@ -968,14 +1022,12 @@ export async function GET({ request }) {
 
     const userNameMap = new Map(users.map((u) => [u.id, u.full_name || u.email || u.id]));
 
-    const assignments = assignmentsRes.data || [];
-
     const dataMetrics = computeTypeMetrics({
       type: 'data',
       assignments,
       matches,
       slotTeamsByMatch,
-      evidenceRows: dataEventsRes.data || [],
+      evidenceRows: dataEvidenceRows,
       userNameMap
     });
 
@@ -984,7 +1036,7 @@ export async function GET({ request }) {
       assignments,
       matches,
       slotTeamsByMatch,
-      evidenceRows: noteEventsRes.data || [],
+      evidenceRows: noteEvidenceRows,
       userNameMap
     });
 
@@ -1016,7 +1068,7 @@ export async function GET({ request }) {
     const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
     const smartFuelModel = computeSmartScoutAdjustment({
       matches,
-      dataEvents: dataEventsRes.data || [],
+      dataEvents: dataEvidenceRows,
       userNameMap,
       enabled: smartFuelEnabled
     });

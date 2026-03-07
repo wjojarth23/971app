@@ -81,12 +81,15 @@ export async function GET({ url, request }) {
     if (!isLocal && !actor?.id && !canReadPublic) return json({ error: 'Unauthorized' }, { status: 401 });
 
     const team_key = url.searchParams.get('team_key');
+    const event_key = String(url.searchParams.get('event_key') || '').trim();
+    const applyEventFilter = (query) => (event_key ? query.ilike('match_key', `${event_key}_%`) : query);
     if (team_key) {
-      const { data, error } = await db
+      let query = db
         .from('scout_notes')
         .select('*')
-        .eq('team_key', team_key)
-        .order('created_at', { ascending: false });
+        .eq('team_key', team_key);
+      query = applyEventFilter(query);
+      const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data });
@@ -94,9 +97,11 @@ export async function GET({ url, request }) {
 
     if (url.searchParams.get('list_teams')) {
       const recent = Number(url.searchParams.get('recent') || '1000');
-      const { data, error } = await db
+      let query = db
         .from('scout_notes')
-        .select('team_key')
+        .select('team_key');
+      query = applyEventFilter(query);
+      const { data, error } = await query
         .order('team_key', { ascending: true })
         .limit(recent);
 
