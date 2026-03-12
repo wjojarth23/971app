@@ -16,9 +16,11 @@
   let buildId = $page.params.id;
   let bomSnapshot = [];
   let processingAdd = false;
+  let updatingBuildQuantity = false;
   let projectBuilds = [];
   let projectTotalCost = 0;
   let projectPartsCount = 0;
+  let buildQuantityInput = '1';
 
   // Edit modal state for build items (top table)
   let showEditModal = false;
@@ -68,6 +70,12 @@
     await loadBuildDetails();
     loading = false;
   });
+
+  function normalizePositiveInt(value, fallback = 1) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 1) return fallback;
+    return Math.max(1, Math.round(n));
+  }
 
   // Helper function to fetch and cache preview image for a part
   async function fetchAndCachePreviewImage(part) {
@@ -146,7 +154,9 @@
         .single();
 
       if (error) throw error;
-      build = data;
+      const normalizedBuildQty = normalizePositiveInt(data?.quantity, 1);
+      build = { ...data, quantity: normalizedBuildQty };
+      buildQuantityInput = String(normalizedBuildQty);
 
       // Load saved BOM snapshot (all items)
       const { data: bomData, error: bomErr } = await supabase
@@ -1040,6 +1050,85 @@
     }
   }
 
+  async function updateBuildQuantity() {
+    if (!build) return;
+    const oldQty = normalizePositiveInt(build.quantity, 1);
+    const newQty = normalizePositiveInt(buildQuantityInput, oldQty);
+    if (newQty === oldQty) {
+      buildQuantityInput = String(oldQty);
+      return;
+    }
+
+    if (!confirm(`Update build quantity from ${oldQty} to ${newQty}? This will rescale all associated BOM, manufacturing, purchasing, and kitting quantities.`)) {
+      buildQuantityInput = String(oldQty);
+      return;
+    }
+
+    updatingBuildQuantity = true;
+    try {
+      const ratio = newQty / oldQty;
+
+      const { error: buildErr } = await supabase
+        .from('builds')
+        .update({ quantity: newQty })
+        .eq('id', buildId);
+      if (buildErr) throw buildErr;
+
+      const { data: rows, error: rowsErr } = await supabase
+        .from('build_bom')
+        .select('id, quantity, parts_id, purchasing_id, kitting_id')
+        .eq('build_id', buildId);
+      if (rowsErr) throw rowsErr;
+
+      const bomRows = rows || [];
+      const scaledByBomId = new Map();
+      const partTotals = new Map();
+      const purchasingTotals = new Map();
+      const kittingTotals = new Map();
+
+      for (const row of bomRows) {
+        const current = normalizePositiveInt(row.quantity, 1);
+        const next = Math.max(1, Math.round(current * ratio));
+        scaledByBomId.set(row.id, next);
+
+        if (row.parts_id) partTotals.set(row.parts_id, (partTotals.get(row.parts_id) || 0) + next);
+        if (row.purchasing_id) purchasingTotals.set(row.purchasing_id, (purchasingTotals.get(row.purchasing_id) || 0) + next);
+        if (row.kitting_id) kittingTotals.set(row.kitting_id, (kittingTotals.get(row.kitting_id) || 0) + next);
+      }
+
+      for (const row of bomRows) {
+        const nextQty = scaledByBomId.get(row.id);
+        const currentQty = normalizePositiveInt(row.quantity, 1);
+        if (nextQty !== currentQty) {
+          const { error } = await supabase.from('build_bom').update({ quantity: nextQty }).eq('id', row.id);
+          if (error) throw error;
+        }
+      }
+
+      for (const [id, qty] of partTotals.entries()) {
+        const { error } = await supabase.from('parts').update({ quantity: qty }).eq('id', id);
+        if (error) throw error;
+      }
+      for (const [id, qty] of purchasingTotals.entries()) {
+        const { error } = await supabase.from('purchasing').update({ quantity: qty }).eq('id', id);
+        if (error) throw error;
+      }
+      for (const [id, qty] of kittingTotals.entries()) {
+        const { error } = await supabase.from('kitting').update({ quantity: qty }).eq('id', id);
+        if (error) throw error;
+      }
+
+      await loadBuildDetails();
+      alert(`Build quantity updated to ${newQty}.`);
+    } catch (error) {
+      console.error('Error updating build quantity:', error);
+      alert('Failed to update build quantity: ' + (error?.message || error));
+      buildQuantityInput = String(oldQty);
+    } finally {
+      updatingBuildQuantity = false;
+    }
+  }
+
   // Version refetch functionality
   async function openVersionSelector() {
     if (!build?.subsystems?.onshape_document_id) {
@@ -1150,7 +1239,7 @@
           part_number: part.part_number || null,
           part_type: part.part_type || 'manufactured',
           workflow: part.workflow || 'mill',
-          quantity: part.quantity || 1,
+          quantity: (part.quantity || 1) * normalizePositiveInt(build?.quantity, 1),
           material: part.material || '',
           stock_assignment: part.stock_assignment || null,
           stock_assignment_custom: part.stock_assignment_custom || null,
@@ -1240,6 +1329,7 @@
             <p class="build-hash">Build #{build.build_hash?.split('_')[1] || build.id.substring(0, 8)}</p>
             <div class="build-meta">
               <span>Created: {new Date(build.created_at).toLocaleDateString()}</span>
+              <span>Quantity: x{normalizePositiveInt(build.quantity, 1)}</span>
               {#if build.assembled_at}
                 <span>Assembled: {new Date(build.assembled_at).toLocaleDateString()}</span>
               {/if}
@@ -1250,6 +1340,25 @@
           </div>
         </div>
         <div class="header-right">
+          {#if isSubsystemLead()}
+            <div class="build-qty-control">
+              <label for="build-quantity">Build Quantity</label>
+              <div class="build-qty-row">
+                <input
+                  id="build-quantity"
+                  class="form-input"
+                  type="number"
+                  min="1"
+                  step="1"
+                  bind:value={buildQuantityInput}
+                  disabled={updatingBuildQuantity}
+                />
+                <button class="btn btn-secondary btn-sm" on:click={updateBuildQuantity} disabled={updatingBuildQuantity}>
+                  {updatingBuildQuantity ? 'Saving...' : 'Apply'}
+                </button>
+              </div>
+            </div>
+          {/if}
           {#if build.status !== 'assembled'}
             {@const progress = getBuildProgress()}
             {#if progress.status === 'Ready to Assemble'}
@@ -2068,6 +2177,36 @@
     color: var(--text-muted);
   }
 
+  .header-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--gap-2);
+  }
+
+  .build-qty-control {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-1);
+    align-items: flex-end;
+  }
+
+  .build-qty-control label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .build-qty-row {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+
+  .build-qty-row .form-input {
+    width: 90px;
+  }
+
   /* Version modal styling */
   .version-item {
     display: flex;
@@ -2135,6 +2274,11 @@
   @media (max-width: 768px) {
     .header-content {
       flex-direction: column;
+    }
+
+    .header-right,
+    .build-qty-control {
+      align-items: flex-start;
     }
 
     .parts-header {

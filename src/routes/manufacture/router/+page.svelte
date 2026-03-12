@@ -1,11 +1,10 @@
-<script>
+﻿<script>
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
   import { Package, GripVertical, Download, ChevronUp, ChevronDown, Calendar, Eye, Pencil, AlertCircle, X } from 'lucide-svelte';
-  import ROUTER_FLOW from '$lib/router_flow.json';
-  import { getDisplayStatus, BUTTONS, getBadgeClass } from '$lib/statuses.js';
-  import RouterStatusSelector from '$lib/components/RouterStatusSelector.svelte';
+  import { getDisplayStatus, BUTTONS } from '$lib/statuses.js';
+  import { getRouterStageCounts, summarizeRouterStages, isFullyCut, isFullyKitted, advanceRouterStageCounts, buildRouterProgressUpdate } from '$lib/router_progress.js';
   import stockData from '$lib/stock.json';
 
   // ==================== State ====================
@@ -17,7 +16,7 @@
   // Edit Mode vs View Mode
   let editMode = false;
 
-  // The subtab determines router vs postprocessing — driven by local state
+  // The subtab determines router vs postprocessing â€” driven by local state
 
   // Drag-and-drop state
   let dragPart = null;
@@ -39,7 +38,7 @@
     'ShopSabre': { bg: 'var(--purple-soft)', text: 'var(--purple-strong)', border: 'var(--purple-base, #9c27b0)' }
   };
 
-  // Stock color map — color by material type
+  // Stock color map â€” color by material type
   function getStockColor(stock) {
     if (!stock) return { bg: 'var(--surface-2)', text: 'var(--text-muted)', border: 'var(--border)' };
     const s = stock.toLowerCase();
@@ -74,27 +73,31 @@
 
   function groupIsCut(g) {
     if (!g || !g.parts || g.parts.length === 0) return false;
-    return g.parts.every(p => {
-      const m = parseMeta(p);
-      return p.status === 'machined' || Boolean(m?.router_meta && m.router_meta.step === 'cut');
-    });
+    return g.parts.every((p) => isFullyCut(p));
   }
 
   function groupIsKitted(g) {
     if (!g || !g.parts || g.parts.length === 0) return false;
-    return g.parts.every(p => p.status === 'complete' || p.status === 'kitted');
+    return g.parts.every((p) => isFullyKitted(p));
   }
 
   function getGroupDisplayStatus(g) {
     if (g.status) return g.status;
     if (!g || !g.parts || g.parts.length === 0) return BUTTONS.PENDING;
     if (groupIsCut(g)) return BUTTONS.MACHINED;
-    const allTravis = g.parts.every(p => {
-      const m = parseMeta(p);
-      return m?.travis_progged || (m?.router_meta && m.router_meta.step === 'queued');
+    const allTravis = g.parts.every((p) => {
+      const counts = getRouterStageCounts(p);
+      const queued = counts.queued || 0;
+      const total = p.quantity || 1;
+      return queued >= total;
     });
     if (allTravis) return BUTTONS.TRAVIS;
-    const allCammed = g.parts.every(p => p.status === 'cammed');
+    const allCammed = g.parts.every((p) => {
+      const counts = getRouterStageCounts(p);
+      const cammed = counts.cammed || 0;
+      const total = p.quantity || 1;
+      return cammed >= total;
+    });
     if (allCammed) return BUTTONS.CAM_REVIEWED;
     return BUTTONS.PENDING;
   }
@@ -132,6 +135,28 @@
       if (count > bestCount) { bestCount = count; best = val; }
     }
     return best;
+  }
+
+  function getPartStageCount(part, stage) {
+    return getRouterStageCounts(part)[stage] || 0;
+  }
+
+  async function movePartStage(part, fromStage, toStage) {
+    const nextCounts = advanceRouterStageCounts(part, fromStage, toStage, 1);
+    if (!nextCounts) return;
+
+    const { error } = await supabase
+      .from('parts')
+      .update(buildRouterProgressUpdate(part, nextCounts))
+      .eq('id', part.id);
+
+    if (error) {
+      console.error('Failed to update router part progress', error);
+      alert('Failed to update router part progress.');
+      return;
+    }
+
+    await loadParts();
   }
 
   // ==================== Data Loading ====================
@@ -495,31 +520,15 @@
     if (!group) return;
     if (newStatus === BUTTONS.TRAVIS) {
       for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', p.id);
-        const meta = parseMeta(p);
-        meta.travis_progged = true;
-        if (!meta.router_meta) meta.router_meta = {};
-        meta.router_meta.step = 'queued';
-        await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', p.id);
+        await supabase.from('parts').update(buildRouterProgressUpdate(p, { queued: p.quantity || 1 })).eq('id', p.id);
       }
     } else if (newStatus === BUTTONS.MACHINED) {
       for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'machined', updated_at: new Date().toISOString() }).eq('id', p.id);
-        const meta = parseMeta(p);
-        if (!meta.router_meta) meta.router_meta = {};
-        meta.router_meta.step = 'cut';
-        await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', p.id);
+        await supabase.from('parts').update(buildRouterProgressUpdate(p, { cut: p.quantity || 1 })).eq('id', p.id);
       }
     } else if (newStatus === BUTTONS.CAM_REVIEWED) {
       for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', p.id);
-        const meta = parseMeta(p);
-        delete meta.travis_progged;
-        if (meta.router_meta) {
-          delete meta.router_meta.travis_progged;
-          meta.router_meta.step = 'cammed';
-        }
-        await supabase.from('parts').update({ file_url: JSON.stringify(meta), updated_at: new Date().toISOString() }).eq('id', p.id);
+        await supabase.from('parts').update(buildRouterProgressUpdate(p, { cammed: p.quantity || 1 })).eq('id', p.id);
       }
     }
     await loadParts();
@@ -528,8 +537,8 @@
   function getGroupSummary(g) {
     if (!g || !g.parts) return '';
     const stockDesc = g.stock || g.parts[0]?.stock_assignment || '';
-    const partCount = g.parts.length;
-    return `${stockDesc}${stockDesc ? ' · ' : ''}${partCount} part${partCount !== 1 ? 's' : ''}`;
+    const totalQty = g.parts.reduce((sum, part) => sum + (part.quantity || 1), 0);
+    return `${stockDesc}${stockDesc ? ' · ' : ''}${totalQty} qty`;
   }
 
   // ==================== Lifecycle ====================
@@ -591,7 +600,7 @@
                     </span>
                   {/if}
                 {:else}
-                  <span class="text-muted">—</span>
+                  <span class="text-muted">â€”</span>
                 {/if}
               </div>
               <div class="status-summary-card">
@@ -606,7 +615,7 @@
                     </span>
                   {/if}
                 {:else}
-                  <span class="text-muted">—</span>
+                  <span class="text-muted">â€”</span>
                 {/if}
               </div>
             </div>
@@ -716,7 +725,29 @@
                           {#if editMode}
                             <GripVertical size={12} class="drag-handle" />
                           {/if}
-                          <span class="part-name">{p.name}</span>
+                          <div class="part-content">
+                            <span class="part-name">{p.name}</span>
+                            <span class="part-progress">{summarizeRouterStages(p)}</span>
+                            {#if !editMode}
+                              <div class="part-actions-inline">
+                                {#if getPartStageCount(p, 'pending') > 0}
+                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'pending', 'cam_ing')}>Start 1</button>
+                                {/if}
+                                {#if getPartStageCount(p, 'cam_ing') > 0}
+                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cam_ing', 'cam_review')}>CAM Done 1</button>
+                                {/if}
+                                {#if getPartStageCount(p, 'cam_review') > 0}
+                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cam_review', 'cammed')}>Review 1</button>
+                                {/if}
+                                {#if getPartStageCount(p, 'cammed') > 0}
+                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cammed', 'queued')}>Travis 1</button>
+                                {/if}
+                                {#if getPartStageCount(p, 'queued') > 0}
+                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'queued', 'cut')}>Cut 1</button>
+                                {/if}
+                              </div>
+                            {/if}
+                          </div>
                           {#if editMode}
                             <button class="remove-btn" on:click={() => removeFromGroup(p)} title="Remove from group">
                               <X size={12} />
@@ -751,7 +782,7 @@
                             {g.machine}
                           </span>
                         {:else}
-                          <span class="text-muted">—</span>
+                          <span class="text-muted">â€”</span>
                         {/if}
                       {/if}
                     </div>
@@ -778,7 +809,7 @@
                             {g.stock}
                           </span>
                         {:else}
-                          <span class="text-muted">—</span>
+                          <span class="text-muted">â€”</span>
                         {/if}
                       {/if}
                     </div>
@@ -821,7 +852,7 @@
                             {new Date(g.target_date).toLocaleDateString()}
                           </span>
                         {:else}
-                          <span class="text-muted">—</span>
+                          <span class="text-muted">â€”</span>
                         {/if}
                       {/if}
                     </div>
@@ -1025,6 +1056,26 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .part-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .part-progress {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: normal;
+  }
+
+  .part-actions-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
   }
 
   /* ==================== Groups Panel ==================== */
@@ -1300,3 +1351,6 @@
 
   }
 </style>
+
+
+

@@ -9,6 +9,7 @@
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users } from 'lucide-svelte';
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
+  import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
   import { TEAM_ROLES } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   
@@ -31,6 +32,8 @@
   let assignMode = false;
   let rosterMembers = [];
   let draggingUser = null;
+  let selectedPartIds = [];
+  let batchSelectMode = false;
   $: canUseAssignMode = (user?.team_role === TEAM_ROLES.MANUFACTURING_LEAD);
   $: if (!canUseAssignMode && assignMode) {
     assignMode = false;
@@ -61,6 +64,19 @@
   // Get workflow-specific statuses for edit modal
   $: editStatusOptions = editWorkflow ? getWorkflowStatuses(editWorkflow) : statuses;
 
+  function isPartFullyCompleted(part) {
+    if (part?.workflow === 'router') return isFullyKitted(part);
+    return part?.status === 'complete';
+  }
+
+  function getQuantitySummary(part) {
+    return part?.quantity || 1;
+  }
+
+  function getRouterProgressSummary(part) {
+    return part?.workflow === 'router' ? summarizeRouterStages(part) : '';
+  }
+
   function getWorkflowClass(workflow) {
     if (!workflow) return 'tag-workflow-default';
     return `tag-workflow-${workflow.toLowerCase().replace(/_/g, '-')}`;
@@ -84,9 +100,46 @@
   let previewStock = '';
   let previewCustomStock = '';
   let previewQuantity = 1;
+
+  function getPartKey(partOrId) {
+    return String(typeof partOrId === 'object' ? partOrId?.id : partOrId);
+  }
+
+  function getNormalizedPartId(id) {
+    return (typeof id === 'string' && /^\d+$/.test(id)) ? Number(id) : id;
+  }
+
+  function isPartSelected(part) {
+    return selectedPartIds.includes(getPartKey(part));
+  }
+
+  function togglePartSelection(part) {
+    const key = getPartKey(part);
+    selectedPartIds = selectedPartIds.includes(key)
+      ? selectedPartIds.filter((id) => id !== key)
+      : [...selectedPartIds, key];
+  }
+
+  function toggleSelectAllFiltered() {
+    const filteredKeys = filteredParts.map(getPartKey);
+    const allSelected = filteredKeys.length > 0 && filteredKeys.every((key) => selectedPartIds.includes(key));
+    if (allSelected) {
+      selectedPartIds = selectedPartIds.filter((key) => !filteredKeys.includes(key));
+      return;
+    }
+
+    selectedPartIds = Array.from(new Set([...selectedPartIds, ...filteredKeys]));
+  }
+
+  function toggleBatchSelectMode() {
+    batchSelectMode = !batchSelectMode;
+    if (!batchSelectMode) {
+      selectedPartIds = [];
+    }
+  }
   
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
-  $: projectIds = Array.from(new Set(parts.filter(p => p.status !== 'complete' && p.project_id).map(p => p.project_id))).sort();
+  $: projectIds = Array.from(new Set(parts.filter(p => !isPartFullyCompleted(p) && p.project_id).map(p => p.project_id))).sort();
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -673,7 +726,6 @@
     // Router: reflect sub-steps using router_meta; prefer sub-step label if present
     if (part.workflow === 'router') {
       const meta = getRouterMeta(part);
-      // Prefer the centralized display mapping
       return getDisplayStatus(part.status, meta);
     }
 
@@ -1009,26 +1061,7 @@
     if (!previewPart) return;
     if (!confirm('Delete this part permanently?')) return;
     try {
-      const normalizedId = (typeof previewPart.id === 'string' && /^\d+$/.test(previewPart.id)) ? Number(previewPart.id) : previewPart.id;
-      try {
-        const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').eq('parts_id', normalizedId);
-        if (refErr) throw refErr;
-        if (refs && refs.length > 0) {
-          const ids = refs.map(r => r.id);
-          const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', ids);
-          if (clearErr) throw clearErr;
-        }
-      } catch (e) {
-        console.error('Failed to clear BOM refs before deleting part:', e);
-        alert('Failed to delete part: could not clear BOM references. Remove or unlink those BOM rows first.');
-        return;
-      }
-      const { error } = await supabase
-        .from('parts')
-        .delete()
-        .eq('id', normalizedId);
-      if (error) throw error;
-      await loadParts();
+      await deletePartsByIds([previewPart.id]);
       showToastMessage('Part deleted');
       closePreviewModal();
     } catch (e) {
@@ -1084,36 +1117,58 @@
     if (!editPart) return;
     if (!confirm('Delete this part permanently?')) return;
     try {
-      // Normalize id (parts.id is bigint)
-      const normalizedId = (typeof editPart.id === 'string' && /^\d+$/.test(editPart.id)) ? Number(editPart.id) : editPart.id;
-
-      // Clear any build_bom references to this part first
-      try {
-        const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').eq('parts_id', normalizedId);
-        if (refErr) throw refErr;
-        if (refs && refs.length > 0) {
-          const ids = refs.map(r => r.id);
-          const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', ids);
-          if (clearErr) throw clearErr;
-        }
-      } catch (e) {
-        console.error('Failed to clear BOM refs before deleting part:', e);
-        alert('Failed to delete part: could not clear BOM references. Remove or unlink those BOM rows first.');
-        return;
-      }
-
-      const { error } = await supabase
-        .from('parts')
-        .delete()
-        .eq('id', normalizedId);
-      if (error) throw error;
-      await loadParts();
+      await deletePartsByIds([editPart.id]);
       showToastMessage('Part deleted');
     } catch (e) {
       console.error('deleteCurrentPart error:', e);
       alert('Failed to delete part: ' + (e.message || e));
     } finally {
       closeEditModal();
+    }
+  }
+
+  async function deletePartsByIds(partIds) {
+    const normalizedIds = [...new Set(partIds.map(getNormalizedPartId))];
+    if (normalizedIds.length === 0) return;
+
+    try {
+      const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').in('parts_id', normalizedIds);
+      if (refErr) throw refErr;
+      if (refs && refs.length > 0) {
+        const bomIds = refs.map((row) => row.id);
+        const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', bomIds);
+        if (clearErr) throw clearErr;
+      }
+    } catch (e) {
+      console.error('Failed to clear BOM refs before deleting part(s):', e);
+      throw new Error('Could not clear BOM references. Remove or unlink those BOM rows first.');
+    }
+
+    const { error } = await supabase
+      .from('parts')
+      .delete()
+      .in('id', normalizedIds);
+
+    if (error) throw error;
+
+    selectedPartIds = selectedPartIds.filter((id) => !normalizedIds.map(String).includes(id));
+    await loadParts();
+  }
+
+  async function bulkDeleteSelected() {
+    const idsToDelete = filteredParts
+      .filter((part) => selectedPartIds.includes(getPartKey(part)))
+      .map((part) => part.id);
+
+    if (idsToDelete.length === 0) return;
+    if (!confirm(`Delete ${idsToDelete.length} selected part${idsToDelete.length === 1 ? '' : 's'} permanently?`)) return;
+
+    try {
+      await deletePartsByIds(idsToDelete);
+      showToastMessage(`${idsToDelete.length} part${idsToDelete.length === 1 ? '' : 's'} deleted`);
+    } catch (e) {
+      console.error('bulkDeleteSelected error:', e);
+      alert('Failed to delete selected parts: ' + (e.message || e));
     }
   }
 
@@ -1132,10 +1187,14 @@
       part.status === filterStatus ||
       (filterStatus === 'cam_review' && meta.step === 'cam_review');
     const matchesProject = !filterProject || part.project_id === filterProject;
-    const notCompleted = part.status !== 'complete';
+    const notCompleted = !isPartFullyCompleted(part);
     
     return matchesSearch && matchesWorkflow && matchesStatus && matchesProject && notCompleted;
   });
+
+  $: filteredPartKeys = filteredParts.map(getPartKey);
+  $: selectedFilteredCount = filteredPartKeys.filter((key) => selectedPartIds.includes(key)).length;
+  $: allFilteredSelected = filteredPartKeys.length > 0 && selectedFilteredCount === filteredPartKeys.length;
 
   // Toast notification functions
   function showToastMessage(message) {
@@ -1199,6 +1258,16 @@
 <div class="page-header">
   <h1>Parts List</h1>
   <div class="page-actions">
+    <button class="btn {batchSelectMode ? 'btn-primary' : 'btn-secondary'}" on:click={toggleBatchSelectMode}>
+      <Package size={16} />
+      {batchSelectMode ? 'Exit Batch Select' : 'Batch Select'}
+    </button>
+    {#if batchSelectMode && selectedFilteredCount > 0}
+      <button class="btn btn-danger" on:click={bulkDeleteSelected}>
+        <Trash2 size={16} />
+        Delete Selected ({selectedFilteredCount})
+      </button>
+    {/if}
     {#if canUseAssignMode}
       <button 
         class="btn {assignMode ? 'btn-primary' : 'btn-secondary'}"
@@ -1332,6 +1401,15 @@
       >
         <div class="part-card-header">
           <div class="part-card-title">
+            {#if batchSelectMode}
+              <input
+                class="part-select-checkbox"
+                type="checkbox"
+                checked={isPartSelected(part)}
+                on:click|stopPropagation
+                on:change|stopPropagation={() => togglePartSelection(part)}
+              />
+            {/if}
             <strong>{part.name}</strong>
             {#if isTeam9584(part.frc_team)}
               <span class="tag team-tag tag-9584">9584</span>
@@ -1357,7 +1435,7 @@
         <div class="part-card-details">
           <div class="part-card-detail">
             <span class="detail-label">Qty</span>
-            <span class="detail-value">{part.quantity || 1}</span>
+            <span class="detail-value">{getQuantitySummary(part)}</span>
           </div>
           {#if part.stock_assignment}
             <div class="part-card-detail">
@@ -1370,6 +1448,9 @@
             <span class="detail-value">{formatDate(part.created_at)}</span>
           </div>
         </div>
+        {#if part.workflow === 'router' && getRouterProgressSummary(part)}
+          <div class="part-card-progress">{getRouterProgressSummary(part)}</div>
+        {/if}
         
         <div class="part-card-actions">
           <!-- Source/Download buttons -->
@@ -1443,6 +1524,11 @@
     <table class="table">
       <thead>
         <tr>
+          {#if batchSelectMode}
+            <th class="select-col">
+              <input type="checkbox" checked={allFilteredSelected} on:change={toggleSelectAllFiltered} aria-label="Select all filtered parts" />
+            </th>
+          {/if}
           <th class="name-col">Name</th>
           <th>Workflow</th>
           <th class="mono" class:hidden={assignMode}>Project ID</th>
@@ -1466,6 +1552,17 @@
             tabindex="0"
             class:droppable={assignMode}
           >
+            {#if batchSelectMode}
+              <td class="select-col">
+                <input
+                  type="checkbox"
+                  checked={isPartSelected(part)}
+                  on:click|stopPropagation
+                  on:change|stopPropagation={() => togglePartSelection(part)}
+                  aria-label={`Select ${part.name}`}
+                />
+              </td>
+            {/if}
             <td class="name-col">
               <div class="name-line">
                 <strong>{part.name}</strong>
@@ -1485,7 +1582,7 @@
               </span>
             </td>
             <td class="mono" class:hidden={assignMode}>{part.project_id}</td>
-            <td class:hidden={assignMode}>{part.quantity || 1}</td>
+            <td class:hidden={assignMode}>{getQuantitySummary(part)}</td>
             <td class="text-muted" class:hidden={assignMode}>{part.stock_assignment || '-'}</td>
             <td class="source-col" class:hidden={assignMode}>
               {#if part.source_type === 'onshape_api'}
@@ -1572,6 +1669,9 @@
             </td>
             <td>
               <span class="status-badge {getBadgeClass(part.status, getRouterMeta(part))} status-table status-fade">{getStatusDisplay(part)}</span>
+              {#if part.workflow === 'router' && getRouterProgressSummary(part)}
+                <div class="router-progress-note">{getRouterProgressSummary(part)}</div>
+              {/if}
             </td>
             <td class:hidden={assignMode}>{formatDate(part.created_at)}</td>
             <td class:hidden={assignMode}>
@@ -1848,6 +1948,11 @@
   
   .table tr { background: white; }
   .table tbody tr:nth-child(even) { background: var(--color-white); }
+
+  .select-col {
+    width: 40px;
+    text-align: center;
+  }
 
   .table th.name-col,
   .table td.name-col {
@@ -2140,6 +2245,18 @@
     gap: var(--gap-2);
     padding-top: var(--space-3);
     border-top: 1px solid var(--border);
+  }
+
+  .part-card-progress,
+  .router-progress-note {
+    margin-top: 0.35rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  .part-select-checkbox {
+    margin: 0;
+    flex-shrink: 0;
   }
   
   .part-card-actions .btn {

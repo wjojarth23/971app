@@ -3,6 +3,7 @@
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
   import { Package, Check } from 'lucide-svelte';
+  import { getRouterStageCounts, buildRouterProgressUpdate, advanceRouterStageCounts, isFullyCut, isFullyKitted, ROUTER_STAGE_LABELS } from '$lib/router_progress.js';
 
   let loading = true;
   let useDedicatedTables = true;
@@ -14,17 +15,34 @@
     try { return JSON.parse(part.file_url || '{}') || {}; } catch { return {}; }
   }
 
+  function getPartStageCount(part, stage) {
+    return getRouterStageCounts(part)[stage] || 0;
+  }
+
+  function getGroupCompletionSummary(group) {
+    if (!group?.parts?.length) return '';
+    const kitted = group.parts.reduce((sum, part) => sum + getPartStageCount(part, 'kitted'), 0);
+    const total = group.parts.reduce((sum, part) => sum + (part.quantity || 1), 0);
+    return `${kitted}/${total} kitted`;
+  }
+
+  function getGroupPostProcessingIndex(group) {
+    if (!group?.parts?.length) return -1;
+    const stageOrder = ['cut', 'jigsawed', 'countersinking', 'deburred', 'inspecting', 'kitted'];
+    for (let i = 0; i < stageOrder.length; i += 1) {
+      if (group.parts.some((part) => getPartStageCount(part, stageOrder[i]) > 0)) return i;
+    }
+    return -1;
+  }
+
   function groupIsCut(g) {
     if (!g || !g.parts || g.parts.length === 0) return false;
-    return g.parts.every(p => {
-      const m = parseMeta(p);
-      return p.status === 'machined' || Boolean(m?.router_meta && m.router_meta.step === 'cut');
-    });
+    return g.parts.every((p) => isFullyCut(p));
   }
 
   function groupIsKitted(g) {
     if (!g || !g.parts || g.parts.length === 0) return false;
-    return g.parts.every(p => p.status === 'complete' || p.status === 'kitted');
+    return g.parts.every((p) => isFullyKitted(p));
   }
 
   function getStockColor(stock) {
@@ -116,19 +134,21 @@
     .filter(g => g.parts.length > 0 && groupIsCut(g) && !groupIsKitted(g))
     .sort((a, b) => (a.queue_position ?? 999) - (b.queue_position ?? 999));
 
-  async function advancePostProcessingStage(gid) {
-    const group = groupMap[gid];
-    if (!group) return;
-    const currentIdx = POST_PROCESSING_STAGES.indexOf(group.post_processing_stage || '');
-    const nextIdx = currentIdx + 1;
-    if (nextIdx >= POST_PROCESSING_STAGES.length) {
-      for (const p of group.parts) {
-        await supabase.from('parts').update({ status: 'complete', updated_at: new Date().toISOString() }).eq('id', p.id);
-      }
-      await supabase.from('router_groups').update({ post_processing_stage: 'Kitted' }).eq('id', gid);
-    } else {
-      await supabase.from('router_groups').update({ post_processing_stage: POST_PROCESSING_STAGES[nextIdx] }).eq('id', gid);
+  async function movePartStage(part, fromStage, toStage) {
+    const nextCounts = advanceRouterStageCounts(part, fromStage, toStage, 1);
+    if (!nextCounts) return;
+
+    const { error } = await supabase
+      .from('parts')
+      .update(buildRouterProgressUpdate(part, nextCounts))
+      .eq('id', part.id);
+
+    if (error) {
+      console.error('Failed to update router progress', error);
+      alert('Failed to update router progress.');
+      return;
     }
+
     await loadGroups();
   }
 
@@ -165,6 +185,7 @@
           <div class="pp-header-left">
             <h2 class="pp-group-name">{g.name}</h2>
             <span class="text-muted">{g.parts.length} part{g.parts.length !== 1 ? 's' : ''}</span>
+            <span class="text-muted">Qty {getGroupCompletionSummary(g)}</span>
           </div>
           {#if g.stock}
             {@const sc = getStockColor(g.stock)}
@@ -176,9 +197,9 @@
 
         <div class="pp-stages">
           {#each POST_PROCESSING_STAGES as stage, stageIdx}
-            {@const currentIdx = POST_PROCESSING_STAGES.indexOf(g.post_processing_stage || '')}
-            {@const isComplete = stageIdx < currentIdx || (stageIdx === currentIdx && g.post_processing_stage === 'Kitted')}
-            {@const isCurrent = stageIdx === currentIdx && g.post_processing_stage !== 'Kitted'}
+            {@const currentIdx = getGroupPostProcessingIndex(g)}
+            {@const isComplete = stageIdx < currentIdx}
+            {@const isCurrent = stageIdx === currentIdx}
             {@const isNext = stageIdx === currentIdx + 1 || (currentIdx === -1 && stageIdx === 0)}
 
             <div class="pp-stage" class:complete={isComplete} class:current={isCurrent} class:next={isNext}>
@@ -190,14 +211,6 @@
                 {/if}
               </div>
               <span class="pp-stage-label">{stage}</span>
-              {#if isNext}
-                <button
-                  class="btn btn-primary btn-sm pp-advance-btn"
-                  on:click={() => advancePostProcessingStage(g.id)}
-                >
-                  Mark Done
-                </button>
-              {/if}
             </div>
             {#if stageIdx < POST_PROCESSING_STAGES.length - 1}
               <div class="pp-connector" class:complete={isComplete}></div>
@@ -206,12 +219,36 @@
         </div>
 
         <div class="pp-parts-preview">
-          {#each g.parts.slice(0, 5) as p}
-            <span class="pp-part-chip">{p.name}</span>
+          {#each g.parts as p}
+            <div class="pp-part-chip">
+              <span class="pp-part-name">{p.name}</span>
+              <span class="pp-part-counts">
+                {#if getPartStageCount(p, 'cut') > 0}<span>{getPartStageCount(p, 'cut')} {ROUTER_STAGE_LABELS.cut}</span>{/if}
+                {#if getPartStageCount(p, 'jigsawed') > 0}<span>{getPartStageCount(p, 'jigsawed')} {ROUTER_STAGE_LABELS.jigsawed}</span>{/if}
+                {#if getPartStageCount(p, 'countersinking') > 0}<span>{getPartStageCount(p, 'countersinking')} {ROUTER_STAGE_LABELS.countersinking}</span>{/if}
+                {#if getPartStageCount(p, 'deburred') > 0}<span>{getPartStageCount(p, 'deburred')} {ROUTER_STAGE_LABELS.deburred}</span>{/if}
+                {#if getPartStageCount(p, 'inspecting') > 0}<span>{getPartStageCount(p, 'inspecting')} {ROUTER_STAGE_LABELS.inspecting}</span>{/if}
+                {#if getPartStageCount(p, 'kitted') > 0}<span>{getPartStageCount(p, 'kitted')} {ROUTER_STAGE_LABELS.kitted}</span>{/if}
+              </span>
+              <div class="pp-part-actions">
+                {#if getPartStageCount(p, 'cut') > 0}
+                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'cut', 'jigsawed')}>Jigsaw 1</button>
+                {/if}
+                {#if getPartStageCount(p, 'jigsawed') > 0}
+                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'jigsawed', 'countersinking')}>Countersink 1</button>
+                {/if}
+                {#if getPartStageCount(p, 'countersinking') > 0}
+                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'countersinking', 'deburred')}>Deburr 1</button>
+                {/if}
+                {#if getPartStageCount(p, 'deburred') > 0}
+                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'deburred', 'inspecting')}>Inspect 1</button>
+                {/if}
+                {#if getPartStageCount(p, 'inspecting') > 0}
+                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'inspecting', 'kitted')}>Kit 1</button>
+                {/if}
+              </div>
+            </div>
           {/each}
-          {#if g.parts.length > 5}
-            <span class="text-muted">+{g.parts.length - 5} more</span>
-          {/if}
         </div>
       </div>
     {/each}
@@ -343,17 +380,40 @@
 
   .pp-parts-preview {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: var(--gap-2);
   }
 
   .pp-part-chip {
-    font-size: var(--font-xs);
-    padding: var(--space-1) var(--space-2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-2);
+    padding: var(--space-2) var(--space-3);
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
+    color: var(--text);
+    flex-wrap: wrap;
+  }
+
+  .pp-part-name {
+    font-size: var(--font-xs);
+    font-weight: 600;
+  }
+
+  .pp-part-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+    font-size: var(--font-xs);
     color: var(--text-muted);
+  }
+
+  .pp-part-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
   }
 
   @media (max-width: 900px) {

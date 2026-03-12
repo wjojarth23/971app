@@ -5,6 +5,7 @@
     "manufacture": true,
     "cad": true,
     "purchasing": true,
+    "tasks": true,
     "notescout": true,
     "teamview": true,
     "pitscout": true,

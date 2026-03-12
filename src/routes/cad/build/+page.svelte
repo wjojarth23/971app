@@ -578,6 +578,8 @@
                           <span>{progress.manufactured}/{progress.total} parts</span>
                           <span>•</span>
                           <span>{progress.percent}%</span>
+                          <span>|</span>
+                          <span>Qty x{Math.max(1, Math.round(Number(build.quantity || 1)))}</span>
                           <span>•</span>
                           <span>Created {new Date(build.created_at).toLocaleDateString()}</span>
                         </div>

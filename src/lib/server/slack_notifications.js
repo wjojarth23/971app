@@ -215,3 +215,113 @@ export async function notifyMatchReminder({ userId, matchKey, teams, matchTime }
     text
   });
 }
+
+function taskStatusLabel(status = '') {
+  const map = {
+    open: 'Open',
+    in_progress: 'In Progress',
+    file_uploaded: 'File Uploaded',
+    under_review: 'Under Review',
+    changes_requested: 'Changes Requested',
+    approved: 'Approved',
+    done: 'Done',
+    closed: 'Closed'
+  };
+  return map[status] || String(status || 'Updated');
+}
+
+export async function notifyTaskAssignedById(taskId) {
+  const supa = getSupabase();
+  const { data: task } = await supa
+    .from('tasks')
+    .select('id, title, assignee_id, created_at')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (!task?.assignee_id) {
+    return { ok: false, reason: 'no-assignee' };
+  }
+  const text = `You were assigned task: ${task.title || 'Untitled task'}.`;
+  const entityKey = task.created_at ? `task:${task.id}:assigned:${task.assignee_id}:${task.created_at}` : `task:${task.id}:assigned`;
+  return dispatchNotification({
+    userId: task.assignee_id,
+    notificationKey: NOTIFICATION_KEYS.TASK_ASSIGNED,
+    entityKey,
+    text
+  });
+}
+
+export async function notifyTaskReviewRequestedById(taskId) {
+  const supa = getSupabase();
+  const { data: task } = await supa
+    .from('tasks')
+    .select('id, title, reviewer_id, attachment_uploaded_at')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (!task?.reviewer_id) {
+    return { ok: false, reason: 'no-reviewer' };
+  }
+  const text = `Task ready for review: ${task.title || 'Untitled task'}.`;
+  const entityKey = task.attachment_uploaded_at
+    ? `task:${task.id}:review:${task.reviewer_id}:${task.attachment_uploaded_at}`
+    : `task:${task.id}:review`;
+  return dispatchNotification({
+    userId: task.reviewer_id,
+    notificationKey: NOTIFICATION_KEYS.TASK_REVIEW_REQUESTED,
+    entityKey,
+    text
+  });
+}
+
+export async function notifyTaskStatusChanged({
+  taskId,
+  previousStatus = null,
+  nextStatus = null,
+  changedByName = null,
+  changedByUserId = null
+}) {
+  const supa = getSupabase();
+  const { data: task } = await supa
+    .from('tasks')
+    .select('id, title, assignee_id, status, updated_at')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (!task?.assignee_id) {
+    return { ok: false, reason: 'no-assignee' };
+  }
+  if (changedByUserId && task.assignee_id === changedByUserId) {
+    return { ok: false, reason: 'self-change' };
+  }
+  const fromLabel = taskStatusLabel(previousStatus || task.status);
+  const toLabel = taskStatusLabel(nextStatus || task.status);
+  const actor = changedByName ? ` by ${changedByName}` : '';
+  const text = `Task status updated${actor}: ${task.title || 'Untitled task'} (${fromLabel} -> ${toLabel}).`;
+  const entityKey = task.updated_at
+    ? `task:${task.id}:status:${task.assignee_id}:${task.updated_at}:${toLabel}`
+    : `task:${task.id}:status:${toLabel}`;
+  return dispatchNotification({
+    userId: task.assignee_id,
+    notificationKey: NOTIFICATION_KEYS.TASK_STATUS_CHANGED,
+    entityKey,
+    text
+  });
+}
+
+export async function notifyTaskDeadlineById(taskId) {
+  const supa = getSupabase();
+  const { data: task } = await supa
+    .from('tasks')
+    .select('id, title, assignee_id, deadline_at, status')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (!task?.assignee_id || !task?.deadline_at) {
+    return { ok: false, reason: 'missing-deadline-or-assignee' };
+  }
+  const text = `Deadline reached for task: ${task.title || 'Untitled task'}. Current status: ${taskStatusLabel(task.status)}.`;
+  const entityKey = `task:${task.id}:deadline:${task.assignee_id}:${new Date(task.deadline_at).toISOString()}`;
+  return dispatchNotification({
+    userId: task.assignee_id,
+    notificationKey: NOTIFICATION_KEYS.TASK_DEADLINE,
+    entityKey,
+    text
+  });
+}

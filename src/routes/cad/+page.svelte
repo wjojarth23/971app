@@ -8,6 +8,7 @@
   import stockData from '$lib/stock.json';
   import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download, Trash2 } from 'lucide-svelte';
   import { goto } from '$app/navigation';  let user = null;
+  const GENERAL_TASK_CATEGORIES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
   let loading = true;
   let loadingStep = 'Initializing...';
   let subsystems = [];
@@ -26,6 +27,11 @@
   let stockTypes = [];
   let buildBOM = [];
   let loadingBuild = false;
+  let generalTaskLoading = false;
+  let generalTaskSaving = false;
+  let generalTaskSelected = new Set();
+  let generalTaskError = '';
+  let generalTaskNote = '';
   onMount(async () => {
     console.time('Total CAD page load');
     try {
@@ -106,6 +112,13 @@
         stockTypes = []; // Set empty array as fallback
       }
       console.timeEnd('Load stock types');
+
+      loadingStep = 'Loading task category signups...';
+      try {
+        await loadGeneralTaskSignup();
+      } catch (taskSignupError) {
+        console.warn('Task category signup load failed:', taskSignupError);
+      }
 
     } catch (error) {
       console.error('Critical error in onMount:', error);
@@ -462,6 +475,74 @@
       console.error('Error loading local stock types:', error);
       stockTypes = [];
     }
+  }
+
+  function normalizeTaskCategoryKey(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  async function loadGeneralTaskSignup() {
+    if (!user?.id) return;
+    generalTaskLoading = true;
+    generalTaskError = '';
+    generalTaskNote = '';
+    generalTaskSelected = new Set();
+
+    try {
+      const { data: profile, error } = await supabase
+        .from('user_profiles')
+        .select('task_general_categories')
+        .eq('id', user.id)
+        .single();
+      if (error) throw error;
+      const selected = Array.isArray(profile?.task_general_categories)
+        ? profile.task_general_categories
+        : [];
+      generalTaskSelected = new Set(
+        selected
+          .map((c) => GENERAL_TASK_CATEGORIES.find((allowed) => normalizeTaskCategoryKey(allowed) === normalizeTaskCategoryKey(c)))
+          .filter(Boolean)
+      );
+    } catch (error) {
+      console.error('Failed to load general task category signup', error);
+      const msg = String(error?.message || '');
+      generalTaskError = msg.toLowerCase().includes('task_general_categories')
+        ? 'Task category signup is not initialized yet. Apply migration 20260311_task_general_categories.sql.'
+        : (msg || 'Failed to load task category signup.');
+    } finally {
+      generalTaskLoading = false;
+    }
+  }
+
+  async function setGeneralTaskCategory(category, enabled) {
+    if (!user?.id || generalTaskSaving) return;
+    generalTaskSaving = true;
+    generalTaskError = '';
+    generalTaskNote = '';
+
+    try {
+      const next = new Set(generalTaskSelected);
+      if (enabled) next.add(category);
+      else next.delete(category);
+      const categories = [...next].filter((c) => GENERAL_TASK_CATEGORIES.includes(c));
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ task_general_categories: categories })
+        .eq('id', user.id);
+      if (error) throw error;
+      generalTaskSelected = next;
+      generalTaskNote = `Saved ${category}.`;
+    } catch (error) {
+      console.error('Failed to update task category signup', error);
+      generalTaskError = error?.message || 'Failed to update category signup.';
+    } finally {
+      generalTaskSaving = false;
+    }
+  }
+
+  function toggleGeneralTaskCategory(category) {
+    const enabled = !generalTaskSelected.has(category);
+    setGeneralTaskCategory(category, enabled);
   }
 
   async function createBuildFromRelease(subsystemId, release) {
@@ -905,7 +986,37 @@
         Create Subsystem
       </button>
   {/if}
-    </div>    <div class="subsystems-grid">
+    </div>
+
+    <section class="general-task-signup">
+      <h2>General Task Categories</h2>
+      <p class="muted">Sign up here so you show up in the Tasks assignee dropdown for non-subsystem tasks.</p>
+      {#if generalTaskLoading}
+        <p class="muted">Loading category signup...</p>
+      {:else if generalTaskError}
+        <p class="error-message">{generalTaskError}</p>
+      {:else}
+        <div class="category-grid">
+          {#each GENERAL_TASK_CATEGORIES as category}
+            <button
+              type="button"
+              class="category-pill"
+              class:selected={generalTaskSelected.has(category)}
+              disabled={generalTaskSaving}
+              aria-pressed={generalTaskSelected.has(category)}
+              on:click={() => toggleGeneralTaskCategory(category)}
+            >
+              {category}
+            </button>
+          {/each}
+        </div>
+        {#if generalTaskNote}
+          <p class="muted">{generalTaskNote}</p>
+        {/if}
+      {/if}
+    </section>
+
+    <div class="subsystems-grid">
       {#each subsystems as subsystem}
         <div 
           class="subsystem-card" 
@@ -1391,6 +1502,63 @@
   .header-content h1 { font-size: var(--font-2xl); }
   .header-content p { margin: var(--space-2) 0 0 0; font-size: var(--font-md); }
 
+  .general-task-signup {
+    margin-bottom: var(--space-4);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    display: grid;
+    gap: var(--gap-3);
+    box-shadow: var(--shadow-sm);
+  }
+  .general-task-signup h2 {
+    margin: 0;
+    font-size: var(--font-md);
+    color: var(--text);
+  }
+  .general-task-signup .muted {
+    color: var(--text-muted);
+    margin: 0;
+  }
+  .category-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-2);
+  }
+  .category-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--control-height-sm);
+    padding: var(--control-padding-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    color: var(--text);
+    font-weight: 500;
+    cursor: pointer;
+    font-size: var(--font-xs);
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  }
+  .category-pill:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .category-pill.selected {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+  .category-pill:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--btn-focus-ring);
+  }
+  .category-pill:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
   .subsystems-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: var(--gap-6); }
   .subsystem-card { background: var(--primary); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: var(--space-6); margin-bottom: var(--space-4); transition: all 0.2s ease; }
   .subsystem-card.clickable { cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
