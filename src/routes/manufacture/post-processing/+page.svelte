@@ -8,6 +8,7 @@
   let loading = true;
   let useDedicatedTables = true;
   let groupMap = {};
+  let savingPartIds = new Set();
 
   const POST_PROCESSING_STAGES = ['Jigsawed', 'Countersinking', 'Deburring', 'Inspecting', 'Kitted'];
 
@@ -134,14 +135,49 @@
     .filter(g => g.parts.length > 0 && groupIsCut(g) && !groupIsKitted(g))
     .sort((a, b) => (a.queue_position ?? 999) - (b.queue_position ?? 999));
 
+  function updatePartInGroups(partId, updates) {
+    let changed = false;
+    const nextGroupMap = {};
+
+    for (const [groupId, group] of Object.entries(groupMap)) {
+      let groupChanged = false;
+      const nextParts = group.parts.map((part) => {
+        if (part.id !== partId) return part;
+        groupChanged = true;
+        changed = true;
+        return { ...part, ...updates };
+      });
+
+      nextGroupMap[groupId] = groupChanged ? { ...group, parts: nextParts } : group;
+    }
+
+    if (changed) {
+      groupMap = nextGroupMap;
+    }
+  }
+
+  function setPartSaving(partId, saving) {
+    const next = new Set(savingPartIds);
+    if (saving) next.add(partId);
+    else next.delete(partId);
+    savingPartIds = next;
+  }
+
   async function movePartStage(part, fromStage, toStage) {
+    if (savingPartIds.has(part.id)) return;
+
     const nextCounts = advanceRouterStageCounts(part, fromStage, toStage, 1);
     if (!nextCounts) return;
+    const update = buildRouterProgressUpdate(part, nextCounts);
+
+    setPartSaving(part.id, true);
 
     const { error } = await supabase
       .from('parts')
-      .update(buildRouterProgressUpdate(part, nextCounts))
+      .update(update)
       .eq('id', part.id);
+
+    setPartSaving(part.id, false);
 
     if (error) {
       console.error('Failed to update router progress', error);
@@ -149,7 +185,7 @@
       return;
     }
 
-    await loadGroups();
+    updatePartInGroups(part.id, update);
   }
 
   onMount(loadGroups);
@@ -232,19 +268,19 @@
               </span>
               <div class="pp-part-actions">
                 {#if getPartStageCount(p, 'cut') > 0}
-                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'cut', 'jigsawed')}>Jigsaw 1</button>
+                  <button type="button" class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'cut', 'jigsawed')} disabled={savingPartIds.has(p.id)}>Jigsaw 1</button>
                 {/if}
                 {#if getPartStageCount(p, 'jigsawed') > 0}
-                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'jigsawed', 'countersinking')}>Countersink 1</button>
+                  <button type="button" class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'jigsawed', 'countersinking')} disabled={savingPartIds.has(p.id)}>Countersink 1</button>
                 {/if}
                 {#if getPartStageCount(p, 'countersinking') > 0}
-                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'countersinking', 'deburred')}>Deburr 1</button>
+                  <button type="button" class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'countersinking', 'deburred')} disabled={savingPartIds.has(p.id)}>Deburr 1</button>
                 {/if}
                 {#if getPartStageCount(p, 'deburred') > 0}
-                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'deburred', 'inspecting')}>Inspect 1</button>
+                  <button type="button" class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'deburred', 'inspecting')} disabled={savingPartIds.has(p.id)}>Inspect 1</button>
                 {/if}
                 {#if getPartStageCount(p, 'inspecting') > 0}
-                  <button class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'inspecting', 'kitted')}>Kit 1</button>
+                  <button type="button" class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'inspecting', 'kitted')} disabled={savingPartIds.has(p.id)}>Kit 1</button>
                 {/if}
               </div>
             </div>

@@ -166,6 +166,7 @@
     if (compact.startsWith('pitscout')) return 'pitscout';
     if (compact.startsWith('task')) return 'tasks';
     if (compact === 'scoutingadmin' || compact === 'scoutadmin') return 'scouting-admin';
+    if (compact === 'cotsstocking') return 'cots-stocking';
     return compact;
   }
 
@@ -181,6 +182,7 @@
     datascout: '/datascout',
     pitscout: '/pitscout',
     'scouting-admin': '/scouting-admin',
+    'cots-stocking': '/cots-stocking',
     home: '/',
     profile: '/profile',
     admin: '/admin'
@@ -198,6 +200,7 @@
     datascout: Coins,
     pitscout: Camera,
     'scouting-admin': Briefcase,
+    'cots-stocking': Package,
     home: Home,
     profile: User,
     admin: Briefcase
@@ -215,6 +218,7 @@
     datascout: 'Data Scouting',
     pitscout: 'Pit Scouting',
     'scouting-admin': 'Scouting Admin',
+    'cots-stocking': 'COTS Stocking',
     admin: 'Admin'
   };
 
@@ -306,6 +310,7 @@
       if (navConfig?.tabs?.pitscout !== false) tabs.push({ key: 'pitscout', label: 'Pit Scouting' });
       if (activeProfile?.team_role === 'Competition Lead') tabs.push({ key: 'scouting-admin', label: 'Scouting Admin' });
     }
+    if (navConfig?.tabs?.['cots-stocking'] !== false) tabs.push({ key: 'cots-stocking', label: 'COTS Stocking' });
     return tabs;
   }
 

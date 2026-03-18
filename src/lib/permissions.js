@@ -120,6 +120,10 @@ export function hasPermission(user, perm) {
   return Array.isArray(user.permissions) && user.permissions.includes(perm);
 }
 
+export function isManufacturingLead(user) {
+  return user?.team_role === TEAM_ROLES.MANUFACTURING_LEAD;
+}
+
 export function normalizePermissions(arr) {
   if (!arr) return [];
   if (Array.isArray(arr)) return arr.map(String);

@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
+  import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
   import { Package, GripVertical, Download, ChevronUp, ChevronDown, Calendar, Eye, Pencil, AlertCircle, X } from 'lucide-svelte';
   import { getDisplayStatus, BUTTONS } from '$lib/statuses.js';
   import { getRouterStageCounts, summarizeRouterStages, isFullyCut, isFullyKitted, advanceRouterStageCounts, buildRouterProgressUpdate } from '$lib/router_progress.js';
+  import { isManufacturingLead } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
 
   // ==================== State ====================
@@ -12,6 +14,8 @@
   let loading = true;
   let groupMap = {};
   let useDedicatedTables = true;
+  let user = null;
+  $: canCamReview = isManufacturingLead(user);
 
   // Edit Mode vs View Mode
   let editMode = false;
@@ -141,13 +145,49 @@
     return getRouterStageCounts(part)[stage] || 0;
   }
 
+  function updatePartInGroups(partId, updates) {
+    let changed = false;
+    const nextGroupMap = {};
+
+    for (const [groupId, group] of Object.entries(groupMap)) {
+      let groupChanged = false;
+      const nextParts = group.parts.map((part) => {
+        if (part.id !== partId) return part;
+        groupChanged = true;
+        changed = true;
+        return { ...part, ...updates };
+      });
+
+      nextGroupMap[groupId] = groupChanged ? { ...group, parts: nextParts } : group;
+    }
+
+    if (changed) {
+      groupMap = nextGroupMap;
+    }
+  }
+
+  function updateGroupInMap(gid, updates) {
+    const group = groupMap[gid];
+    if (!group) return;
+    groupMap = {
+      ...groupMap,
+      [gid]: { ...group, ...updates }
+    };
+  }
+
   async function movePartStage(part, fromStage, toStage) {
+    if (fromStage === 'cam_review' && toStage === 'cammed' && !canCamReview) {
+      alert('Only manufacturing leads can CAM review parts.');
+      return;
+    }
+
     const nextCounts = advanceRouterStageCounts(part, fromStage, toStage, 1);
     if (!nextCounts) return;
+    const update = buildRouterProgressUpdate(part, nextCounts);
 
     const { error } = await supabase
       .from('parts')
-      .update(buildRouterProgressUpdate(part, nextCounts))
+      .update(update)
       .eq('id', part.id);
 
     if (error) {
@@ -156,7 +196,7 @@
       return;
     }
 
-    await loadParts();
+    updatePartInGroups(part.id, update);
   }
 
   // ==================== Data Loading ====================
@@ -307,6 +347,7 @@
     if (!gid) return;
     const newName = editingGroupName.trim();
     if (!newName) { editingGroupId = null; editingGroupName = ''; return; }
+    let saved = false;
     try {
       if (useDedicatedTables) {
         await supabase.from('router_groups').update({ name: newName }).eq('id', gid);
@@ -320,13 +361,16 @@
           }
         }
       }
+      saved = true;
     } catch (e) {
       console.error('Rename failed', e);
       alert('Failed to rename group');
     } finally {
       editingGroupId = null;
       editingGroupName = '';
-      await loadParts();
+      if (saved) {
+        updateGroupInMap(gid, { name: newName });
+      }
     }
   }
 
@@ -334,7 +378,7 @@
     if (!useDedicatedTables) return;
     try {
       await supabase.from('router_groups').update({ [field]: value }).eq('id', gid);
-      await loadParts();
+      updateGroupInMap(gid, { [field]: value });
     } catch (e) {
       console.error(`Failed to update ${field}`, e);
     }
@@ -353,7 +397,14 @@
       for (let i = 0; i < groups.length; i++) {
         await supabase.from('router_groups').update({ queue_position: i }).eq('id', groups[i].id);
       }
-      await loadParts();
+      const nextGroupMap = { ...groupMap };
+      for (let i = 0; i < groups.length; i++) {
+        const group = nextGroupMap[groups[i].id];
+        if (group) {
+          nextGroupMap[groups[i].id] = { ...group, queue_position: i };
+        }
+      }
+      groupMap = nextGroupMap;
     } catch (e) {
       console.error('Failed to reorder queue', e);
     }
@@ -520,18 +571,23 @@
     if (!group) return;
     if (newStatus === BUTTONS.TRAVIS) {
       for (const p of group.parts) {
-        await supabase.from('parts').update(buildRouterProgressUpdate(p, { queued: p.quantity || 1 })).eq('id', p.id);
+        const update = buildRouterProgressUpdate(p, { queued: p.quantity || 1 });
+        await supabase.from('parts').update(update).eq('id', p.id);
+        updatePartInGroups(p.id, update);
       }
     } else if (newStatus === BUTTONS.MACHINED) {
       for (const p of group.parts) {
-        await supabase.from('parts').update(buildRouterProgressUpdate(p, { cut: p.quantity || 1 })).eq('id', p.id);
+        const update = buildRouterProgressUpdate(p, { cut: p.quantity || 1 });
+        await supabase.from('parts').update(update).eq('id', p.id);
+        updatePartInGroups(p.id, update);
       }
     } else if (newStatus === BUTTONS.CAM_REVIEWED) {
       for (const p of group.parts) {
-        await supabase.from('parts').update(buildRouterProgressUpdate(p, { cammed: p.quantity || 1 })).eq('id', p.id);
+        const update = buildRouterProgressUpdate(p, { cammed: p.quantity || 1 });
+        await supabase.from('parts').update(update).eq('id', p.id);
+        updatePartInGroups(p.id, update);
       }
     }
-    await loadParts();
   }
 
   function getGroupSummary(g) {
@@ -542,7 +598,14 @@
   }
 
   // ==================== Lifecycle ====================
-  onMount(loadParts);
+  onMount(async () => {
+    const unsub = userStore.subscribe((value) => {
+      user = value;
+    });
+    await loadUserFromUUID(supabase);
+    await loadParts();
+    return unsub;
+  });
 </script>
 
 <svelte:head><title>Router Management</title></svelte:head>
@@ -551,6 +614,7 @@
   <h1>Router</h1>
   <div class="page-actions">
     <button
+      type="button"
       class="btn {editMode ? 'btn-primary' : 'btn-secondary'}"
       on:click={() => editMode = !editMode}
     >
@@ -689,7 +753,7 @@
                           on:blur={() => saveGroupName(g.id)}
                         />
                       {:else}
-                        <button class="group-name-btn" on:click={() => { editingGroupId = g.id; editingGroupName = g.name || g.id; }}>
+                        <button type="button" class="group-name-btn" on:click={() => { editingGroupId = g.id; editingGroupName = g.name || g.id; }}>
                           {g.name || g.id}
                         </button>
                       {/if}
@@ -731,25 +795,27 @@
                             {#if !editMode}
                               <div class="part-actions-inline">
                                 {#if getPartStageCount(p, 'pending') > 0}
-                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'pending', 'cam_ing')}>Start 1</button>
+                                  <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'pending', 'cam_ing')}>Start 1</button>
                                 {/if}
                                 {#if getPartStageCount(p, 'cam_ing') > 0}
-                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cam_ing', 'cam_review')}>CAM Done 1</button>
+                                  <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cam_ing', 'cam_review')}>CAM Done 1</button>
                                 {/if}
                                 {#if getPartStageCount(p, 'cam_review') > 0}
-                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cam_review', 'cammed')}>Review 1</button>
+                                  {#if canCamReview}
+                                    <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cam_review', 'cammed')}>Review 1</button>
+                                  {/if}
                                 {/if}
                                 {#if getPartStageCount(p, 'cammed') > 0}
-                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cammed', 'queued')}>Travis 1</button>
+                                  <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cammed', 'queued')}>Travis 1</button>
                                 {/if}
                                 {#if getPartStageCount(p, 'queued') > 0}
-                                  <button class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'queued', 'cut')}>Cut 1</button>
+                                  <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'queued', 'cut')}>Cut 1</button>
                                 {/if}
                               </div>
                             {/if}
                           </div>
                           {#if editMode}
-                            <button class="remove-btn" on:click={() => removeFromGroup(p)} title="Remove from group">
+                            <button type="button" class="remove-btn" on:click={() => removeFromGroup(p)} title="Remove from group">
                               <X size={12} />
                             </button>
                           {/if}
@@ -861,6 +927,7 @@
                     {#if editMode}
                       <div class="queue-controls">
                         <button
+                          type="button"
                           class="queue-btn"
                           on:click={() => moveGroupInQueue(g.id, 'up')}
                           disabled={idx === 0}
@@ -870,6 +937,7 @@
                         </button>
                         <span class="queue-position">#{idx + 1}</span>
                         <button
+                          type="button"
                           class="queue-btn"
                           on:click={() => moveGroupInQueue(g.id, 'down')}
                           disabled={idx === routerGroups.length - 1}

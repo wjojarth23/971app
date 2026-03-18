@@ -419,6 +419,22 @@
   function closeTaskDetails() {
     selectedTask = null;
   }
+
+  function rowCanOpenModal(target) {
+    return !target?.closest?.('button, a, input, select, textarea, label');
+  }
+
+  function handleRowClick(event, task) {
+    if (!rowCanOpenModal(event.target)) return;
+    openTaskDetails(task);
+  }
+
+  function handleRowKeydown(event, task) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!rowCanOpenModal(event.target)) return;
+    event.preventDefault();
+    openTaskDetails(task);
+  }
 </script>
 
 <svelte:head>
@@ -640,6 +656,7 @@
               <th>Task</th>
               <th>Type</th>
               <th>Assignee</th>
+              <th>Created By</th>
               <th>Deadline</th>
               <th>Status</th>
               <th>Actions</th>
@@ -647,21 +664,17 @@
           </thead>
           <tbody>
             {#each tasks as task (task.id)}
-              <tr class:overdue={isOverdue(task)}>
+              <tr
+                class:overdue={isOverdue(task)}
+                class="task-row"
+                tabindex="0"
+                role="button"
+                aria-label={`Open details for ${task.title}`}
+                on:click={(event) => handleRowClick(event, task)}
+                on:keydown={(event) => handleRowKeydown(event, task)}
+              >
                 <td>
-                  <button class="task-open-button" type="button" on:click={() => openTaskDetails(task)}>
-                    <strong>{task.title}</strong>
-                  </button>
-                  {#if extractImageUrls(task.description).length > 0}
-                    <div class="task-photo-grid">
-                      {#each extractImageUrls(task.description) as imageUrl}
-                        <a href={imageUrl} target="_blank" rel="noopener noreferrer">
-                          <img src={imageUrl} alt="Task photo" loading="lazy" />
-                        </a>
-                      {/each}
-                    </div>
-                  {/if}
-                  <div class="meta-text muted">Created by {formatPerson(task.creator)}</div>
+                  <strong>{task.title}</strong>
                   {#if task.needs_review || task.needs_manufacturing}
                     <div class="meta-text muted">
                       {task.needs_review ? 'Review required' : ''}
@@ -683,6 +696,7 @@
                     <div class="meta-text muted">Reviewer: {formatPerson(task.reviewer)}</div>
                   {/if}
                 </td>
+                <td>{formatPerson(task.creator)}</td>
                 <td>{deadlineDisplay(task.deadline_at)}</td>
                 <td>
                   <span class="status-pill status-{statusTone(task.status)}">{statusLabel(task.status)}</span>
@@ -819,17 +833,12 @@
   tr.overdue td {
     background: var(--brand-gold-soft);
   }
-  .task-open-button {
-    all: unset;
-    display: inline-flex;
+  .task-row {
     cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
   }
-  .task-open-button:focus-visible {
+  .task-row:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
-    border-radius: var(--radius-xs);
   }
   .task-modal-description {
     margin: 0;

@@ -9,6 +9,7 @@
     "notescout": true,
     "teamview": true,
     "pitscout": true,
-    "scouting-admin": true
+    "scouting-admin": true,
+    "cots-stocking": true
   }
 }

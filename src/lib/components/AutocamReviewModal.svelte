@@ -2,10 +2,12 @@
   import { createEventDispatcher } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { toastActions } from '$lib/toast.js';
+  import { isManufacturingLead } from '$lib/permissions.js';
   import { X, Check, XCircle, Download, Copy, AlertTriangle, Clock, Wrench } from 'lucide-svelte';
 
   export let part = null;
   export let visible = false;
+  export let user = null;
 
   const dispatch = createEventDispatcher();
   
@@ -50,6 +52,10 @@
 
   async function approve() {
     if (!autocamJob) return;
+    if (!isManufacturingLead(user)) {
+      toastActions.show('Only manufacturing leads can review autocam parts.', 'error');
+      return;
+    }
     processing = true;
     
     try {
@@ -94,6 +100,10 @@
 
   async function reject() {
     if (!autocamJob) return;
+    if (!isManufacturingLead(user)) {
+      toastActions.show('Only manufacturing leads can review autocam parts.', 'error');
+      return;
+    }
     
     if (!showRejectionForm) {
       showRejectionForm = true;
@@ -291,7 +301,7 @@
           <button 
             class="btn btn-danger" 
             on:click={reject}
-            disabled={processing}
+            disabled={processing || !isManufacturingLead(user)}
           >
             <XCircle size={16} />
             {showRejectionForm ? 'Confirm Reject' : 'Reject (Manual CAM)'}
@@ -310,7 +320,7 @@
           <button 
             class="btn btn-success" 
             on:click={approve}
-            disabled={processing || showRejectionForm}
+            disabled={processing || showRejectionForm || !isManufacturingLead(user)}
           >
             <Check size={16} /> Approve
           </button>

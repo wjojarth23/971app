@@ -10,7 +10,7 @@
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
-  import { TEAM_ROLES } from '$lib/permissions.js';
+  import { isManufacturingLead } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   
   let parts = [];
@@ -34,7 +34,8 @@
   let draggingUser = null;
   let selectedPartIds = [];
   let batchSelectMode = false;
-  $: canUseAssignMode = (user?.team_role === TEAM_ROLES.MANUFACTURING_LEAD);
+  $: canUseAssignMode = isManufacturingLead(user);
+  $: canCamReview = isManufacturingLead(user);
   $: if (!canUseAssignMode && assignMode) {
     assignMode = false;
   }
@@ -62,7 +63,7 @@
   ];
   
   // Get workflow-specific statuses for edit modal
-  $: editStatusOptions = editWorkflow ? getWorkflowStatuses(editWorkflow) : statuses;
+  $: editStatusOptions = filterRestrictedStatusOptions(editWorkflow ? getWorkflowStatuses(editWorkflow) : statuses);
 
   function isPartFullyCompleted(part) {
     if (part?.workflow === 'router') return isFullyKitted(part);
@@ -81,6 +82,18 @@
     if (!workflow) return 'tag-workflow-default';
     return `tag-workflow-${workflow.toLowerCase().replace(/_/g, '-')}`;
   }
+
+  function filterRestrictedStatusOptions(options = []) {
+    if (canCamReview) return options;
+    return options.filter((option) => option?.value !== 'cammed');
+  }
+
+  function assertCanCamReview() {
+    if (canCamReview) return true;
+    alert('Only manufacturing leads can CAM review parts.');
+    return false;
+  }
+
   let showEditModal = false;
   let editPart = null;
   let editStatus = '';
@@ -1031,6 +1044,7 @@
 
   async function savePreviewEdits() {
     if (!previewPart) return;
+    if (previewStatus === 'cammed' && !assertCanCamReview()) return;
     const effectiveStock = previewStock === '__other__' ? (previewCustomStock || '').trim() : previewStock;
     const update = {
       status: previewStatus === 'cam_review' ? 'in-progress' : previewStatus,
@@ -1071,7 +1085,7 @@
   }
 
   $: previewStockOptions = previewWorkflow ? (stockData[previewWorkflow] || []).map(s => s.description) : [];
-  $: previewStatusOptions = previewWorkflow ? getWorkflowStatuses(previewWorkflow) : statuses;
+  $: previewStatusOptions = filterRestrictedStatusOptions(previewWorkflow ? getWorkflowStatuses(previewWorkflow) : statuses);
 
   function closeEditModal() {
     showEditModal = false;
@@ -1080,6 +1094,7 @@
 
   async function saveEdits() {
     if (!editPart) return;
+    if (editStatus === 'cammed' && !assertCanCamReview()) return;
     const effectiveStock = editStock === '__other__' ? (editCustomStock || '').trim() : editStock;
     // If the user selected the CAM review pseudo-status, store underlying 'cammed'
     // as the actual status and set router_meta.step = 'cam_review' separately.
@@ -1505,12 +1520,14 @@
                   CAM Done
                 </button>
               {:else if getRouterMeta(part).step === 'cam_review'}
-                <button
-                  class="btn btn-primary btn-sm"
-                  on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
-                >
-                  {BUTTONS.CAM_REVIEWED}
-                </button>
+                {#if canCamReview}
+                  <button
+                    class="btn btn-primary btn-sm"
+                    on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
+                  >
+                    {BUTTONS.CAM_REVIEWED}
+                  </button>
+                {/if}
               {/if}
             {/if}
           {/if}
@@ -1712,15 +1729,17 @@
                     </button>
                   </div>
               {:else if getRouterMeta(part).step === 'cam_review'}
-              <div class="actions-col">
-                    <button
-                      class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
-                      title={BUTTONS.CAM_REVIEWED}
-                    >
-                      {BUTTONS.CAM_REVIEWED}
-                    </button>
-                  </div>
+                  {#if canCamReview}
+                    <div class="actions-col">
+                      <button
+                        class="btn btn-secondary btn-sm"
+                        on:click={async () => { await updatePartStatus(part.id, 'cammed'); await updateRouterMeta(part, { step: 'cammed' }); setLocalStatus(part.id, 'cammed'); setLocalRouterMeta(part.id, { step: 'cammed' }); }}
+                        title={BUTTONS.CAM_REVIEWED}
+                      >
+                        {BUTTONS.CAM_REVIEWED}
+                      </button>
+                    </div>
+                  {/if}
                   {/if}
                 {/if}
               {/if}
