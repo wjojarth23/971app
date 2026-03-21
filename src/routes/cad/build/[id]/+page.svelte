@@ -894,9 +894,9 @@
             ...baseInsert,
             stock_assignment: stock_assignment_value || null,
             onshape_document_id: item.onshape_document_id || build?.subsystems?.onshape_document_id || null,
-            onshape_wvm: item.onshape_wvm || 'v',
-            onshape_wvmid: item.onshape_wvmid || build?.release_id || null,
-            onshape_element_id: item.onshape_element_id || build?.subsystems?.onshape_element_id || null,
+            onshape_wvm: item.onshape_wvm || (build?.release_id ? 'v' : 'w'),
+            onshape_wvmid: item.onshape_wvmid || build?.release_id || build?.subsystems?.onshape_workspace_id || null,
+            onshape_element_id: item.onshape_element_id || item.onshape_part_studio_element_id || build?.subsystems?.onshape_element_id || null,
             onshape_part_id: item.onshape_part_id || null,
             file_format,
             is_onshape_part: !!(item.onshape_document_id || item.onshape_part_id)
@@ -914,9 +914,9 @@
             const withOnshapeNoStock = {
               ...baseInsert,
               onshape_document_id: item.onshape_document_id || build?.subsystems?.onshape_document_id || null,
-              onshape_wvm: item.onshape_wvm || 'v',
-              onshape_wvmid: item.onshape_wvmid || build?.release_id || null,
-              onshape_element_id: item.onshape_element_id || build?.subsystems?.onshape_element_id || null,
+              onshape_wvm: item.onshape_wvm || (build?.release_id ? 'v' : 'w'),
+              onshape_wvmid: item.onshape_wvmid || build?.release_id || build?.subsystems?.onshape_workspace_id || null,
+              onshape_element_id: item.onshape_element_id || item.onshape_part_studio_element_id || build?.subsystems?.onshape_element_id || null,
               onshape_part_id: item.onshape_part_id || null,
               file_format,
               is_onshape_part: !!(item.onshape_document_id || item.onshape_part_id)
@@ -1243,10 +1243,10 @@
           material: part.material || '',
           stock_assignment: part.stock_assignment || null,
           stock_assignment_custom: part.stock_assignment_custom || null,
-          onshape_document_id: part.onshape_document_id || null,
-          onshape_wvm: 'v',
-          onshape_wvmid: selectedVersionForRefetch.id,
-          onshape_element_id: part.onshape_element_id || null,
+          onshape_document_id: part.onshape_document_id || build?.subsystems?.onshape_document_id || null,
+          onshape_wvm: part.onshape_wvm || 'v',
+          onshape_wvmid: part.onshape_wvmid || selectedVersionForRefetch.id,
+          onshape_element_id: part.onshape_element_id || part.onshape_part_studio_element_id || build?.subsystems?.onshape_element_id || null,
           onshape_part_id: part.onshape_part_id || null,
           added: false
         }));

@@ -224,10 +224,10 @@
       bounding_box_z: item.bounding_box_z ?? null,
       stock_assignment: item.stock_assignment,
       onshape_document_id: item.onshape_document_id || subsystem.onshape_document_id || null,
-      onshape_element_id: item.onshape_part_studio_element_id || subsystem.onshape_element_id || null,
+      onshape_element_id: item.onshape_element_id || item.onshape_part_studio_element_id || subsystem.onshape_element_id || null,
       onshape_part_id: item.onshape_part_id || null,
-      onshape_wvm: 'v',
-      onshape_wvmid: version.id,
+      onshape_wvm: item.onshape_wvm || 'v',
+      onshape_wvmid: item.onshape_wvmid || version.id,
       status: 'pending', // Explicitly set status
       file_format: item.part_type === 'manufactured' ? 'step' : null, // Set file_format for manufactured parts
       is_onshape_part: !!(item.onshape_document_id || item.onshape_part_id), // Set is_onshape_part flag

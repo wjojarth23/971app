@@ -327,50 +327,84 @@ async function findPartStudioContainingPart(documentId, wvm, wvmId, partId) {
     }
 }
 
+async function partExistsInPartStudio(documentId, wvm, wvmId, elementId, partId) {
+    try {
+        const partsUrl = `${ONSHAPE_BASE_URL}/api/v6/parts/d/${documentId}/${wvm}/${wvmId}/e/${elementId}`;
+        const partsResp = await fetch(partsUrl, { headers: { ...getBasicAuth(), 'Accept': 'application/json' } });
+        if (!partsResp.ok) {
+            return false;
+        }
+        const parts = await partsResp.json();
+        return Array.isArray(parts) && parts.some(p => p.partId === partId);
+    } catch (e) {
+        console.warn('Error checking Part Studio contents:', e.message);
+        return false;
+    }
+}
+
+async function resolvePartStudioForPart(documentId, wvm, wvmId, elementId, partId) {
+    const elementType = elementId ? await getElementType(documentId, wvm, wvmId, elementId) : null;
+    console.log(`Resolving part source for ${partId}: element=${elementId}, type=${elementType}`);
+
+    if (elementType === 'PARTSTUDIO') {
+        const exists = await partExistsInPartStudio(documentId, wvm, wvmId, elementId, partId);
+        if (exists) {
+            return { documentId, wvm, wvmId, elementId };
+        }
+        console.warn(`Part ${partId} was not found in provided Part Studio ${elementId}; searching document`);
+    } else if (elementType === 'ASSEMBLY') {
+        const fromBom = await findPartStudioFromAssemblyBOM(documentId, wvm, wvmId, elementId, partId);
+        if (fromBom) {
+            return {
+                documentId: fromBom.documentId || documentId,
+                wvm: fromBom.wvmType || wvm,
+                wvmId: fromBom.wvmId || wvmId,
+                elementId: fromBom.elementId
+            };
+        }
+    } else if (elementId) {
+        const exists = await partExistsInPartStudio(documentId, wvm, wvmId, elementId, partId);
+        if (exists) {
+            return { documentId, wvm, wvmId, elementId };
+        }
+    }
+
+    const found = await findPartStudioContainingPart(documentId, wvm, wvmId, partId);
+    if (found) {
+        return {
+            documentId: found.documentId || documentId,
+            wvm: found.wvmType || wvm,
+            wvmId: found.wvmId || wvmId,
+            elementId: found.elementId
+        };
+    }
+
+    return null;
+}
+
 /* ── Translation Handler (for both STL and STEP) ─────────────────────────────── */
 async function handlePartTranslation(documentId, wvm, wvmId, elementId, partId, format) {
     try {
         console.log(`Starting ${format} translation for part ${partId}`);
         console.log(`Document: ${documentId}, WVM: ${wvm}/${wvmId}, Element: ${elementId}`);
         
-        // Check if element is a Part Studio or Assembly
-        const elementType = await getElementType(documentId, wvm, wvmId, elementId);
-        console.log(`Element type: ${elementType}`);
-        
-        let targetElementId = elementId;
-        let targetDocumentId = documentId;
-        let targetWvm = wvm;
-        let targetWvmId = wvmId;
-        
-        if (elementType === 'ASSEMBLY') {
-            console.log(`Element ${elementId} is an Assembly - looking up Part Studio for part ${partId}`);
-            
-            // First try to find via assembly BOM (faster, more accurate)
-            let partStudioInfo = await findPartStudioFromAssemblyBOM(documentId, wvm, wvmId, elementId, partId);
-            
-            // If not found in BOM, search all Part Studios in document
-            if (!partStudioInfo) {
-                console.log('Part not found in assembly BOM, searching all Part Studios...');
-                partStudioInfo = await findPartStudioContainingPart(documentId, wvm, wvmId, partId);
-            }
-            
-            if (partStudioInfo) {
-                targetElementId = partStudioInfo.elementId;
-                targetDocumentId = partStudioInfo.documentId || documentId;
-                targetWvm = partStudioInfo.wvmType || wvm;
-                targetWvmId = partStudioInfo.wvmId || wvmId;
-                console.log(`Resolved Part Studio: ${targetElementId} in document ${targetDocumentId}`);
-            } else {
-                console.error(`Could not find Part Studio containing part ${partId}`);
-                return json({ 
-                    error: 'Could not find Part Studio for this part',
-                    details: `Part ID "${partId}" was not found in the assembly BOM or any Part Studio in the document.`
-                }, { status: 404 });
-            }
+        const resolvedPartStudio = await resolvePartStudioForPart(documentId, wvm, wvmId, elementId, partId);
+        if (!resolvedPartStudio) {
+            console.error(`Could not find Part Studio containing part ${partId}`);
+            return json({ 
+                error: 'Could not find Part Studio for this part',
+                details: `Part ID "${partId}" was not found in the provided element, assembly BOM, or any Part Studio in the document.`
+            }, { status: 404 });
         }
+
+        let targetElementId = resolvedPartStudio.elementId;
+        let targetDocumentId = resolvedPartStudio.documentId;
+        let targetWvm = resolvedPartStudio.wvm;
+        let targetWvmId = resolvedPartStudio.wvmId;
+        console.log(`Resolved Part Studio: ${targetElementId} in document ${targetDocumentId} (${targetWvm}/${targetWvmId})`);
         
         // 1) Initiate translation using the PartStudio endpoint
-        const exportResp = await fetch(
+        let exportResp = await fetch(
             `${ONSHAPE_BASE_URL}/api/v11/partstudios/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/translations`,
             {
                 method: 'POST',
@@ -387,6 +421,34 @@ async function handlePartTranslation(documentId, wvm, wvmId, elementId, partId, 
                 })
             }
         );
+
+        if (exportResp.status === 404) {
+            console.warn(`${format} translation returned 404 after resolution; retrying document search for backward compatibility`);
+            const fallbackPartStudio = await findPartStudioContainingPart(targetDocumentId, targetWvm, targetWvmId, partId);
+            if (fallbackPartStudio && fallbackPartStudio.elementId !== targetElementId) {
+                targetElementId = fallbackPartStudio.elementId;
+                targetDocumentId = fallbackPartStudio.documentId || targetDocumentId;
+                targetWvm = fallbackPartStudio.wvmType || targetWvm;
+                targetWvmId = fallbackPartStudio.wvmId || targetWvmId;
+                exportResp = await fetch(
+                    `${ONSHAPE_BASE_URL}/api/v11/partstudios/d/${targetDocumentId}/${targetWvm}/${targetWvmId}/e/${targetElementId}/translations`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            ...getBasicAuth(),
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            formatName: format,
+                            partIds: partId,
+                            onePartPerDoc: true,
+                            storeInDocument: false
+                        })
+                    }
+                );
+            }
+        }
 
         if (!exportResp.ok) {
             const errorText = await exportResp.text();
@@ -601,25 +663,17 @@ export async function GET({ url }) {
                     return json({ error: 'Missing wvmId for shaded views' }, { status: 400 });
                 }
 
-                // First check if the element is an Assembly and resolve to Part Studio if needed
-                const shadedElementType = await getElementType(documentId, shadedWvm, shadedWvmId, elementId);
                 let targetElementId = elementId;
                 let targetDocumentId = documentId;
                 let targetWvm = shadedWvm;
                 let targetWvmId = shadedWvmId;
 
-                if (shadedElementType === 'ASSEMBLY') {
-                    console.log(`Shaded views: Element ${elementId} is an Assembly - looking up Part Studio for part ${shadedPartId}`);
-                    let partStudioInfo = await findPartStudioFromAssemblyBOM(documentId, shadedWvm, shadedWvmId, elementId, shadedPartId);
-                    if (!partStudioInfo) {
-                        partStudioInfo = await findPartStudioContainingPart(documentId, shadedWvm, shadedWvmId, shadedPartId);
-                    }
-                    if (partStudioInfo) {
-                        targetElementId = partStudioInfo.elementId;
-                        targetDocumentId = partStudioInfo.documentId || documentId;
-                        targetWvm = partStudioInfo.wvmType || shadedWvm;
-                        targetWvmId = partStudioInfo.wvmId || shadedWvmId;
-                    }
+                const partStudioInfo = await resolvePartStudioForPart(documentId, shadedWvm, shadedWvmId, elementId, shadedPartId);
+                if (partStudioInfo) {
+                    targetElementId = partStudioInfo.elementId;
+                    targetDocumentId = partStudioInfo.documentId || documentId;
+                    targetWvm = partStudioInfo.wvm || shadedWvm;
+                    targetWvmId = partStudioInfo.wvmId || shadedWvmId;
                 }
 
                 // Isometric view matrix (standard isometric projection)

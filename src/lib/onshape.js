@@ -3,6 +3,15 @@ import { partClassificationService } from './bom_classify.js';
 
 const ENABLE_BBOX = false;
 
+function normalizeOnshapeWvmType(value) {
+    if (!value) return null;
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === 'w' || normalized === 'workspace') return 'w';
+    if (normalized === 'v' || normalized === 'version') return 'v';
+    if (normalized === 'm' || normalized === 'microversion') return 'm';
+    return normalized;
+}
+
 class OnShapeAPI {
     constructor() {
         this.accessKey = PUBLIC_ONSHAPE_ACCESS_KEY;
@@ -373,16 +382,31 @@ class OnShapeAPI {
 
                 // Get part ID and Part Studio element ID from item source
                 let partStudioElementId = '';
+                let sourceDocumentId = '';
+                let sourceWvmId = '';
+                let sourceWvmType = '';
                 if (item.itemSource && item.itemSource.partId) {
                     partId = item.itemSource.partId;
                 }
                 if (item.itemSource && item.itemSource.elementId) {
                     partStudioElementId = item.itemSource.elementId;
                 }
+                if (item.itemSource && item.itemSource.documentId) {
+                    sourceDocumentId = item.itemSource.documentId;
+                }
+                if (item.itemSource && item.itemSource.wvmId) {
+                    sourceWvmId = item.itemSource.wvmId;
+                }
+                if (item.itemSource && item.itemSource.wvmType) {
+                    sourceWvmType = normalizeOnshapeWvmType(item.itemSource.wvmType);
+                }
                 
                 console.log('Part source info:', {
                     partId,
                     partStudioElementId,
+                    sourceDocumentId,
+                    sourceWvmId,
+                    sourceWvmType,
                     itemSource: item.itemSource
                 });
                 
@@ -420,6 +444,10 @@ class OnShapeAPI {
                     bounding_box_y: boundingBoxY,
                     bounding_box_z: boundingBoxZ,
                     quantity: quantity,
+                    onshape_document_id: sourceDocumentId,
+                    onshape_wvm: sourceWvmType,
+                    onshape_wvmid: sourceWvmId,
+                    onshape_element_id: partStudioElementId,
                     onshape_part_id: partId,
                     onshape_part_studio_element_id: partStudioElementId
                 });
@@ -464,6 +492,10 @@ class OnShapeAPI {
                 part_type: partType,
                 material: bomItem.material,
                 workflow: workflow,
+                onshape_document_id: bomItem.onshape_document_id,
+                onshape_wvm: bomItem.onshape_wvm,
+                onshape_wvmid: bomItem.onshape_wvmid,
+                onshape_element_id: bomItem.onshape_element_id,
                 onshape_part_id: bomItem.onshape_part_id,
                 onshape_part_studio_element_id: bomItem.onshape_part_studio_element_id,
                 bounding_box_x: bomItem.bounding_box_x,
