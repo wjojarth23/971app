@@ -1,4 +1,5 @@
 <script>
+  import { browser } from '$app/environment';
   import { onMount, tick } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
@@ -32,6 +33,21 @@
   let generalTaskSelected = new Set();
   let generalTaskError = '';
   let generalTaskNote = '';
+  const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
+
+  function rememberLastSubsystem(subsystem) {
+    if (!browser || !subsystem?.id) return;
+    localStorage.setItem(LAST_SUBSYSTEM_STORAGE_KEY, JSON.stringify({
+      id: subsystem.id,
+      name: subsystem.name || '',
+      updatedAt: new Date().toISOString()
+    }));
+  }
+
+  $: if (selectedSubsystem && subsystems.length > 0) {
+    const activeSubsystem = subsystems.find((subsystem) => subsystem.id === selectedSubsystem);
+    if (activeSubsystem) rememberLastSubsystem(activeSubsystem);
+  }
   onMount(async () => {
     console.time('Total CAD page load');
     try {

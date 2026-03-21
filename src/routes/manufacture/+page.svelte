@@ -1,4 +1,5 @@
 <script>
+  import { browser } from '$app/environment';
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
@@ -12,6 +13,10 @@
   import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
   import { isManufacturingLead } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
+
+  const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
+  const QUICK_PRINT_STOCK_OPTIONS = stockData['3d-print'] || [];
+  const DEFAULT_PETG_STOCK = QUICK_PRINT_STOCK_OPTIONS.find((stock) => stock.material === 'PETG')?.description || 'PETG 3D Printing Filament';
   
   let parts = [];
   let filteredParts = [];
@@ -23,6 +28,16 @@
   let filterProject = '';
   let toastMessage = '';
   let showToast = false;
+  let subsystemOptions = [];
+  let showQuickPrintModal = false;
+  let quickPrintPartName = '';
+  let quickPrintRequester = '';
+  let quickPrintSubsystemId = '';
+  let quickPrintMaterial = DEFAULT_PETG_STOCK;
+  let quickPrintCustomMaterial = '';
+  let quickPrintQuantity = 1;
+  let quickPrintFile = null;
+  let quickPrintSubmitting = false;
   // Kitting bins
   let bins = [];
   let selectedBinMap = {}; // per-part selected bin_id
@@ -176,11 +191,176 @@
       await loadUserFromUUID(supabase);
     }
 
-    await loadParts();
-    await loadBins();
+    await Promise.all([
+      loadParts(),
+      loadBins(),
+      loadSubsystemOptions()
+    ]);
 
     loading = false;
   });
+
+  function sanitizeName(value) {
+    return (value || 'part').replace(/[^a-zA-Z0-9]/g, '_');
+  }
+
+  function derivePartNameFromFile(file) {
+    return (file?.name || '').replace(/\.[^.]+$/, '').trim();
+  }
+
+  function getStoredLastSubsystemId() {
+    if (!browser) return '';
+    try {
+      const raw = localStorage.getItem(LAST_SUBSYSTEM_STORAGE_KEY);
+      if (!raw) return '';
+      const parsed = JSON.parse(raw);
+      return typeof parsed?.id === 'string' ? parsed.id : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function persistLastSubsystem(subsystem) {
+    if (!browser || !subsystem?.id) return;
+    localStorage.setItem(LAST_SUBSYSTEM_STORAGE_KEY, JSON.stringify({
+      id: subsystem.id,
+      name: subsystem.name || '',
+      updatedAt: new Date().toISOString()
+    }));
+  }
+
+  function getDefaultQuickPrintSubsystemId() {
+    const storedId = getStoredLastSubsystemId();
+    if (storedId && subsystemOptions.some((subsystem) => subsystem.id === storedId)) {
+      return storedId;
+    }
+    return subsystemOptions[0]?.id || '';
+  }
+
+  async function loadSubsystemOptions() {
+    if (!user?.id) {
+      subsystemOptions = [];
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('subsystem_members')
+        .select('subsystems(id, name)')
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      subsystemOptions = (data || [])
+        .map((row) => row.subsystems)
+        .filter(Boolean)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    } catch (error) {
+      console.error('Error loading subsystem options:', error);
+      subsystemOptions = [];
+    }
+  }
+
+  function resetQuickPrintForm() {
+    quickPrintPartName = '';
+    quickPrintRequester = user?.full_name || user?.email || '';
+    quickPrintSubsystemId = getDefaultQuickPrintSubsystemId();
+    quickPrintMaterial = DEFAULT_PETG_STOCK;
+    quickPrintCustomMaterial = '';
+    quickPrintQuantity = 1;
+    quickPrintFile = null;
+    quickPrintSubmitting = false;
+  }
+
+  function openQuickPrintModal() {
+    resetQuickPrintForm();
+    showQuickPrintModal = true;
+  }
+
+  function closeQuickPrintModal() {
+    showQuickPrintModal = false;
+    quickPrintSubmitting = false;
+  }
+
+  function handleQuickPrintFileChange(event) {
+    const file = event.currentTarget?.files?.[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!['step', 'stp'].includes(ext || '')) {
+      alert('Quick Print Add currently accepts STEP (.step or .stp) files.');
+      event.currentTarget.value = '';
+      return;
+    }
+    quickPrintFile = file;
+    if (!quickPrintPartName.trim()) {
+      quickPrintPartName = derivePartNameFromFile(file);
+    }
+  }
+
+  async function submitQuickPrint() {
+    const selectedSubsystem = subsystemOptions.find((subsystem) => subsystem.id === quickPrintSubsystemId);
+    const effectiveMaterial = quickPrintMaterial === '__other__' ? quickPrintCustomMaterial.trim() : quickPrintMaterial;
+
+    if (!quickPrintFile) {
+      alert('Upload a STEP file first.');
+      return;
+    }
+    if (!quickPrintPartName.trim()) {
+      alert('Part name is required.');
+      return;
+    }
+    if (!quickPrintRequester.trim()) {
+      alert('Requester is required.');
+      return;
+    }
+    if (!selectedSubsystem) {
+      alert('Choose a subsystem.');
+      return;
+    }
+    if (!effectiveMaterial) {
+      alert('Choose a material.');
+      return;
+    }
+
+    quickPrintSubmitting = true;
+    try {
+      const fileExt = quickPrintFile.name.split('.').pop();
+      const fileName = `${Date.now()}_${sanitizeName(quickPrintPartName)}.${fileExt}`;
+      const matchingStock = QUICK_PRINT_STOCK_OPTIONS.find((stock) => stock.description === effectiveMaterial);
+
+      const { error: uploadError } = await supabase.storage
+        .from('manufacturing-files')
+        .upload(fileName, quickPrintFile, { cacheControl: '3600', upsert: false });
+      if (uploadError) throw uploadError;
+
+      const { error: insertError } = await supabase
+        .from('parts')
+        .insert([{
+          name: quickPrintPartName.trim(),
+          requester: quickPrintRequester.trim(),
+          project_id: selectedSubsystem.name,
+          workflow: '3d-print',
+          quantity: Math.max(1, Number(quickPrintQuantity) || 1),
+          material: matchingStock?.material || effectiveMaterial,
+          stock_assignment: effectiveMaterial,
+          file_name: fileName,
+          file_url: fileName,
+          status: 'pending',
+          frc_team: user?.frc_team || null
+        }]);
+      if (insertError) throw insertError;
+
+      persistLastSubsystem(selectedSubsystem);
+      await loadParts();
+      closeQuickPrintModal();
+      showToastMessage('Quick print part added');
+    } catch (error) {
+      console.error('Quick print add error:', error);
+      alert(`Error adding quick print part: ${error.message || error}`);
+    } finally {
+      quickPrintSubmitting = false;
+    }
+  }
 
   async function loadParts() {
     try {
@@ -549,6 +729,10 @@
       console.error('Error completing part:', error);
       alert('Error completing part. Please try again.');
     }
+  }
+
+  $: if (showQuickPrintModal && !quickPrintSubsystemId) {
+    quickPrintSubsystemId = getDefaultQuickPrintSubsystemId();
   }
 
   // Helper: persist the latest bin entry (store in kitting_bin per spec "last value")
@@ -1292,6 +1476,10 @@
         {assignMode ? 'Exit Assign Mode' : 'Assign Mode'}
       </button>
     {/if}
+    <button class="btn btn-primary" on:click={openQuickPrintModal}>
+      <Upload size={16} />
+      Quick Print Add
+    </button>
     <a href="/manufacture/create" class="btn btn-primary">
       <Upload size={16} />
       Create New Part
@@ -1754,6 +1942,80 @@
 </div>
 
 <!-- Edit Part Modal -->
+{#if showQuickPrintModal}
+  <div
+    class="modal-backdrop"
+    on:click|self={closeQuickPrintModal}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeQuickPrintModal(); } }}
+  >
+    <div class="modal quick-print-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Quick Print Add</h3>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeQuickPrintModal}>
+          <X size={18} />
+        </button>
+      </div>
+      <div class="modal-body quick-print-body">
+        <div class="quick-print-note">
+          Upload a STEP file and press add. Material defaults to PETG and subsystem defaults to the one you interacted with most recently, and both can be changed here.
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="quick-print-file">STEP File</label>
+          <input id="quick-print-file" class="form-input" type="file" accept=".step,.stp" on:change={handleQuickPrintFileChange} />
+          {#if quickPrintFile}
+            <div class="file-hint">{quickPrintFile.name}</div>
+          {/if}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="quick-print-name">Part Name</label>
+          <input id="quick-print-name" class="form-input" type="text" bind:value={quickPrintPartName} />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="quick-print-subsystem">Subsystem</label>
+          <select id="quick-print-subsystem" class="form-select" bind:value={quickPrintSubsystemId}>
+            <option value="" disabled selected={!quickPrintSubsystemId}>Select subsystem</option>
+            {#each subsystemOptions as subsystem}
+              <option value={subsystem.id}>{subsystem.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="quick-print-material">Material</label>
+          <select id="quick-print-material" class="form-select" bind:value={quickPrintMaterial}>
+            {#each QUICK_PRINT_STOCK_OPTIONS as stock}
+              <option value={stock.description}>{stock.material}</option>
+            {/each}
+            <option value="__other__">Custom...</option>
+          </select>
+        </div>
+        {#if quickPrintMaterial === '__other__'}
+          <div class="form-group">
+            <label class="form-label" for="quick-print-custom-material">Custom Material</label>
+            <input id="quick-print-custom-material" class="form-input" type="text" placeholder="Enter material or stock" bind:value={quickPrintCustomMaterial} />
+          </div>
+        {/if}
+        <div class="form-group">
+          <label class="form-label" for="quick-print-requester">Requester</label>
+          <input id="quick-print-requester" class="form-input" type="text" bind:value={quickPrintRequester} />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="quick-print-quantity">Quantity</label>
+          <input id="quick-print-quantity" class="form-input" type="number" min="1" step="1" bind:value={quickPrintQuantity} />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="spacer"></div>
+        <button class="btn" on:click={closeQuickPrintModal} disabled={quickPrintSubmitting}>Cancel</button>
+        <button class="btn btn-primary" on:click={submitQuickPrint} disabled={quickPrintSubmitting || subsystemOptions.length === 0}>
+          {quickPrintSubmitting ? 'Adding...' : 'Add'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if showEditModal}
   <div
     class="modal-backdrop"
@@ -2033,6 +2295,26 @@
     flex-direction: column;
     gap: 0.5rem;
     min-width: 110px;
+  }
+
+  .quick-print-modal {
+    max-width: 560px;
+  }
+
+  .quick-print-body {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .quick-print-note {
+    color: var(--neutral-600);
+    line-height: 1.4;
+  }
+
+  .file-hint {
+    margin-top: 0.35rem;
+    color: var(--neutral-600);
+    font-size: 0.9rem;
   }
 
   .kitting-inline {

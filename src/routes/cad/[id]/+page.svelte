@@ -1,4 +1,5 @@
 <script>
+  import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
@@ -54,6 +55,16 @@
   let memberSearchQuery = '';
   let transferTargetUserId = null;
   let loadingMembers = false;
+  const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
+
+  function rememberLastSubsystem(subsystemData) {
+    if (!browser || !subsystemData?.id) return;
+    localStorage.setItem(LAST_SUBSYSTEM_STORAGE_KEY, JSON.stringify({
+      id: subsystemData.id,
+      name: subsystemData.name || '',
+      updatedAt: new Date().toISOString()
+    }));
+  }
 
   onMount(async () => {
     try {
@@ -110,6 +121,7 @@
 
       if (error) throw error;
       subsystem = data;
+      rememberLastSubsystem(subsystem);
       
       // Additional logging for debugging membership issues
       console.log('Loaded subsystem:', {
