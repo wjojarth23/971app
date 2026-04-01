@@ -92,7 +92,7 @@ async function ensureSlackDmChannel(user, supa) {
 function promptText({ item, checkpoint, scheduledFor, ownerName }) {
   const when = formatMoment(scheduledFor);
   const who = ownerName ? `${ownerName}, ` : '';
-  return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. React with green, yellow, or red to update the planner status. ${getPlannerLink(item.id)}`;
+  return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. React with green, yellow, red, or ✓ to update the planner status. ${getPlannerLink(item.id)}`;
 }
 
 function drivePracticePromptText({ item, scheduledFor, ownerName }) {

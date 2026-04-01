@@ -37,6 +37,7 @@
   } from '$lib/planner/multi_step.js';
   import { formatPlannerDateTimeInputValue } from '$lib/planner/timezone.js';
   import { workingMinutesBetween } from '$lib/planner/schedule.js';
+  import { toastActions } from '$lib/toast.js';
 
   const ganttTaskTypes = [
     { id: 'task', label: 'Task' },
@@ -786,7 +787,8 @@
     });
 
     try {
-      const response = await submitPlannerAction(payload, successMessage);
+      const response = await submitPlannerAction(payload, '');
+      toastActions.show(successMessage);
       const updatedItem = response?.data?.items?.find((item) => item.id === source.id);
       logPlannerGanttUpdate('Task drag update saved', {
         success: true,
@@ -941,8 +943,8 @@
       ? 'Work windows create the hours the scheduler can use. Use Weekday for a repeating block or Specific Date for a one-time shift.'
       : 'Blocked meetings remove time from the schedule. Drive practice now belongs on the task list. For a one-off meeting, leave Weekday on Specific date instead and set the Specific Date.';
   $: setPlannerGanttCalendarRules(calendarRules);
-  $: ganttScales = createPlannerGanttScales();
   $: ganttZoom = PLANNER_GANTT_ZOOM_LEVELS[ganttZoomIndex];
+  $: ganttScales = createPlannerGanttScales({ timeScaleStep: ganttZoom.timeScaleStep });
   $: ganttBounds = getPlannerGanttBounds(items);
   $: ganttTasks = (items || []).map((item) => ({
     id: item.id,

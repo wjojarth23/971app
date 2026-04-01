@@ -11,7 +11,7 @@ export const PLANNER_AUTO_FIXING_TASK_DAYS = 3;
 
 export const PLANNER_ITEM_KINDS = ['task', 'milestone'];
 export const PLANNER_CATEGORIES = ['assembly', 'electrical', 'software', 'manufacturing', 'cad', PLANNER_DRIVE_PRACTICE_CATEGORY];
-export const PLANNER_STATUSES = ['green', 'yellow', 'red'];
+export const PLANNER_STATUSES = ['green', 'yellow', 'red', 'completed'];
 export const PLANNER_CRITICAL_LEVELS = [1, 2, 3, 4];
 export const PLANNER_OWNER_TYPES = ['owner', 'accountable'];
 export const PLANNER_RULE_TYPES = ['work_window', 'blocked'];
@@ -29,6 +29,10 @@ export const PLANNER_STATUS_META = {
   red: {
     label: 'Red',
     tone: 'risk'
+  },
+  completed: {
+    label: 'Completed',
+    tone: 'done'
   }
 };
 
@@ -56,13 +60,15 @@ export const PLANNER_TASK_MODE_LABELS = {
 export const PLANNER_REACTION_TO_STATUS = {
   red_circle: 'red',
   yellow_circle: 'yellow',
-  green_circle: 'green'
+  green_circle: 'green',
+  white_check_mark: 'completed'
 };
 
 export const PLANNER_STATUS_TO_REACTION = {
   red: 'red_circle',
   yellow: 'yellow_circle',
-  green: 'green_circle'
+  green: 'green_circle',
+  completed: 'white_check_mark'
 };
 
 export const DEFAULT_PLANNER_CALENDAR_RULES = [

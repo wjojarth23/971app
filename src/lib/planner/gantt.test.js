@@ -4,7 +4,7 @@ import { DataStore } from '@svar-ui/gantt-store';
 import { DEFAULT_PLANNER_CALENDAR_RULES } from './constants.js';
 import { createPlannerGanttScales, setPlannerGanttCalendarRules } from './gantt.js';
 
-function buildScaleState({ start, end, cellWidth = 48 } = {}) {
+function buildScaleState({ start, end, cellWidth = 48, scaleOptions = {} } = {}) {
   setPlannerGanttCalendarRules(DEFAULT_PLANNER_CALENDAR_RULES);
 
   const store = new DataStore(writable);
@@ -13,7 +13,7 @@ function buildScaleState({ start, end, cellWidth = 48 } = {}) {
     links: [],
     start,
     end,
-    scales: createPlannerGanttScales(),
+    scales: createPlannerGanttScales(scaleOptions),
     lengthUnit: 'workslot',
     durationUnit: 'hour',
     cellWidth,
@@ -57,5 +57,22 @@ describe('planner gantt scales', () => {
       11 * 48,
       16 * 48
     ]);
+  });
+
+  it('shows fewer timestamp headers at wider zoom levels', () => {
+    const start = new Date('2026-04-04T19:00:00');
+    const end = new Date('2026-04-05T03:00:00');
+    const defaultScales = buildScaleState({ start, end });
+    const zoomedOutScales = buildScaleState({
+      start,
+      end,
+      scaleOptions: { timeScaleStep: 4 }
+    });
+
+    expect(zoomedOutScales.rows[1].cells.length).toBeLessThan(defaultScales.rows[1].cells.length);
+    expect(zoomedOutScales.rows[1].cells[0].width).toBe(4 * 48);
+    expect(Math.max(...zoomedOutScales.rows[1].cells.map((cell) => cell.width))).toBeGreaterThan(
+      Math.max(...defaultScales.rows[1].cells.map((cell) => cell.width))
+    );
   });
 });

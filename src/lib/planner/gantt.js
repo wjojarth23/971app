@@ -194,7 +194,9 @@ export function setPlannerGanttCalendarRules(rules = []) {
   workslotRegistered = true;
 }
 
-export function createPlannerGanttScales() {
+export function createPlannerGanttScales(options = {}) {
+  const timeScaleStep = Math.max(1, Math.round(Number(options?.timeScaleStep) || 1));
+
   return [
     {
       unit: 'day',
@@ -207,18 +209,18 @@ export function createPlannerGanttScales() {
     },
     {
       unit: 'workslot',
-      step: 1,
+      step: timeScaleStep,
       format: (start) => slotFormatter.format(start)
     }
   ];
 }
 
 export const PLANNER_GANTT_ZOOM_LEVELS = [
-  { label: 'Close', cellWidth: 60 },
-  { label: 'Medium', cellWidth: 48 },
-  { label: 'Wide', cellWidth: 36 },
-  { label: 'Overview', cellWidth: 26 },
-  { label: 'Macro', cellWidth: 18 }
+  { label: 'Close', cellWidth: 100, timeScaleStep: 1 },
+  { label: 'Medium', cellWidth: 56, timeScaleStep: 1 },
+  { label: 'Wide', cellWidth: 30, timeScaleStep: 2 },
+  { label: 'Overview', cellWidth: 16, timeScaleStep: 4 },
+  { label: 'Macro', cellWidth: 8, timeScaleStep: 8 }
 ];
 
 export function getPlannerGanttBounds(items = [], referenceDate = new Date()) {

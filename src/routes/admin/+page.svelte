@@ -21,10 +21,11 @@
     getCurrentNetworkFingerprint
   } from '$lib/attendance.js';
   import BudgetsTab from './BudgetsTab.svelte';
+  import PlannerCalendarTab from './PlannerCalendarTab.svelte';
   const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
 
   // Tab management
-  let activeTab = 'access'; // 'access', 'purchasing', 'rosters'
+  let activeTab = 'access'; // 'access', 'purchasing', 'rosters', 'planner-calendar'
   async function notifyUserNeedsApproval(u) {
     try {
       await fetch(`${BOT_BASE_URL}/notify/user_registration`, {
@@ -1308,6 +1309,9 @@
     <button type="button" class:active={activeTab === 'purchasing'} on:click={() => setActiveTab('purchasing')}>
       Purchasing
     </button>
+    <button type="button" class:active={activeTab === 'planner-calendar'} on:click={() => setActiveTab('planner-calendar')}>
+      Gantt Calendar
+    </button>
     {#if hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
       <button type="button" class:active={activeTab === 'attendance'} on:click={() => setActiveTab('attendance')}>
         Attendance
@@ -1771,6 +1775,8 @@
         </div>
       {/if}
     </section>
+  {:else if activeTab === 'planner-calendar'}
+    <PlannerCalendarTab currentUser={$currentUser} />
   {:else if activeTab === 'attendance' && hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
     <section class="section-card">
       <div class="section-header">
