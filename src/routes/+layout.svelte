@@ -5,7 +5,7 @@
   import { hasPermission } from '$lib/permissions.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -164,6 +164,7 @@
     if (compact.startsWith('datascout')) return 'datascout';
     if (compact.startsWith('teamview')) return 'teamview';
     if (compact.startsWith('pitscout')) return 'pitscout';
+    if (compact.startsWith('planner')) return 'planner';
     if (compact.startsWith('task')) return 'tasks';
     if (compact === 'scoutingadmin' || compact === 'scoutadmin') return 'scouting-admin';
     if (compact === 'cotsstocking') return 'cots-stocking';
@@ -176,6 +177,7 @@
     cad: '/cad',
     build: '/cad/build',
     purchasing: '/cad/purchasing',
+    planner: '/planner',
     notescout: '/notescout',
     tasks: '/tasks',
     teamview: '/teamview',
@@ -194,6 +196,7 @@
     cad: Move3d,
     build: Wrench,
     purchasing: Receipt,
+    planner: CalendarDays,
     notescout: Coins,
     tasks: Briefcase,
     teamview: Coins,
@@ -212,6 +215,7 @@
     cad: 'CAD',
     build: 'Build',
     purchasing: 'Purchasing',
+    planner: 'Planner',
     notescout: 'Note Scouting',
     tasks: 'Tasks',
     teamview: 'Team View',
@@ -301,6 +305,7 @@
     tabs.push({ key: 'cad', label: 'CAD' });
     if (navConfig?.tabs?.build !== false) tabs.push({ key: 'build', label: 'Build' });
     tabs.push({ key: 'purchasing', label: 'Purchasing' });
+    if (navConfig?.tabs?.planner !== false) tabs.push({ key: 'planner', label: 'Planner' });
     if (navConfig?.tabs?.tasks !== false) tabs.push({ key: 'tasks', label: 'Tasks' });
     if (scoutingEventKey) {
       if (navConfig?.tabs?.notescout !== false) tabs.push({ key: 'notescout', label: 'Note Scouting' });

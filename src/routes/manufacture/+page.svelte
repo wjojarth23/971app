@@ -137,6 +137,14 @@
     return (typeof id === 'string' && /^\d+$/.test(id)) ? Number(id) : id;
   }
 
+  function chunkArray(items, size = 100) {
+    const chunks = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
+  }
+
   function isPartSelected(part) {
     return selectedPartIds.includes(getPartKey(part));
   }
@@ -1327,15 +1335,15 @@
   }
 
   async function deletePartsByIds(partIds) {
-    const normalizedIds = [...new Set(partIds.map(getNormalizedPartId))];
+    const normalizedIds = [...new Set(partIds.map(getNormalizedPartId).filter((id) => id !== null && id !== undefined && id !== ''))];
     if (normalizedIds.length === 0) return;
 
     try {
-      const { data: refs, error: refErr } = await supabase.from('build_bom').select('id').in('parts_id', normalizedIds);
-      if (refErr) throw refErr;
-      if (refs && refs.length > 0) {
-        const bomIds = refs.map((row) => row.id);
-        const { error: clearErr } = await supabase.from('build_bom').update({ parts_id: null, added: false }).in('id', bomIds);
+      for (const batch of chunkArray(normalizedIds)) {
+        const { error: clearErr } = await supabase
+          .from('build_bom')
+          .update({ parts_id: null, added: false })
+          .in('parts_id', batch);
         if (clearErr) throw clearErr;
       }
     } catch (e) {

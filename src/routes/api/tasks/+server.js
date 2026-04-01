@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
+import { createPlannerFixingTaskFromP0Bug } from '$lib/server/planner_data.js';
 import {
   notifyTaskAssignedById,
   notifyTaskReviewRequestedById,
@@ -312,9 +313,20 @@ export async function POST({ request }) {
       const { data: created, error: createError } = await db
         .from('tasks')
         .insert([payload])
-        .select('id')
+        .select('id, title, created_at')
         .single();
       if (createError) throw createError;
+
+      try {
+        await createPlannerFixingTaskFromP0Bug(db, actor, created);
+      } catch (plannerError) {
+        await db
+          .from('tasks')
+          .delete()
+          .eq('frc_team', actor.frcTeam)
+          .eq('id', created.id);
+        throw plannerError;
+      }
 
       await notifyTaskAssignedById(created.id);
       const bundle = await fetchTasksBundle(db, actor.frcTeam);

@@ -7,6 +7,7 @@ import {
   messageToPurchaseMap,
   getSupabase
 } from '$lib/server/971bot';
+import { handlePlannerReaction } from '$lib/server/planner_notifications.js';
 
 // Avoid approving the same purchase repeatedly when multiple reactions are added.
 const recentlyApprovedPurchases = new Set();
@@ -43,6 +44,16 @@ export async function POST({ request }) {
       const reactingUser = event.user || null;
 
       try {
+        const plannerResult = await handlePlannerReaction({
+          channel,
+          ts,
+          reaction,
+          reactingUser
+        });
+        if (plannerResult?.handled) {
+          return json({ ok: true });
+        }
+
         const approverChannel = await ensureApproverDmChannel();
         console.log('Approver channel (cached):', approverChannel, 'event channel:', channel);
 

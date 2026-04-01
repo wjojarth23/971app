@@ -31,19 +31,24 @@
   let selectedTask = null;
   let uploadingDescriptionImage = false;
   let descriptionImageError = '';
+  let p0ReportContext = null;
 
-  let form = {
-    title: '',
-    description: '',
-    scope: 'general',
-    general_type: 'CAD',
-    subsystem_id: '',
-    assignee_id: '',
-    reviewer_id: '',
-    needs_review: false,
-    needs_manufacturing: false,
-    deadline_at: ''
-  };
+  function createDefaultForm() {
+    return {
+      title: '',
+      description: '',
+      scope: 'general',
+      general_type: 'CAD',
+      subsystem_id: '',
+      assignee_id: '',
+      reviewer_id: '',
+      needs_review: false,
+      needs_manufacturing: false,
+      deadline_at: ''
+    };
+  }
+
+  let form = createDefaultForm();
 
   function formatPerson(person) {
     if (!person) return '';
@@ -75,6 +80,75 @@
     } catch {
       return value;
     }
+  }
+
+  function toDatetimeLocalString(date) {
+    const safeDate = date instanceof Date ? date : new Date(date);
+    if (!Number.isFinite(safeDate.getTime())) return '';
+    return new Date(safeDate.getTime() - safeDate.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+
+  function formatReportMoment(value) {
+    if (!value) return '';
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      }).format(new Date(value));
+    } catch {
+      return String(value || '');
+    }
+  }
+
+  function buildP0ReportDescription(context) {
+    const practiceLabel = context?.practiceLabel || 'Drive Practice';
+    const scheduledFor = formatReportMoment(context?.scheduledFor);
+    const lines = [
+      `P0 bug reported after ${practiceLabel}.`
+    ];
+    if (scheduledFor) lines.push(`Drive practice end: ${scheduledFor}`);
+    lines.push('');
+    lines.push('What happened?');
+    lines.push('- ');
+    lines.push('');
+    lines.push('How can we reproduce it?');
+    lines.push('- ');
+    lines.push('');
+    lines.push('What subsystem or workflow is affected?');
+    lines.push('- ');
+    return lines.join('\n');
+  }
+
+  function buildP0ReportForm(context = p0ReportContext) {
+    const base = createDefaultForm();
+    base.general_type = 'Other';
+    base.assignee_id = user?.id || '';
+    base.reviewer_id = user?.id || '';
+    base.deadline_at = toDatetimeLocalString(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    base.description = buildP0ReportDescription(context);
+    return base;
+  }
+
+  function parseP0ReportContext() {
+    if (typeof window === 'undefined') return null;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('report_p0') !== '1') return null;
+    return {
+      source: url.searchParams.get('source') || '',
+      practiceRuleId: url.searchParams.get('practice_rule_id') || '',
+      practiceLabel: url.searchParams.get('practice_label') || 'Drive Practice',
+      scheduledFor: url.searchParams.get('scheduled_for') || ''
+    };
+  }
+
+  function applyP0ReportContext(context) {
+    if (!context) return;
+    p0ReportContext = context;
+    form = buildP0ReportForm(context);
+    showCreateModal = true;
+    info = `P0 bug report form ready for ${context.practiceLabel || 'drive practice'}.`;
   }
 
   async function authHeader() {
@@ -135,14 +209,34 @@
       goto('/');
       return () => unsub?.();
     }
+    const legacyP0Context = parseP0ReportContext();
+    if (legacyP0Context) {
+      const params = new URLSearchParams({
+        source: legacyP0Context.source || 'drive_practice',
+        practice_rule_id: legacyP0Context.practiceRuleId || '',
+        practice_label: legacyP0Context.practiceLabel || 'Drive Practice',
+        scheduled_for: legacyP0Context.scheduledFor || ''
+      });
+      goto(`/tasks/report-p0?${params.toString()}`, { replaceState: true });
+      return () => unsub?.();
+    }
     await loadTasks();
+    applyP0ReportContext(parseP0ReportContext());
     return () => unsub?.();
   });
 
-  $: assigneeOptions =
-    form.scope === 'subsystem'
-      ? (subsystemMembers?.[form.subsystem_id] || [])
-      : (generalCandidates?.[form.general_type] || []);
+  $: assigneeOptions = (() => {
+    const base =
+      form.scope === 'subsystem'
+        ? (subsystemMembers?.[form.subsystem_id] || [])
+        : (generalCandidates?.[form.general_type] || []);
+    if (!p0ReportContext || !user?.id) return base;
+    if (base.some((member) => member.id === user.id)) return base;
+    return [
+      { id: user.id, full_name: user.full_name, email: user.email },
+      ...base
+    ];
+  })();
 
   $: reviewerOptions = (() => {
     const map = new Map();
@@ -169,10 +263,7 @@
   })();
 
   function syncAssigneeSelection() {
-    const options =
-      form.scope === 'subsystem'
-        ? (subsystemMembers?.[form.subsystem_id] || [])
-        : (generalCandidates?.[form.general_type] || []);
+    const options = assigneeOptions;
     if (form.scope === 'subsystem' && !form.subsystem_id && subsystems.length > 0) {
       form = { ...form, subsystem_id: subsystems[0].id };
       return;
@@ -184,6 +275,10 @@
     if (options.length === 0 && form.assignee_id) {
       form = { ...form, assignee_id: '' };
     }
+  }
+
+  $: if (p0ReportContext && user?.id && !form.assignee_id) {
+    form = { ...form, assignee_id: user.id, reviewer_id: form.reviewer_id || user.id };
   }
 
   function extractImageUrls(text) {
@@ -267,17 +362,23 @@
         reviewer_id: form.needs_review ? form.reviewer_id : ''
       });
       hydrateBundle(payload?.data || {});
-      info = 'Task created.';
-      form = {
-        ...form,
-        title: '',
-        description: '',
-        needs_review: false,
-        needs_manufacturing: false,
-        deadline_at: ''
-      };
+      if (p0ReportContext) {
+        info = 'P0 bug created. Add another if you found more issues.';
+        form = buildP0ReportForm(p0ReportContext);
+        showCreateModal = true;
+      } else {
+        info = 'Task created.';
+        form = {
+          ...form,
+          title: '',
+          description: '',
+          needs_review: false,
+          needs_manufacturing: false,
+          deadline_at: ''
+        };
+        showCreateModal = false;
+      }
       descriptionImageError = '';
-      showCreateModal = false;
     } catch (error) {
       apiError = error.message || 'Failed to create task.';
     } finally {
@@ -449,7 +550,7 @@
         <p class="tasks-subtitle">Team-scoped view: Team {user.frc_team}</p>
       {/if}
     </div>
-    <button class="btn btn-primary btn-sm" type="button" on:click={() => (showCreateModal = true)}>Create Task</button>
+    <button class="btn btn-primary btn-sm" type="button" on:click={() => p0ReportContext ? applyP0ReportContext(p0ReportContext) : (showCreateModal = true)}>{p0ReportContext ? 'Report P0 Bug' : 'Create Task'}</button>
   </div>
 
   {#if apiError}
@@ -470,7 +571,12 @@
     >
       <section class="modal modal--wide" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation>
         <div class="modal-header">
-          <h2>Create Task</h2>
+          <div>
+            <h2>{p0ReportContext ? 'Report P0 Bug' : 'Create Task'}</h2>
+            {#if p0ReportContext}
+              <p class="tasks-subtitle">Drive practice: {p0ReportContext.practiceLabel}{p0ReportContext.scheduledFor ? ` - ended ${formatReportMoment(p0ReportContext.scheduledFor)}` : ''}</p>
+            {/if}
+          </div>
           <button
             type="button"
             class="modal-close-button"
@@ -482,10 +588,15 @@
         </div>
 
         <div class="modal-body">
+          {#if p0ReportContext}
+            <div class="task-feedback task-feedback-success">
+              Use this form to log each P0 bug you found. Each submission creates a new item that will also appear on the planner P0 bug list.
+            </div>
+          {/if}
           <div class="form-grid">
             <label class="form-group">
-              <span class="form-label">Task Name</span>
-            <input class="form-input" bind:value={form.title} placeholder="Task title" />
+              <span class="form-label">{p0ReportContext ? 'Bug Title' : 'Task Name'}</span>
+            <input class="form-input" bind:value={form.title} placeholder={p0ReportContext ? 'Short summary of the bug' : 'Task title'} />
           </label>
             <label class="form-group">
               <span class="form-label">Type Mode</span>
@@ -555,7 +666,7 @@
 
           <label class="form-group">
             <span class="form-label">Description</span>
-            <textarea class="form-input" rows="3" bind:value={form.description} placeholder="Task description"></textarea>
+            <textarea class="form-input" rows="3" bind:value={form.description} placeholder={p0ReportContext ? 'What happened, how to reproduce it, and what was affected' : 'Task description'}></textarea>
           </label>
           <div class="photo-upload-row">
             <label class="btn btn-secondary btn-sm" class:disabled={uploadingDescriptionImage}>
@@ -591,7 +702,7 @@
         <div class="modal-footer">
           <button class="btn btn-secondary btn-sm" type="button" on:click={() => (showCreateModal = false)}>Cancel</button>
           <button class="btn btn-primary btn-sm" type="button" disabled={saving} on:click={createTask}>
-            {saving ? 'Creating...' : 'Create Task'}
+            {saving ? 'Creating...' : p0ReportContext ? 'Add P0 Bug' : 'Create Task'}
           </button>
         </div>
       </section>
