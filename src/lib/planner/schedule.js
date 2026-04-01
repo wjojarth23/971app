@@ -4,6 +4,14 @@ import {
   PLANNER_SLOT_MINUTES,
   isPlannerDrivePracticeTask
 } from './constants.js';
+import {
+  addPlannerDays,
+  buildPlannerDateAtMinutes,
+  endOfPlannerDay,
+  getPlannerDateKey,
+  getPlannerWeekday,
+  startOfPlannerDay
+} from './timezone.js';
 
 function pad(value) {
   return String(value).padStart(2, '0');
@@ -43,32 +51,23 @@ function cloneDate(value) {
 }
 
 function startOfDay(date) {
-  const value = cloneDate(date);
-  value.setHours(0, 0, 0, 0);
-  return value;
+  return startOfPlannerDay(date) || cloneDate(date);
 }
 
 function endOfDay(date) {
-  const value = cloneDate(date);
-  value.setHours(23, 59, 59, 999);
-  return value;
+  return endOfPlannerDay(date) || cloneDate(date);
 }
 
 function addDays(date, days) {
-  const value = cloneDate(date);
-  value.setDate(value.getDate() + days);
-  return value;
+  return addPlannerDays(date, days) || cloneDate(date);
 }
 
 function buildDateAtMinutes(baseDate, minutes) {
-  const date = startOfDay(baseDate);
-  date.setMinutes(minutes, 0, 0);
-  return date;
+  return buildPlannerDateAtMinutes(baseDate, minutes) || cloneDate(baseDate);
 }
 
 function toDateKey(date) {
-  const value = cloneDate(date);
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  return getPlannerDateKey(date);
 }
 
 function isFiniteDate(value) {
@@ -82,9 +81,7 @@ export function toDateOrNull(value) {
 }
 
 function wallClockAdd(date, minutes) {
-  const value = cloneDate(date);
-  value.setMinutes(value.getMinutes() + minutes);
-  return value;
+  return new Date(cloneDate(date).getTime() + (minutes * 60000));
 }
 
 function wallClockDiffMinutes(a, b) {
@@ -195,7 +192,7 @@ function ruleAppliesToDate(rule, date) {
   if (rule.specific_date) {
     return rule.specific_date === toDateKey(date);
   }
-  return rule.weekday === date.getDay();
+  return rule.weekday === getPlannerWeekday(date);
 }
 
 function hasExplicitWorkRules(rules) {

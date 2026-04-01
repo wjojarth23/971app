@@ -1,4 +1,5 @@
 export const PLANNER_ROUTE = '/planner';
+export const PLANNER_TIME_ZONE = 'America/Los_Angeles';
 export const PLANNER_SLOT_MINUTES = 30;
 export const PLANNER_DEFAULT_TASK_DURATION_MINUTES = 120;
 export const PLANNER_DEFAULT_MIN_DURATION_MINUTES = 30;

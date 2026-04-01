@@ -1,23 +1,26 @@
 import { registerScaleUnit } from '@svar-ui/gantt-store';
-import { PLANNER_SLOT_MINUTES } from './constants.js';
+import { PLANNER_SLOT_MINUTES, PLANNER_TIME_ZONE } from './constants.js';
 import {
   getWorkIntervalsForDate,
   nextWorkMoment,
   toDateOrNull,
   workingMinutesBetween
 } from './schedule.js';
+import { addPlannerDays, startOfPlannerDay } from './timezone.js';
 
 const SLOT_MINUTES = PLANNER_SLOT_MINUTES;
 const SLOT_MS = SLOT_MINUTES * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const dayFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: PLANNER_TIME_ZONE,
   weekday: 'short',
   month: 'short',
   day: 'numeric'
 });
 
 const slotFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: PLANNER_TIME_ZONE,
   hour: 'numeric',
   minute: '2-digit'
 });
@@ -30,9 +33,7 @@ function cloneDate(value) {
 }
 
 function startOfDay(value) {
-  const date = cloneDate(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
+  return startOfPlannerDay(value) || cloneDate(value);
 }
 
 function addMinutes(value, minutes) {
@@ -42,9 +43,7 @@ function addMinutes(value, minutes) {
 }
 
 function addDays(value, days) {
-  const date = cloneDate(value);
-  date.setDate(date.getDate() + days);
-  return date;
+  return addPlannerDays(value, days) || cloneDate(value);
 }
 
 function lastSlotStart(interval) {

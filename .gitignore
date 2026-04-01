@@ -27,4 +27,4 @@ vite.config.ts.timestamp-*
 /docs/migrations
 /PenguinCAM
 /supabase
-
+/logs

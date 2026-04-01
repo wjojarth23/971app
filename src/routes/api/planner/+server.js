@@ -27,6 +27,7 @@ import {
   normalizePlannerTaskTemplate,
   PLANNER_FULL_CYCLE_TASK_TEMPLATE
 } from '$lib/planner/multi_step.js';
+import { parsePlannerDateTimeInput } from '$lib/planner/timezone.js';
 
 function normalizeAction(rawValue) {
   return String(rawValue || '').trim().toLowerCase();
@@ -93,9 +94,8 @@ function normalizeTaskMode(rawValue) {
 }
 
 function normalizeDateTime(rawValue) {
-  if (!rawValue) return null;
-  const date = new Date(rawValue);
-  if (!Number.isFinite(date.getTime())) return null;
+  const date = parsePlannerDateTimeInput(rawValue);
+  if (!date || !Number.isFinite(date.getTime())) return null;
   return date.toISOString();
 }
 

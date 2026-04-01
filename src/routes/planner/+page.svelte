@@ -22,6 +22,7 @@
     PLANNER_RULE_TYPES,
     PLANNER_STANDARD_TASK_MODE,
     PLANNER_STATUSES,
+    PLANNER_TIME_ZONE,
     PLANNER_TASK_MODE_LABELS,
     isPlannerDrivePracticeTask,
     isPlannerFixingTask
@@ -34,6 +35,7 @@
     PLANNER_FULL_CYCLE_TASK_TEMPLATE,
     PLANNER_SINGLE_STEP_TASK_TEMPLATE
   } from '$lib/planner/multi_step.js';
+  import { formatPlannerDateTimeInputValue } from '$lib/planner/timezone.js';
   import { workingMinutesBetween } from '$lib/planner/schedule.js';
 
   const ganttTaskTypes = [
@@ -52,6 +54,13 @@
   ];
   const OWNER_SEARCH_RESULT_LIMIT = 8;
   const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const plannerDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: PLANNER_TIME_ZONE,
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
   const plannerTaskWorkflowOptions = [
     { value: PLANNER_STANDARD_TASK_MODE, label: 'Single Step' },
     { value: PLANNER_FULL_CYCLE_TASK_TEMPLATE, label: 'Full Cycle' },
@@ -226,12 +235,7 @@
   function formatDateTime(value) {
     if (!value) return 'Not scheduled';
     try {
-      return new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit'
-      }).format(new Date(value));
+      return plannerDateTimeFormatter.format(new Date(value));
     } catch {
       return value;
     }
@@ -334,12 +338,7 @@
   function formatDeadline(value) {
     if (!value) return 'No deadline';
     try {
-      return new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit'
-      }).format(new Date(value));
+      return plannerDateTimeFormatter.format(new Date(value));
     } catch {
       return value;
     }
@@ -393,11 +392,7 @@
   }
 
   function toDatetimeLocal(value) {
-    if (!value) return '';
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return '';
-    const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return adjusted.toISOString().slice(0, 16);
+    return value ? formatPlannerDateTimeInputValue(value) : '';
   }
 
   function handleTableRowKeydown(event, itemId) {
