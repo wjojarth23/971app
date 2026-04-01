@@ -10,9 +10,11 @@ import { supabase } from '$lib/supabase.js';
  */
 export const user = writable(null);
 export const userProfile = writable(null);
+export const authReady = writable(false);
 
 let subscription = null;
 let initialized = false;
+let initCount = 0;
 
 export async function fetchUserProfile(userId) {
   if (!userId) {
@@ -89,19 +91,26 @@ export async function fetchUserProfile(userId) {
  * No awaits inside the auth callback; async work is scheduled.
  */
 export function initAuth() {
+  initCount += 1;
+
   if (!initialized) {
     initialized = true;
+    authReady.set(false);
 
     // Initial session load (safe to await here; not inside callback)
     (async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) console.warn('getSession error:', error.message || error);
-      const authUser = data?.session?.user ?? null;
-      user.set(authUser);
-      if (authUser) {
-        await fetchUserProfile(authUser.id);
-      } else {
-        userProfile.set(null);
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) console.warn('getSession error:', error.message || error);
+        const authUser = data?.session?.user ?? null;
+        user.set(authUser);
+        if (authUser) {
+          await fetchUserProfile(authUser.id);
+        } else {
+          userProfile.set(null);
+        }
+      } finally {
+        authReady.set(true);
       }
     })();
   }
@@ -119,6 +128,8 @@ export function initAuth() {
       } else if (event === 'SIGNED_OUT') {
         userProfile.set(null);
       }
+
+      authReady.set(true);
     });
 
     subscription = data?.subscription ?? null;
@@ -126,9 +137,13 @@ export function initAuth() {
 
   // Return unsubscribe function
   return () => {
+    initCount = Math.max(0, initCount - 1);
+    if (initCount > 0) return;
+
     subscription?.unsubscribe?.();
     subscription = null;
     initialized = false;
+    authReady.set(false);
   };
 }
 

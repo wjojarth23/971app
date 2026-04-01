@@ -1,4 +1,4 @@
-import { registerScaleUnit } from 'wx-svelte-gantt';
+import { registerScaleUnit } from '@svar-ui/gantt-store';
 import { PLANNER_SLOT_MINUTES } from './constants.js';
 import {
   getWorkIntervalsForDate,
@@ -111,6 +111,19 @@ function previousWorkslotStart(value, rules = activeRules) {
   return cursor;
 }
 
+function resolveWorkslotAnchor(value, rules = activeRules) {
+  const date = toDateOrNull(value) || new Date();
+  const interval = findContainingInterval(date, rules);
+
+  if (interval) {
+    const diffMinutes = Math.max(0, Math.floor((date.getTime() - interval.start.getTime()) / 60000));
+    const slotOffset = Math.floor(diffMinutes / SLOT_MINUTES);
+    return new Date(interval.start.getTime() + slotOffset * SLOT_MS);
+  }
+
+  return nextWorkslotStart(date, rules);
+}
+
 function addWorkslots(value, step) {
   const current = toDateOrNull(value) || new Date();
   if (!step) return current;
@@ -147,16 +160,16 @@ function diffWorkslots(leftValue, rightValue) {
 }
 
 function startWorkslot(value) {
-  return previousWorkslotStart(value);
+  return resolveWorkslotAnchor(value);
 }
 
 function endWorkslot(value) {
-  return addMinutes(previousWorkslotStart(value), SLOT_MINUTES);
+  return addWorkslots(resolveWorkslotAnchor(value), 1);
 }
 
 function isSameWorkslot(leftValue, rightValue) {
-  const left = previousWorkslotStart(leftValue);
-  const right = previousWorkslotStart(rightValue);
+  const left = resolveWorkslotAnchor(leftValue);
+  const right = resolveWorkslotAnchor(rightValue);
   return left.getTime() === right.getTime();
 }
 

@@ -1,7 +1,7 @@
 <script>
   import '../app.css';
   import { onMount } from 'svelte';
-  import { initAuth, user as authUserStore, userStore } from '$lib/stores/auth.js';
+  import { initAuth, user as authUserStore, userStore, authReady as authReadyStore } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
@@ -14,12 +14,19 @@
 
   let authUser = null;
   let profile = null;
-  let lastProfile = null;
+  let authReady = false;
   let mobileMenuOpen = false;
   let openDesktopFolder = -1;
   let openMobileFolders = {};
   let scoutingEventKey = '';
-  $: activeProfile = profile ?? lastProfile;
+  const PUBLIC_ROUTES = ['/'];
+  $: activeProfile = profile;
+  $: currentPath = $page.url.pathname;
+  $: requiresAuth = !PUBLIC_ROUTES.includes(currentPath);
+  $: isAuthenticated = !!(authUser || activeProfile);
+  $: shouldHoldProtectedContent = requiresAuth && !authReady;
+  $: shouldRedirectToLogin = requiresAuth && authReady && !isAuthenticated;
+  $: canRenderPageContent = !requiresAuth || (authReady && isAuthenticated);
 
   // Check if user is approved (has CAN_SEE_ROUTES permission)
   $: isApproved = hasPermission(activeProfile, 'CAN_SEE_ROUTES');
@@ -32,15 +39,18 @@
   }
 
   // Guard: redirect unapproved users away from protected routes
+  $: if (shouldRedirectToLogin && typeof window !== 'undefined' && currentPath !== '/') {
+    goto('/', { replaceState: true });
+  }
+
   $: if (activeProfile && !isApproved && typeof window !== 'undefined') {
-    const currentPath = $page.url.pathname;
     if (!isRouteAllowedForUnapproved(currentPath)) {
       goto('/');
     }
   }
 
   // Close menus on route change
-  $: if ($page.url.pathname) {
+  $: if (currentPath) {
     mobileMenuOpen = false;
     openMobileFolders = {};
     openDesktopFolder = -1;
@@ -117,10 +127,10 @@
     const unsubProfile = userStore.subscribe((v) => {
       profile = v;
       if (v) {
-        lastProfile = v;
         void checkAttendance(v);
       }
     });
+    const unsubAuthReady = authReadyStore.subscribe((value) => { authReady = value; });
     void fetchActiveScoutingEventKey().then((k) => {
       scoutingEventKey = k || '';
     });
@@ -131,6 +141,7 @@
       document.removeEventListener('keydown', onKeyDown);
       unsubAuth?.();
       unsubProfile?.();
+      unsubAuthReady?.();
       uninit?.();
     };
   });
@@ -341,10 +352,10 @@
   $: customTabs = sanitizeTabs(activeProfile?.header_tabs);
   $: baseNavTabs = addAdminTabIfAllowed(customTabs ?? fallbackTabs());
   $: navItems = isApproved ? buildNavItems(baseNavTabs) : [];
-  $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || 'Profile';
+  $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || authUser?.email || 'Profile';
 </script>
 
-{#if authUser || activeProfile}
+{#if authReady && isAuthenticated}
   <header class="nav-header">
     <div class="nav-container">
       <!-- Brand -->
@@ -467,9 +478,24 @@
   </nav>
 {/if}
 
-<main class="container page-container">
-  <slot />
-</main>
+{#if canRenderPageContent}
+  <main class="container page-container">
+    <slot />
+  </main>
+{:else if shouldHoldProtectedContent}
+  <main class="container page-container auth-loading-shell" aria-busy="true">
+    <div class="auth-loading-card">
+      <div class="loading-spinner"></div>
+      <p>Checking your session...</p>
+    </div>
+  </main>
+{:else}
+  <main class="container page-container auth-loading-shell">
+    <div class="auth-loading-card">
+      <p>Redirecting to sign in...</p>
+    </div>
+  </main>
+{/if}
 
 <Toasts />
 
@@ -826,6 +852,46 @@
     max-width: 1440px;
     margin: 0 auto;
     padding: 0 var(--space-4);
+  }
+
+  .auth-loading-shell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .auth-loading-card {
+    min-width: min(100%, 320px);
+    display: grid;
+    justify-items: center;
+    gap: var(--gap-3);
+    padding: var(--space-6);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-sm);
+    text-align: center;
+  }
+
+  .auth-loading-card p {
+    margin: 0;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* ========== TABLET (≤960px) ========== */

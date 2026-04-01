@@ -1,6 +1,9 @@
-<script>  import { onMount } from 'svelte';
+<script>
+  import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { initAuth, userStore, signOut } from '$lib/stores/auth.js';  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users } from 'lucide-svelte';  import { goto } from '$app/navigation';
+  import { initAuth, userStore, signOut, authReady as authReadyStore } from '$lib/stores/auth.js';
+  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
   import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
   
   let user = null;
@@ -56,10 +59,11 @@
 
   onMount(() => {
     const unsub = userStore.subscribe((v) => { user = v; });
+    const unsubReady = authReadyStore.subscribe((value) => {
+      loading = !value;
+    });
     const uninit = initAuth();
-    // UI shouldn't block on auth; keep simple
-    loading = false;
-    return () => { unsub?.(); uninit?.(); };
+    return () => { unsub?.(); unsubReady?.(); uninit?.(); };
   });
 
   async function loadUserLists() {

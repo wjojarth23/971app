@@ -34,6 +34,7 @@
     PLANNER_FULL_CYCLE_TASK_TEMPLATE,
     PLANNER_SINGLE_STEP_TASK_TEMPLATE
   } from '$lib/planner/multi_step.js';
+  import { workingMinutesBetween } from '$lib/planner/schedule.js';
 
   const ganttTaskTypes = [
     { id: 'task', label: 'Task' },
@@ -234,6 +235,100 @@
     } catch {
       return value;
     }
+  }
+
+  function toDebugDate(value) {
+    if (!value) return null;
+    const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    if (!Number.isFinite(date.getTime())) return { raw: value };
+    return {
+      local: formatDateTime(date),
+      iso: date.toISOString(),
+      unix_ms: date.getTime()
+    };
+  }
+
+  function toDebugDuration(minutes) {
+    if (minutes === null || minutes === undefined || Number.isNaN(Number(minutes))) return null;
+    const normalized = Number(minutes);
+    return {
+      minutes: normalized,
+      hours: normalized / 60,
+      label: formatHours(normalized)
+    };
+  }
+
+  function createPlannerTaskDebugSnapshot(task, mode = 'source') {
+    if (!task) return null;
+
+    const isGanttTask = mode === 'gantt';
+    const startValue = isGanttTask
+      ? task.start
+      : (task.scheduled_start_at || task.manual_start_at || null);
+    const endValue = isGanttTask
+      ? task.end
+      : (task.scheduled_end_at || task.scheduled_start_at || task.manual_start_at || null);
+    const computedDuration = startValue && endValue
+      ? Math.max(30, workingMinutesBetween(startValue, endValue, calendarRules))
+      : null;
+
+    return {
+      id: task.id,
+      title: task.title || task.text || 'Untitled',
+      kind: task.kind || task.type || 'task',
+      status: task.status || null,
+      manual_start_at: isGanttTask ? null : toDebugDate(task.manual_start_at),
+      scheduled_start_at: isGanttTask ? null : toDebugDate(task.scheduled_start_at),
+      scheduled_end_at: isGanttTask ? null : toDebugDate(task.scheduled_end_at),
+      start: toDebugDate(startValue),
+      end: toDebugDate(endValue),
+      duration_minutes: toDebugDuration(isGanttTask ? computedDuration : Number(task.duration_minutes || 0)),
+      requested_duration_minutes: isGanttTask ? null : toDebugDuration(Number(task.requested_duration_minutes || task.duration_minutes || 0))
+    };
+  }
+
+  function getPlannerGanttUpdateType(payload) {
+    const hasManualStart = Object.prototype.hasOwnProperty.call(payload || {}, 'manual_start_at');
+    const hasDuration = Object.prototype.hasOwnProperty.call(payload || {}, 'duration_minutes');
+    if (hasManualStart && hasDuration) return 'move+resize';
+    if (hasManualStart) return 'move';
+    if (hasDuration) return 'resize';
+    return 'unknown';
+  }
+
+  function datesMatchForDebug(leftValue, rightValue) {
+    if (!leftValue && !rightValue) return true;
+    if (!leftValue || !rightValue) return false;
+    const left = new Date(leftValue);
+    const right = rightValue instanceof Date ? rightValue : new Date(rightValue);
+    if (!Number.isFinite(left.getTime()) || !Number.isFinite(right.getTime())) return false;
+    return left.getTime() === right.getTime();
+  }
+
+  function buildPlannerUpdatePersistenceCheck(updatedItem, payload) {
+    const durationTarget = Number(payload?.duration_minutes);
+    const requestedDuration = Number(updatedItem?.requested_duration_minutes ?? updatedItem?.duration_minutes ?? 0);
+
+    return {
+      item_found_in_response: !!updatedItem,
+      manual_start_matched:
+        !Object.prototype.hasOwnProperty.call(payload || {}, 'manual_start_at') ||
+        datesMatchForDebug(updatedItem?.manual_start_at, payload?.manual_start_at),
+      requested_duration_matched:
+        !Object.prototype.hasOwnProperty.call(payload || {}, 'duration_minutes') ||
+        requestedDuration === durationTarget
+    };
+  }
+
+  function logPlannerGanttUpdate(stage, details = {}) {
+    const label = `[Planner Gantt] ${stage}`;
+    if (typeof console.groupCollapsed === 'function') {
+      console.groupCollapsed(label);
+      Object.entries(details).forEach(([key, value]) => console.log(key, value));
+      console.groupEnd();
+      return;
+    }
+    console.log(label, details);
   }
 
   function formatDeadline(value) {
@@ -627,23 +722,99 @@
     const source = itemMap.get(event?.id);
     const current = ganttApi?.getTask?.(event?.id);
     if (!source || !current) return;
+    const beforeSnapshot = createPlannerTaskDebugSnapshot(source, 'source');
+    const draggedSnapshot = createPlannerTaskDebugSnapshot(current, 'gantt');
 
     if (source.kind === 'milestone') {
-      await submitPlannerAction({
+      const payload = {
         action: 'update-item',
         item_id: source.id,
         manual_start_at: current.start
-      }, 'Milestone moved.');
+      };
+
+      logPlannerGanttUpdate('Submitting milestone drag update', {
+        event,
+        item_id: source.id,
+        before: beforeSnapshot,
+        after_drag: draggedSnapshot,
+        payload
+      });
+
+      try {
+        const response = await submitPlannerAction(payload, 'Milestone moved.');
+        const updatedItem = response?.data?.items?.find((item) => item.id === source.id);
+        logPlannerGanttUpdate('Milestone drag update saved', {
+          success: true,
+          item_id: source.id,
+          payload,
+          before: beforeSnapshot,
+          after_drag: draggedSnapshot,
+          persisted: createPlannerTaskDebugSnapshot(updatedItem, 'source'),
+          persisted_check: buildPlannerUpdatePersistenceCheck(updatedItem, payload)
+        });
+      } catch (submitError) {
+        logPlannerGanttUpdate('Milestone drag update failed', {
+          success: false,
+          item_id: source.id,
+          payload,
+          before: beforeSnapshot,
+          after_drag: draggedSnapshot,
+          error: submitError?.message || submitError
+        });
+        throw submitError;
+      }
       return;
     }
 
     const payload = buildPlannerTaskUpdatePayload(source, event?.task, current, calendarRules);
-    if (!payload) return;
+    if (!payload) {
+      logPlannerGanttUpdate('Skipped drag update with no timing change', {
+        event,
+        item_id: source.id,
+        before: beforeSnapshot,
+        after_drag: draggedSnapshot
+      });
+      return;
+    }
 
     const successMessage = Object.prototype.hasOwnProperty.call(payload, 'manual_start_at')
       ? 'Task updated.'
       : 'Task duration updated.';
-    await submitPlannerAction(payload, successMessage);
+
+    logPlannerGanttUpdate('Submitting task drag update', {
+      event,
+      update_type: getPlannerGanttUpdateType(payload),
+      item_id: source.id,
+      before: beforeSnapshot,
+      after_drag: draggedSnapshot,
+      payload
+    });
+
+    try {
+      const response = await submitPlannerAction(payload, successMessage);
+      const updatedItem = response?.data?.items?.find((item) => item.id === source.id);
+      logPlannerGanttUpdate('Task drag update saved', {
+        success: true,
+        update_type: getPlannerGanttUpdateType(payload),
+        item_id: source.id,
+        payload,
+        before: beforeSnapshot,
+        after_drag: draggedSnapshot,
+        persisted: createPlannerTaskDebugSnapshot(updatedItem, 'source'),
+        persisted_check: buildPlannerUpdatePersistenceCheck(updatedItem, payload)
+      });
+    } catch (submitError) {
+      logPlannerGanttUpdate('Task drag update failed', {
+        success: false,
+        update_type: getPlannerGanttUpdateType(payload),
+        item_id: source.id,
+        payload,
+        before: beforeSnapshot,
+        after_drag: draggedSnapshot,
+        error: submitError?.message || submitError
+      });
+      throw submitError;
+    }
   }
 
   async function handleGanttLinkAdd(event) {
