@@ -954,7 +954,7 @@
           </div>
         {/if}
       </section>
-    {:else}
+    {:else if activeView === 'table'}
       <section class="section-card planner-table-card">
         <div class="section-head">
           <div class="planner-section-copy">
