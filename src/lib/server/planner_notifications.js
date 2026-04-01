@@ -4,6 +4,7 @@ import { buildTaskPromptSchedule } from '$lib/planner/schedule.js';
 import { isPlannerDrivePracticeTask, PLANNER_REACTION_TO_STATUS, PLANNER_STATUS_TO_REACTION } from '$lib/planner/constants.js';
 import { ensureApproverDmChannel, getSlackClient, getSupabase, slackUserIdForEmail } from '$lib/server/971bot.js';
 import { fetchPlannerSnapshot } from '$lib/server/planner_data.js';
+import { formatPacific } from '$lib/timezone.js';
 
 function getAppBaseUrl() {
   const origin =
@@ -42,12 +43,13 @@ function checkpointLabel(checkpoint) {
 
 function formatMoment(value) {
   try {
-    return new Intl.DateTimeFormat('en-US', {
+    const formatted = formatPacific(value, {
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit'
-    }).format(new Date(value));
+    });
+    return formatted ? `${formatted} PT` : '';
   } catch {
     return String(value || '');
   }
@@ -92,7 +94,7 @@ async function ensureSlackDmChannel(user, supa) {
 function promptText({ item, checkpoint, scheduledFor, ownerName }) {
   const when = formatMoment(scheduledFor);
   const who = ownerName ? `${ownerName}, ` : '';
-  return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. React with green, yellow, red, or ✓ to update the planner status. ${getPlannerLink(item.id)}`;
+  return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. React with green, yellow, red, or the check mark reaction to update the planner status. ${getPlannerLink(item.id)}`;
 }
 
 function drivePracticePromptText({ item, scheduledFor, ownerName }) {
@@ -188,7 +190,6 @@ export async function broadcastPlannerRedAlert({ item, checkpoint, reactionUserI
   });
   return { ok: !!response?.ok };
 }
-
 
 export async function sendDuePlannerPrompts(now = new Date()) {
   const supa = getSupabase();

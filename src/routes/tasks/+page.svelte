@@ -2,6 +2,11 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
+  import {
+    formatPacific,
+    formatPacificDateTimeInputValue,
+    formatPacificDateTimeWithZone
+  } from '$lib/timezone.js';
   import { goto } from '$app/navigation';
 
   const GENERAL_TYPES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
@@ -76,7 +81,7 @@
   function deadlineDisplay(value) {
     if (!value) return 'No deadline';
     try {
-      return new Date(value).toLocaleString();
+      return formatPacificDateTimeWithZone(value) || String(value);
     } catch {
       return value;
     }
@@ -85,18 +90,19 @@
   function toDatetimeLocalString(date) {
     const safeDate = date instanceof Date ? date : new Date(date);
     if (!Number.isFinite(safeDate.getTime())) return '';
-    return new Date(safeDate.getTime() - safeDate.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    return formatPacificDateTimeInputValue(safeDate);
   }
 
   function formatReportMoment(value) {
     if (!value) return '';
     try {
-      return new Intl.DateTimeFormat('en-US', {
+      const formatted = formatPacific(value, {
         month: 'short',
         day: 'numeric',
         hour: 'numeric',
         minute: '2-digit'
-      }).format(new Date(value));
+      });
+      return formatted ? `${formatted} PT` : '';
     } catch {
       return String(value || '');
     }
@@ -388,8 +394,7 @@
 
   function setQuickDeadline(hours) {
     const date = new Date(Date.now() + hours * 60 * 60 * 1000);
-    const tzAdjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-    form = { ...form, deadline_at: tzAdjusted };
+    form = { ...form, deadline_at: formatPacificDateTimeInputValue(date) };
   }
 
   async function setTaskStatus(task, status) {
@@ -661,6 +666,7 @@
                 <button class="btn btn-secondary btn-sm" type="button" on:click={() => setQuickDeadline(24)}>+24h</button>
                 <button class="btn btn-secondary btn-sm" type="button" on:click={() => setQuickDeadline(48)}>+48h</button>
               </div>
+              <div class="meta-text muted">Deadlines are shown and saved in Pacific Time.</div>
             </label>
           </div>
 

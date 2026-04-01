@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+  import { formatPacificDateTimeWithZone } from '$lib/timezone.js';
 
   const SCOPE_OPTIONS = [
     { value: 'total', label: 'Total' },
@@ -641,7 +642,7 @@
         <div class="empty">No notes yet.</div>
       {:else}
         {#each teamNotes as note}
-          <div class="note-row"><div class="note-meta">Match {note.match_number || '-'} - {new Date(note.created_at).toLocaleString()}</div><div>{note.notes || '-'}</div></div>
+          <div class="note-row"><div class="note-meta">Match {note.match_number || '-'} - {formatPacificDateTimeWithZone(note.created_at)}</div><div>{note.notes || '-'}</div></div>
         {/each}
       {/if}
     </div>

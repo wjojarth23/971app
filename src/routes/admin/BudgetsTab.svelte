@@ -5,6 +5,7 @@
   import { toastActions } from '$lib/toast.js';
   import { Plus, Edit, Trash2, DollarSign, Calendar, Target, Folder } from 'lucide-svelte';
   import { userStore } from '$lib/stores/user.js';
+  import { formatPacificDate } from '$lib/timezone.js';
 
   export let subsystems = []; // Passed from parent or loaded here if needed
 
@@ -373,10 +374,10 @@
               </td>
               <td>
                 <div class="date-range">
-                  <span>{new Date(budget.start_date).toLocaleDateString()}</span>
+                  <span>{formatPacificDate(budget.start_date)}</span>
                   {#if budget.end_date}
                     <span class="arrow">→</span>
-                    <span>{new Date(budget.end_date).toLocaleDateString()}</span>
+                    <span>{formatPacificDate(budget.end_date)}</span>
                   {:else}
                     <span class="text-muted"> (ongoing)</span>
                   {/if}

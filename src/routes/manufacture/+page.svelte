@@ -13,6 +13,7 @@
   import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
   import { isManufacturingLead } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
+  import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
 
   const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
   const QUICK_PRINT_STOCK_OPTIONS = stockData['3d-print'] || [];
@@ -842,14 +843,7 @@
   // Format date/time in a friendly way
   function formatDateTime(dateStr) {
     if (!dateStr) return 'N/A';
-    const date = new Date(dateStr);
-    return date.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return formatPacificDateTimeWithZone(dateStr) || 'N/A';
   }
 
   // Open the subsystem page or linked Onshape document for parts that require drawings
@@ -924,7 +918,7 @@
   }
 
   function formatDate(dateString) {
-    return new Date(dateString).toLocaleDateString();
+    return formatPacificDate(dateString);
   }
 
   function getStatusDisplay(part) {
@@ -1010,8 +1004,8 @@
           part.onshape_wvmid || '',
           `"${(part.kitting_bin || '').replace(/"/g, '""')}"`,
           part.delivered ? 'Yes' : 'No',
-          part.created_at ? new Date(part.created_at).toLocaleString() : '',
-          part.updated_at ? new Date(part.updated_at).toLocaleString() : ''
+          part.created_at ? formatPacificDateTimeWithZone(part.created_at) : '',
+          part.updated_at ? formatPacificDateTimeWithZone(part.updated_at) : ''
         ].join(','))
       ].join('\n');
       

@@ -1,6 +1,7 @@
 import { getSupabase, getSlackClient, slackUserIdForEmail } from '$lib/server/971bot';
 import { NOTIFICATION_KEYS } from '$lib/notifications/constants.js';
 import { mergeNotificationSettings } from '$lib/notifications/settings.js';
+import { formatPacificDateTimeWithZone, formatPacificTimeWithZone } from '$lib/timezone.js';
 
 function formatMatchLabel(matchKey = '') {
   if (!matchKey) return 'match';
@@ -205,7 +206,8 @@ export async function notifyMatchReminder({ userId, matchKey, teams, matchTime }
   if (!userId || !matchKey) return { ok: false, reason: 'invalid-input' };
   const label = formatMatchLabel(matchKey);
   const teamList = teams && teams.length ? teams.map((t) => t.replace(/^frc/i, '')).join(', ') : 'your assigned teams';
-  const when = matchTime ? ` at ${new Date(matchTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+  const whenLabel = matchTime ? formatPacificTimeWithZone(matchTime * 1000) : '';
+  const when = whenLabel ? ` at ${whenLabel}` : '';
   const text = `${label}${when} is starting soon. You're scouting teams ${teamList}.`; 
   const entityKey = `${matchKey}:${userId}`;
   return dispatchNotification({
@@ -316,7 +318,8 @@ export async function notifyTaskDeadlineById(taskId) {
   if (!task?.assignee_id || !task?.deadline_at) {
     return { ok: false, reason: 'missing-deadline-or-assignee' };
   }
-  const text = `Deadline reached for task: ${task.title || 'Untitled task'}. Current status: ${taskStatusLabel(task.status)}.`;
+  const deadlineLabel = formatPacificDateTimeWithZone(task.deadline_at);
+  const text = `Deadline reached for task: ${task.title || 'Untitled task'}. Deadline: ${deadlineLabel || 'Pacific time unavailable'}. Current status: ${taskStatusLabel(task.status)}.`;
   const entityKey = `task:${task.id}:deadline:${task.assignee_id}:${new Date(task.deadline_at).toISOString()}`;
   return dispatchNotification({
     userId: task.assignee_id,

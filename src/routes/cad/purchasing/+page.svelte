@@ -6,6 +6,7 @@
   import { isTeam9584 } from '$lib/frcTeams.js';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
+  import { formatPacificDate } from '$lib/timezone.js';
   import { goto } from '$app/navigation';
   // Base URL for the Slack bot service (971bot). Defaults to the in-app endpoint.
   // Optionally expose via a public env var and import from $env/static/public
@@ -1141,7 +1142,7 @@
                 </td>
                 <td class="delivery">
                   {#if part.delivery_date}
-                    <span style="font-size:12px; color:var(--text-secondary);">{new Date(part.delivery_date).toLocaleDateString()}</span>
+                    <span style="font-size:12px; color:var(--text-secondary);">{formatPacificDate(part.delivery_date)}</span>
                   {:else}
                     <span style="color: var(--text-secondary); font-size: 12px;">—</span>
                   {/if}

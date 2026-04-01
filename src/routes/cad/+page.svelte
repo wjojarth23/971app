@@ -6,6 +6,7 @@
   import { hasPermission, GENERAL_ROLES } from '$lib/permissions.js';
   import { isTeam9584 } from '$lib/frcTeams.js';
   import { onShapeAPI } from '$lib/onshape.js';
+  import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
   import stockData from '$lib/stock.json';
   import { Users, Plus, Link, Upload, Settings, FileText, ExternalLink, Edit, Download, Trash2 } from 'lucide-svelte';
   import { goto } from '$app/navigation';  let user = null;
@@ -909,7 +910,7 @@
         .insert([{
           subsystem_id: subsystem.id,
           release_id: 'current',
-          release_name: `Current State - ${new Date().toLocaleDateString()}`,
+          release_name: `Current State - ${formatPacificDate(new Date())}`,
           build_hash: buildHash,
           created_by: user.id,
           status: 'pending',
@@ -963,8 +964,8 @@
       const docInfo = onshapeData[subsystem.id].docInfo;
       const details = [
         `Name: ${docInfo.name || 'Unknown'}`,
-        `Modified: ${docInfo.modifiedAt ? new Date(docInfo.modifiedAt).toLocaleString() : 'Unknown'}`,
-        `Created: ${docInfo.createdAt ? new Date(docInfo.createdAt).toLocaleString() : 'Unknown'}`,
+        `Modified: ${docInfo.modifiedAt ? formatPacificDateTimeWithZone(docInfo.modifiedAt) : 'Unknown'}`,
+        `Created: ${docInfo.createdAt ? formatPacificDateTimeWithZone(docInfo.createdAt) : 'Unknown'}`,
         `Owner: ${docInfo.owner || 'Unknown'}`,
         `Public: ${docInfo.public ? 'Yes' : 'No'}`
       ].join('\n');
@@ -1254,7 +1255,7 @@
                 </div>
                 <div class="info-item">
                   <span>Created:</span>
-                  <span>{new Date(build.created_at).toLocaleDateString()}</span>
+                  <span>{formatPacificDate(build.created_at)}</span>
                 </div>
                 {#if build.creator}
                   <div class="info-item">
@@ -1265,7 +1266,7 @@
                 {#if build.assembled_at}
                   <div class="info-item">
                     <span>Assembled:</span>
-                    <span>{new Date(build.assembled_at).toLocaleDateString()}</span>
+                    <span>{formatPacificDate(build.assembled_at)}</span>
                   </div>
                 {/if}
               </div>

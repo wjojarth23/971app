@@ -3,6 +3,7 @@
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
   import { Download, Upload } from 'lucide-svelte';
+  import { formatPacificDate } from '$lib/timezone.js';
 
   let parts = [];
   let filteredParts = [];
@@ -30,7 +31,7 @@
     loading = false;
   }
 
-  function formatDate(dateString) { return new Date(dateString).toLocaleDateString(); }
+  function formatDate(dateString) { return formatPacificDate(dateString); }
 
   $: filteredParts = parts.filter(p => {
     const matchesSearch = !searchTerm ||

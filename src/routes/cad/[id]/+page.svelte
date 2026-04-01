@@ -8,6 +8,7 @@
   import { onShapeAPI } from '$lib/onshape.js';  
   import { partClassificationService } from '$lib/bom_classify.js';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
+  import { formatPacificDate } from '$lib/timezone.js';
   import { goto } from '$app/navigation';
   import { ArrowLeft, Triangle, Circle, Download, Settings, Plus, ShoppingCart, Zap, Copy, Trash2, Users } from 'lucide-svelte';
   import stockData from '$lib/stock.json';
@@ -1610,7 +1611,7 @@
                 <div class="timeline-content">
                   <div class="timeline-header">
                     <span class="timeline-name">{item.name}</span>
-                    <span class="timeline-date">{item.date.toLocaleDateString()}</span>
+                    <span class="timeline-date">{formatPacificDate(item.date)}</span>
                   </div>
                   {#if item.description}
                     <p class="timeline-description">{item.description}</p>

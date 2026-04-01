@@ -8,6 +8,7 @@
   import { getRouterStageCounts, summarizeRouterStages, isFullyCut, isFullyKitted, advanceRouterStageCounts, buildRouterProgressUpdate } from '$lib/router_progress.js';
   import { isManufacturingLead } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
+  import { formatPacificDate } from '$lib/timezone.js';
 
   // ==================== State ====================
   let parts = [];
@@ -660,7 +661,7 @@
                   {#if data.cutting.target_date}
                     <span class="status-target-date">
                       <Calendar size={12} />
-                      {new Date(data.cutting.target_date).toLocaleDateString()}
+                      {formatPacificDate(data.cutting.target_date)}
                     </span>
                   {/if}
                 {:else}
@@ -675,7 +676,7 @@
                   {#if data.upNext.target_date}
                     <span class="status-target-date">
                       <Calendar size={12} />
-                      {new Date(data.upNext.target_date).toLocaleDateString()}
+                      {formatPacificDate(data.upNext.target_date)}
                     </span>
                   {/if}
                 {:else}
@@ -915,7 +916,7 @@
                         {#if g.target_date}
                           <span class="meta-value">
                             <Calendar size={12} />
-                            {new Date(g.target_date).toLocaleDateString()}
+                            {formatPacificDate(g.target_date)}
                           </span>
                         {:else}
                           <span class="text-muted">â€”</span>

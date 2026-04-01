@@ -9,6 +9,7 @@
   import { BUTTONS } from '$lib/statuses.js';
   import { detectVendorFromString, buildVendorSearchUrl } from '$lib/vendor_detect.js';
   import { GENERAL_ROLES } from '$lib/permissions.js';
+  import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
 
   let user = null;
   let loading = true;
@@ -1328,10 +1329,10 @@
             </h1>
             <p class="build-hash">Build #{build.build_hash?.split('_')[1] || build.id.substring(0, 8)}</p>
             <div class="build-meta">
-              <span>Created: {new Date(build.created_at).toLocaleDateString()}</span>
+              <span>Created: {formatPacificDate(build.created_at)}</span>
               <span>Quantity: x{normalizePositiveInt(build.quantity, 1)}</span>
               {#if build.assembled_at}
-                <span>Assembled: {new Date(build.assembled_at).toLocaleDateString()}</span>
+                <span>Assembled: {formatPacificDate(build.assembled_at)}</span>
               {/if}
               {#if build.project_id}
                 <span>{projectBuilds.length} builds • {projectPartsCount} parts • Total cost: ${projectTotalCost.toFixed(2)}</span>
@@ -1806,7 +1807,7 @@
             >
               <div class="version-info">
                 <div class="version-name">{version.name || `Version ${version.id.substring(0, 8)}`}</div>
-                <div class="version-date">{new Date(version.date).toLocaleDateString()} at {new Date(version.date).toLocaleTimeString()}</div>
+                <div class="version-date">{formatPacificDateTimeWithZone(version.date)}</div>
               </div>
               {#if selectedVersionForRefetch?.id === version.id}
                 <div class="version-checkmark">✓</div>

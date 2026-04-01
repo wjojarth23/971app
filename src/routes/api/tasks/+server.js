@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
+import { parsePacificDateTimeInput } from '$lib/timezone.js';
 import { createPlannerFixingTaskFromP0Bug } from '$lib/server/planner_data.js';
 import {
   notifyTaskAssignedById,
@@ -252,10 +253,15 @@ export async function POST({ request }) {
       const needsReview = !!body?.needs_review;
       const needsManufacturing = !!body?.needs_manufacturing;
       const reviewerId = needsReview ? (reviewerIdRaw || actor.id) : null;
-      const deadlineAt = body?.deadline_at ? new Date(body.deadline_at).toISOString() : null;
+      const rawDeadlineAt = String(body?.deadline_at || '').trim();
+      const parsedDeadlineAt = rawDeadlineAt ? parsePacificDateTimeInput(rawDeadlineAt) : null;
+      const deadlineAt = parsedDeadlineAt ? parsedDeadlineAt.toISOString() : null;
 
       if (!title) return json({ error: 'title required' }, { status: 400 });
       if (!assigneeId) return json({ error: 'assignee_id required' }, { status: 400 });
+      if (rawDeadlineAt && !parsedDeadlineAt) {
+        return json({ error: 'deadline_at must be a valid Pacific time' }, { status: 400 });
+      }
       if (scope === 'general' && !GENERAL_TYPES.includes(generalType)) {
         return json({ error: 'general_type required for general tasks' }, { status: 400 });
       }

@@ -4,6 +4,7 @@
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { Settings, Package, Wrench, CheckCircle, Clock, ExternalLink, DollarSign } from 'lucide-svelte';
   import { goto } from '$app/navigation';
+  import { formatPacificDate } from '$lib/timezone.js';
 
   let user = null;
   let loading = true;
@@ -581,7 +582,7 @@
                           <span>|</span>
                           <span>Qty x{Math.max(1, Math.round(Number(build.quantity || 1)))}</span>
                           <span>•</span>
-                          <span>Created {new Date(build.created_at).toLocaleDateString()}</span>
+                          <span>Created {formatPacificDate(build.created_at)}</span>
                         </div>
                         <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
                           <div class="cost-badge">Cost: ${ (build.totalPurchasingCost || 0).toFixed(2) }</div>
