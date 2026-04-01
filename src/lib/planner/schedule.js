@@ -425,11 +425,13 @@ function scheduleItem(item, predecessorMap, scheduledMap, rules, defaultStartAt)
 
   if (item.kind === 'milestone') {
     const target = toDateOrNull(item.manual_start_at) || predecessorFinish || defaultStartAt;
+    const dependencyReadyAt = predecessorFinish || target;
     const scheduledStart = isPinnedMilestone(item)
-      ? (predecessorFinish && predecessorFinish > target ? predecessorFinish : target)
-      : (predecessorFinish || target);
+      ? target
+      : dependencyReadyAt;
     return {
       ...item,
+      dependency_ready_at: dependencyReadyAt?.toISOString() || null,
       scheduled_start_at: scheduledStart?.toISOString() || null,
       scheduled_end_at: scheduledStart?.toISOString() || null
     };
@@ -813,7 +815,7 @@ function buildPinnedMilestoneWarnings(items, rawRules = []) {
     .filter((item) => isPinnedMilestone(item))
     .sort((left, right) => String(left.manual_start_at).localeCompare(String(right.manual_start_at)))
     .flatMap((anchor) => {
-      const scheduledStart = toDateOrNull(anchor.scheduled_start_at);
+      const scheduledStart = toDateOrNull(anchor.dependency_ready_at || anchor.scheduled_start_at);
       const targetStart = toDateOrNull(anchor.manual_start_at);
       if (!scheduledStart || !targetStart || scheduledStart <= targetStart) return [];
 

@@ -27,7 +27,11 @@
     isPlannerDrivePracticeTask,
     isPlannerFixingTask
   } from '$lib/planner/constants.js';
-  import { buildPlannerTaskUpdatePayload } from '$lib/planner/interaction.js';
+  import {
+    buildPlannerOptimisticItem,
+    buildPlannerTaskUpdatePayload,
+    reorderPlannerItems
+  } from '$lib/planner/interaction.js';
   import {
     buildFullCycleTaskSteps,
     PLANNER_FULL_CYCLE_DEFAULT_TOTAL_MINUTES,
@@ -80,6 +84,11 @@
   let warnings = [];
   let error = '';
   let info = '';
+  let optimisticItemOverrides = {};
+  let optimisticItemMutationIds = {};
+  let optimisticOrderState = null;
+  let optimisticDependencies = [];
+  let plannerMutationSequence = 0;
   let activeView = 'gantt';
   let showItemModal = false;
   let editingItemId = null;
@@ -429,6 +438,67 @@
     warnings = data?.warnings || [];
   }
 
+  function nextPlannerMutationId() {
+    plannerMutationSequence += 1;
+    return plannerMutationSequence;
+  }
+
+  function startOptimisticItemMutation(itemId, nextItem) {
+    const mutationId = nextPlannerMutationId();
+    optimisticItemOverrides = {
+      ...optimisticItemOverrides,
+      [itemId]: nextItem
+    };
+    optimisticItemMutationIds = {
+      ...optimisticItemMutationIds,
+      [itemId]: mutationId
+    };
+    return mutationId;
+  }
+
+  function finishOptimisticItemMutation(itemId, mutationId) {
+    if (!itemId || optimisticItemMutationIds[itemId] !== mutationId) return;
+    const nextOverrides = { ...optimisticItemOverrides };
+    const nextMutationIds = { ...optimisticItemMutationIds };
+    delete nextOverrides[itemId];
+    delete nextMutationIds[itemId];
+    optimisticItemOverrides = nextOverrides;
+    optimisticItemMutationIds = nextMutationIds;
+  }
+
+  function startOptimisticOrder(itemIds = []) {
+    const mutationId = nextPlannerMutationId();
+    optimisticOrderState = {
+      mutationId,
+      itemIds: [...itemIds]
+    };
+    return mutationId;
+  }
+
+  function finishOptimisticOrder(mutationId) {
+    if (optimisticOrderState?.mutationId !== mutationId) return;
+    optimisticOrderState = null;
+  }
+
+  function startOptimisticDependency(predecessorItemId, successorItemId) {
+    const mutationId = nextPlannerMutationId();
+    optimisticDependencies = [
+      ...optimisticDependencies,
+      {
+        id: `optimistic-dependency-${mutationId}`,
+        predecessor_item_id: predecessorItemId,
+        successor_item_id: successorItemId
+      }
+    ];
+    return mutationId;
+  }
+
+  function finishOptimisticDependency(mutationId) {
+    optimisticDependencies = optimisticDependencies.filter(
+      (dependency) => dependency.id !== `optimistic-dependency-${mutationId}`
+    );
+  }
+
   async function loadPlanner() {
     loading = true;
     error = '';
@@ -727,6 +797,10 @@
         item_id: source.id,
         manual_start_at: current.start
       };
+      const optimisticItem = buildPlannerOptimisticItem(source, current, payload);
+      const mutationId = optimisticItem
+        ? startOptimisticItemMutation(source.id, optimisticItem)
+        : null;
 
       logPlannerGanttUpdate('Submitting milestone drag update', {
         event,
@@ -758,6 +832,8 @@
           error: submitError?.message || submitError
         });
         throw submitError;
+      } finally {
+        if (mutationId !== null) finishOptimisticItemMutation(source.id, mutationId);
       }
       return;
     }
@@ -786,6 +862,11 @@
       payload
     });
 
+    const optimisticItem = buildPlannerOptimisticItem(source, current, payload);
+    const mutationId = optimisticItem
+      ? startOptimisticItemMutation(source.id, optimisticItem)
+      : null;
+
     try {
       const response = await submitPlannerAction(payload, '');
       toastActions.show(successMessage);
@@ -811,24 +892,44 @@
         error: submitError?.message || submitError
       });
       throw submitError;
+    } finally {
+      if (mutationId !== null) finishOptimisticItemMutation(source.id, mutationId);
     }
   }
 
   async function handleGanttLinkAdd(event) {
-    await submitPlannerAction({
-      action: 'add-dependency',
-      predecessor_item_id: event?.link?.source,
-      successor_item_id: event?.link?.target
-    }, 'Dependency added.');
+    const predecessorItemId = event?.link?.source;
+    const successorItemId = event?.link?.target;
+    if (!predecessorItemId || !successorItemId) return;
+
+    const mutationId = startOptimisticDependency(predecessorItemId, successorItemId);
+
+    try {
+      await submitPlannerAction({
+        action: 'add-dependency',
+        predecessor_item_id: predecessorItemId,
+        successor_item_id: successorItemId
+      }, 'Dependency added.');
+    } finally {
+      finishOptimisticDependency(mutationId);
+    }
   }
 
   async function handleGanttReorder(event) {
     if (event?.inProgress || !ganttApi?.serialize) return;
     const orderedIds = ganttApi.serialize().map((task) => task.id);
-    await submitPlannerAction({
-      action: 'reorder-items',
-      item_ids: orderedIds
-    });
+    if (!orderedIds.length) return;
+
+    const mutationId = startOptimisticOrder(orderedIds);
+
+    try {
+      await submitPlannerAction({
+        action: 'reorder-items',
+        item_ids: orderedIds
+      });
+    } finally {
+      finishOptimisticOrder(mutationId);
+    }
   }
 
   function handleGanttSelect(event) {
@@ -876,8 +977,23 @@
     return () => unsubscribe?.();
   });
 
+  $: plannerItems = (() => {
+    const mergedItems = (items || []).map((item) => optimisticItemOverrides[item.id] || item);
+    return optimisticOrderState?.itemIds?.length
+      ? reorderPlannerItems(mergedItems, optimisticOrderState.itemIds)
+      : mergedItems;
+  })();
+  $: plannerDependencies = (() => {
+    const seen = new Set();
+    return [...(dependencies || []), ...(optimisticDependencies || [])].filter((dependency) => {
+      const key = `${dependency.predecessor_item_id}:${dependency.successor_item_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
   $: peopleById = new Map((people || []).map((person) => [person.id, person]));
-  $: itemMap = new Map((items || []).map((item) => [item.id, item]));
+  $: itemMap = new Map((plannerItems || []).map((item) => [item.id, item]));
   $: ownerSearchTerm = String(ownerSearchQuery || '').trim().toLowerCase();
   $: p0BugSearchTerm = String(p0BugSearchQuery || '').trim().toLowerCase();
   $: selectedOwners = (draft.owner_ids || []).map((ownerId) => peopleById.get(ownerId) || { id: ownerId });
@@ -889,7 +1005,7 @@
     : [];
   $: knownP0BugRows = (() => {
     const map = new Map();
-    for (const item of items || []) {
+    for (const item of plannerItems || []) {
       for (const bug of item?.p0_bugs || []) {
         if (bug?.id && !map.has(bug.id)) map.set(bug.id, bug);
       }
@@ -912,25 +1028,25 @@
       : list;
   })();
   $: incomingDependencies = (() => {
-    const map = new Map((items || []).map((item) => [item.id, []]));
-    for (const dependency of dependencies || []) {
+    const map = new Map((plannerItems || []).map((item) => [item.id, []]));
+    for (const dependency of plannerDependencies || []) {
       if (map.has(dependency.successor_item_id)) map.get(dependency.successor_item_id).push(dependency);
     }
     return map;
   })();
   $: outgoingDependencies = (() => {
-    const map = new Map((items || []).map((item) => [item.id, []]));
-    for (const dependency of dependencies || []) {
+    const map = new Map((plannerItems || []).map((item) => [item.id, []]));
+    for (const dependency of plannerDependencies || []) {
       if (map.has(dependency.predecessor_item_id)) map.get(dependency.predecessor_item_id).push(dependency);
     }
     return map;
   })();
-  $: taskRows = (items || []).filter((item) => item.kind === 'task');
+  $: taskRows = (plannerItems || []).filter((item) => item.kind === 'task');
   $: fixingTaskRows = taskRows.filter((item) => isFixingItem(item));
   $: drivePracticeTaskRows = taskRows.filter((item) => isDrivePracticeItem(item));
   $: p0BugRows = p0Bugs || [];
-  $: redItems = (items || []).filter((item) => item.status === 'red');
-  $: dependencyCandidateItems = (items || []).filter((item) => item.id !== editingItemId);
+  $: redItems = (plannerItems || []).filter((item) => item.status === 'red');
+  $: dependencyCandidateItems = (plannerItems || []).filter((item) => item.id !== editingItemId);
   $: blockedRules = (calendarRules || []).filter((rule) => rule.rule_type === 'blocked' || rule.rule_type === 'drive_practice');
   $: legacyDrivePracticeRules = blockedRules.filter((rule) => rule.rule_type === 'drive_practice');
   $: workWindowRules = (calendarRules || []).filter((rule) => rule.rule_type === 'work_window');
@@ -945,8 +1061,8 @@
   $: setPlannerGanttCalendarRules(calendarRules);
   $: ganttZoom = PLANNER_GANTT_ZOOM_LEVELS[ganttZoomIndex];
   $: ganttScales = createPlannerGanttScales({ timeScaleStep: ganttZoom.timeScaleStep });
-  $: ganttBounds = getPlannerGanttBounds(items);
-  $: ganttTasks = (items || []).map((item) => ({
+  $: ganttBounds = getPlannerGanttBounds(plannerItems);
+  $: ganttTasks = (plannerItems || []).map((item) => ({
     id: item.id,
     text: item.title,
     start: new Date(item.scheduled_start_at || item.manual_start_at || new Date()),
@@ -965,7 +1081,7 @@
     accountable_name: formatPerson(item.accountable),
     ...item
   }));
-  $: ganttLinks = (dependencies || []).map((dependency) => ({
+  $: ganttLinks = (plannerDependencies || []).map((dependency) => ({
     id: dependency.id,
     source: dependency.predecessor_item_id,
     target: dependency.successor_item_id,
@@ -1086,7 +1202,7 @@
             </div>
           </div>
         </div>
-        {#if items.length === 0}
+        {#if plannerItems.length === 0}
           <div class="empty-state planner-empty-state">
             <h3>No planner items yet</h3>
             <p>Create a task or milestone to start shaping the schedule.</p>

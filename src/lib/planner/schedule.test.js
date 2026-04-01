@@ -246,7 +246,7 @@ describe('planner schedule utilities', () => {
 
     expect(taskA.duration_minutes).toBe(120);
     expect(taskB.duration_minutes).toBe(120);
-    expect(new Date(milestone.scheduled_start_at).getTime()).toBeGreaterThan(new Date(milestone.manual_start_at).getTime());
+    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
     expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
@@ -295,7 +295,7 @@ describe('planner schedule utilities', () => {
 
     expect(taskA.duration_minutes).toBe(120);
     expect(taskB.duration_minutes).toBe(120);
-    expect(new Date(milestone.scheduled_start_at).getTime()).toBeGreaterThan(new Date(milestone.manual_start_at).getTime());
+    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
     expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
@@ -384,7 +384,7 @@ describe('planner schedule utilities', () => {
 
     expect(task.duration_minutes).toBe(120);
     expect(new Date(task.scheduled_end_at).toISOString()).toBe(new Date(2026, 3, 1, 18, 0, 0, 0).toISOString());
-    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(2026, 3, 1, 18, 0, 0, 0).toISOString());
+    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
     expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
@@ -434,7 +434,7 @@ describe('planner schedule utilities', () => {
     expect(taskA.duration_minutes).toBe(120);
     expect(taskB.duration_minutes).toBe(120);
     expect(new Date(milestone.manual_start_at).toISOString()).toBe(new Date(2026, 3, 1, 10, 30, 0, 0).toISOString());
-    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(2026, 3, 1, 12, 0, 0, 0).toISOString());
+    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
     expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 

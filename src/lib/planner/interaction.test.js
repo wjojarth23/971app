@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildPlannerTaskUpdatePayload } from './interaction.js';
+import {
+  buildPlannerOptimisticItem,
+  buildPlannerTaskUpdatePayload,
+  reorderPlannerItems
+} from './interaction.js';
 import { DEFAULT_PLANNER_CALENDAR_RULES } from './constants.js';
 
 describe('planner gantt interaction payloads', () => {
@@ -114,5 +118,77 @@ describe('planner gantt interaction payloads', () => {
       item_id: 'task-5',
       duration_minutes: 150
     });
+  });
+
+  it('builds an optimistic task update that keeps the dragged timing visible', () => {
+    const movedStart = new Date(2026, 3, 1, 16, 30, 0, 0);
+    const movedEnd = new Date(2026, 3, 1, 19, 0, 0, 0);
+    const optimistic = buildPlannerOptimisticItem(
+      {
+        id: 'task-6',
+        kind: 'task',
+        manual_start_at: null,
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+        duration_minutes: 120,
+        requested_duration_minutes: 120
+      },
+      { start: movedStart, end: movedEnd },
+      {
+        action: 'update-item',
+        item_id: 'task-6',
+        manual_start_at: movedStart,
+        duration_minutes: 150
+      }
+    );
+
+    expect(optimistic).toMatchObject({
+      id: 'task-6',
+      manual_start_at: movedStart.toISOString(),
+      scheduled_start_at: movedStart.toISOString(),
+      scheduled_end_at: movedEnd.toISOString(),
+      duration_minutes: 150,
+      requested_duration_minutes: 150
+    });
+  });
+
+  it('builds an optimistic milestone update from the dragged date', () => {
+    const movedStart = new Date(2026, 3, 2, 12, 0, 0, 0);
+    const optimistic = buildPlannerOptimisticItem(
+      {
+        id: 'milestone-1',
+        kind: 'milestone',
+        manual_start_at: start.toISOString(),
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: start.toISOString()
+      },
+      { start: movedStart },
+      {
+        action: 'update-item',
+        item_id: 'milestone-1',
+        manual_start_at: movedStart
+      }
+    );
+
+    expect(optimistic).toMatchObject({
+      id: 'milestone-1',
+      manual_start_at: movedStart.toISOString(),
+      scheduled_start_at: movedStart.toISOString(),
+      scheduled_end_at: movedStart.toISOString()
+    });
+  });
+
+  it('reorders planner items while rewriting sort order locally', () => {
+    const reordered = reorderPlannerItems(
+      [
+        { id: 'task-a', sort_order: 0 },
+        { id: 'task-b', sort_order: 1000 },
+        { id: 'task-c', sort_order: 2000 }
+      ],
+      ['task-c', 'task-a', 'task-b']
+    );
+
+    expect(reordered.map((item) => item.id)).toEqual(['task-c', 'task-a', 'task-b']);
+    expect(reordered.map((item) => item.sort_order)).toEqual([0, 1000, 2000]);
   });
 });
