@@ -30,7 +30,8 @@
   import {
     buildPlannerOptimisticItem,
     buildPlannerTaskUpdatePayload,
-    reorderPlannerItems
+    reorderPlannerItems,
+    snapPlannerGanttDragDetail
   } from '$lib/planner/interaction.js';
   import {
     buildFullCycleTaskSteps,
@@ -89,6 +90,8 @@
   let optimisticOrderState = null;
   let optimisticDependencies = [];
   let plannerMutationSequence = 0;
+  let ganttDragSnapState = new Map();
+  let ganttSnapInterceptorInstalled = false;
   let activeView = 'gantt';
   let showItemModal = false;
   let editingItemId = null;
@@ -499,6 +502,61 @@
     );
   }
 
+  function getPlannerGanttDragStateKey(detail) {
+    return `${detail?.id || ''}:${detail?.segmentIndex ?? 'task'}`;
+  }
+
+  function clearPlannerGanttDragState(itemId) {
+    if (!itemId || !ganttDragSnapState.size) return;
+    ganttDragSnapState = new Map(
+      [...ganttDragSnapState.entries()].filter(([key]) => !key.startsWith(`${itemId}:`))
+    );
+  }
+
+  function installPlannerGanttSnapInterceptor(api) {
+    if (!api || ganttSnapInterceptorInstalled) return;
+
+    api.intercept('drag-task', (detail) => {
+      if (!detail?.id) return;
+
+      const hasHorizontalDrag =
+        Number.isFinite(Number(detail?.left)) ||
+        Number.isFinite(Number(detail?.width));
+      const state = api.getState?.();
+      const gridSize = Number(state?._scales?.lengthUnitWidth || 0);
+      const chartWidth = Number(state?._scales?.width || 0);
+      const key = getPlannerGanttDragStateKey(detail);
+
+      if (!hasHorizontalDrag || !gridSize) {
+        if (detail?.inProgress === false) ganttDragSnapState.delete(key);
+        return;
+      }
+
+      const task = api.getTask?.(detail.id);
+      if (!task) {
+        if (detail?.inProgress === false) ganttDragSnapState.delete(key);
+        return;
+      }
+
+      const result = snapPlannerGanttDragDetail(
+        detail,
+        task,
+        ganttDragSnapState.get(key) || null,
+        { gridSize, chartWidth }
+      );
+
+      if (result?.detail) Object.assign(detail, result.detail);
+
+      if (detail?.inProgress === false) {
+        ganttDragSnapState.delete(key);
+      } else if (result?.dragState) {
+        ganttDragSnapState.set(key, result.dragState);
+      }
+    });
+
+    ganttSnapInterceptorInstalled = true;
+  }
+
   async function loadPlanner() {
     loading = true;
     error = '';
@@ -785,6 +843,7 @@
 
   async function handleGanttTaskUpdate(event) {
     if (event?.inProgress) return;
+    clearPlannerGanttDragState(event?.id);
     const source = itemMap.get(event?.id);
     const current = ganttApi?.getTask?.(event?.id);
     if (!source || !current) return;
@@ -938,6 +997,7 @@
 
   function ganttInit(api) {
     ganttApi = api;
+    installPlannerGanttSnapInterceptor(api);
   }
 
   async function setGanttZoom(nextIndex) {

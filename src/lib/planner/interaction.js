@@ -10,6 +10,19 @@ function toIsoStringOrNull(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function toNumberOrNull(value) {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function roundToStep(value, step) {
+  return Math.round(value / step) * step;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function toDateOrNull(value) {
   if (!value) return null;
   const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
@@ -111,4 +124,79 @@ export function reorderPlannerItems(items = [], orderedIds = []) {
     ...item,
     sort_order: index * 1000
   }));
+}
+
+export function snapPlannerGanttDragDetail(detail, task, dragState = null, options = {}) {
+  const gridSize = toNumberOrNull(options?.gridSize);
+  if (!detail || !task || !gridSize || gridSize <= 0) {
+    return {
+      detail: detail ? { ...detail } : detail,
+      dragState
+    };
+  }
+
+  const chartWidth = toNumberOrNull(options?.chartWidth);
+  const rawLeft = toNumberOrNull(detail.left);
+  const rawWidth = toNumberOrNull(detail.width);
+  const baseLeft = toNumberOrNull(dragState?.left) ?? toNumberOrNull(task?.$x) ?? rawLeft;
+  const baseWidth = toNumberOrNull(dragState?.width) ?? toNumberOrNull(task?.$w) ?? rawWidth;
+  const nextDetail = { ...detail };
+  const nextDragState =
+    baseLeft === null && baseWidth === null
+      ? null
+      : { left: baseLeft, width: baseWidth };
+
+  const leftChanged =
+    rawLeft !== null &&
+    baseLeft !== null &&
+    Math.abs(rawLeft - baseLeft) > 0.5;
+  const widthChanged =
+    rawWidth !== null &&
+    baseWidth !== null &&
+    Math.abs(rawWidth - baseWidth) > 0.5;
+
+  if (!leftChanged && !widthChanged) {
+    return {
+      detail: nextDetail,
+      dragState: nextDragState
+    };
+  }
+
+  if (leftChanged && widthChanged && baseLeft !== null && baseWidth !== null) {
+    const rightEdge = baseLeft + baseWidth;
+    const maxLeft = Math.max(0, rightEdge - gridSize);
+    const snappedLeft = clamp(roundToStep(rawLeft, gridSize), 0, maxLeft);
+    nextDetail.left = snappedLeft;
+    nextDetail.width = Math.max(gridSize, rightEdge - snappedLeft);
+    return {
+      detail: nextDetail,
+      dragState: nextDragState
+    };
+  }
+
+  if (widthChanged && rawWidth !== null) {
+    const anchorLeft = rawLeft ?? baseLeft ?? 0;
+    const maxWidth =
+      chartWidth !== null
+        ? Math.max(gridSize, chartWidth - anchorLeft)
+        : Number.POSITIVE_INFINITY;
+    nextDetail.width = clamp(roundToStep(rawWidth, gridSize), gridSize, maxWidth);
+    return {
+      detail: nextDetail,
+      dragState: nextDragState
+    };
+  }
+
+  if (leftChanged && rawLeft !== null) {
+    const maxLeft =
+      chartWidth !== null && baseWidth !== null
+        ? Math.max(0, chartWidth - baseWidth)
+        : Number.POSITIVE_INFINITY;
+    nextDetail.left = clamp(roundToStep(rawLeft, gridSize), 0, maxLeft);
+  }
+
+  return {
+    detail: nextDetail,
+    dragState: nextDragState
+  };
 }

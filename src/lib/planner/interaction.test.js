@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPlannerOptimisticItem,
   buildPlannerTaskUpdatePayload,
-  reorderPlannerItems
+  reorderPlannerItems,
+  snapPlannerGanttDragDetail
 } from './interaction.js';
 import { DEFAULT_PLANNER_CALENDAR_RULES } from './constants.js';
 
@@ -190,5 +191,81 @@ describe('planner gantt interaction payloads', () => {
 
     expect(reordered.map((item) => item.id)).toEqual(['task-c', 'task-a', 'task-b']);
     expect(reordered.map((item) => item.sort_order)).toEqual([0, 1000, 2000]);
+  });
+
+  it('snaps a moved task preview to the nearest visible workslot while dragging', () => {
+    const snapped = snapPlannerGanttDragDetail(
+      {
+        id: 'task-7',
+        left: 73,
+        width: 56,
+        inProgress: true
+      },
+      {
+        id: 'task-7',
+        $x: 56,
+        $w: 56
+      },
+      null,
+      {
+        gridSize: 28,
+        chartWidth: 280
+      }
+    );
+
+    expect(snapped.detail.left).toBe(84);
+    expect(snapped.detail.width).toBe(56);
+    expect(snapped.dragState).toEqual({
+      left: 56,
+      width: 56
+    });
+  });
+
+  it('snaps a start resize while preserving the task end position', () => {
+    const snapped = snapPlannerGanttDragDetail(
+      {
+        id: 'task-8',
+        left: 73,
+        width: 39,
+        inProgress: true
+      },
+      {
+        id: 'task-8',
+        $x: 56,
+        $w: 56
+      },
+      null,
+      {
+        gridSize: 28,
+        chartWidth: 280
+      }
+    );
+
+    expect(snapped.detail.left).toBe(84);
+    expect(snapped.detail.width).toBe(28);
+  });
+
+  it('snaps an end resize while keeping the start anchored', () => {
+    const snapped = snapPlannerGanttDragDetail(
+      {
+        id: 'task-9',
+        left: 56,
+        width: 73,
+        inProgress: true
+      },
+      {
+        id: 'task-9',
+        $x: 56,
+        $w: 56
+      },
+      null,
+      {
+        gridSize: 28,
+        chartWidth: 280
+      }
+    );
+
+    expect(snapped.detail.left).toBe(56);
+    expect(snapped.detail.width).toBe(84);
   });
 });
