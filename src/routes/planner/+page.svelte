@@ -623,6 +623,7 @@
   }
 
   async function handleGanttTaskUpdate(event) {
+    if (event?.inProgress) return;
     const source = itemMap.get(event?.id);
     const current = ganttApi?.getTask?.(event?.id);
     if (!source || !current) return;

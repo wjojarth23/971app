@@ -43,7 +43,7 @@ describe('planner schedule utilities', () => {
     expect(workingMinutesBetween(start, end, rules)).toBe(240);
   });
 
-  it('expands the least critical downstream tasks to fill a mission-critical milestone window', () => {
+  it('keeps requested durations stable even when a pinned milestone has slack', () => {
     const items = [
       {
         id: 'A',
@@ -88,12 +88,12 @@ describe('planner schedule utilities', () => {
 
     expect(taskA.duration_minutes).toBe(120);
     expect(taskB.requested_duration_minutes).toBe(120);
-    expect(taskB.duration_minutes).toBe(180);
-    expect(new Date(taskB.scheduled_end_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
+    expect(taskB.duration_minutes).toBe(120);
+    expect(new Date(taskB.scheduled_end_at).getTime()).toBeLessThan(new Date(milestone.manual_start_at).getTime());
     expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
   });
 
-  it('keeps expansion inside the segment between pinned milestones', () => {
+  it('keeps requested durations stable between pinned milestones', () => {
     const items = [
       {
         id: 'X',
@@ -157,12 +157,12 @@ describe('planner schedule utilities', () => {
     const milestone = result.items.find((item) => item.id === 'M');
 
     expect(earlierTask.duration_minutes).toBe(60);
-    expect(taskA.duration_minutes).toBeGreaterThanOrEqual(60);
-    expect(taskB.duration_minutes).toBeGreaterThan(60);
-    expect(new Date(taskB.scheduled_end_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
+    expect(taskA.duration_minutes).toBe(60);
+    expect(taskB.duration_minutes).toBe(60);
+    expect(new Date(taskB.scheduled_end_at).getTime()).toBeLessThan(new Date(milestone.manual_start_at).getTime());
   });
 
-  it('pulls a standard-priority milestone earlier even when it has a target date', () => {
+  it('still pulls an unpinned milestone to the dependency finish when work gets shorter', () => {
     const baseItems = [
       {
         id: 'A',
@@ -201,7 +201,7 @@ describe('planner schedule utilities', () => {
     expect(new Date(shortenedMilestone.scheduled_start_at).getTime()).toBeLessThan(new Date(baseItems[1].manual_start_at).getTime());
   });
 
-  it('shrinks level 4 tasks before touching lower-priority work', () => {
+  it('keeps task durations stable when a pinned milestone is late', () => {
     const items = [
       {
         id: 'A',
@@ -245,11 +245,12 @@ describe('planner schedule utilities', () => {
     const milestone = result.items.find((item) => item.id === 'M');
 
     expect(taskA.duration_minutes).toBe(120);
-    expect(taskB.duration_minutes).toBe(60);
-    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
+    expect(taskB.duration_minutes).toBe(120);
+    expect(new Date(milestone.scheduled_start_at).getTime()).toBeGreaterThan(new Date(milestone.manual_start_at).getTime());
+    expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
-  it('shrinks level 3 twice as fast as level 2 once level 4 work is exhausted', () => {
+  it('keeps requested durations stable for mixed-priority paths when a pinned milestone is late', () => {
     const items = [
       {
         id: 'A',
@@ -292,9 +293,10 @@ describe('planner schedule utilities', () => {
     const taskB = result.items.find((item) => item.id === 'B');
     const milestone = result.items.find((item) => item.id === 'M');
 
-    expect(taskA.duration_minutes).toBe(90);
-    expect(taskB.duration_minutes).toBe(60);
-    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
+    expect(taskA.duration_minutes).toBe(120);
+    expect(taskB.duration_minutes).toBe(120);
+    expect(new Date(milestone.scheduled_start_at).getTime()).toBeGreaterThan(new Date(milestone.manual_start_at).getTime());
+    expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
   it('restores previously compressed tasks back to their requested duration on recompute', () => {
@@ -350,7 +352,7 @@ describe('planner schedule utilities', () => {
     expect(new Date(taskB.scheduled_start_at).getTime()).toBe(new Date(taskA.scheduled_end_at).getTime());
   });
 
-  it('can compress requested-start tasks to satisfy milestone pressure', () => {
+  it('keeps requested-start tasks at their requested duration and warns when a pinned milestone slips', () => {
     const items = [
       {
         id: 'A',
@@ -380,12 +382,13 @@ describe('planner schedule utilities', () => {
     const task = result.items.find((item) => item.id === 'A');
     const milestone = result.items.find((item) => item.id === 'M');
 
-    expect(task.duration_minutes).toBe(60);
-    expect(new Date(task.scheduled_end_at).toISOString()).toBe(new Date(2026, 3, 1, 17, 0, 0, 0).toISOString());
-    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(2026, 3, 1, 17, 0, 0, 0).toISOString());
+    expect(task.duration_minutes).toBe(120);
+    expect(new Date(task.scheduled_end_at).toISOString()).toBe(new Date(2026, 3, 1, 18, 0, 0, 0).toISOString());
+    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(2026, 3, 1, 18, 0, 0, 0).toISOString());
+    expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
-  it('never shrinks level 1 tasks and moves the milestone instead when needed', () => {
+  it('never rewrites task durations or milestone targets when a pinned milestone is late', () => {
     const items = [
       {
         id: 'A',
@@ -429,10 +432,10 @@ describe('planner schedule utilities', () => {
     const milestone = result.items.find((item) => item.id === 'M');
 
     expect(taskA.duration_minutes).toBe(120);
-    expect(taskB.duration_minutes).toBe(60);
-    expect(new Date(milestone.manual_start_at).toISOString()).toBe(new Date(2026, 3, 1, 11, 0, 0, 0).toISOString());
-    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(milestone.manual_start_at).toISOString());
-    expect(result.warnings.some((warning) => warning.includes('level 1 tasks cannot shrink'))).toBe(true);
+    expect(taskB.duration_minutes).toBe(120);
+    expect(new Date(milestone.manual_start_at).toISOString()).toBe(new Date(2026, 3, 1, 10, 30, 0, 0).toISOString());
+    expect(new Date(milestone.scheduled_start_at).toISOString()).toBe(new Date(2026, 3, 1, 12, 0, 0, 0).toISOString());
+    expect(result.warnings.some((warning) => warning.includes('Critical path warning'))).toBe(true);
   });
 
   it('pulls an unanchored milestone earlier when its dependency gets shorter', () => {

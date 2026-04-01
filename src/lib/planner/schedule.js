@@ -860,47 +860,11 @@ export function recomputePlannerSchedule(rawItems = [], dependencies = [], rawRu
   }
 
   const { predecessorMap } = buildDependencyMaps(items, dependencies);
-  let scheduled = scheduleOrderedItems(items, order, predecessorMap, rawRules, defaultStartAt);
-  const warnings = [];
-  const seenWarnings = new Set();
-
-  function collectWarnings(entries = []) {
-    for (const entry of entries) {
-      if (!entry || seenWarnings.has(entry)) continue;
-      seenWarnings.add(entry);
-      warnings.push(entry);
-    }
-  }
-
-  for (let guard = 0; guard < 25; guard += 1) {
-    const compression = findFirstCompression(
-      scheduled.items,
-      predecessorMap,
-      scheduled.scheduledMap,
-      rawRules
-    );
-    if (compression) {
-      collectWarnings(compression.warnings || []);
-      const adjustedItems = applyScheduleAdjustment(scheduled.items, compression, rawRules);
-      scheduled = scheduleOrderedItems(adjustedItems, order, predecessorMap, rawRules, defaultStartAt);
-      continue;
-    }
-
-    const expansion = findFirstPinnedMilestoneExpansion(
-      scheduled.items,
-      predecessorMap,
-      scheduled.scheduledMap,
-      rawRules
-    );
-    if (!expansion) break;
-    collectWarnings(expansion.warnings || []);
-    const adjustedItems = applyScheduleAdjustment(scheduled.items, expansion, rawRules);
-    scheduled = scheduleOrderedItems(adjustedItems, order, predecessorMap, rawRules, defaultStartAt);
-  }
+  const scheduled = scheduleOrderedItems(items, order, predecessorMap, rawRules, defaultStartAt);
 
   return {
     items: scheduled.items,
-    warnings: [...warnings, ...buildPinnedMilestoneWarnings(scheduled.items, rawRules)],
+    warnings: buildPinnedMilestoneWarnings(scheduled.items, rawRules),
     hasCycle: false
   };
 }
