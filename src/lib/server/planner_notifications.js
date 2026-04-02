@@ -106,6 +106,69 @@ function drivePracticePromptText({ item, scheduledFor, ownerName }) {
   return `${who}drive practice "${item?.title || 'Drive Practice'}" wrapped at ${when}. Please report any P0 bugs you found here: ${getDrivePracticeReportLink(item, scheduledFor)} If there were no P0 bugs, no action is needed.`;
 }
 
+function isUniqueViolation(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.code === '23505' || message.includes('duplicate key value') || message.includes('unique constraint');
+}
+
+async function persistPlannerPromptRecord({ item, ownerId, checkpoint, scheduledFor, response, supa }) {
+  const scheduledForIso = new Date(scheduledFor).toISOString();
+  const payload = {
+    frc_team: item.frc_team,
+    planner_item_id: item.id,
+    owner_id: ownerId,
+    checkpoint,
+    scheduled_for: scheduledForIso,
+    sent_at: new Date().toISOString(),
+    slack_channel: response.channel,
+    slack_ts: response.ts
+  };
+
+  const { data: exactRow, error: exactRowError } = await supa
+    .from('planner_slack_prompts')
+    .select('id')
+    .eq('planner_item_id', item.id)
+    .eq('owner_id', ownerId)
+    .eq('checkpoint', checkpoint)
+    .eq('scheduled_for', scheduledForIso)
+    .maybeSingle();
+  if (exactRowError) throw exactRowError;
+
+  if (exactRow?.id) {
+    const { error: updateError } = await supa
+      .from('planner_slack_prompts')
+      .update(payload)
+      .eq('id', exactRow.id);
+    if (updateError) throw updateError;
+    return;
+  }
+
+  const { error: insertError } = await supa
+    .from('planner_slack_prompts')
+    .insert(payload);
+  if (!insertError) return;
+  if (!isUniqueViolation(insertError)) throw insertError;
+
+  // Back-compat for older databases that only allow one row per item/owner/checkpoint.
+  const { data: legacyRow, error: legacyRowError } = await supa
+    .from('planner_slack_prompts')
+    .select('id')
+    .eq('planner_item_id', item.id)
+    .eq('owner_id', ownerId)
+    .eq('checkpoint', checkpoint)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (legacyRowError) throw legacyRowError;
+  if (!legacyRow?.id) throw insertError;
+
+  const { error: legacyUpdateError } = await supa
+    .from('planner_slack_prompts')
+    .update(payload)
+    .eq('id', legacyRow.id);
+  if (legacyUpdateError) throw legacyUpdateError;
+}
+
 export async function sendPlannerPrompt({ item, ownerId, checkpoint, scheduledFor }) {
   const supa = getSupabase();
   const user = await fetchNotificationUser(ownerId, supa);
@@ -150,21 +213,14 @@ export async function sendPlannerPrompt({ item, ownerId, checkpoint, scheduledFo
     }
   }
 
-  const { error: upsertError } = await supa
-    .from('planner_slack_prompts')
-    .upsert([{
-      frc_team: item.frc_team,
-      planner_item_id: item.id,
-      owner_id: ownerId,
-      checkpoint,
-      scheduled_for: new Date(scheduledFor).toISOString(),
-      sent_at: new Date().toISOString(),
-      slack_channel: response.channel,
-      slack_ts: response.ts
-    }], {
-      onConflict: 'planner_item_id,owner_id,checkpoint,scheduled_for'
-    });
-  if (upsertError) throw upsertError;
+  await persistPlannerPromptRecord({
+    item,
+    ownerId,
+    checkpoint,
+    scheduledFor,
+    response,
+    supa
+  });
 
   return { ok: true, channel: response.channel, ts: response.ts };
 }
