@@ -8,16 +8,24 @@ export const PLANNER_DRIVE_PRACTICE_CATEGORY = 'drive_practice';
 export const PLANNER_STANDARD_TASK_MODE = 'standard';
 export const PLANNER_FIXING_TASK_MODE = 'fixing';
 export const PLANNER_AUTO_FIXING_TASK_DAYS = 3;
+export const PLANNER_NOT_STARTED_STATUS = 'not_started';
+export const PLANNER_DEFAULT_TASK_STATUS = PLANNER_NOT_STARTED_STATUS;
+export const PLANNER_DEFAULT_MILESTONE_STATUS = 'green';
 
 export const PLANNER_ITEM_KINDS = ['task', 'milestone'];
 export const PLANNER_CATEGORIES = ['assembly', 'electrical', 'software', 'manufacturing', 'cad', PLANNER_DRIVE_PRACTICE_CATEGORY];
-export const PLANNER_STATUSES = ['green', 'yellow', 'red', 'completed'];
+export const PLANNER_STATUSES = [PLANNER_NOT_STARTED_STATUS, 'green', 'yellow', 'red', 'completed'];
+export const PLANNER_ROLLUP_STATUSES = ['green', 'yellow', 'red'];
 export const PLANNER_CRITICAL_LEVELS = [1, 2, 3, 4];
 export const PLANNER_OWNER_TYPES = ['owner', 'accountable'];
 export const PLANNER_RULE_TYPES = ['work_window', 'blocked'];
 export const PLANNER_TASK_MODES = [PLANNER_STANDARD_TASK_MODE, PLANNER_FIXING_TASK_MODE];
 
 export const PLANNER_STATUS_META = {
+  [PLANNER_NOT_STARTED_STATUS]: {
+    label: 'Not Started',
+    tone: 'pending'
+  },
   green: {
     label: 'Green',
     tone: 'healthy'

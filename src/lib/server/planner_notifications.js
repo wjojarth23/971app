@@ -1,7 +1,12 @@
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import { buildTaskPromptSchedule } from '$lib/planner/schedule.js';
-import { isPlannerDrivePracticeTask, PLANNER_REACTION_TO_STATUS, PLANNER_STATUS_TO_REACTION } from '$lib/planner/constants.js';
+import {
+  isPlannerDrivePracticeTask,
+  PLANNER_REACTION_TO_STATUS,
+  PLANNER_STATUS_TO_REACTION
+} from '$lib/planner/constants.js';
+import { canPlannerReactionUpdateStatus } from '$lib/planner/status.js';
 import { ensureApproverDmChannel, getSlackClient, getSupabase, slackUserIdForEmail } from '$lib/server/971bot.js';
 import { fetchPlannerSnapshot } from '$lib/server/planner_data.js';
 import { formatPacific } from '$lib/timezone.js';
@@ -97,7 +102,11 @@ async function ensureSlackDmChannel(user, supa) {
 function promptText({ item, checkpoint, scheduledFor, ownerName }) {
   const when = formatMoment(scheduledFor);
   const who = ownerName ? `${ownerName}, ` : '';
-  return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. React with green, yellow, red, or the check mark reaction to update the planner status. ${getPlannerLink(item.id)}`;
+  const isTaskStartPrompt = checkpoint === 'task_start' || checkpoint === 'start';
+  const actionHelp = isTaskStartPrompt
+    ? 'React to this first message to mark the task as started and set the planner status.'
+    : 'React with green, yellow, red, or the check mark reaction to update the planner status.';
+  return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. ${actionHelp} ${getPlannerLink(item.id)}`;
 }
 
 function drivePracticePromptText({ item, scheduledFor, ownerName }) {
@@ -387,6 +396,16 @@ export async function handlePlannerReaction({ channel, ts, reaction, reactingUse
       responded_at: new Date().toISOString()
     })
     .eq('id', prompt.id);
+
+  if (!canPlannerReactionUpdateStatus(item.status, prompt.checkpoint)) {
+    return {
+      handled: true,
+      ignored: true,
+      reason: 'awaiting-task-start-reaction',
+      status: item.status,
+      recorded_status: status
+    };
+  }
 
   if (item.status !== status) {
     await supa

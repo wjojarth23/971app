@@ -15,6 +15,8 @@ import {
 import { detectCycleIfDependencyAdded, parseClockToMinutes, roundUpToSlot } from '$lib/planner/schedule.js';
 import {
   PLANNER_CATEGORIES,
+  PLANNER_DEFAULT_MILESTONE_STATUS,
+  PLANNER_DEFAULT_TASK_STATUS,
   PLANNER_DEFAULT_MIN_DURATION_MINUTES,
   PLANNER_DEFAULT_TASK_DURATION_MINUTES,
   PLANNER_FIXING_TASK_MODE,
@@ -37,9 +39,13 @@ function normalizeKind(rawValue) {
   return String(rawValue || '').trim().toLowerCase() === 'milestone' ? 'milestone' : 'task';
 }
 
-function normalizeStatus(rawValue) {
+function defaultStatusForKind(kind = 'task') {
+  return kind === 'task' ? PLANNER_DEFAULT_TASK_STATUS : PLANNER_DEFAULT_MILESTONE_STATUS;
+}
+
+function normalizeStatus(rawValue, fallback = PLANNER_DEFAULT_TASK_STATUS) {
   const value = String(rawValue || '').trim().toLowerCase();
-  return PLANNER_STATUSES.includes(value) ? value : 'green';
+  return PLANNER_STATUSES.includes(value) ? value : fallback;
 }
 
 function normalizeCategory(rawValue) {
@@ -209,7 +215,7 @@ export async function POST({ request }) {
       const ownerIds = normalizeOwnerIds(body?.owner_ids);
       const p0BugIds = normalizeIdList(body?.p0_bug_ids);
       const accountableUserId = String(body?.accountable_user_id || '').trim() || null;
-      const normalizedStatus = normalizeStatus(body?.status);
+      const normalizedStatus = normalizeStatus(body?.status, defaultStatusForKind(kind));
       const criticalLevel = normalizeCriticalLevel(body?.critical_level);
 
       if (!title) return json({ error: 'title required' }, { status: 400 });
@@ -352,7 +358,7 @@ export async function POST({ request }) {
 
       const { data: existing, error: existingError } = await db
         .from('planner_items')
-        .select('id, frc_team, kind, task_mode, duration_minutes, requested_duration_minutes, min_duration_minutes')
+        .select('id, frc_team, kind, status, task_mode, duration_minutes, requested_duration_minutes, min_duration_minutes')
         .eq('id', itemId)
         .maybeSingle();
       if (existingError) throw existingError;
@@ -376,7 +382,9 @@ export async function POST({ request }) {
       } else if (body?.notes !== undefined) {
         updatePayload.notes = String(body.notes || '').trim() || null;
       }
-      if (body?.status !== undefined) updatePayload.status = normalizeStatus(body.status);
+      if (body?.status !== undefined) {
+        updatePayload.status = normalizeStatus(body.status, existing.status || defaultStatusForKind(kind));
+      }
       if (body?.critical_level !== undefined) updatePayload.critical_level = normalizeCriticalLevel(body.critical_level);
       if (kind === 'task') {
         updatePayload.task_mode = taskMode;

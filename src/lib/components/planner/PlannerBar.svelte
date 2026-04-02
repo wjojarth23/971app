@@ -11,7 +11,7 @@
 
 {#if data?.kind === 'milestone'}
   <div
-    class={`planner-milestone planner-milestone--${data.status || 'green'}`}
+    class={`planner-milestone planner-milestone--${data.status || 'green'} planner-milestone-tone--${data.status_tone || data.status || 'green'}`}
     title={`${data.text} - ${criticalLabel(data.critical_level)}`}
   >
     <div class="planner-milestone-fill"></div>
@@ -21,7 +21,7 @@
   </div>
 {:else}
   <div
-    class={`planner-task planner-task--${data.status || 'green'}`}
+    class={`planner-task planner-task--${data.status || 'green'} planner-task-tone--${data.status_tone || data.status || 'green'}`}
     title={`${data.text} - ${criticalLabel(data.critical_level)}`}
   >
     <span class="planner-task-title">{data.text}</span>
@@ -56,6 +56,32 @@
     border-color: var(--planner-green-border, #166534);
   }
 
+  .planner-task--not_started {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.2) 0,
+      rgba(255, 255, 255, 0.2) 0.45rem,
+      transparent 0.45rem,
+      transparent 0.9rem
+    );
+  }
+
+  .planner-task--not_started.planner-task-tone--green {
+    background-color: var(--planner-green-solid, #15803d);
+    border-color: var(--planner-green-border, #166534);
+  }
+
+  .planner-task--not_started.planner-task-tone--yellow {
+    background-color: var(--planner-yellow-solid, #eab308);
+    border-color: var(--planner-yellow-border, #ca8a04);
+    color: var(--planner-yellow-text, #422006);
+  }
+
+  .planner-task--not_started.planner-task-tone--red {
+    background-color: var(--planner-red-solid, #be123c);
+    border-color: var(--planner-red-border, #9f1239);
+  }
+
   .planner-task--yellow {
     background: var(--planner-yellow-solid, #eab308);
     border-color: var(--planner-yellow-border, #ca8a04);
@@ -65,6 +91,24 @@
   .planner-task--red {
     background: var(--planner-red-solid, #be123c);
     border-color: var(--planner-red-border, #9f1239);
+  }
+
+  .planner-task--completed {
+    background-color: var(--planner-completed-solid, #0f766e);
+    background-image:
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.22) 0%,
+        rgba(255, 255, 255, 0.08) 38%,
+        rgba(255, 255, 255, 0) 100%
+      ),
+      linear-gradient(
+        120deg,
+        rgba(153, 246, 228, 0.16) 0%,
+        rgba(153, 246, 228, 0) 55%
+      );
+    border-color: var(--planner-completed-border, #115e59);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(6, 78, 59, 0.24);
   }
 
   .planner-task-title,
@@ -89,6 +133,31 @@
     border-color: var(--planner-green-border, #166534);
   }
 
+  .planner-milestone--not_started .planner-milestone-fill {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.2) 0,
+      rgba(255, 255, 255, 0.2) 0.45rem,
+      transparent 0.45rem,
+      transparent 0.9rem
+    );
+  }
+
+  .planner-milestone--not_started.planner-milestone-tone--green .planner-milestone-fill {
+    background-color: var(--planner-green-solid, #15803d);
+    border-color: var(--planner-green-border, #166534);
+  }
+
+  .planner-milestone--not_started.planner-milestone-tone--yellow .planner-milestone-fill {
+    background-color: var(--planner-yellow-solid, #eab308);
+    border-color: var(--planner-yellow-border, #ca8a04);
+  }
+
+  .planner-milestone--not_started.planner-milestone-tone--red .planner-milestone-fill {
+    background-color: var(--planner-red-solid, #be123c);
+    border-color: var(--planner-red-border, #9f1239);
+  }
+
   .planner-milestone--yellow .planner-milestone-fill {
     background: var(--planner-yellow-solid, #eab308);
     border-color: var(--planner-yellow-border, #ca8a04);
@@ -97,6 +166,24 @@
   .planner-milestone--red .planner-milestone-fill {
     background: var(--planner-red-solid, #be123c);
     border-color: var(--planner-red-border, #9f1239);
+  }
+
+  .planner-milestone--completed .planner-milestone-fill {
+    background-color: var(--planner-completed-solid, #0f766e);
+    background-image:
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.22) 0%,
+        rgba(255, 255, 255, 0.08) 38%,
+        rgba(255, 255, 255, 0) 100%
+      ),
+      linear-gradient(
+        120deg,
+        rgba(153, 246, 228, 0.16) 0%,
+        rgba(153, 246, 228, 0) 55%
+      );
+    border-color: var(--planner-completed-border, #115e59);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(6, 78, 59, 0.24);
   }
 
   .planner-milestone-text {

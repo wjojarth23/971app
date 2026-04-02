@@ -16,10 +16,15 @@
     PLANNER_CATEGORY_LABELS,
     PLANNER_CRITICAL_LABELS,
     PLANNER_CRITICAL_LEVELS,
+    PLANNER_DEFAULT_MILESTONE_STATUS,
+    PLANNER_DEFAULT_TASK_STATUS,
     PLANNER_DEFAULT_TASK_DURATION_MINUTES,
     PLANNER_DRIVE_PRACTICE_CATEGORY,
     PLANNER_FIXING_TASK_MODE,
+    PLANNER_NOT_STARTED_STATUS,
+    PLANNER_ROLLUP_STATUSES,
     PLANNER_RULE_TYPES,
+    PLANNER_STATUS_META,
     PLANNER_STANDARD_TASK_MODE,
     PLANNER_STATUSES,
     PLANNER_TIME_ZONE,
@@ -47,16 +52,18 @@
   const ganttTaskTypes = [
     { id: 'task', label: 'Task' },
     { id: 'milestone', label: 'Milestone' },
+    { id: 'planner-not_started', label: 'Not Started Task' },
     { id: 'planner-green', label: 'Green Task' },
     { id: 'planner-yellow', label: 'Yellow Task' },
-    { id: 'planner-red', label: 'Red Task' }
+    { id: 'planner-red', label: 'Red Task' },
+    { id: 'planner-completed', label: 'Completed Task' }
   ];
 
   const ganttColumns = [
     { id: 'text', header: 'Item', width: 240, flexgrow: 1 },
     { id: 'kind', header: 'Kind', width: 110, template: (_value, row) => row.kind === 'milestone' ? 'Milestone' : formatPlannerTaskType(row) },
     { id: 'owners_label', header: 'Owners / Bugs', width: 190, template: (_value, row) => row.kind === 'milestone' ? (row.accountable_name || 'Unassigned') : (row.owners_label || 'Unassigned') },
-    { id: 'status', header: 'Status', width: 90, template: (_value, row) => String(row.status || 'green').replace(/^\w/, (char) => char.toUpperCase()) }
+    { id: 'status', header: 'Status', width: 90, template: (_value, row) => formatStatus(row.status) }
   ];
   const OWNER_SEARCH_RESULT_LIMIT = 8;
   const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -112,7 +119,7 @@
       task_mode: PLANNER_STANDARD_TASK_MODE,
       task_template: kind === 'task' ? PLANNER_SINGLE_STEP_TASK_TEMPLATE : '',
       category: kind === 'task' ? PLANNER_CATEGORIES[0] : '',
-      status: 'green',
+      status: kind === 'task' ? PLANNER_DEFAULT_TASK_STATUS : PLANNER_DEFAULT_MILESTONE_STATUS,
       critical_level: 3,
       duration_hours: 2,
       min_duration_hours: 0.5,
@@ -154,7 +161,42 @@
   }
 
   function formatStatus(status) {
-    return String(status || 'green').replace(/^\w/, (char) => char.toUpperCase());
+    const normalized = String(status || '').trim().toLowerCase();
+    if (PLANNER_STATUS_META[normalized]?.label) return PLANNER_STATUS_META[normalized].label;
+    if (!normalized) return PLANNER_STATUS_META.green.label;
+    return normalized
+      .split('_')
+      .filter(Boolean)
+      .map((segment) => segment.replace(/^\w/, (char) => char.toUpperCase()))
+      .join(' ');
+  }
+
+  function normalizePlannerStatusValue(value, fallback = 'green') {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || fallback;
+  }
+
+  function getPlannerItemDisplayStatus(item) {
+    const rawStatus = normalizePlannerStatusValue(item?.raw_status ?? item?.status, 'green');
+    if (rawStatus === PLANNER_NOT_STARTED_STATUS) return PLANNER_NOT_STARTED_STATUS;
+    if (rawStatus === 'completed') return 'completed';
+    const displayStatus = normalizePlannerStatusValue(item?.status, rawStatus);
+    return PLANNER_STATUS_META[displayStatus] ? displayStatus : rawStatus;
+  }
+
+  function getPlannerItemStatusTone(item) {
+    const displayStatus = getPlannerItemDisplayStatus(item);
+    if (displayStatus === 'completed') return 'completed';
+    const tone = normalizePlannerStatusValue(item?.status_tone ?? item?.rolled_up_status ?? item?.status, 'green');
+    return PLANNER_ROLLUP_STATUSES.includes(tone) ? tone : 'green';
+  }
+
+  function getPlannerStatusBadgeClasses(item) {
+    return `planner-status-badge--${getPlannerItemDisplayStatus(item)} planner-status-badge-tone--${getPlannerItemStatusTone(item)}`;
+  }
+
+  function getPlannerStatusChipClasses(item) {
+    return `status-chip--${getPlannerItemDisplayStatus(item)} status-chip-tone--${getPlannerItemStatusTone(item)}`;
   }
 
   function formatCategory(category) {
@@ -619,7 +661,7 @@
       task_mode: item.task_mode || PLANNER_STANDARD_TASK_MODE,
       task_template: item.kind === 'task' ? PLANNER_SINGLE_STEP_TASK_TEMPLATE : '',
       category: item.category || 'assembly',
-      status: item.raw_status || item.status || 'green',
+      status: item.raw_status || item.status || (item.kind === 'task' ? PLANNER_DEFAULT_TASK_STATUS : PLANNER_DEFAULT_MILESTONE_STATUS),
       critical_level: item.critical_level || 3,
       duration_hours: item.kind === 'task' ? Number(item.requested_duration_minutes || item.duration_minutes || 0) / 60 : 0,
       min_duration_hours: item.kind === 'task' ? Number(item.min_duration_minutes || 0) / 60 : 0.5,
@@ -1103,7 +1145,7 @@
   $: fixingTaskRows = taskRows.filter((item) => isFixingItem(item));
   $: drivePracticeTaskRows = taskRows.filter((item) => isDrivePracticeItem(item));
   $: p0BugRows = p0Bugs || [];
-  $: redItems = (plannerItems || []).filter((item) => item.status === 'red');
+  $: redItems = (plannerItems || []).filter((item) => getPlannerItemStatusTone(item) === 'red');
   $: dependencyCandidateItems = (plannerItems || []).filter((item) => item.id !== editingItemId);
   $: blockedRules = (calendarRules || []).filter((rule) => rule.rule_type === 'blocked' || rule.rule_type === 'drive_practice');
   $: legacyDrivePracticeRules = blockedRules.filter((rule) => rule.rule_type === 'drive_practice');
@@ -1127,9 +1169,10 @@
     ...(item.kind === 'task'
       ? { end: new Date(item.scheduled_end_at || item.scheduled_start_at || item.manual_start_at || new Date()) }
       : {}),
-    type: item.kind === 'milestone' ? 'milestone' : `planner-${item.status || 'green'}`,
+    type: item.kind === 'milestone' ? 'milestone' : `planner-${getPlannerItemDisplayStatus(item)}`,
     kind: item.kind,
-    status: item.status,
+    status: getPlannerItemDisplayStatus(item),
+    status_tone: getPlannerItemStatusTone(item),
     critical_level: item.critical_level,
     owners_label: item.kind === 'milestone'
       ? formatPerson(item.accountable)
@@ -1344,7 +1387,7 @@
                 <tbody>
                   {#each taskRows as item (item.id)}
                     <tr
-                      class:red-row={item.status === 'red'}
+                      class:red-row={getPlannerItemStatusTone(item) === 'red'}
                       class="planner-table-row"
                       tabindex="0"
                       role="button"
@@ -1366,9 +1409,9 @@
                         </div>
                       </td>
                       <td>
-                        <span class={`planner-status-badge planner-status-badge--${item.status}`}>
-                          <span class={`status-dot status-dot--${item.status}`}></span>
-                          {formatStatus(item.status)}
+                        <span class={`planner-status-badge ${getPlannerStatusBadgeClasses(item)}`}>
+                          <span class={`status-dot status-dot--${getPlannerItemStatusTone(item)}`}></span>
+                          {formatStatus(getPlannerItemDisplayStatus(item))}
                         </span>
                       </td>
                       <td><span class="planner-type-chip">{formatPlannerTaskType(item)}</span></td>
@@ -1912,7 +1955,7 @@
                         <span class="dependency-meta">{item?.kind === 'milestone' ? 'Milestone' : formatPlannerTaskType(item)}</span>
                       </div>
                       <div class="dependency-row-actions">
-                        <span class={`status-chip status-chip--${item?.status || 'green'}`}>{formatStatus(item?.status)}</span>
+                        <span class={`status-chip ${getPlannerStatusChipClasses(item)}`}>{formatStatus(getPlannerItemDisplayStatus(item))}</span>
                         <button class="btn btn-outline btn-sm" type="button" on:click={() => removeDependency(dependency.id)}>Remove</button>
                       </div>
                     </div>
@@ -1935,7 +1978,7 @@
                         <span class="dependency-meta">{item?.kind === 'milestone' ? 'Milestone' : formatPlannerTaskType(item)}</span>
                       </div>
                       <div class="dependency-row-actions">
-                        <span class={`status-chip status-chip--${item?.status || 'green'}`}>{formatStatus(item?.status)}</span>
+                        <span class={`status-chip ${getPlannerStatusChipClasses(item)}`}>{formatStatus(getPlannerItemDisplayStatus(item))}</span>
                         <button class="btn btn-outline btn-sm" type="button" on:click={() => removeDependency(dependency.id)}>Remove</button>
                       </div>
                     </div>
@@ -2056,12 +2099,17 @@
     --planner-border-strong: rgba(15, 23, 42, 0.14);
     --planner-surface-soft: var(--surface-1);
     --planner-surface-muted: var(--surface-2);
+    --planner-not-started-soft: #f1f5f9;
+    --planner-not-started-strong: #475569;
     --planner-green-soft: #ecfdf3;
     --planner-green-strong: #15803d;
     --planner-yellow-soft: #fff8e1;
     --planner-yellow-strong: #a16207;
     --planner-red-soft: #fff1f2;
     --planner-red-strong: #be123c;
+    --planner-not-started-solid: #64748b;
+    --planner-not-started-border: #475569;
+    --planner-not-started-accent: #cbd5e1;
     --planner-green-solid: #15803d;
     --planner-green-border: #166534;
     --planner-green-accent: #bbf7d0;
@@ -2072,6 +2120,11 @@
     --planner-red-solid: #be123c;
     --planner-red-border: #9f1239;
     --planner-red-accent: #fecdd3;
+    --planner-completed-soft: #ecfeff;
+    --planner-completed-strong: #0f766e;
+    --planner-completed-solid: #0f766e;
+    --planner-completed-border: #115e59;
+    --planner-completed-accent: #99f6e4;
     --planner-status-text: #f8fafc;
     --planner-shadow: var(--shadow-sm);
     --wx-background: #ffffff;
@@ -2324,6 +2377,40 @@
   .planner-kind-chip--milestone {
     background: rgba(219, 234, 254, 0.58);
     border-color: rgba(29, 78, 216, 0.16);
+  }
+
+  .planner-status-badge--not_started,
+  .status-chip--not_started {
+    position: relative;
+    overflow: hidden;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.22) 0,
+      rgba(255, 255, 255, 0.22) 0.45rem,
+      transparent 0.45rem,
+      transparent 0.9rem
+    );
+  }
+
+  .planner-status-badge--not_started.planner-status-badge-tone--green,
+  .status-chip--not_started.status-chip-tone--green {
+    background-color: var(--planner-green-solid);
+    border-color: var(--planner-green-border);
+    color: var(--planner-status-text);
+  }
+
+  .planner-status-badge--not_started.planner-status-badge-tone--yellow,
+  .status-chip--not_started.status-chip-tone--yellow {
+    background-color: var(--planner-yellow-solid);
+    border-color: var(--planner-yellow-border);
+    color: var(--planner-yellow-text);
+  }
+
+  .planner-status-badge--not_started.planner-status-badge-tone--red,
+  .status-chip--not_started.status-chip-tone--red {
+    background-color: var(--planner-red-solid);
+    border-color: var(--planner-red-border);
+    color: var(--planner-status-text);
   }
 
   .planner-status-badge--green,
@@ -2900,6 +2987,10 @@
     box-shadow: none;
   }
 
+  .status-dot--not_started {
+    background: var(--planner-not-started-accent);
+  }
+
   .status-dot--green {
     background: var(--planner-green-accent);
   }
@@ -2910,6 +3001,10 @@
 
   .status-dot--red {
     background: var(--planner-red-accent);
+  }
+
+  .status-dot--completed {
+    background: var(--planner-completed-accent);
   }
 
   .planner-danger-action {
@@ -2967,15 +3062,21 @@
     background: rgba(15, 23, 42, 0.03);
   }
 
+  :global(.planner-shell .wx-bar.planner-not_started),
   :global(.planner-shell .wx-bar.planner-green),
   :global(.planner-shell .wx-bar.planner-yellow),
   :global(.planner-shell .wx-bar.planner-red),
+  :global(.planner-shell .wx-bar.planner-completed),
+  :global(.planner-shell .wx-bar.planner-not_started:hover),
   :global(.planner-shell .wx-bar.planner-green:hover),
   :global(.planner-shell .wx-bar.planner-yellow:hover),
   :global(.planner-shell .wx-bar.planner-red:hover),
+  :global(.planner-shell .wx-bar.planner-completed:hover),
+  :global(.planner-shell .wx-bar.planner-not_started.wx-selected),
   :global(.planner-shell .wx-bar.planner-green.wx-selected),
   :global(.planner-shell .wx-bar.planner-yellow.wx-selected),
   :global(.planner-shell .wx-bar.planner-red.wx-selected),
+  :global(.planner-shell .wx-bar.planner-completed.wx-selected),
   :global(.planner-shell .wx-bar.wx-milestone),
   :global(.planner-shell .wx-bar.wx-milestone:hover),
   :global(.planner-shell .wx-bar.wx-milestone.wx-selected) {
