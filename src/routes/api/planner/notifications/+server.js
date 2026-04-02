@@ -1,16 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { isAuthorizedCronRequest } from '$lib/server/cron_auth.js';
 import { sendDuePlannerPrompts } from '$lib/server/planner_notifications.js';
 
-function requireToken(url) {
-  const expected = env.NOTIFICATION_CRON_TOKEN || env.CRON_NOTIFICATION_TOKEN || null;
-  if (!expected) return true;
-  const provided = url.searchParams.get('token');
-  return provided === expected;
-}
-
-export async function GET({ url }) {
-  if (!requireToken(url)) {
+export async function GET({ url, request }) {
+  if (!isAuthorizedCronRequest({ url, headers: request.headers, env })) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 

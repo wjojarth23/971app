@@ -1,19 +1,13 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { isAuthorizedCronRequest } from '$lib/server/cron_auth.js';
 import { getSupabase } from '$lib/server/971bot';
 import { notifyTaskDeadlineById } from '$lib/server/slack_notifications.js';
 
 const OPEN_STATUSES = ['open', 'in_progress', 'file_uploaded', 'under_review', 'changes_requested'];
 
-function requireToken(url) {
-  const expected = env.NOTIFICATION_CRON_TOKEN || env.CRON_NOTIFICATION_TOKEN || null;
-  if (!expected) return true;
-  const provided = url.searchParams.get('token');
-  return provided === expected;
-}
-
-export async function GET({ url }) {
-  if (!requireToken(url)) {
+export async function GET({ url, request }) {
+  if (!isAuthorizedCronRequest({ url, headers: request.headers, env })) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 

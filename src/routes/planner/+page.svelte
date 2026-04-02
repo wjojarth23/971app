@@ -84,7 +84,6 @@
   let p0Bugs = [];
   let warnings = [];
   let error = '';
-  let info = '';
   let optimisticItemOverrides = {};
   let optimisticItemMutationIds = {};
   let optimisticOrderState = null;
@@ -573,11 +572,10 @@
   async function submitPlannerAction(body, successMessage = '') {
     saving = true;
     error = '';
-    info = '';
     try {
       const payload = await plannerRequest('POST', body);
       hydrateBundle(payload?.data || {});
-      if (successMessage) info = successMessage;
+      if (successMessage) toastActions.show(successMessage);
       return payload;
     } catch (submitError) {
       error = submitError.message || 'Planner action failed.';
@@ -775,7 +773,7 @@
     const successMessage = editingItemId
       ? (isFixingDraft
         ? 'Fixing task updated.'
-        : drivePracticeDraft ? 'Drive practice updated.' : 'Planner item updated.')
+        : drivePracticeDraft ? 'Drive practice updated.' : '')
       : (isFixingDraft
         ? 'Fixing task created.'
         : drivePracticeDraft
@@ -1225,9 +1223,6 @@
 
   {#if error}
     <div class="planner-banner planner-banner--error">{error}</div>
-  {/if}
-  {#if info}
-    <div class="planner-banner planner-banner--success">{info}</div>
   {/if}
   {#if warnings.length > 0}
     <div class="planner-banner planner-banner--warning">

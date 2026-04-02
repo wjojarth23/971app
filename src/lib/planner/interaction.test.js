@@ -221,6 +221,30 @@ describe('planner gantt interaction payloads', () => {
     });
   });
 
+  it('snaps a move to the next slot once the drag has started, even before halfway at close zoom', () => {
+    const snapped = snapPlannerGanttDragDetail(
+      {
+        id: 'task-7b',
+        left: 76,
+        width: 56,
+        inProgress: true
+      },
+      {
+        id: 'task-7b',
+        $x: 56,
+        $w: 56
+      },
+      null,
+      {
+        gridSize: 56,
+        chartWidth: 560
+      }
+    );
+
+    expect(snapped.detail.left).toBe(112);
+    expect(snapped.detail.width).toBe(56);
+  });
+
   it('snaps a start resize while preserving the task end position', () => {
     const snapped = snapPlannerGanttDragDetail(
       {
@@ -245,6 +269,30 @@ describe('planner gantt interaction payloads', () => {
     expect(snapped.detail.width).toBe(28);
   });
 
+  it('snaps a start resize forward to the next slot once the resize has started at close zoom', () => {
+    const snapped = snapPlannerGanttDragDetail(
+      {
+        id: 'task-8b',
+        left: 76,
+        width: 92,
+        inProgress: true
+      },
+      {
+        id: 'task-8b',
+        $x: 56,
+        $w: 112
+      },
+      null,
+      {
+        gridSize: 56,
+        chartWidth: 560
+      }
+    );
+
+    expect(snapped.detail.left).toBe(112);
+    expect(snapped.detail.width).toBe(56);
+  });
+
   it('snaps an end resize while keeping the start anchored', () => {
     const snapped = snapPlannerGanttDragDetail(
       {
@@ -267,5 +315,29 @@ describe('planner gantt interaction payloads', () => {
 
     expect(snapped.detail.left).toBe(56);
     expect(snapped.detail.width).toBe(84);
+  });
+
+  it('snaps an end resize forward to the next slot once the resize has started at close zoom', () => {
+    const snapped = snapPlannerGanttDragDetail(
+      {
+        id: 'task-9b',
+        left: 56,
+        width: 76,
+        inProgress: true
+      },
+      {
+        id: 'task-9b',
+        $x: 56,
+        $w: 56
+      },
+      null,
+      {
+        gridSize: 56,
+        chartWidth: 560
+      }
+    );
+
+    expect(snapped.detail.left).toBe(56);
+    expect(snapped.detail.width).toBe(112);
   });
 });

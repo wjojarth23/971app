@@ -19,6 +19,14 @@ function roundToStep(value, step) {
   return Math.round(value / step) * step;
 }
 
+function floorToStep(value, step) {
+  return Math.floor(value / step) * step;
+}
+
+function ceilToStep(value, step) {
+  return Math.ceil(value / step) * step;
+}
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -27,6 +35,16 @@ function toDateOrNull(value) {
   if (!value) return null;
   const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function snapToDirectionalStep(rawValue, baseValue, step) {
+  if (!Number.isFinite(rawValue) || !Number.isFinite(baseValue) || !Number.isFinite(step) || step <= 0) {
+    return rawValue;
+  }
+  if (Math.abs(rawValue - baseValue) <= 0.5) return baseValue;
+  if (rawValue > baseValue) return ceilToStep(rawValue, step);
+  if (rawValue < baseValue) return floorToStep(rawValue, step);
+  return baseValue;
 }
 
 export function buildPlannerTaskUpdatePayload(source, eventTask, current, calendarRules = []) {
@@ -165,7 +183,7 @@ export function snapPlannerGanttDragDetail(detail, task, dragState = null, optio
   if (leftChanged && widthChanged && baseLeft !== null && baseWidth !== null) {
     const rightEdge = baseLeft + baseWidth;
     const maxLeft = Math.max(0, rightEdge - gridSize);
-    const snappedLeft = clamp(roundToStep(rawLeft, gridSize), 0, maxLeft);
+    const snappedLeft = clamp(snapToDirectionalStep(rawLeft, baseLeft, gridSize), 0, maxLeft);
     nextDetail.left = snappedLeft;
     nextDetail.width = Math.max(gridSize, rightEdge - snappedLeft);
     return {
@@ -180,7 +198,7 @@ export function snapPlannerGanttDragDetail(detail, task, dragState = null, optio
       chartWidth !== null
         ? Math.max(gridSize, chartWidth - anchorLeft)
         : Number.POSITIVE_INFINITY;
-    nextDetail.width = clamp(roundToStep(rawWidth, gridSize), gridSize, maxWidth);
+    nextDetail.width = clamp(snapToDirectionalStep(rawWidth, baseWidth, gridSize), gridSize, maxWidth);
     return {
       detail: nextDetail,
       dragState: nextDragState
@@ -192,7 +210,7 @@ export function snapPlannerGanttDragDetail(detail, task, dragState = null, optio
       chartWidth !== null && baseWidth !== null
         ? Math.max(0, chartWidth - baseWidth)
         : Number.POSITIVE_INFINITY;
-    nextDetail.left = clamp(roundToStep(rawLeft, gridSize), 0, maxLeft);
+    nextDetail.left = clamp(snapToDirectionalStep(rawLeft, baseLeft, gridSize), 0, maxLeft);
   }
 
   return {

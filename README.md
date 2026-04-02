@@ -126,6 +126,8 @@ The app can be deployed to any SvelteKit-compatible platform. Make sure to confi
 
 > You may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
 
+When deploying on Vercel, the included [vercel.json](/c:/Users/wjoja/Downloads/Code/971app/vercel.json) schedules planner Slack notifications every 15 minutes. Set `CRON_SECRET` in the deployment environment to protect those cron endpoints with Vercel's `Authorization: Bearer ...` header.
+
 ## Configuration: Disabling automatic vendor detection
 
 The app supports an environment variable to disable automatic vendor detection for BOM parsing. By default detection is enabled.

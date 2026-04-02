@@ -138,6 +138,26 @@ function normalizeRulePayload(body) {
   };
 }
 
+function normalizePlannerActionError(error) {
+  const message = String(error?.message || '').trim();
+  const code = String(error?.code || '').trim();
+
+  if (
+    (code === '23514' || message.includes('violates check constraint'))
+    && message.includes('planner_items_category_check')
+  ) {
+    return {
+      status: 500,
+      message: 'Planner database is missing the drive practice category update. Apply migration 20260401_planner_drive_practice_category_guard.sql.'
+    };
+  }
+
+  return {
+    status: 500,
+    message: message || 'Planner action failed'
+  };
+}
+
 async function requirePlannerActor(request) {
   const db = getPlannerDbFromRequest(request);
   const actor = await getPlannerActor(db);
@@ -595,6 +615,7 @@ export async function POST({ request }) {
 
     return json({ error: 'Unknown action' }, { status: 400 });
   } catch (error) {
-    return json({ error: error?.message || 'Planner action failed' }, { status: 500 });
+    const normalized = normalizePlannerActionError(error);
+    return json({ error: normalized.message }, { status: normalized.status });
   }
 }

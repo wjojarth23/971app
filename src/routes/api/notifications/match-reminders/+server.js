@@ -1,14 +1,8 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { isAuthorizedCronRequest } from '$lib/server/cron_auth.js';
 import { getSupabase } from '$lib/server/971bot';
 import { notifyMatchReminder } from '$lib/server/slack_notifications.js';
-
-function requireToken(url) {
-  const expected = env.NOTIFICATION_CRON_TOKEN || env.CRON_NOTIFICATION_TOKEN || null;
-  if (!expected) return true;
-  const provided = url.searchParams.get('token');
-  return provided === expected;
-}
 
 async function eventKeyFromUrl(url, db) {
   const fromQuery = url.searchParams.get('event_key');
@@ -27,8 +21,8 @@ function matchStartTimestamp(match) {
   return match?.predicted_time || match?.time || null;
 }
 
-export async function GET({ url }) {
-  if (!requireToken(url)) {
+export async function GET({ url, request }) {
+  if (!isAuthorizedCronRequest({ url, headers: request.headers, env })) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
   const supa = getSupabase();
