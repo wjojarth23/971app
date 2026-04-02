@@ -126,7 +126,7 @@ The app can be deployed to any SvelteKit-compatible platform. Make sure to confi
 
 > You may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
 
-When deploying on Vercel, the included [vercel.json](/c:/Users/wjoja/Downloads/Code/971app/vercel.json) schedules planner Slack notifications every 15 minutes. Set `CRON_SECRET` in the deployment environment to protect those cron endpoints with Vercel's `Authorization: Bearer ...` header.
+Planner Slack prompts are driven by Supabase Cron every 15 minutes. The scheduler created in [20260403_planner_prompt_cron.sql](/c:/Users/wjoja/Downloads/Code/971app/migrations/20260403_planner_prompt_cron.sql) calls `/api/planner/notifications` using Vault secrets named `planner_notifications_app_url` and `planner_notifications_cron_token`. Set the app to trust the same token via `CRON_SECRET`, `NOTIFICATION_CRON_TOKEN`, or `CRON_NOTIFICATION_TOKEN`.
 
 ## Configuration: Disabling automatic vendor detection
 

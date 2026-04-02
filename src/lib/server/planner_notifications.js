@@ -6,6 +6,9 @@ import { ensureApproverDmChannel, getSlackClient, getSupabase, slackUserIdForEma
 import { fetchPlannerSnapshot } from '$lib/server/planner_data.js';
 import { formatPacific } from '$lib/timezone.js';
 
+const PLANNER_PROMPT_SWEEP_LEASE_KEY = 'planner_prompt_sweep';
+const PLANNER_PROMPT_SWEEP_LEASE_SECONDS = 120;
+
 function getAppBaseUrl() {
   const origin =
     env.PUBLIC_APP_ORIGIN ||
@@ -248,6 +251,49 @@ export async function sendDuePlannerPrompts(now = new Date()) {
     plannerPromptsSent: sentCount,
     drivePracticePromptsSent: 0
   };
+}
+
+async function claimPlannerPromptSweepLease({ leaseSeconds = PLANNER_PROMPT_SWEEP_LEASE_SECONDS, minIntervalSeconds = 0 } = {}) {
+  const supa = getSupabase();
+  const { data, error } = await supa.rpc('claim_runtime_lease', {
+    lease_key: PLANNER_PROMPT_SWEEP_LEASE_KEY,
+    lease_seconds: leaseSeconds,
+    min_interval_seconds: Math.max(0, Number(minIntervalSeconds) || 0)
+  });
+  if (error) throw error;
+  return !!data;
+}
+
+async function releasePlannerPromptSweepLease() {
+  const supa = getSupabase();
+  const { error } = await supa.rpc('release_runtime_lease', {
+    lease_key: PLANNER_PROMPT_SWEEP_LEASE_KEY
+  });
+  if (error) throw error;
+}
+
+export async function runPlannerPromptSweep(now = new Date(), options = {}) {
+  const claimed = await claimPlannerPromptSweepLease(options);
+  if (!claimed) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'lease-unavailable',
+      sent: 0,
+      plannerPromptsSent: 0,
+      drivePracticePromptsSent: 0
+    };
+  }
+
+  try {
+    return await sendDuePlannerPrompts(now);
+  } finally {
+    try {
+      await releasePlannerPromptSweepLease();
+    } catch (error) {
+      console.warn('Failed to release planner prompt sweep lease', error?.message || error);
+    }
+  }
 }
 
 export async function handlePlannerReaction({ channel, ts, reaction, reactingUser }) {
