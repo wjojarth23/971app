@@ -94,21 +94,8 @@
   }
 
   .planner-task--completed {
-    background-color: var(--planner-completed-solid, #0f766e);
-    background-image:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.22) 0%,
-        rgba(255, 255, 255, 0.08) 38%,
-        rgba(255, 255, 255, 0) 100%
-      ),
-      linear-gradient(
-        120deg,
-        rgba(153, 246, 228, 0.16) 0%,
-        rgba(153, 246, 228, 0) 55%
-      );
+    background: var(--planner-completed-solid, #0f766e);
     border-color: var(--planner-completed-border, #115e59);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(6, 78, 59, 0.24);
   }
 
   .planner-task-title,
@@ -169,21 +156,8 @@
   }
 
   .planner-milestone--completed .planner-milestone-fill {
-    background-color: var(--planner-completed-solid, #0f766e);
-    background-image:
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.22) 0%,
-        rgba(255, 255, 255, 0.08) 38%,
-        rgba(255, 255, 255, 0) 100%
-      ),
-      linear-gradient(
-        120deg,
-        rgba(153, 246, 228, 0.16) 0%,
-        rgba(153, 246, 228, 0) 55%
-      );
+    background: var(--planner-completed-solid, #0f766e);
     border-color: var(--planner-completed-border, #115e59);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(6, 78, 59, 0.24);
   }
 
   .planner-milestone-text {

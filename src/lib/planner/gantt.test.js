@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { writable } from 'svelte/store';
 import { DataStore } from '@svar-ui/gantt-store';
 import { DEFAULT_PLANNER_CALENDAR_RULES } from './constants.js';
-import { createPlannerGanttScales, setPlannerGanttCalendarRules } from './gantt.js';
+import {
+  createPlannerGanttScales,
+  PLANNER_GANTT_ALL_TIMES_RULES,
+  setPlannerGanttCalendarRules
+} from './gantt.js';
 
-function buildScaleState({ start, end, cellWidth = 48, scaleOptions = {} } = {}) {
-  setPlannerGanttCalendarRules(DEFAULT_PLANNER_CALENDAR_RULES);
+function buildScaleState({ start, end, cellWidth = 48, scaleOptions = {}, calendarRules = DEFAULT_PLANNER_CALENDAR_RULES } = {}) {
+  setPlannerGanttCalendarRules(calendarRules);
 
   const store = new DataStore(writable);
   store.init({
@@ -74,5 +78,20 @@ describe('planner gantt scales', () => {
     expect(Math.max(...zoomedOutScales.rows[1].cells.map((cell) => cell.width))).toBeGreaterThan(
       Math.max(...defaultScales.rows[1].cells.map((cell) => cell.width))
     );
+  });
+
+  it('supports the all times timeline with a fixed 8am to 12pm daily window', () => {
+    const scales = buildScaleState({
+      start: new Date('2026-04-01T15:00:00'),
+      end: new Date('2026-04-03T20:00:00'),
+      calendarRules: PLANNER_GANTT_ALL_TIMES_RULES
+    });
+
+    const widths = scales.rows[0].cells
+      .map((cell) => cell.width)
+      .filter((width) => width > 0);
+
+    expect(widths.length).toBeGreaterThanOrEqual(2);
+    expect(widths.every((width) => width === 8 * 48)).toBe(true);
   });
 });

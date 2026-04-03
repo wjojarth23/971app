@@ -11,6 +11,8 @@ import { addPlannerDays, startOfPlannerDay } from './timezone.js';
 const SLOT_MINUTES = PLANNER_SLOT_MINUTES;
 const SLOT_MS = SLOT_MINUTES * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const ALL_TIMES_WINDOW_START = '08:00';
+const ALL_TIMES_WINDOW_END = '12:00';
 
 const dayFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: PLANNER_TIME_ZONE,
@@ -27,6 +29,21 @@ const slotFormatter = new Intl.DateTimeFormat('en-US', {
 
 let activeRules = [];
 let workslotRegistered = false;
+
+export const PLANNER_GANTT_TIMELINE_MODES = {
+  MEETINGS_ONLY: 'meetings_only',
+  ALL_TIMES: 'all_times'
+};
+
+export const PLANNER_GANTT_ALL_TIMES_RULES = Array.from({ length: 7 }, (_value, weekday) => ({
+  weekday,
+  starts_at: ALL_TIMES_WINDOW_START,
+  ends_at: ALL_TIMES_WINDOW_END,
+  label: 'All Times Window',
+  rule_type: 'work_window',
+  enabled: true,
+  is_default: true
+}));
 
 function cloneDate(value) {
   return new Date(value instanceof Date ? value.getTime() : value);

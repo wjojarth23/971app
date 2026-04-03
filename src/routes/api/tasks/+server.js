@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
 import { parsePacificDateTimeInput } from '$lib/timezone.js';
-import { createPlannerFixingTaskFromP0Bug } from '$lib/server/planner_data.js';
+import { createPlannerFixingTaskFromP0Bug, recomputePlannerTeam } from '$lib/server/planner_data.js';
 import {
   notifyTaskAssignedById,
   notifyTaskReviewRequestedById,
@@ -12,6 +12,48 @@ import {
 const GENERAL_TYPES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
 const OPEN_STATUSES = new Set(['open', 'in_progress', 'file_uploaded', 'under_review', 'changes_requested']);
 const CLOSABLE_STATUSES = new Set([...OPEN_STATUSES, 'approved', 'done', 'closed']);
+
+async function validateTaskAssignment(db, { actor, scope, generalType, subsystemId, assigneeId, reviewerId, needsReview }) {
+  if (scope === 'subsystem') {
+    const { data: subsystem } = await db
+      .from('subsystems')
+      .select('id, frc_team')
+      .eq('id', subsystemId)
+      .maybeSingle();
+    if (!subsystem?.id || subsystem?.frc_team !== actor.frcTeam) {
+      return { error: 'Invalid subsystem for your team' };
+    }
+  }
+
+  const { data: assigneeProfile } = await db
+    .from('user_profiles')
+    .select('id, frc_team')
+    .eq('id', assigneeId)
+    .maybeSingle();
+  if (!assigneeProfile?.id || assigneeProfile.frc_team !== actor.frcTeam) {
+    return { error: 'Assignee must be on your FRC team' };
+  }
+
+  if (needsReview) {
+    const { data: reviewerProfile } = await db
+      .from('user_profiles')
+      .select('id, frc_team')
+      .eq('id', reviewerId)
+      .maybeSingle();
+    if (!reviewerProfile?.id || reviewerProfile.frc_team !== actor.frcTeam) {
+      return { error: 'Reviewer must be on your FRC team' };
+    }
+  }
+
+  if (scope === 'general' && !GENERAL_TYPES.includes(generalType)) {
+    return { error: 'general_type required for general tasks' };
+  }
+  if (scope === 'subsystem' && !subsystemId) {
+    return { error: 'subsystem_id required for subsystem tasks' };
+  }
+
+  return { error: null };
+}
 
 function getClientFromRequest(request) {
   const auth = request?.headers?.get('authorization') || '';
@@ -262,42 +304,17 @@ export async function POST({ request }) {
       if (rawDeadlineAt && !parsedDeadlineAt) {
         return json({ error: 'deadline_at must be a valid Pacific time' }, { status: 400 });
       }
-      if (scope === 'general' && !GENERAL_TYPES.includes(generalType)) {
-        return json({ error: 'general_type required for general tasks' }, { status: 400 });
-      }
-      if (scope === 'subsystem' && !subsystemId) {
-        return json({ error: 'subsystem_id required for subsystem tasks' }, { status: 400 });
-      }
-
-      if (scope === 'subsystem') {
-        const { data: subsystem } = await db
-          .from('subsystems')
-          .select('id, frc_team')
-          .eq('id', subsystemId)
-          .maybeSingle();
-        if (!subsystem?.id || subsystem?.frc_team !== actor.frcTeam) {
-          return json({ error: 'Invalid subsystem for your team' }, { status: 400 });
-        }
-      }
-
-      const { data: assigneeProfile } = await db
-        .from('user_profiles')
-        .select('id, frc_team')
-        .eq('id', assigneeId)
-        .maybeSingle();
-      if (!assigneeProfile?.id || assigneeProfile.frc_team !== actor.frcTeam) {
-        return json({ error: 'Assignee must be on your FRC team' }, { status: 400 });
-      }
-
-      if (needsReview) {
-        const { data: reviewerProfile } = await db
-          .from('user_profiles')
-          .select('id, frc_team')
-          .eq('id', reviewerId)
-          .maybeSingle();
-        if (!reviewerProfile?.id || reviewerProfile.frc_team !== actor.frcTeam) {
-          return json({ error: 'Reviewer must be on your FRC team' }, { status: 400 });
-        }
+      const assignmentValidation = await validateTaskAssignment(db, {
+        actor,
+        scope,
+        generalType,
+        subsystemId,
+        assigneeId,
+        reviewerId,
+        needsReview
+      });
+      if (assignmentValidation.error) {
+        return json({ error: assignmentValidation.error }, { status: 400 });
       }
 
       const payload = {
@@ -335,6 +352,74 @@ export async function POST({ request }) {
       }
 
       await notifyTaskAssignedById(created.id);
+      const bundle = await fetchTasksBundle(db, actor.frcTeam);
+      return json({ success: true, data: bundle });
+    }
+
+    if (action === 'update-metadata') {
+      const taskId = String(body?.task_id || '').trim();
+      const title = String(body?.title || '').trim();
+      const description = String(body?.description || '').trim() || null;
+      const scope = body?.scope === 'subsystem' ? 'subsystem' : 'general';
+      const generalType = scope === 'general' ? String(body?.general_type || '').trim() : null;
+      const subsystemId = scope === 'subsystem' ? String(body?.subsystem_id || '').trim() : null;
+      const assigneeId = String(body?.assignee_id || '').trim() || null;
+      const reviewerIdRaw = String(body?.reviewer_id || '').trim();
+      const needsReview = !!body?.needs_review;
+      const needsManufacturing = !!body?.needs_manufacturing;
+      const reviewerId = needsReview ? (reviewerIdRaw || actor.id) : null;
+      const rawDeadlineAt = String(body?.deadline_at || '').trim();
+      const parsedDeadlineAt = rawDeadlineAt ? parsePacificDateTimeInput(rawDeadlineAt) : null;
+      const deadlineAt = parsedDeadlineAt ? parsedDeadlineAt.toISOString() : null;
+
+      if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
+      if (!title) return json({ error: 'title required' }, { status: 400 });
+      if (!assigneeId) return json({ error: 'assignee_id required' }, { status: 400 });
+      if (rawDeadlineAt && !parsedDeadlineAt) {
+        return json({ error: 'deadline_at must be a valid Pacific time' }, { status: 400 });
+      }
+
+      const { data: existing, error: existingError } = await db
+        .from('tasks')
+        .select('id, frc_team, created_by, reviewer_id, assignee_id')
+        .eq('id', taskId)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
+
+      const canUpdate = actor.id === existing.assignee_id || actor.id === existing.created_by || actor.id === existing.reviewer_id || actor.role === 'admin';
+      if (!canUpdate) return json({ error: 'Forbidden' }, { status: 403 });
+
+      const assignmentValidation = await validateTaskAssignment(db, {
+        actor,
+        scope,
+        generalType,
+        subsystemId,
+        assigneeId,
+        reviewerId,
+        needsReview
+      });
+      if (assignmentValidation.error) {
+        return json({ error: assignmentValidation.error }, { status: 400 });
+      }
+
+      const { error: updateError } = await db
+        .from('tasks')
+        .update({
+          title,
+          description,
+          scope,
+          general_type: scope === 'general' ? generalType : null,
+          subsystem_id: scope === 'subsystem' ? subsystemId : null,
+          assignee_id: assigneeId,
+          reviewer_id: needsReview ? reviewerId : null,
+          needs_review: needsReview,
+          needs_manufacturing: needsManufacturing,
+          deadline_at: deadlineAt
+        })
+        .eq('id', taskId);
+      if (updateError) throw updateError;
+
       const bundle = await fetchTasksBundle(db, actor.frcTeam);
       return json({ success: true, data: bundle });
     }
@@ -450,6 +535,64 @@ export async function POST({ request }) {
         changedByName: actor.fullName || actor.email || 'Teammate',
         changedByUserId: actor.id
       });
+
+      const bundle = await fetchTasksBundle(db, actor.frcTeam);
+      return json({ success: true, data: bundle });
+    }
+
+    if (action === 'delete') {
+      const taskId = String(body?.task_id || '').trim();
+      if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
+
+      const { data: existing, error: existingError } = await db
+        .from('tasks')
+        .select('id, frc_team, status, created_by, reviewer_id, assignee_id')
+        .eq('id', taskId)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
+
+      const canDelete = actor.id === existing.assignee_id || actor.id === existing.created_by || actor.id === existing.reviewer_id || actor.role === 'admin';
+      if (!canDelete) return json({ error: 'Forbidden' }, { status: 403 });
+
+      const { data: linkedPlannerItems, error: linkedPlannerItemsError } = await db
+        .from('planner_item_p0_bugs')
+        .select('planner_item_id')
+        .eq('frc_team', actor.frcTeam)
+        .eq('task_id', taskId);
+      if (linkedPlannerItemsError) throw linkedPlannerItemsError;
+
+      const linkedPlannerItemIds = Array.from(new Set((linkedPlannerItems || []).map((row) => row.planner_item_id).filter(Boolean)));
+
+      const { error: deleteError } = await db
+        .from('tasks')
+        .delete()
+        .eq('frc_team', actor.frcTeam)
+        .eq('id', taskId);
+      if (deleteError) throw deleteError;
+
+      if (linkedPlannerItemIds.length) {
+        const { data: remainingLinks, error: remainingLinksError } = await db
+          .from('planner_item_p0_bugs')
+          .select('planner_item_id')
+          .eq('frc_team', actor.frcTeam)
+          .in('planner_item_id', linkedPlannerItemIds);
+        if (remainingLinksError) throw remainingLinksError;
+
+        const plannerItemsWithLinks = new Set((remainingLinks || []).map((row) => row.planner_item_id).filter(Boolean));
+        const orphanedPlannerItemIds = linkedPlannerItemIds.filter((itemId) => !plannerItemsWithLinks.has(itemId));
+
+        if (orphanedPlannerItemIds.length) {
+          const { error: plannerDeleteError } = await db
+            .from('planner_items')
+            .delete()
+            .eq('frc_team', actor.frcTeam)
+            .in('id', orphanedPlannerItemIds);
+          if (plannerDeleteError) throw plannerDeleteError;
+
+          await recomputePlannerTeam(db, actor.frcTeam);
+        }
+      }
 
       const bundle = await fetchTasksBundle(db, actor.frcTeam);
       return json({ success: true, data: bundle });

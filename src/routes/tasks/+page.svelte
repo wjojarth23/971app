@@ -223,7 +223,8 @@
         practice_label: legacyP0Context.practiceLabel || 'Drive Practice',
         scheduled_for: legacyP0Context.scheduledFor || ''
       });
-      goto(`/tasks/report-p0?${params.toString()}`, { replaceState: true });
+      params.set('report_p0', '1');
+      goto(`/tasks?${params.toString()}`, { replaceState: true });
       return () => unsub?.();
     }
     await loadTasks();

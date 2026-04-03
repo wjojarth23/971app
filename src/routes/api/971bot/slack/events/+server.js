@@ -8,6 +8,7 @@ import {
   getSupabase
 } from '$lib/server/971bot';
 import { handlePlannerReaction } from '$lib/server/planner_notifications.js';
+import { handleP0BugAssignmentReaction } from '$lib/server/slack_notifications.js';
 
 // Avoid approving the same purchase repeatedly when multiple reactions are added.
 const recentlyApprovedPurchases = new Set();
@@ -51,6 +52,16 @@ export async function POST({ request }) {
           reactingUser
         });
         if (plannerResult?.handled) {
+          return json({ ok: true });
+        }
+
+        const p0BugAssignmentResult = await handleP0BugAssignmentReaction({
+          channel,
+          ts,
+          reaction,
+          reactingUser
+        });
+        if (p0BugAssignmentResult?.handled) {
           return json({ ok: true });
         }
 

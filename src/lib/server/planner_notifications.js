@@ -32,12 +32,12 @@ function getPlannerLink(itemId) {
 
 function getDrivePracticeReportLink(item, scheduledFor) {
   const params = new URLSearchParams({
+    report_p0: '1',
     source: 'drive_practice',
-    planner_item_id: String(item?.id || ''),
     practice_label: String(item?.title || 'Drive Practice'),
     scheduled_for: new Date(scheduledFor).toISOString()
   });
-  return `${getAppBaseUrl()}/tasks/report-p0?${params.toString()}`;
+  return `${getAppBaseUrl()}/tasks?${params.toString()}`;
 }
 
 function checkpointLabel(checkpoint) {
@@ -104,8 +104,8 @@ function promptText({ item, checkpoint, scheduledFor, ownerName }) {
   const who = ownerName ? `${ownerName}, ` : '';
   const isTaskStartPrompt = checkpoint === 'task_start' || checkpoint === 'start';
   const actionHelp = isTaskStartPrompt
-    ? 'React to this first message to mark the task as started and set the planner status.'
-    : 'React with green, yellow, red, or the check mark reaction to update the planner status.';
+    ? 'React to this message with white, green, yellow, red, or the check mark reaction to set the planner status.'
+    : 'React with white, green, yellow, red, or the check mark reaction to update the planner status.';
   return `${who}${checkpointLabel(checkpoint)} check-in for ${item.title} at ${when}. ${actionHelp} ${getPlannerLink(item.id)}`;
 }
 
@@ -209,7 +209,8 @@ export async function sendPlannerPrompt({ item, ownerId, checkpoint, scheduledFo
   }
 
   if (!isDrivePracticePrompt) {
-    for (const checkpointReaction of Object.values(PLANNER_STATUS_TO_REACTION)) {
+    const seededReactions = Array.from(new Set(Object.values(PLANNER_STATUS_TO_REACTION)));
+    for (const checkpointReaction of seededReactions) {
       try {
         await client.reactions.add({
           channel: response.channel,

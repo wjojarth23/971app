@@ -8,6 +8,8 @@
   import {
     createPlannerGanttScales,
     getPlannerGanttBounds,
+    PLANNER_GANTT_ALL_TIMES_RULES,
+    PLANNER_GANTT_TIMELINE_MODES,
     PLANNER_GANTT_ZOOM_LEVELS,
     setPlannerGanttCalendarRules
   } from '$lib/planner/gantt.js';
@@ -48,6 +50,18 @@
   import { formatPlannerDateTimeInputValue } from '$lib/planner/timezone.js';
   import { workingMinutesBetween } from '$lib/planner/schedule.js';
   import { toastActions } from '$lib/toast.js';
+
+  const GENERAL_TYPES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
+  const P0_STATUS_OPTIONS = [
+    { value: 'open', label: 'Open' },
+    { value: 'in_progress', label: 'In Progress' },
+    { value: 'file_uploaded', label: 'File Uploaded' },
+    { value: 'under_review', label: 'Under Review' },
+    { value: 'changes_requested', label: 'Changes Requested' },
+    { value: 'approved', label: 'Approved' },
+    { value: 'done', label: 'Done' },
+    { value: 'closed', label: 'Closed' }
+  ];
 
   const ganttTaskTypes = [
     { id: 'task', label: 'Task' },
@@ -98,16 +112,25 @@
   let plannerMutationSequence = 0;
   let ganttDragSnapState = new Map();
   let ganttSnapInterceptorInstalled = false;
-  let activeView = 'gantt';
+  let activeView = 'table';
   let showItemModal = false;
   let editingItemId = null;
   let dependencyTargetId = '';
   let showRuleModal = false;
   let editingRuleId = null;
+  let showP0BugModal = false;
+  let editingP0BugId = null;
+  let uploadingP0DescriptionImage = false;
+  let p0DescriptionImageError = '';
   let pendingOpenItemId = null;
   let ganttZoomIndex = 1;
+  let ganttTimelineMode = PLANNER_GANTT_TIMELINE_MODES.MEETINGS_ONLY;
   let draft = createItemDraft('task');
   let ruleDraft = createRuleDraft('blocked');
+  let taskSubsystems = [];
+  let taskSubsystemMembers = {};
+  let taskGeneralCandidates = {};
+  let p0BugDraft = createP0BugDraft();
   let ownerSearchQuery = '';
   let p0BugSearchQuery = '';
 
@@ -141,6 +164,22 @@
       starts_at: isWorkWindow ? '08:00' : '18:00',
       ends_at: isWorkWindow ? '17:00' : '19:00',
       enabled: true
+    };
+  }
+
+  function createP0BugDraft() {
+    return {
+      title: '',
+      description: '',
+      scope: 'general',
+      general_type: 'Other',
+      subsystem_id: '',
+      assignee_id: user?.id || '',
+      reviewer_id: user?.id || '',
+      needs_review: false,
+      needs_manufacturing: false,
+      deadline_at: toDatetimeLocal(new Date(Date.now() + 24 * 60 * 60 * 1000)),
+      status: 'open'
     };
   }
 
@@ -327,7 +366,7 @@
       ? task.end
       : (task.scheduled_end_at || task.scheduled_start_at || task.manual_start_at || null);
     const computedDuration = startValue && endValue
-      ? Math.max(30, workingMinutesBetween(startValue, endValue, calendarRules))
+      ? Math.max(30, workingMinutesBetween(startValue, endValue, effectiveGanttCalendarRules))
       : null;
 
     return {
@@ -473,6 +512,24 @@
     return payload;
   }
 
+  async function taskRequest(method = 'GET', body = null) {
+    const headers = {
+      ...(await getAuthHeader())
+    };
+    if (body) headers['content-type'] = 'application/json';
+
+    const response = await fetch('/api/tasks', {
+      method,
+      headers,
+      ...(body ? { body: JSON.stringify(body) } : {})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || `Task request failed (${response.status})`);
+    }
+    return payload;
+  }
+
   function hydrateBundle(data) {
     items = data?.items || [];
     dependencies = data?.dependencies || [];
@@ -480,6 +537,12 @@
     people = data?.people || [];
     p0Bugs = data?.p0_bugs || [];
     warnings = data?.warnings || [];
+  }
+
+  function hydrateTaskBundle(data) {
+    taskSubsystems = data?.subsystems || [];
+    taskSubsystemMembers = data?.subsystem_members || {};
+    taskGeneralCandidates = data?.general_candidates || {};
   }
 
   function nextPlannerMutationId() {
@@ -611,6 +674,15 @@
     }
   }
 
+  async function loadTaskOptions() {
+    try {
+      const payload = await taskRequest('GET');
+      hydrateTaskBundle(payload?.data || {});
+    } catch (loadError) {
+      error = loadError.message || 'Failed to load task options.';
+    }
+  }
+
   async function submitPlannerAction(body, successMessage = '') {
     saving = true;
     error = '';
@@ -710,6 +782,192 @@
   function closeRuleModal() {
     showRuleModal = false;
     editingRuleId = null;
+  }
+
+  function openCreateP0BugModal() {
+    editingP0BugId = null;
+    p0BugDraft = createP0BugDraft();
+    showP0BugModal = true;
+  }
+
+  function openEditP0BugModal(bugId) {
+    const bug = p0BugRows.find((row) => row.id === bugId);
+    if (!bug) return;
+    editingP0BugId = bug.id;
+    p0BugDraft = {
+      title: bug.title || '',
+      description: bug.description || '',
+      scope: bug.scope === 'subsystem' ? 'subsystem' : 'general',
+      general_type: bug.general_type || 'Other',
+      subsystem_id: bug.subsystem_id || '',
+      assignee_id: bug.assignee_id || '',
+      reviewer_id: bug.reviewer_id || user?.id || '',
+      needs_review: !!bug.needs_review,
+      needs_manufacturing: !!bug.needs_manufacturing,
+      deadline_at: toDatetimeLocal(bug.deadline_at),
+      status: bug.status || 'open'
+    };
+    showP0BugModal = true;
+  }
+
+  function closeP0BugModal() {
+    showP0BugModal = false;
+    editingP0BugId = null;
+    uploadingP0DescriptionImage = false;
+    p0DescriptionImageError = '';
+    p0BugDraft = createP0BugDraft();
+  }
+
+  function extractImageUrls(text) {
+    const raw = String(text || '');
+    const urlRegex = /https?:\/\/[^\s)]+/gi;
+    const allowedExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif'];
+    const seen = new Set();
+    const results = [];
+    for (const match of raw.match(urlRegex) || []) {
+      const cleaned = match.replace(/[),.;!?]+$/, '');
+      const lower = cleaned.toLowerCase();
+      const hasImageExt = allowedExt.some((ext) => lower.includes(ext));
+      if (!hasImageExt) continue;
+      if (seen.has(cleaned)) continue;
+      seen.add(cleaned);
+      results.push(cleaned);
+    }
+    return results;
+  }
+
+  function addPhotoUrlToP0BugDescription(url) {
+    const line = `Photo: ${url}`;
+    const current = String(p0BugDraft.description || '').trim();
+    const next = current ? `${current}\n${line}` : line;
+    p0BugDraft = { ...p0BugDraft, description: next };
+  }
+
+  async function handleP0DescriptionPhotos(event) {
+    const files = Array.from(event?.target?.files || []);
+    if (!files.length || !user?.id || !user?.frc_team) return;
+    uploadingP0DescriptionImage = true;
+    p0DescriptionImageError = '';
+
+    try {
+      for (const file of files) {
+        if (!String(file.type || '').startsWith('image/')) continue;
+        const safeName = String(file.name || 'task-photo').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const path = `${user.frc_team}/drafts/${user.id}/${Date.now()}_${safeName}`;
+        const { error: uploadError } = await supabase.storage
+          .from('task-description-images')
+          .upload(path, file, {
+            upsert: false,
+            contentType: file.type || 'image/jpeg'
+          });
+        if (uploadError) throw uploadError;
+        const { data: urlData } = supabase.storage.from('task-description-images').getPublicUrl(path);
+        const publicUrl = String(urlData?.publicUrl || '').trim();
+        if (publicUrl) addPhotoUrlToP0BugDescription(publicUrl);
+      }
+    } catch (photoError) {
+      p0DescriptionImageError = photoError?.message || 'Failed to upload image.';
+    } finally {
+      uploadingP0DescriptionImage = false;
+      if (event?.target) event.target.value = '';
+    }
+  }
+
+  function rowCanOpenP0BugModal(target) {
+    return !target?.closest?.('button, a, input, select, textarea, label');
+  }
+
+  function handleP0BugRowClick(event, bugId) {
+    if (!rowCanOpenP0BugModal(event.target)) return;
+    openEditP0BugModal(bugId);
+  }
+
+  function handleP0BugRowKeydown(event, bugId) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!rowCanOpenP0BugModal(event.target)) return;
+    event.preventDefault();
+    openEditP0BugModal(bugId);
+  }
+
+  function syncP0BugAssigneeSelection() {
+    const options = p0BugAssigneeOptions;
+    if (p0BugDraft.scope === 'subsystem' && !p0BugDraft.subsystem_id && taskSubsystems.length > 0) {
+      p0BugDraft = { ...p0BugDraft, subsystem_id: taskSubsystems[0].id };
+      return;
+    }
+    if (options.length > 0 && !options.some((opt) => opt.id === p0BugDraft.assignee_id)) {
+      p0BugDraft = { ...p0BugDraft, assignee_id: options[0].id };
+      return;
+    }
+    if (options.length === 0 && p0BugDraft.assignee_id) {
+      p0BugDraft = { ...p0BugDraft, assignee_id: '' };
+    }
+  }
+
+  async function saveP0Bug() {
+    const isEditing = !!editingP0BugId;
+    saving = true;
+    error = '';
+    try {
+      const metadataPayload = {
+        title: p0BugDraft.title,
+        description: p0BugDraft.description,
+        scope: p0BugDraft.scope,
+        general_type: p0BugDraft.scope === 'general' ? p0BugDraft.general_type : '',
+        subsystem_id: p0BugDraft.scope === 'subsystem' ? p0BugDraft.subsystem_id : '',
+        assignee_id: p0BugDraft.assignee_id,
+        reviewer_id: p0BugDraft.needs_review ? p0BugDraft.reviewer_id : '',
+        needs_review: p0BugDraft.needs_review,
+        needs_manufacturing: p0BugDraft.needs_manufacturing,
+        deadline_at: p0BugDraft.deadline_at || ''
+      };
+
+      const payload = await taskRequest('POST', {
+        action: isEditing ? 'update-metadata' : 'create',
+        ...(isEditing ? { task_id: editingP0BugId } : {}),
+        ...metadataPayload
+      });
+
+      const statusPayload = isEditing && p0BugDraft.status
+        ? await taskRequest('POST', {
+          action: 'set-status',
+          task_id: editingP0BugId,
+          status: p0BugDraft.status
+        })
+        : payload;
+
+      hydrateTaskBundle(statusPayload?.data || payload?.data || {});
+      await loadPlanner();
+      toastActions.show(isEditing ? 'P0 bug updated.' : 'P0 bug created.');
+      closeP0BugModal();
+    } catch (saveError) {
+      error = saveError.message || 'Failed to save P0 bug.';
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function deleteP0Bug() {
+    if (!editingP0BugId || typeof window === 'undefined') return;
+    const confirmed = window.confirm('Delete this P0 bug? This will also remove any fixing task that only exists for this bug.');
+    if (!confirmed) return;
+
+    saving = true;
+    error = '';
+    try {
+      const payload = await taskRequest('POST', {
+        action: 'delete',
+        task_id: editingP0BugId
+      });
+      hydrateTaskBundle(payload?.data || {});
+      await loadPlanner();
+      toastActions.show('P0 bug deleted.');
+      closeP0BugModal();
+    } catch (deleteError) {
+      error = deleteError.message || 'Failed to delete P0 bug.';
+    } finally {
+      saving = false;
+    }
   }
 
   function addOwner(personId) {
@@ -937,7 +1195,7 @@
       return;
     }
 
-    const payload = buildPlannerTaskUpdatePayload(source, event?.task, current, calendarRules);
+    const payload = buildPlannerTaskUpdatePayload(source, event?.task, current, effectiveGanttCalendarRules);
     if (!payload) {
       logPlannerGanttUpdate('Skipped drag update with no timing change', {
         event,
@@ -1074,6 +1332,7 @@
     }
     pendingOpenItemId = new URL(window.location.href).searchParams.get('item');
     await loadPlanner();
+    await loadTaskOptions();
     return () => unsubscribe?.();
   });
 
@@ -1145,11 +1404,56 @@
   $: fixingTaskRows = taskRows.filter((item) => isFixingItem(item));
   $: drivePracticeTaskRows = taskRows.filter((item) => isDrivePracticeItem(item));
   $: p0BugRows = p0Bugs || [];
+  $: p0BugAssigneeOptions = (() => {
+    const base =
+      p0BugDraft.scope === 'subsystem'
+        ? (taskSubsystemMembers?.[p0BugDraft.subsystem_id] || [])
+        : (taskGeneralCandidates?.[p0BugDraft.general_type] || []);
+    if (!user?.id) return base;
+    if (base.some((member) => member.id === user.id)) return base;
+    return [
+      { id: user.id, full_name: user.full_name, email: user.email },
+      ...base
+    ];
+  })();
+  $: p0BugReviewerOptions = (() => {
+    const map = new Map();
+    for (const bug of p0BugRows || []) {
+      for (const person of [bug?.assignee, bug?.reviewer]) {
+        if (person?.id && !map.has(person.id)) map.set(person.id, person);
+      }
+    }
+    for (const sid of Object.keys(taskSubsystemMembers || {})) {
+      for (const person of taskSubsystemMembers[sid] || []) {
+        if (person?.id && !map.has(person.id)) map.set(person.id, person);
+      }
+    }
+    for (const key of Object.keys(taskGeneralCandidates || {})) {
+      for (const person of taskGeneralCandidates[key] || []) {
+        if (person?.id && !map.has(person.id)) map.set(person.id, person);
+      }
+    }
+    if (user?.id && !map.has(user.id)) {
+      map.set(user.id, { id: user.id, full_name: user.full_name, email: user.email });
+    }
+    return [...map.values()].sort((a, b) => formatPerson(a).localeCompare(formatPerson(b), undefined, { sensitivity: 'base' }));
+  })();
+  $: if (showP0BugModal) {
+    syncP0BugAssigneeSelection();
+  }
   $: redItems = (plannerItems || []).filter((item) => getPlannerItemStatusTone(item) === 'red');
   $: dependencyCandidateItems = (plannerItems || []).filter((item) => item.id !== editingItemId);
   $: blockedRules = (calendarRules || []).filter((rule) => rule.rule_type === 'blocked' || rule.rule_type === 'drive_practice');
   $: legacyDrivePracticeRules = blockedRules.filter((rule) => rule.rule_type === 'drive_practice');
   $: workWindowRules = (calendarRules || []).filter((rule) => rule.rule_type === 'work_window');
+  $: effectiveGanttCalendarRules =
+    ganttTimelineMode === PLANNER_GANTT_TIMELINE_MODES.ALL_TIMES
+      ? PLANNER_GANTT_ALL_TIMES_RULES
+      : calendarRules;
+  $: ganttTimelineDescription =
+    ganttTimelineMode === PLANNER_GANTT_TIMELINE_MODES.ALL_TIMES
+      ? 'Timeline shows every day from 8:00 AM to 12:00 PM.'
+      : 'Timeline is compressed to meeting-aware work windows only. To add a one-off meeting, create a blocked calendar rule with a specific date.';
   $: ruleModeLabel =
     ruleDraft?.rule_type === 'work_window'
       ? 'Work Window'
@@ -1158,7 +1462,7 @@
     ruleDraft?.rule_type === 'work_window'
       ? 'Work windows create the hours the scheduler can use. Use Weekday for a repeating block or Specific Date for a one-time shift.'
       : 'Blocked meetings remove time from the schedule. Drive practice now belongs on the task list. For a one-off meeting, leave Weekday on Specific date instead and set the Specific Date.';
-  $: setPlannerGanttCalendarRules(calendarRules);
+  $: setPlannerGanttCalendarRules(effectiveGanttCalendarRules);
   $: ganttZoom = PLANNER_GANTT_ZOOM_LEVELS[ganttZoomIndex];
   $: ganttScales = createPlannerGanttScales({ timeScaleStep: ganttZoom.timeScaleStep });
   $: ganttBounds = getPlannerGanttBounds(plannerItems);
@@ -1227,16 +1531,7 @@
       <p class="planner-subtitle">Track milestones, sequence dependencies, and keep work aligned with real team availability.</p>
     </div>
     <div class="planner-header-actions">
-      <div class="planner-view-toggle planner-view-toggle--3" role="tablist" aria-label="Planner views">
-        <button
-          class="planner-view-button"
-          class:planner-view-button--active={activeView === 'gantt'}
-          type="button"
-          aria-pressed={activeView === 'gantt'}
-          on:click={() => (activeView = 'gantt')}
-        >
-          Gantt
-        </button>
+      <div class="planner-view-toggle" role="tablist" aria-label="Planner views">
         <button
           class="planner-view-button"
           class:planner-view-button--active={activeView === 'table'}
@@ -1248,16 +1543,16 @@
         </button>
         <button
           class="planner-view-button"
-          class:planner-view-button--active={activeView === 'meetings'}
+          class:planner-view-button--active={activeView === 'gantt'}
           type="button"
-          aria-pressed={activeView === 'meetings'}
-          on:click={() => (activeView = 'meetings')}
+          aria-pressed={activeView === 'gantt'}
+          on:click={() => (activeView = 'gantt')}
         >
-          Calendar
+          Gantt
         </button>
       </div>
       <div class="planner-actions">
-        <button class="btn btn-primary btn-sm btn-nowrap" type="button" on:click={openDrivePracticeItem}>New Drive Practice</button>
+        <button class="btn btn-primary btn-sm btn-nowrap" type="button" on:click={openCreateP0BugModal}>New P0 Bug</button>
         <button class="btn btn-primary btn-sm btn-nowrap" type="button" on:click={() => openCreateItem('milestone')}>New Milestone</button>
         <button class="btn btn-primary btn-sm btn-nowrap" type="button" on:click={() => openCreateItem('task')}>New Task</button>
       </div>
@@ -1290,9 +1585,29 @@
           <div class="planner-section-copy">
             <span class="planner-section-kicker">Timeline</span>
             <h2>Gantt Schedule</h2>
-            <p class="muted">Timeline is compressed to work windows only. To add a one-off meeting, create a blocked calendar rule with a specific date.</p>
+            <p class="muted">{ganttTimelineDescription}</p>
           </div>
           <div class="planner-gantt-actions">
+            <div class="planner-timeline-toggle" role="group" aria-label="Gantt timeline mode">
+              <button
+                class="planner-timeline-button"
+                class:planner-timeline-button--active={ganttTimelineMode === PLANNER_GANTT_TIMELINE_MODES.MEETINGS_ONLY}
+                type="button"
+                aria-pressed={ganttTimelineMode === PLANNER_GANTT_TIMELINE_MODES.MEETINGS_ONLY}
+                on:click={() => (ganttTimelineMode = PLANNER_GANTT_TIMELINE_MODES.MEETINGS_ONLY)}
+              >
+                Meetings Only
+              </button>
+              <button
+                class="planner-timeline-button"
+                class:planner-timeline-button--active={ganttTimelineMode === PLANNER_GANTT_TIMELINE_MODES.ALL_TIMES}
+                type="button"
+                aria-pressed={ganttTimelineMode === PLANNER_GANTT_TIMELINE_MODES.ALL_TIMES}
+                on:click={() => (ganttTimelineMode = PLANNER_GANTT_TIMELINE_MODES.ALL_TIMES)}
+              >
+                All Times
+              </button>
+            </div>
             <div class="planner-zoom-controls">
               <button class="btn btn-secondary btn-sm" type="button" on:click={() => zoomGantt(1)} disabled={ganttZoomIndex === PLANNER_GANTT_ZOOM_LEVELS.length - 1}>Zoom Out</button>
               <span class="planner-zoom-label">{ganttZoom.label}</span>
@@ -1343,7 +1658,7 @@
           <div class="planner-section-copy">
             <span class="planner-section-kicker">Details</span>
             <h2>Task List</h2>
-            <p class="muted">Use the list when you want a faster scan of scheduled work, including drive practice sessions, plus unresolved items from the separate tasks system.</p>
+            <p class="muted">Use the list when you want a faster scan of scheduled work, including drive practice sessions and editable P0 bugs in one place.</p>
           </div>
           <div class="planner-badge-cluster">
             <span class="planner-count-pill">{taskRows.length} planner task{taskRows.length === 1 ? '' : 's'}</span>
@@ -1365,8 +1680,8 @@
               <h3>No tasks yet</h3>
               <p>Create a task or drive practice session to start building the schedule.</p>
               <div class="planner-empty-actions">
-                <button class="btn btn-secondary btn-sm" type="button" on:click={openDrivePracticeItem}>New Drive Practice</button>
                 <button class="btn btn-primary btn-sm" type="button" on:click={() => openCreateItem('task')}>New Task</button>
+                <button class="btn btn-secondary btn-sm" type="button" on:click={() => openCreateItem('milestone')}>New Milestone</button>
               </div>
             </div>
           {:else}
@@ -1437,14 +1752,13 @@
           <div class="planner-list-group-head">
             <div class="planner-subsection-head">
               <h3>P0 Bugs</h3>
-              <p>These unresolved items come from the separate `/tasks` list and stay read-only here for planning visibility.</p>
+              <p>Edit unresolved P0 bugs here, then pull them into fixing blocks when you schedule bug-fix time.</p>
             </div>
-            <a class="btn btn-secondary btn-sm btn-nowrap" href="/tasks">Open Tasks</a>
           </div>
           {#if p0BugRows.length === 0}
             <div class="empty-state planner-empty-state">
               <h3>No P0 bugs right now</h3>
-              <p>The separate tasks system has no unresolved items for Team {user?.frc_team || 'your team'}.</p>
+              <p>There are no unresolved P0 bugs for Team {user?.frc_team || 'your team'}.</p>
             </div>
           {:else}
             <div class="table-container planner-table-surface">
@@ -1457,16 +1771,25 @@
                     <th>Deadline</th>
                     <th>Status</th>
                     <th>Flags</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {#each p0BugRows as bug (bug.id)}
                     {@const flags = formatP0BugFlags(bug)}
-                    <tr class:planner-p0-bug-row--overdue={isPastDue(bug.deadline_at)}>
+                    <tr
+                      class:planner-p0-bug-row--overdue={isPastDue(bug.deadline_at)}
+                      class="planner-table-row"
+                      tabindex="0"
+                      role="button"
+                      aria-label={`Open P0 bug ${bug.title}`}
+                      on:click={(event) => handleP0BugRowClick(event, bug.id)}
+                      on:keydown={(event) => handleP0BugRowKeydown(event, bug.id)}
+                    >
                       <td>
                         <div class="planner-table-primary">
                           <strong class="planner-row-title">{bug.title}</strong>
-                          <span class="planner-table-secondary">From the tasks system</span>
+                          <span class="planner-table-secondary">Open bug details</span>
                         </div>
                       </td>
                       <td><span class="planner-type-chip">{formatP0BugType(bug)}</span></td>
@@ -1498,6 +1821,9 @@
                           <span class="planner-table-secondary">None</span>
                         {/if}
                       </td>
+                      <td>
+                        <button class="btn btn-secondary btn-sm" type="button" on:click={() => openEditP0BugModal(bug.id)}>Edit</button>
+                      </td>
                     </tr>
                   {/each}
                 </tbody>
@@ -1506,100 +1832,145 @@
           {/if}
         </div>
       </section>
-    {:else if activeView === 'meetings'}
-      <section class="section-card planner-table-card">
-        <div class="section-head">
-          <div class="planner-section-copy">
-            <span class="planner-section-kicker">Drive Practice</span>
-            <h2>Drive Practice Tasks</h2>
-            <p class="muted">Drive practice now lives on the task list and Gantt, so it shares owners, dependencies, and scheduler behavior with the rest of the planner. Owners get the end-of-practice P0 bug prompt automatically.</p>
-          </div>
-          <div class="calendar-actions">
-            <span class="planner-count-pill">{drivePracticeTaskRows.length} session{drivePracticeTaskRows.length === 1 ? '' : 's'}</span>
-            <button class="btn btn-primary btn-sm btn-nowrap" type="button" on:click={openDrivePracticeItem}>New Drive Practice</button>
-          </div>
-        </div>
-        <div class="planner-banner planner-banner--success">
-          Create or edit drive practice from the planner task flow. It stays visible in the Gantt, can depend on other work, and pings task owners with the dedicated P0 report form when it ends.
-        </div>
-      </section>
-
-      <section class="section-card planner-table-card">
-        <div class="section-head">
-          <div class="planner-section-copy">
-            <span class="planner-section-kicker">Blocked Time</span>
-            <h2>Calendar Blocks</h2>
-            <p class="muted">Meetings and other manual blocks remove time from the schedule. Add recurring weekly meetings or one-off blocks for specific dates.</p>
-          </div>
-          <div class="calendar-actions">
-            <span class="planner-count-pill">{blockedRules.length} block{blockedRules.length === 1 ? '' : 's'}</span>
-            <button class="btn btn-primary btn-sm btn-nowrap" type="button" on:click={openMeetingModal}>Add Meeting</button>
-          </div>
-        </div>
-
-        {#if legacyDrivePracticeRules.length > 0}
-          <div class="planner-banner planner-banner--warning">
-            {legacyDrivePracticeRules.length} legacy drive practice block{legacyDrivePracticeRules.length === 1 ? '' : 's'} still exist in the calendar. Recreate them as tasks when you get a chance.
-          </div>
-        {/if}
-
-        {#if blockedRules.length === 0}
-          <div class="empty-state planner-empty-state">
-            <h3>No calendar blocks yet</h3>
-            <p>Add a recurring weekly meeting or a one-off block to carve out time from the schedule.</p>
-            <div class="planner-empty-actions">
-              <button class="btn btn-primary btn-sm" type="button" on:click={openMeetingModal}>Add Meeting</button>
-            </div>
-          </div>
-        {:else}
-          <div class="table-container planner-table-surface">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Label</th>
-                  <th>Type</th>
-                  <th>Recurrence</th>
-                  <th>When</th>
-                  <th>Time</th>
-                  <th>Enabled</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each blockedRules as rule (rule.id)}
-                  <tr>
-                    <td>
-                      <div class="planner-table-primary">
-                        <strong class="planner-row-title">{rule.label}</strong>
-                      </div>
-                    </td>
-                    <td><span class="planner-type-chip">{formatBlockedRuleType(rule)}</span></td>
-                    <td>
-                      <span class={`planner-rule-chip planner-rule-chip--${rule.specific_date ? 'oneoff' : 'recurring'}`}>
-                        {rule.specific_date ? 'One-off' : 'Weekly'}
-                      </span>
-                    </td>
-                    <td>{formatRuleWhen(rule)}</td>
-                    <td><span class="planner-time-range">{formatRuleWindow(rule)}</span></td>
-                    <td>
-                      <span class={`planner-enabled-chip planner-enabled-chip--${rule.enabled ? 'on' : 'off'}`}>
-                        {rule.enabled ? 'Enabled' : 'Paused'}
-                      </span>
-                    </td>
-                    <td class="calendar-actions">
-                      <button class="btn btn-outline btn-sm" type="button" on:click={() => openRuleModal(rule)}>Edit</button>
-                      <button class="btn btn-outline-danger btn-sm" type="button" on:click={() => deleteRule(rule.id)}>Delete</button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </section>
     {/if}
   {/if}
 </div>
+
+{#if showP0BugModal}
+  <div class="modal-backdrop" role="button" tabindex="0" on:click|self={closeP0BugModal}>
+    <section class="modal modal--wide planner-modal" role="dialog" aria-modal="true">
+      <div class="modal-header planner-modal-header">
+        <div>
+          <p class="planner-modal-kicker">P0 Bug</p>
+          <h2>{editingP0BugId ? 'Edit P0 Bug' : 'Create P0 Bug'}</h2>
+          <p class="planner-modal-subtitle">Keep ownership, deadline, and review state up to date without leaving the planner.</p>
+        </div>
+        <button class="modal-close-button" type="button" aria-label="Close" on:click={closeP0BugModal}>&times;</button>
+      </div>
+      <div class="modal-body planner-modal-body">
+        <div class="planner-form-grid">
+          <label class="form-group planner-form-group--wide">
+            <span class="form-label">Bug Title</span>
+            <input class="form-input" bind:value={p0BugDraft.title} placeholder="Short summary of the bug" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">Type Mode</span>
+            <select class="form-select" bind:value={p0BugDraft.scope} on:change={syncP0BugAssigneeSelection}>
+              <option value="general">General Type</option>
+              <option value="subsystem">Subsystem</option>
+            </select>
+          </label>
+          {#if p0BugDraft.scope === 'general'}
+            <label class="form-group">
+              <span class="form-label">General Type</span>
+              <select class="form-select" bind:value={p0BugDraft.general_type} on:change={syncP0BugAssigneeSelection}>
+                {#each GENERAL_TYPES as type}
+                  <option value={type}>{type}</option>
+                {/each}
+              </select>
+            </label>
+          {:else}
+            <label class="form-group">
+              <span class="form-label">Subsystem</span>
+              <select class="form-select" bind:value={p0BugDraft.subsystem_id} on:change={syncP0BugAssigneeSelection}>
+                {#if taskSubsystems.length === 0}
+                  <option value="">No subsystems on your team</option>
+                {:else}
+                  {#each taskSubsystems as subsystem}
+                    <option value={subsystem.id}>{subsystem.name}</option>
+                  {/each}
+                {/if}
+              </select>
+            </label>
+          {/if}
+          <label class="form-group">
+            <span class="form-label">Assignee</span>
+            <select class="form-select" bind:value={p0BugDraft.assignee_id}>
+              {#if p0BugAssigneeOptions.length === 0}
+                <option value="">No eligible members</option>
+              {:else}
+                {#each p0BugAssigneeOptions as member}
+                  <option value={member.id}>{formatPerson(member)}</option>
+                {/each}
+              {/if}
+            </select>
+          </label>
+          <label class="form-group">
+            <span class="form-label">Reviewer</span>
+            <select class="form-select" bind:value={p0BugDraft.reviewer_id} disabled={!p0BugDraft.needs_review}>
+              {#each p0BugReviewerOptions as member}
+                <option value={member.id}>{formatPerson(member)}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="form-group">
+            <span class="form-label">Deadline</span>
+            <input class="form-input" type="datetime-local" bind:value={p0BugDraft.deadline_at} />
+            <small class="form-help">Deadlines are saved in Pacific Time.</small>
+          </label>
+          {#if editingP0BugId}
+            <label class="form-group">
+              <span class="form-label">Status</span>
+              <select class="form-select" bind:value={p0BugDraft.status}>
+                {#each P0_STATUS_OPTIONS as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
+        </div>
+        <label class="form-group planner-form-group--wide">
+          <span class="form-label">Description</span>
+          <textarea class="form-input" rows="8" bind:value={p0BugDraft.description} placeholder="What happened, how to reproduce it, and what was affected"></textarea>
+        </label>
+        <div class="photo-upload-row">
+          <label class="btn btn-secondary btn-sm" class:disabled={uploadingP0DescriptionImage}>
+            {uploadingP0DescriptionImage ? 'Uploading Photo...' : 'Attach / Take Photos'}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              multiple
+              disabled={uploadingP0DescriptionImage}
+              on:change={handleP0DescriptionPhotos}
+            />
+          </label>
+          <span class="meta-text muted">Photos are added to the description as links and shown inline on tasks.</span>
+        </div>
+        {#if p0DescriptionImageError}
+          <div class="error-message">{p0DescriptionImageError}</div>
+        {/if}
+        {#if extractImageUrls(p0BugDraft.description).length > 0}
+          <div class="planner-flags">
+            {#each extractImageUrls(p0BugDraft.description) as imageUrl}
+              <a class="planner-count-pill" href={imageUrl} target="_blank" rel="noopener noreferrer">Photo</a>
+            {/each}
+          </div>
+        {/if}
+        <div class="check-row">
+          <label class="checkbox-line">
+            <input type="checkbox" bind:checked={p0BugDraft.needs_review} />
+            Needs Review
+          </label>
+          <label class="checkbox-line">
+            <input type="checkbox" bind:checked={p0BugDraft.needs_manufacturing} />
+            Needs Manufacturing
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        {#if editingP0BugId}
+          <button class="btn btn-outline-danger btn-sm" type="button" disabled={saving} on:click={deleteP0Bug}>Delete P0 Bug</button>
+        {/if}
+        <button class="btn btn-secondary btn-sm" type="button" on:click={closeP0BugModal}>Cancel</button>
+        <button class="btn btn-primary btn-sm" type="button" disabled={saving || !p0BugDraft.title.trim() || !p0BugDraft.assignee_id} on:click={saveP0Bug}>
+          {saving ? 'Saving...' : editingP0BugId ? 'Save P0 Bug' : 'Create P0 Bug'}
+        </button>
+      </div>
+    </section>
+  </div>
+{/if}
 
 {#if showItemModal}
   <div class="modal-backdrop" role="button" tabindex="0" on:click|self={closeItemModal}>
@@ -1767,7 +2138,7 @@
               <p>
                 {#if draft.kind === 'task'}
                   {#if fixingDraft}
-                    Choose the unresolved P0 bugs this time block should cover. The raw P0 bug list still stays in its own table below the planner tasks.
+                    Choose the unresolved P0 bugs this time block should cover.
                   {:else if fullCycleDraft}
                     Capture the overall context once, then assign the owners who should carry all three blocks forward.
                   {:else if drivePracticeDraft}
@@ -2254,10 +2625,6 @@
     background: var(--surface-2);
   }
 
-  .planner-view-toggle--3 {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .planner-view-button {
     border: 0;
     background: transparent;
@@ -2434,6 +2801,13 @@
     color: var(--planner-status-text);
   }
 
+  .planner-status-badge--completed,
+  .status-chip--completed {
+    background: var(--planner-completed-solid);
+    border-color: var(--planner-completed-border);
+    color: var(--planner-status-text);
+  }
+
   .planner-rule-chip--work {
     background: rgba(219, 234, 254, 0.58);
     border-color: rgba(29, 78, 216, 0.16);
@@ -2502,6 +2876,40 @@
     border: 1px solid var(--planner-border-soft);
     border-radius: var(--radius-sm);
     background: var(--surface-1);
+  }
+
+  .planner-timeline-toggle {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem;
+    border: 1px solid var(--planner-border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+  }
+
+  .planner-timeline-button {
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    min-height: var(--control-height-sm);
+    padding: 0 0.85rem;
+    border-radius: calc(var(--radius-sm) - 2px);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .planner-timeline-button:hover,
+  .planner-timeline-button:focus-visible {
+    color: var(--text);
+    outline: none;
+  }
+
+  .planner-timeline-button--active {
+    background: rgba(241, 195, 49, 0.14);
+    color: var(--text);
   }
 
   .planner-zoom-label {

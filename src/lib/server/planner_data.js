@@ -471,7 +471,7 @@ export async function createPlannerFixingTaskFromP0Bug(db, actor, bug) {
       title: buildPlannerFixingTaskTitle(bug.title),
       notes: null,
       category: null,
-      status: 'red',
+      status: 'not_started',
       critical_level: 1,
       duration_minutes: durationMinutes,
       requested_duration_minutes: durationMinutes,

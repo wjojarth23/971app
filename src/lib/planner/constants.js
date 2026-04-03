@@ -67,15 +67,19 @@ export const PLANNER_TASK_MODE_LABELS = {
 
 export const PLANNER_REACTION_TO_STATUS = {
   red_circle: 'red',
+  large_yellow_circle: 'yellow',
   yellow_circle: 'yellow',
+  large_green_circle: 'green',
   green_circle: 'green',
+  white_circle: 'not_started',
   white_check_mark: 'completed'
 };
 
 export const PLANNER_STATUS_TO_REACTION = {
   red: 'red_circle',
-  yellow: 'yellow_circle',
-  green: 'green_circle',
+  yellow: 'large_yellow_circle',
+  green: 'large_green_circle',
+  not_started: 'white_circle',
   completed: 'white_check_mark'
 };
 

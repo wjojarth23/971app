@@ -97,8 +97,12 @@ async function dispatchNotification({ userId, notificationKey, entityKey = null,
   }
 
   const client = getSlackClient();
-  await client.chat.postMessage({ channel, text, blocks });
-  return { ok: true };
+  const response = await client.chat.postMessage({ channel, text, blocks });
+  return {
+    ok: !!response?.ok,
+    channel: response?.channel || channel,
+    ts: response?.ts || null
+  };
 }
 
 export async function notifyScoutAssignment({ assignmentId, userId, matchKey, teamKey, scoutingType }) {
@@ -242,14 +246,100 @@ export async function notifyTaskAssignedById(taskId) {
   if (!task?.assignee_id) {
     return { ok: false, reason: 'no-assignee' };
   }
-  const text = `You were assigned task: ${task.title || 'Untitled task'}.`;
+  const { data: p0Link } = await supa
+    .from('planner_item_p0_bugs')
+    .select('planner_item_id')
+    .eq('task_id', task.id)
+    .limit(1)
+    .maybeSingle();
+  const isP0Bug = !!p0Link?.planner_item_id;
+  const text = isP0Bug
+    ? `You were assigned P0 bug: ${task.title || 'Untitled bug'}. React with :white_check_mark: when you start it.`
+    : `You were assigned task: ${task.title || 'Untitled task'}.`;
   const entityKey = task.created_at ? `task:${task.id}:assigned:${task.assignee_id}:${task.created_at}` : `task:${task.id}:assigned`;
-  return dispatchNotification({
+  const result = await dispatchNotification({
     userId: task.assignee_id,
     notificationKey: NOTIFICATION_KEYS.TASK_ASSIGNED,
     entityKey,
     text
   });
+  if (isP0Bug && result?.ok && result.channel && result.ts) {
+    await supa
+      .from('tasks')
+      .update({
+        assignment_slack_channel: result.channel,
+        assignment_slack_ts: result.ts
+      })
+      .eq('id', task.id);
+
+    try {
+      await getSlackClient().reactions.add({
+        channel: result.channel,
+        timestamp: result.ts,
+        name: 'white_check_mark'
+      });
+    } catch (error) {
+      console.warn('Failed to add P0 bug start reaction', error?.data || error?.message || error);
+    }
+  }
+  return result;
+}
+
+export async function handleP0BugAssignmentReaction({ channel, ts, reaction, reactingUser }) {
+  if (String(reaction || '').trim() !== 'white_check_mark' || !channel || !ts) {
+    return { handled: false };
+  }
+
+  const supa = getSupabase();
+  const { data: task, error: taskError } = await supa
+    .from('tasks')
+    .select('id, assignee_id, status, assignment_slack_channel, assignment_slack_ts')
+    .eq('assignment_slack_channel', channel)
+    .eq('assignment_slack_ts', ts)
+    .maybeSingle();
+  if (taskError) throw taskError;
+  if (!task?.id) return { handled: false };
+
+  const user = await fetchNotificationUser(task.assignee_id, supa);
+  if (user?.slack_user_id && reactingUser && user.slack_user_id !== reactingUser) {
+    return { handled: true, ignored: true };
+  }
+
+  const { data: link, error: linkError } = await supa
+    .from('planner_item_p0_bugs')
+    .select('planner_item_id')
+    .eq('task_id', task.id)
+    .limit(1)
+    .maybeSingle();
+  if (linkError) throw linkError;
+  if (!link?.planner_item_id) return { handled: true, ignored: true };
+
+  if (task.status === 'open') {
+    const { error: updateTaskError } = await supa
+      .from('tasks')
+      .update({ status: 'in_progress' })
+      .eq('id', task.id)
+      .eq('status', 'open');
+    if (updateTaskError) throw updateTaskError;
+  }
+
+  const { data: plannerItem, error: plannerError } = await supa
+    .from('planner_items')
+    .select('id, status')
+    .eq('id', link.planner_item_id)
+    .maybeSingle();
+  if (plannerError) throw plannerError;
+
+  if (plannerItem?.id && String(plannerItem.status || '').trim().toLowerCase() === 'not_started') {
+    const { error: updatePlannerError } = await supa
+      .from('planner_items')
+      .update({ status: 'green' })
+      .eq('id', plannerItem.id)
+      .eq('status', 'not_started');
+    if (updatePlannerError) throw updatePlannerError;
+  }
+
+  return { handled: true, status: 'started' };
 }
 
 export async function notifyTaskReviewRequestedById(taskId) {
