@@ -13,6 +13,118 @@
   const MAX_AUTO_NAME_LENGTH = 60;
   const MAX_AUTO_DESCRIPTION_LENGTH = 220;
   const MAX_BREAKING_COMPONENT_LENGTH = 240;
+  const YES_NO_OPTIONS = ['Yes', 'No'];
+  const INTAKE_STYLE_OPTIONS = ['Slapdown Intake', 'Linkage Intake', 'Other'];
+  const MAIN_BREAKER_OPTIONS = ['Bussmann', 'OptiFuse', 'Other'];
+  const SB_CONNECTOR_OPTIONS = ['SB60', 'SB40', 'Other'];
+  const WIRE_INSULATION_OPTIONS = ['Silicone', 'Other'];
+  const ELECTRICAL_CONNECTOR_OPTIONS = [
+    'Molex SL CAN',
+    'WAGO CAN',
+    'WAGO Power',
+    'Anderson Power',
+    'Ring Terminal Power',
+    'Ring Terminal CAN',
+    'Non-locking CAN',
+    'WCP Powerpole Board',
+    'Custom Powerpole Board',
+    'Custom PCBs',
+    'Other'
+  ];
+  const BATTERY_OPTIONS = ['Energizer', 'Duracell', 'MK Battery', 'Other'];
+  const MOTOR_CONTROLLER_OPTIONS = ['Talon FX', 'Victor SPX', 'Spark MAX', 'Redux', 'Thrifty'];
+  const MOTOR_TYPE_OPTIONS = ['X60', 'X44', '550', 'Vortex', 'Thrifty', 'CIM'];
+  const AUTO_TOOL_OPTIONS = ['Bline', 'PathPlanner', 'Choreo', 'Custom'];
+  const VISION_OPTIONS = ['PhotonVision', 'Limelight', 'Custom'];
+  const COPROCESSOR_OPTIONS = ['Orin', 'Limelight', 'Orange Pi', 'Raspberry Pi', 'Mac Mini', 'Other'];
+  const PROGRAMMING_LANGUAGE_OPTIONS = ['Java', 'C++', 'Python'];
+  const GRIP_TAPE_OPTIONS = ['Cat Tongue', 'Silicone', 'Other'];
+  const SWERVE_MODULE_OPTIONS = [
+    'MK5n',
+    'MK5i',
+    'MK4i',
+    'MK4n',
+    'MK4',
+    'WCP X2i',
+    'X2t',
+    'X2c',
+    'X2',
+    'ThriftySwerve',
+    'Other'
+  ];
+  const HOPPER_WALL_OPTIONS = ['Reinforced Corners', 'Polycarbonate Flanges', 'Other'];
+  const BUMPER_FOAM_OPTIONS = ['Pool Noodle', 'EVA', 'XPE', 'Other'];
+  const HARDWARE_STANDARD_OPTIONS = ['E-clip', 'Metric Fasteners', 'Metric Bearings'];
+  const ENCODER_TYPE_OPTIONS = ['PWM', 'CAN Through Bore', 'Other'];
+  const TECHNICAL_MULTI_FIELD_OPTIONS = {
+    electrical_connectors: ELECTRICAL_CONNECTOR_OPTIONS,
+    motor_controllers: MOTOR_CONTROLLER_OPTIONS,
+    motor_types: MOTOR_TYPE_OPTIONS,
+    auto_tools: AUTO_TOOL_OPTIONS,
+    vision: VISION_OPTIONS,
+    programming_language: PROGRAMMING_LANGUAGE_OPTIONS,
+    hardware_standards: HARDWARE_STANDARD_OPTIONS,
+    encoder_types: ENCODER_TYPE_OPTIONS
+  };
+  const TECHNICAL_SINGLE_FIELD_OPTIONS = {
+    use_net: YES_NO_OPTIONS,
+    intake_style: INTAKE_STYLE_OPTIONS,
+    main_breaker_brand: MAIN_BREAKER_OPTIONS,
+    sb_connector: SB_CONNECTOR_OPTIONS,
+    main_breaker_shroud: YES_NO_OPTIONS,
+    wire_insulation: WIRE_INSULATION_OPTIONS,
+    battery_type: BATTERY_OPTIONS,
+    ground_intake_kicker: YES_NO_OPTIONS,
+    uses_canivore: YES_NO_OPTIONS,
+    coprocessor: COPROCESSOR_OPTIONS,
+    uses_wpilib: YES_NO_OPTIONS,
+    grip_tape: GRIP_TAPE_OPTIONS,
+    swerve_module: SWERVE_MODULE_OPTIONS,
+    hopper_wall_reinforcement: HOPPER_WALL_OPTIONS,
+    fits_under_trench: YES_NO_OPTIONS,
+    drives_over_mound: YES_NO_OPTIONS,
+    bumper_foam: BUMPER_FOAM_OPTIONS,
+    printed_roller_hubs: YES_NO_OPTIONS
+  };
+  const DEFAULT_TECHNICAL_DETAILS = Object.freeze({
+    use_net: '',
+    intake_style: '',
+    ground_roller_motor_count: undefined,
+    bumper_length: undefined,
+    bumper_width: undefined,
+    bumper_height: undefined,
+    main_breaker_brand: '',
+    sb_connector: '',
+    main_breaker_shroud: '',
+    mostly_used_wire_gauge: '',
+    wire_insulation: '',
+    electrical_connectors: [],
+    battery_type: '',
+    ground_intake_kicker: '',
+    motor_controllers: [],
+    motor_types: [],
+    uses_canivore: '',
+    can_bus_count: undefined,
+    auto_tools: [],
+    vision: [],
+    coprocessor: '',
+    programming_language: [],
+    uses_wpilib: '',
+    grip_tape: '',
+    swerve_module: '',
+    hopper_wall_reinforcement: '',
+    fits_under_trench: '',
+    drives_over_mound: '',
+    drivebase_tube_thickness: '',
+    bumper_foam: '',
+    hardware_standards: [],
+    encoder_types: [],
+    printed_roller_hubs: '',
+    roller_hub_material: '',
+    electrical_rating: undefined,
+    drivebase_rating: undefined,
+    overall_reliability_rating: undefined
+  });
 
   let eventKey = '';
 
@@ -34,13 +146,15 @@
     likely_breaking_component: true,
     estimated_bps: true,
     climb_options: true,
-    auto_options: true
+    auto_options: true,
+    technical_details: true
   };
   let schemaWarning = '';
   let likely_breaking_component = '';
   let estimated_bps = undefined;
   let climb_options = [];
   let autoOptions = [];
+  let technical_details = createDefaultTechnicalDetails();
   let editablePhotoPaths = [];
   let pendingFiles = [];
   let photoInputKey = 0;
@@ -70,6 +184,53 @@
     return CLIMB_OPTIONS.filter((option) => option !== NO_CLIMB_OPTION && selected.has(option));
   }
 
+  function createDefaultTechnicalDetails() {
+    return Object.fromEntries(
+      Object.entries(DEFAULT_TECHNICAL_DETAILS).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])
+    );
+  }
+
+  function normalizeTechnicalNumber(value, { min = 0, max = null, integer = false } = {}) {
+    if (value === '' || value === null || value === undefined) return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < min || (max !== null && parsed > max)) return undefined;
+    return integer ? Math.round(parsed) : Math.round(parsed * 1000) / 1000;
+  }
+
+  function normalizeTechnicalDetails(input) {
+    const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+    const normalized = createDefaultTechnicalDetails();
+
+    for (const [field, options] of Object.entries(TECHNICAL_SINGLE_FIELD_OPTIONS)) {
+      const value = String(source[field] || '').trim();
+      normalized[field] = options.includes(value) ? value : '';
+    }
+
+    for (const [field, options] of Object.entries(TECHNICAL_MULTI_FIELD_OPTIONS)) {
+      const selected = new Set(Array.isArray(source[field]) ? source[field].map((value) => String(value || '').trim()) : []);
+      normalized[field] = options.filter((option) => selected.has(option));
+    }
+
+    normalized.mostly_used_wire_gauge = String(source.mostly_used_wire_gauge || '').trim().slice(0, 80);
+    normalized.drivebase_tube_thickness = String(source.drivebase_tube_thickness || '').trim().slice(0, 80);
+    normalized.roller_hub_material = String(source.roller_hub_material || '').trim().slice(0, 80);
+
+    normalized.ground_roller_motor_count = normalizeTechnicalNumber(source.ground_roller_motor_count, { integer: true });
+    normalized.bumper_length = normalizeTechnicalNumber(source.bumper_length);
+    normalized.bumper_width = normalizeTechnicalNumber(source.bumper_width);
+    normalized.bumper_height = normalizeTechnicalNumber(source.bumper_height);
+    normalized.can_bus_count = normalizeTechnicalNumber(source.can_bus_count, { integer: true });
+    normalized.electrical_rating = normalizeTechnicalNumber(source.electrical_rating, { min: 1, max: 10, integer: true });
+    normalized.drivebase_rating = normalizeTechnicalNumber(source.drivebase_rating, { min: 1, max: 10, integer: true });
+    normalized.overall_reliability_rating = normalizeTechnicalNumber(source.overall_reliability_rating, {
+      min: 1,
+      max: 10,
+      integer: true
+    });
+
+    return normalized;
+  }
+
   function setClimbOption(option, checked) {
     if (option === NO_CLIMB_OPTION) {
       climb_options = checked ? [NO_CLIMB_OPTION] : [];
@@ -81,6 +242,21 @@
     if (checked) selected.add(option);
     else selected.delete(option);
     climb_options = CLIMB_OPTIONS.filter((value) => value !== NO_CLIMB_OPTION && selected.has(value));
+  }
+
+  function setTechnicalMulti(field, option, checked) {
+    const allowed = TECHNICAL_MULTI_FIELD_OPTIONS[field] || [];
+    const selected = new Set(Array.isArray(technical_details[field]) ? technical_details[field] : []);
+    if (checked) selected.add(option);
+    else selected.delete(option);
+    technical_details = {
+      ...technical_details,
+      [field]: allowed.filter((value) => selected.has(value))
+    };
+  }
+
+  function hasTechnicalMulti(field, option) {
+    return Array.isArray(technical_details[field]) && technical_details[field].includes(option);
   }
 
   function normalizeLikelyBreakingComponent(value) {
@@ -137,6 +313,7 @@
     estimated_bps = hasEstimatedBps(entry?.estimated_bps) ? Number(entry.estimated_bps) : undefined;
     climb_options = normalizeClimbOptions(entry?.climb_options || []);
     autoOptions = normalizeAutoOptions(entry?.auto_options || []);
+    technical_details = normalizeTechnicalDetails(entry?.technical_details || {});
     editablePhotoPaths = [...(entry?.photo_paths || [])];
     pendingFiles = [];
     photoInputKey += 1;
@@ -364,6 +541,7 @@
     const normalizedLikelyBreakingComponent = normalizeLikelyBreakingComponent(likely_breaking_component);
     const normalizedEstimatedBps = hasEstimatedBps(estimated_bps) ? Math.round(Number(estimated_bps) * 100) / 100 : null;
     const normalizedClimbOptions = normalizeClimbOptions(climb_options);
+    const normalizedTechnicalDetails = normalizeTechnicalDetails(technical_details);
 
     const normalizedAutoOptions = getFilledAutoOptions(autoOptions);
     if (normalizedAutoOptions.some((option) => !option.name || !option.description)) {
@@ -396,6 +574,7 @@
         ...(pitSchema.estimated_bps ? { estimated_bps: normalizedEstimatedBps } : {}),
         ...(pitSchema.climb_options ? { climb_options: normalizedClimbOptions } : {}),
         ...(pitSchema.auto_options ? { auto_options: normalizedAutoOptions } : {}),
+        ...(pitSchema.technical_details ? { technical_details: normalizedTechnicalDetails } : {}),
         photo_paths
       };
 
@@ -570,6 +749,496 @@
         {/each}
       </select>
     </div>
+
+    {#if pitSchema.technical_details}
+      <section class="question-section">
+        <h4>Robot and Mechanisms</h4>
+
+        <div class="field-grid">
+          <div class="form-group">
+            <label class="form-label" for="useNetSelect">Do they use a net?</label>
+            <select id="useNetSelect" class="form-select" bind:value={technical_details.use_net}>
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="intakeStyleSelect">Ground intake style</label>
+            <select id="intakeStyleSelect" class="form-select" bind:value={technical_details.intake_style}>
+              <option value="">-- Select --</option>
+              {#each INTAKE_STYLE_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groundRollerMotorCountInput">Motors powering ground roller</label>
+            <input
+              id="groundRollerMotorCountInput"
+              class="form-input"
+              type="number"
+              min="0"
+              step="1"
+              bind:value={technical_details.ground_roller_motor_count}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groundIntakeKickerSelect">Ground intake has a kicker?</label>
+            <select
+              id="groundIntakeKickerSelect"
+              class="form-select"
+              bind:value={technical_details.ground_intake_kicker}
+            >
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Motor controllers used</label>
+          <div class="option-grid compact">
+            {#each MOTOR_CONTROLLER_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('motor_controllers', option)}
+                  on:change={(event) => setTechnicalMulti('motor_controllers', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Motor types used</label>
+          <div class="option-grid compact">
+            {#each MOTOR_TYPE_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('motor_types', option)}
+                  on:change={(event) => setTechnicalMulti('motor_types', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      </section>
+
+      <section class="question-section">
+        <h4>Electrical</h4>
+
+        <div class="field-grid">
+          <div class="form-group">
+            <label class="form-label" for="mainBreakerBrandSelect">Main breaker brand</label>
+            <select id="mainBreakerBrandSelect" class="form-select" bind:value={technical_details.main_breaker_brand}>
+              <option value="">-- Select --</option>
+              {#each MAIN_BREAKER_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="sbConnectorSelect">SB connector</label>
+            <select id="sbConnectorSelect" class="form-select" bind:value={technical_details.sb_connector}>
+              <option value="">-- Select --</option>
+              {#each SB_CONNECTOR_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="mainBreakerShroudSelect">Main breaker shroud?</label>
+            <select id="mainBreakerShroudSelect" class="form-select" bind:value={technical_details.main_breaker_shroud}>
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="wireGaugeInput">Wire gauge mostly used</label>
+            <input
+              id="wireGaugeInput"
+              class="form-input"
+              type="text"
+              maxlength="80"
+              placeholder="e.g. 6 AWG, 12 AWG"
+              bind:value={technical_details.mostly_used_wire_gauge}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="wireInsulationSelect">Wire insulation</label>
+            <select id="wireInsulationSelect" class="form-select" bind:value={technical_details.wire_insulation}>
+              <option value="">-- Select --</option>
+              {#each WIRE_INSULATION_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="batteryTypeSelect">Battery type</label>
+            <select id="batteryTypeSelect" class="form-select" bind:value={technical_details.battery_type}>
+              <option value="">-- Select --</option>
+              {#each BATTERY_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Connectors and boards used</label>
+          <div class="option-grid">
+            {#each ELECTRICAL_CONNECTOR_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('electrical_connectors', option)}
+                  on:change={(event) => setTechnicalMulti('electrical_connectors', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      </section>
+
+      <section class="question-section">
+        <h4>Controls and Software</h4>
+
+        <div class="field-grid">
+          <div class="form-group">
+            <label class="form-label" for="usesCanivoreSelect">Uses CANivore?</label>
+            <select id="usesCanivoreSelect" class="form-select" bind:value={technical_details.uses_canivore}>
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="canBusCountInput">Number of CAN buses</label>
+            <input
+              id="canBusCountInput"
+              class="form-input"
+              type="number"
+              min="0"
+              step="1"
+              bind:value={technical_details.can_bus_count}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="coprocessorSelect">Coprocessor</label>
+            <select id="coprocessorSelect" class="form-select" bind:value={technical_details.coprocessor}>
+              <option value="">-- Select --</option>
+              {#each COPROCESSOR_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="usesWpilibSelect">Uses WPILib?</label>
+            <select id="usesWpilibSelect" class="form-select" bind:value={technical_details.uses_wpilib}>
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Auto tools used</label>
+          <div class="option-grid compact">
+            {#each AUTO_TOOL_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('auto_tools', option)}
+                  on:change={(event) => setTechnicalMulti('auto_tools', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Vision used</label>
+          <div class="option-grid compact">
+            {#each VISION_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('vision', option)}
+                  on:change={(event) => setTechnicalMulti('vision', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Programming language</label>
+          <div class="option-grid compact">
+            {#each PROGRAMMING_LANGUAGE_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('programming_language', option)}
+                  on:change={(event) => setTechnicalMulti('programming_language', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      </section>
+
+      <section class="question-section">
+        <h4>Drivebase and Structure</h4>
+
+        <div class="field-grid">
+          <div class="form-group">
+            <label class="form-label" for="swerveModuleSelect">Swerve module</label>
+            <select id="swerveModuleSelect" class="form-select" bind:value={technical_details.swerve_module}>
+              <option value="">-- Select --</option>
+              {#each SWERVE_MODULE_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="gripTapeSelect">Grip tape</label>
+            <select id="gripTapeSelect" class="form-select" bind:value={technical_details.grip_tape}>
+              <option value="">-- Select --</option>
+              {#each GRIP_TAPE_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="hopperWallSelect">Hopper wall reinforcement</label>
+            <select
+              id="hopperWallSelect"
+              class="form-select"
+              bind:value={technical_details.hopper_wall_reinforcement}
+            >
+              <option value="">-- Select --</option>
+              {#each HOPPER_WALL_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="fitsUnderTrenchSelect">Can fit under the trench?</label>
+            <select id="fitsUnderTrenchSelect" class="form-select" bind:value={technical_details.fits_under_trench}>
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="drivesOverMoundSelect">Can drive over the mound?</label>
+            <select id="drivesOverMoundSelect" class="form-select" bind:value={technical_details.drives_over_mound}>
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="drivebaseTubeThicknessInput">Drivebase tube thickness</label>
+            <input
+              id="drivebaseTubeThicknessInput"
+              class="form-input"
+              type="text"
+              maxlength="80"
+              placeholder="e.g. 1/8 in, 0.090 in"
+              bind:value={technical_details.drivebase_tube_thickness}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="bumperFoamSelect">Bumper foam</label>
+            <select id="bumperFoamSelect" class="form-select" bind:value={technical_details.bumper_foam}>
+              <option value="">-- Select --</option>
+              {#each BUMPER_FOAM_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="dimension-grid">
+          <div class="form-group">
+            <label class="form-label" for="bumperLengthInput">Bumper length</label>
+            <input
+              id="bumperLengthInput"
+              class="form-input"
+              type="number"
+              min="0"
+              step="0.01"
+              bind:value={technical_details.bumper_length}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="bumperWidthInput">Bumper width</label>
+            <input
+              id="bumperWidthInput"
+              class="form-input"
+              type="number"
+              min="0"
+              step="0.01"
+              bind:value={technical_details.bumper_width}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="bumperHeightInput">Bumper height</label>
+            <input
+              id="bumperHeightInput"
+              class="form-input"
+              type="number"
+              min="0"
+              step="0.01"
+              bind:value={technical_details.bumper_height}
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Hardware standards used</label>
+          <div class="option-grid compact">
+            {#each HARDWARE_STANDARD_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('hardware_standards', option)}
+                  on:change={(event) => setTechnicalMulti('hardware_standards', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Encoder types used</label>
+          <div class="option-grid compact">
+            {#each ENCODER_TYPE_OPTIONS as option}
+              <label class="form-checkbox option-tile">
+                <input
+                  type="checkbox"
+                  checked={hasTechnicalMulti('encoder_types', option)}
+                  on:change={(event) => setTechnicalMulti('encoder_types', option, event.currentTarget.checked)}
+                />
+                <span>{option}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="form-group">
+            <label class="form-label" for="printedRollerHubsSelect">3D printed roller hubs?</label>
+            <select
+              id="printedRollerHubsSelect"
+              class="form-select"
+              bind:value={technical_details.printed_roller_hubs}
+            >
+              <option value="">-- Select --</option>
+              {#each YES_NO_OPTIONS as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rollerHubMaterialInput">Roller hub print material</label>
+            <input
+              id="rollerHubMaterialInput"
+              class="form-input"
+              type="text"
+              maxlength="80"
+              placeholder="e.g. PLA, PETG, Onyx"
+              bind:value={technical_details.roller_hub_material}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section class="question-section">
+        <h4>Subjective Ratings</h4>
+        <div class="rating-grid">
+          <div class="form-group">
+            <label class="form-label" for="electricalRatingInput">Electrical rating (1-10)</label>
+            <input
+              id="electricalRatingInput"
+              class="form-input"
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              bind:value={technical_details.electrical_rating}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="drivebaseRatingInput">Drivebase rating (1-10)</label>
+            <input
+              id="drivebaseRatingInput"
+              class="form-input"
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              bind:value={technical_details.drivebase_rating}
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="overallReliabilityRatingInput">Overall reliability rating (1-10)</label>
+            <input
+              id="overallReliabilityRatingInput"
+              class="form-input"
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              bind:value={technical_details.overall_reliability_rating}
+            />
+          </div>
+        </div>
+      </section>
+    {/if}
 
     {#if pitSchema.estimated_bps}
       <div class="form-group">
@@ -830,6 +1499,45 @@
     margin-top: 0.3rem;
     color: var(--text-muted);
     font-size: 0.9rem;
+  }
+
+  .question-section {
+    display: grid;
+    gap: 0.85rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+
+  .question-section h4 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .field-grid,
+  .dimension-grid,
+  .rating-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .option-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.55rem;
+    margin-top: 0.5rem;
+  }
+
+  .option-grid.compact {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+
+  .option-tile {
+    min-height: 44px;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
   }
 
   .auto-options-header,

@@ -11,13 +11,16 @@ export const PLANNER_AUTO_FIXING_TASK_DAYS = 3;
 export const PLANNER_NOT_STARTED_STATUS = 'not_started';
 export const PLANNER_DEFAULT_TASK_STATUS = PLANNER_NOT_STARTED_STATUS;
 export const PLANNER_DEFAULT_MILESTONE_STATUS = 'green';
+export const PLANNER_DEFAULT_P0_BUG_STATUS = 'red';
 
 export const PLANNER_ITEM_KINDS = ['task', 'milestone'];
-export const PLANNER_CATEGORIES = ['assembly', 'electrical', 'software', 'manufacturing', 'cad', PLANNER_DRIVE_PRACTICE_CATEGORY];
+export const PLANNER_ITEM_TYPES = ['task', 'milestone', 'drive_practice_session', 'p0_bug', 'fixing_block'];
+export const PLANNER_WORK_CATEGORIES = ['assembly', 'electrical', 'software', 'manufacturing', 'cad'];
+export const PLANNER_CATEGORIES = [...PLANNER_WORK_CATEGORIES, PLANNER_DRIVE_PRACTICE_CATEGORY];
 export const PLANNER_STATUSES = [PLANNER_NOT_STARTED_STATUS, 'green', 'yellow', 'red', 'completed'];
+export const PLANNER_P0_BUG_STATUSES = ['red', 'yellow', 'green', 'completed'];
 export const PLANNER_ROLLUP_STATUSES = ['green', 'yellow', 'red'];
 export const PLANNER_CRITICAL_LEVELS = [1, 2, 3, 4];
-export const PLANNER_OWNER_TYPES = ['owner', 'accountable'];
 export const PLANNER_RULE_TYPES = ['work_window', 'blocked'];
 export const PLANNER_TASK_MODES = [PLANNER_STANDARD_TASK_MODE, PLANNER_FIXING_TASK_MODE];
 
@@ -91,10 +94,48 @@ export const DEFAULT_PLANNER_CALENDAR_RULES = [
   { weekday: 0, starts_at: '12:00', ends_at: '21:30', label: 'Sunday Work Window', rule_type: 'work_window', enabled: true, is_default: true }
 ];
 
+export function plannerItemType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return PLANNER_ITEM_TYPES.includes(normalized) ? normalized : 'task';
+}
+
+export function plannerItemKind(item) {
+  if (plannerItemType(item?.item_type) === 'milestone') return 'milestone';
+  return String(item?.kind || '').trim().toLowerCase() === 'milestone' ? 'milestone' : 'task';
+}
+
+export function plannerItemTaskMode(item) {
+  if (plannerItemType(item?.item_type) === 'fixing_block') return PLANNER_FIXING_TASK_MODE;
+  return String(item?.task_mode || '').trim().toLowerCase() === PLANNER_FIXING_TASK_MODE
+    ? PLANNER_FIXING_TASK_MODE
+    : PLANNER_STANDARD_TASK_MODE;
+}
+
+export function plannerItemCategory(item) {
+  if (plannerItemType(item?.item_type) === 'drive_practice_session') {
+    return PLANNER_DRIVE_PRACTICE_CATEGORY;
+  }
+  return item?.work_category || item?.category || null;
+}
+
+export function isPlannerMilestone(item) {
+  return plannerItemType(item?.item_type) === 'milestone';
+}
+
+export function isPlannerP0Bug(item) {
+  return plannerItemType(item?.item_type) === 'p0_bug';
+}
+
 export function isPlannerDrivePracticeTask(item) {
-  return item?.kind === 'task' && item?.category === PLANNER_DRIVE_PRACTICE_CATEGORY;
+  return plannerItemType(item?.item_type) === 'drive_practice_session'
+    || (item?.kind === 'task' && item?.category === PLANNER_DRIVE_PRACTICE_CATEGORY);
 }
 
 export function isPlannerFixingTask(item) {
-  return item?.kind === 'task' && item?.task_mode === PLANNER_FIXING_TASK_MODE;
+  return plannerItemType(item?.item_type) === 'fixing_block'
+    || (item?.kind === 'task' && item?.task_mode === PLANNER_FIXING_TASK_MODE);
+}
+
+export function isPlannerSchedulableTask(item) {
+  return !isPlannerMilestone(item) && !isPlannerP0Bug(item);
 }

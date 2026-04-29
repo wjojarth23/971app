@@ -224,144 +224,67 @@ export async function notifyMatchReminder({ userId, matchKey, teams, matchTime }
 
 function taskStatusLabel(status = '') {
   const map = {
-    open: 'Open',
-    in_progress: 'In Progress',
-    file_uploaded: 'File Uploaded',
-    under_review: 'Under Review',
-    changes_requested: 'Changes Requested',
-    approved: 'Approved',
-    done: 'Done',
-    closed: 'Closed'
+    red: 'Red',
+    yellow: 'Yellow',
+    green: 'Green',
+    completed: 'Completed',
+    open: 'Red',
+    in_progress: 'Yellow',
+    file_uploaded: 'Yellow',
+    under_review: 'Yellow',
+    changes_requested: 'Red',
+    approved: 'Green',
+    done: 'Completed',
+    closed: 'Completed'
   };
   return map[status] || String(status || 'Updated');
+}
+
+async function fetchPlannerItemOwnerId(supa, taskId) {
+  const { data: ownerRow, error: ownerError } = await supa
+    .from('planner_item_people')
+    .select('user_id')
+    .eq('planner_item_id', taskId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (ownerError) throw ownerError;
+  return ownerRow?.user_id || null;
 }
 
 export async function notifyTaskAssignedById(taskId) {
   const supa = getSupabase();
   const { data: task } = await supa
-    .from('tasks')
-    .select('id, title, assignee_id, created_at')
+    .from('planner_items')
+    .select('id, title, created_at, item_type')
     .eq('id', taskId)
+    .eq('item_type', 'p0_bug')
     .maybeSingle();
-  if (!task?.assignee_id) {
+  const ownerId = task?.id ? await fetchPlannerItemOwnerId(supa, task.id) : null;
+  if (!ownerId) {
     return { ok: false, reason: 'no-assignee' };
   }
-  const { data: p0Link } = await supa
-    .from('planner_item_p0_bugs')
-    .select('planner_item_id')
-    .eq('task_id', task.id)
-    .limit(1)
-    .maybeSingle();
-  const isP0Bug = !!p0Link?.planner_item_id;
-  const text = isP0Bug
-    ? `You were assigned P0 bug: ${task.title || 'Untitled bug'}. React with :white_check_mark: when you start it.`
-    : `You were assigned task: ${task.title || 'Untitled task'}.`;
-  const entityKey = task.created_at ? `task:${task.id}:assigned:${task.assignee_id}:${task.created_at}` : `task:${task.id}:assigned`;
-  const result = await dispatchNotification({
-    userId: task.assignee_id,
+  const text = `You were assigned P0 bug: ${task.title || 'Untitled bug'}.`;
+  const entityKey = task.created_at ? `task:${task.id}:assigned:${ownerId}:${task.created_at}` : `task:${task.id}:assigned`;
+  return dispatchNotification({
+    userId: ownerId,
     notificationKey: NOTIFICATION_KEYS.TASK_ASSIGNED,
     entityKey,
     text
   });
-  if (isP0Bug && result?.ok && result.channel && result.ts) {
-    await supa
-      .from('tasks')
-      .update({
-        assignment_slack_channel: result.channel,
-        assignment_slack_ts: result.ts
-      })
-      .eq('id', task.id);
-
-    try {
-      await getSlackClient().reactions.add({
-        channel: result.channel,
-        timestamp: result.ts,
-        name: 'white_check_mark'
-      });
-    } catch (error) {
-      console.warn('Failed to add P0 bug start reaction', error?.data || error?.message || error);
-    }
-  }
-  return result;
 }
 
 export async function handleP0BugAssignmentReaction({ channel, ts, reaction, reactingUser }) {
-  if (String(reaction || '').trim() !== 'white_check_mark' || !channel || !ts) {
-    return { handled: false };
-  }
-
-  const supa = getSupabase();
-  const { data: task, error: taskError } = await supa
-    .from('tasks')
-    .select('id, assignee_id, status, assignment_slack_channel, assignment_slack_ts')
-    .eq('assignment_slack_channel', channel)
-    .eq('assignment_slack_ts', ts)
-    .maybeSingle();
-  if (taskError) throw taskError;
-  if (!task?.id) return { handled: false };
-
-  const user = await fetchNotificationUser(task.assignee_id, supa);
-  if (user?.slack_user_id && reactingUser && user.slack_user_id !== reactingUser) {
-    return { handled: true, ignored: true };
-  }
-
-  const { data: link, error: linkError } = await supa
-    .from('planner_item_p0_bugs')
-    .select('planner_item_id')
-    .eq('task_id', task.id)
-    .limit(1)
-    .maybeSingle();
-  if (linkError) throw linkError;
-  if (!link?.planner_item_id) return { handled: true, ignored: true };
-
-  if (task.status === 'open') {
-    const { error: updateTaskError } = await supa
-      .from('tasks')
-      .update({ status: 'in_progress' })
-      .eq('id', task.id)
-      .eq('status', 'open');
-    if (updateTaskError) throw updateTaskError;
-  }
-
-  const { data: plannerItem, error: plannerError } = await supa
-    .from('planner_items')
-    .select('id, status')
-    .eq('id', link.planner_item_id)
-    .maybeSingle();
-  if (plannerError) throw plannerError;
-
-  if (plannerItem?.id && String(plannerItem.status || '').trim().toLowerCase() === 'not_started') {
-    const { error: updatePlannerError } = await supa
-      .from('planner_items')
-      .update({ status: 'green' })
-      .eq('id', plannerItem.id)
-      .eq('status', 'not_started');
-    if (updatePlannerError) throw updatePlannerError;
-  }
-
-  return { handled: true, status: 'started' };
+  void channel;
+  void ts;
+  void reaction;
+  void reactingUser;
+  return { handled: false };
 }
 
 export async function notifyTaskReviewRequestedById(taskId) {
-  const supa = getSupabase();
-  const { data: task } = await supa
-    .from('tasks')
-    .select('id, title, reviewer_id, attachment_uploaded_at')
-    .eq('id', taskId)
-    .maybeSingle();
-  if (!task?.reviewer_id) {
-    return { ok: false, reason: 'no-reviewer' };
-  }
-  const text = `Task ready for review: ${task.title || 'Untitled task'}.`;
-  const entityKey = task.attachment_uploaded_at
-    ? `task:${task.id}:review:${task.reviewer_id}:${task.attachment_uploaded_at}`
-    : `task:${task.id}:review`;
-  return dispatchNotification({
-    userId: task.reviewer_id,
-    notificationKey: NOTIFICATION_KEYS.TASK_REVIEW_REQUESTED,
-    entityKey,
-    text
-  });
+  void taskId;
+  return { ok: false, reason: 'review-flow-removed' };
 }
 
 export async function notifyTaskStatusChanged({
@@ -373,14 +296,16 @@ export async function notifyTaskStatusChanged({
 }) {
   const supa = getSupabase();
   const { data: task } = await supa
-    .from('tasks')
-    .select('id, title, assignee_id, status, updated_at')
+    .from('planner_items')
+    .select('id, title, status, updated_at, item_type')
     .eq('id', taskId)
+    .eq('item_type', 'p0_bug')
     .maybeSingle();
-  if (!task?.assignee_id) {
+  const ownerId = task?.id ? await fetchPlannerItemOwnerId(supa, task.id) : null;
+  if (!ownerId) {
     return { ok: false, reason: 'no-assignee' };
   }
-  if (changedByUserId && task.assignee_id === changedByUserId) {
+  if (changedByUserId && ownerId === changedByUserId) {
     return { ok: false, reason: 'self-change' };
   }
   const fromLabel = taskStatusLabel(previousStatus || task.status);
@@ -388,10 +313,10 @@ export async function notifyTaskStatusChanged({
   const actor = changedByName ? ` by ${changedByName}` : '';
   const text = `Task status updated${actor}: ${task.title || 'Untitled task'} (${fromLabel} -> ${toLabel}).`;
   const entityKey = task.updated_at
-    ? `task:${task.id}:status:${task.assignee_id}:${task.updated_at}:${toLabel}`
+    ? `task:${task.id}:status:${ownerId}:${task.updated_at}:${toLabel}`
     : `task:${task.id}:status:${toLabel}`;
   return dispatchNotification({
-    userId: task.assignee_id,
+    userId: ownerId,
     notificationKey: NOTIFICATION_KEYS.TASK_STATUS_CHANGED,
     entityKey,
     text
@@ -399,22 +324,6 @@ export async function notifyTaskStatusChanged({
 }
 
 export async function notifyTaskDeadlineById(taskId) {
-  const supa = getSupabase();
-  const { data: task } = await supa
-    .from('tasks')
-    .select('id, title, assignee_id, deadline_at, status')
-    .eq('id', taskId)
-    .maybeSingle();
-  if (!task?.assignee_id || !task?.deadline_at) {
-    return { ok: false, reason: 'missing-deadline-or-assignee' };
-  }
-  const deadlineLabel = formatPacificDateTimeWithZone(task.deadline_at);
-  const text = `Deadline reached for task: ${task.title || 'Untitled task'}. Deadline: ${deadlineLabel || 'Pacific time unavailable'}. Current status: ${taskStatusLabel(task.status)}.`;
-  const entityKey = `task:${task.id}:deadline:${task.assignee_id}:${new Date(task.deadline_at).toISOString()}`;
-  return dispatchNotification({
-    userId: task.assignee_id,
-    notificationKey: NOTIFICATION_KEYS.TASK_DEADLINE,
-    entityKey,
-    text
-  });
+  void taskId;
+  return { ok: false, reason: 'deadlines-removed' };
 }

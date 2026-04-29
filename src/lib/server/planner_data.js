@@ -11,12 +11,53 @@ import { rollupPlannerStatuses } from '$lib/planner/status.js';
 import {
   PLANNER_AUTO_FIXING_TASK_DAYS,
   PLANNER_DEFAULT_MIN_DURATION_MINUTES,
+  PLANNER_DEFAULT_P0_BUG_STATUS,
   PLANNER_DEFAULT_TASK_DURATION_MINUTES,
+  PLANNER_DRIVE_PRACTICE_CATEGORY,
   PLANNER_FIXING_TASK_MODE,
-  PLANNER_STANDARD_TASK_MODE
+  PLANNER_STANDARD_TASK_MODE,
+  plannerItemCategory,
+  plannerItemKind,
+  plannerItemTaskMode,
+  plannerItemType
 } from '$lib/planner/constants.js';
 
-const P0_BUG_DONE_STATUSES = new Set(['done', 'closed']);
+const PLANNER_ITEM_SELECT = `
+  id,
+  frc_team,
+  item_type,
+  title,
+  details,
+  work_category,
+  status,
+  critical_level,
+  duration_minutes,
+  requested_duration_minutes,
+  min_duration_minutes,
+  manual_start_at,
+  scheduled_start_at,
+  scheduled_end_at,
+  sort_order,
+  created_by,
+  created_at,
+  updated_at,
+  scope,
+  general_type,
+  subsystem_id,
+  needs_manufacturing,
+  attachment_path,
+  attachment_name,
+  attachment_uploaded_at,
+  auto_completed_from_parts,
+  state_before_auto_complete
+`;
+
+const P0_STATUS_ORDER = new Map([
+  ['red', 0],
+  ['yellow', 1],
+  ['green', 2],
+  ['completed', 3]
+]);
 
 export function getPlannerDbFromRequest(request) {
   const auth = request?.headers?.get('authorization') || '';
@@ -25,14 +66,39 @@ export function getPlannerDbFromRequest(request) {
   });
 }
 
-function normalizeTaskStatus(value) {
+function normalizeLegacyTaskStatus(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function normalizePlannerTaskMode(value) {
-  return String(value || '').trim().toLowerCase() === PLANNER_FIXING_TASK_MODE
-    ? PLANNER_FIXING_TASK_MODE
-    : PLANNER_STANDARD_TASK_MODE;
+export function normalizeP0BugStatus(value, fallback = PLANNER_DEFAULT_P0_BUG_STATUS) {
+  const normalized = normalizeLegacyTaskStatus(value);
+  if (normalized === 'red' || normalized === 'yellow' || normalized === 'green' || normalized === 'completed') {
+    return normalized;
+  }
+  if (normalized === 'done' || normalized === 'closed') return 'completed';
+  if (normalized === 'approved') return 'green';
+  if (
+    normalized === 'in_progress'
+    || normalized === 'file_uploaded'
+    || normalized === 'under_review'
+  ) {
+    return 'yellow';
+  }
+  if (normalized === 'open' || normalized === 'changes_requested') return 'red';
+  return fallback;
+}
+
+function compareP0BugRows(a, b) {
+  const leftStatus = normalizeP0BugStatus(a?.status);
+  const rightStatus = normalizeP0BugStatus(b?.status);
+  const leftRank = P0_STATUS_ORDER.get(leftStatus) ?? 999;
+  const rightRank = P0_STATUS_ORDER.get(rightStatus) ?? 999;
+
+  if (leftRank !== rightRank) return leftRank - rightRank;
+
+  const leftUpdated = Date.parse(a?.updated_at || a?.created_at || '') || 0;
+  const rightUpdated = Date.parse(b?.updated_at || b?.created_at || '') || 0;
+  return rightUpdated - leftUpdated;
 }
 
 function addDays(value, days) {
@@ -46,24 +112,197 @@ function buildPlannerFixingTaskTitle(title) {
   return `P0 Fix: ${bugTitle}`;
 }
 
-function taskHasDeadline(value) {
-  const timestamp = Date.parse(value || '');
-  return Number.isFinite(timestamp) ? timestamp : null;
+function withLegacyPlannerAliases(row) {
+  const itemType = plannerItemType(row?.item_type);
+  const legacyCategory = plannerItemCategory({ item_type: itemType, work_category: row?.work_category });
+  return {
+    ...row,
+    item_type: itemType,
+    kind: plannerItemKind({ item_type: itemType }),
+    task_mode: plannerItemTaskMode({ item_type: itemType }),
+    category: legacyCategory,
+    notes: row?.details || null
+  };
 }
 
-function compareP0BugRows(a, b) {
-  const aDeadline = taskHasDeadline(a?.deadline_at);
-  const bDeadline = taskHasDeadline(b?.deadline_at);
+function withLegacyP0Aliases(row, owner = null, creator = null, subsystem = null, partIds = [], reportedDrivePractices = []) {
+  const ownerId = owner?.id || null;
+  return {
+    ...withLegacyPlannerAliases(row),
+    description: row?.details || null,
+    owner_id: ownerId,
+    owner,
+    assignee_id: ownerId,
+    assignee: owner,
+    reviewer_id: null,
+    reviewer: null,
+    creator,
+    subsystem,
+    needs_review: false,
+    review_decision: null,
+    review_notes: null,
+    reviewed_at: null,
+    deadline_at: null,
+    status: normalizeP0BugStatus(row?.status),
+    part_ids: partIds,
+    parts_id: partIds[0] || null,
+    reported_drive_practices: reportedDrivePractices
+  };
+}
 
-  if (aDeadline !== null && bDeadline === null) return -1;
-  if (aDeadline === null && bDeadline !== null) return 1;
-  if (aDeadline !== null && bDeadline !== null && aDeadline !== bDeadline) {
-    return aDeadline - bDeadline;
+async function fetchSubsystemMap(db, subsystemIds = []) {
+  const uniqueIds = Array.from(new Set((subsystemIds || []).filter(Boolean)));
+  if (!uniqueIds.length) return new Map();
+
+  const { data, error } = await db
+    .from('subsystems')
+    .select('id, name')
+    .in('id', uniqueIds);
+  if (error) throw error;
+
+  return new Map((data || []).map((row) => [row.id, {
+    id: row.id,
+    name: row.name || 'Unknown'
+  }]));
+}
+
+async function fetchPlannerItemPeopleRows(db, team, plannerItemIds = []) {
+  const uniqueIds = Array.from(new Set((plannerItemIds || []).filter(Boolean)));
+  if (!uniqueIds.length) return [];
+
+  const { data, error } = await db
+    .from('planner_item_people')
+    .select('id, frc_team, planner_item_id, user_id, created_at')
+    .eq('frc_team', team)
+    .in('planner_item_id', uniqueIds);
+  if (error) throw error;
+  return data || [];
+}
+
+async function fetchPlannerItemPartRows(db, team, plannerItemIds = []) {
+  const uniqueIds = Array.from(new Set((plannerItemIds || []).filter(Boolean)));
+  if (!uniqueIds.length) return [];
+
+  const { data, error } = await db
+    .from('planner_item_parts')
+    .select('id, frc_team, planner_item_id, part_id, created_at')
+    .eq('frc_team', team)
+    .in('planner_item_id', uniqueIds);
+  if (error) throw error;
+  return data || [];
+}
+
+async function fetchPlannerTeamParts(db, team) {
+  const { data, error } = await db
+    .from('parts')
+    .select('id, name, project_id, workflow, status, frc_team')
+    .eq('frc_team', team)
+    .order('id', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row) => ({
+    id: Number(row.id),
+    name: row.name || null,
+    project_id: row.project_id || null,
+    workflow: row.workflow || null,
+    status: row.status || null,
+    frc_team: row.frc_team || null
+  }));
+}
+
+async function fetchPlannerP0BugRowsRaw(db, team, { itemIds = null, includeCompleted = true } = {}) {
+  let query = db
+    .from('planner_items')
+    .select(PLANNER_ITEM_SELECT)
+    .eq('frc_team', team)
+    .eq('item_type', 'p0_bug')
+    .order('created_at', { ascending: false });
+
+  if (Array.isArray(itemIds)) {
+    const uniqueIds = Array.from(new Set(itemIds.filter(Boolean)));
+    if (!uniqueIds.length) return [];
+    query = query.in('id', uniqueIds);
   }
 
-  const aUpdated = taskHasDeadline(a?.updated_at) ?? taskHasDeadline(a?.created_at) ?? 0;
-  const bUpdated = taskHasDeadline(b?.updated_at) ?? taskHasDeadline(b?.created_at) ?? 0;
-  return bUpdated - aUpdated;
+  if (!includeCompleted) {
+    query = query.neq('status', 'completed');
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(withLegacyPlannerAliases).sort(compareP0BugRows);
+}
+
+async function hydratePlannerP0BugRows(db, team, rows = [], people = null) {
+  if (!rows.length) return [];
+
+  const resolvedPeople = people || await fetchPlannerTeamPeople(db, team);
+  const peopleMap = new Map(resolvedPeople.map((person) => [person.id, person]));
+  const itemIds = rows.map((row) => row.id).filter(Boolean);
+
+  const [peopleRows, partRows, subsystemMap, reportRows] = await Promise.all([
+    fetchPlannerItemPeopleRows(db, team, itemIds),
+    fetchPlannerItemPartRows(db, team, itemIds),
+    fetchSubsystemMap(db, rows.map((row) => row?.subsystem_id)),
+    db
+      .from('planner_item_p0_bugs')
+      .select('id, frc_team, planner_item_id, p0_bug_item_id, report_area, created_by, created_at')
+      .eq('frc_team', team)
+      .in('p0_bug_item_id', itemIds)
+      .not('report_area', 'is', null)
+  ]);
+
+  if (reportRows.error) throw reportRows.error;
+
+  const drivePracticeItemIds = Array.from(new Set(
+    (reportRows.data || []).map((row) => row?.planner_item_id).filter(Boolean)
+  ));
+
+  let drivePracticeMap = new Map();
+  if (drivePracticeItemIds.length) {
+    const { data, error } = await db
+      .from('planner_items')
+      .select('id, title, scheduled_start_at, scheduled_end_at')
+      .in('id', drivePracticeItemIds);
+    if (error) throw error;
+    drivePracticeMap = new Map((data || []).map((row) => [row.id, row]));
+  }
+
+  const ownerByItem = new Map();
+  for (const ownerRow of peopleRows) {
+    if (!ownerByItem.has(ownerRow.planner_item_id)) ownerByItem.set(ownerRow.planner_item_id, ownerRow.user_id);
+  }
+
+  const partIdsByItem = new Map();
+  for (const partRow of partRows) {
+    if (!partIdsByItem.has(partRow.planner_item_id)) partIdsByItem.set(partRow.planner_item_id, []);
+    partIdsByItem.get(partRow.planner_item_id).push(partRow.part_id);
+  }
+
+  const reportsByBug = new Map();
+  for (const reportRow of reportRows.data || []) {
+    if (!reportsByBug.has(reportRow.p0_bug_item_id)) reportsByBug.set(reportRow.p0_bug_item_id, []);
+    const item = drivePracticeMap.get(reportRow.planner_item_id);
+    if (!item?.id) continue;
+    reportsByBug.get(reportRow.p0_bug_item_id).push({
+      id: item.id,
+      title: item.title || 'Drive Practice',
+      scheduled_start_at: item.scheduled_start_at || null,
+      scheduled_end_at: item.scheduled_end_at || null,
+      report_area: reportRow.report_area || null,
+      created_at: reportRow.created_at || null
+    });
+  }
+
+  return rows
+    .map((row) => {
+      const owner = peopleMap.get(ownerByItem.get(row.id)) || null;
+      const creator = row?.created_by ? (peopleMap.get(row.created_by) || null) : null;
+      const subsystem = row?.subsystem_id ? (subsystemMap.get(row.subsystem_id) || null) : null;
+      const partIds = Array.from(new Set(partIdsByItem.get(row.id) || []));
+      const reportedDrivePractices = reportsByBug.get(row.id) || [];
+      return withLegacyP0Aliases(row, owner, creator, subsystem, partIds, reportedDrivePractices);
+    })
+    .sort(compareP0BugRows);
 }
 
 export async function getPlannerActor(db) {
@@ -108,100 +347,18 @@ export async function fetchPlannerTeamPeople(db, team) {
     }));
 }
 
-async function fetchPlannerTaskRows(db, team, { taskIds = null, includeClosed = false } = {}) {
-  let query = db
-    .from('tasks')
-    .select(`
-      id,
-      frc_team,
-      title,
-      description,
-      scope,
-      general_type,
-      subsystem_id,
-      assignee_id,
-      reviewer_id,
-      created_by,
-      needs_review,
-      needs_manufacturing,
-      deadline_at,
-      status,
-      review_notes,
-      created_at,
-      updated_at
-    `)
-    .eq('frc_team', team);
-
-  if (Array.isArray(taskIds)) {
-    const uniqueTaskIds = Array.from(new Set(taskIds.filter(Boolean)));
-    if (!uniqueTaskIds.length) return [];
-    query = query.in('id', uniqueTaskIds);
-  }
-
-  const { data: taskRows, error: tasksError } = await query;
-
-  if (tasksError) {
-    const errorMessage = String(tasksError?.message || '').toLowerCase();
-    if (errorMessage.includes('tasks')) return [];
-    throw tasksError;
-  }
-
-  const scopedRows = includeClosed
-    ? (taskRows || [])
-    : (taskRows || []).filter((row) => !P0_BUG_DONE_STATUSES.has(normalizeTaskStatus(row?.status)));
-  const subsystemIds = Array.from(new Set(scopedRows.map((row) => row?.subsystem_id).filter(Boolean)));
-  let subsystemMap = new Map();
-
-  if (subsystemIds.length) {
-    const { data: subsystems, error: subsystemError } = await db
-      .from('subsystems')
-      .select('id, name')
-      .in('id', subsystemIds);
-    if (subsystemError) throw subsystemError;
-    subsystemMap = new Map((subsystems || []).map((subsystem) => [subsystem.id, {
-      id: subsystem.id,
-      name: subsystem.name || 'Unknown'
-    }]));
-  }
-
-  return scopedRows
-    .map((row) => ({
-      ...row,
-      subsystem: row?.subsystem_id ? (subsystemMap.get(row.subsystem_id) || null) : null
-    }))
-    .sort(compareP0BugRows);
-}
-
-async function fetchPlannerP0BugRows(db, team) {
-  return fetchPlannerTaskRows(db, team);
+export async function fetchPlannerP0BugRows(db, team, options = {}) {
+  const rows = await fetchPlannerP0BugRowsRaw(db, team, options);
+  return hydratePlannerP0BugRows(db, team, rows, options.people || null);
 }
 
 export async function fetchPlannerSnapshot(db, team) {
-  const [itemsResult, dependenciesResult, rulesResult, ownersResult, p0BugLinksResult, ruleRecipientsResult] = await Promise.all([
+  const [itemsResult, dependenciesResult, rulesResult, peopleResult, p0BugLinksResult, ruleRecipientsResult] = await Promise.all([
     db
       .from('planner_items')
-      .select(`
-        id,
-        frc_team,
-        kind,
-        task_mode,
-        title,
-        notes,
-        category,
-        status,
-        critical_level,
-        duration_minutes,
-        requested_duration_minutes,
-        min_duration_minutes,
-        manual_start_at,
-        scheduled_start_at,
-        scheduled_end_at,
-        sort_order,
-        created_by,
-        created_at,
-        updated_at
-      `)
+      .select(PLANNER_ITEM_SELECT)
       .eq('frc_team', team)
+      .neq('item_type', 'p0_bug')
       .order('sort_order', { ascending: true })
       .order('created_at', { ascending: true }),
     db
@@ -216,15 +373,13 @@ export async function fetchPlannerSnapshot(db, team) {
       .order('weekday', { ascending: true, nullsFirst: true })
       .order('starts_at', { ascending: true }),
     db
-      .from('planner_item_owners')
-      .select('id, frc_team, planner_item_id, user_id, owner_type, created_at')
-      .eq('frc_team', team)
-    ,
+      .from('planner_item_people')
+      .select('id, frc_team, planner_item_id, user_id, created_at')
+      .eq('frc_team', team),
     db
       .from('planner_item_p0_bugs')
-      .select('id, frc_team, planner_item_id, task_id, created_by, created_at')
-      .eq('frc_team', team)
-    ,
+      .select('id, frc_team, planner_item_id, p0_bug_item_id, report_area, created_by, created_at')
+      .eq('frc_team', team),
     db
       .from('planner_calendar_rule_recipients')
       .select('id, frc_team, planner_calendar_rule_id, user_id, created_at')
@@ -234,50 +389,61 @@ export async function fetchPlannerSnapshot(db, team) {
   if (itemsResult.error) throw itemsResult.error;
   if (dependenciesResult.error) throw dependenciesResult.error;
   if (rulesResult.error) throw rulesResult.error;
-  if (ownersResult.error) throw ownersResult.error;
+  if (peopleResult.error) throw peopleResult.error;
   if (p0BugLinksResult.error) throw p0BugLinksResult.error;
   if (ruleRecipientsResult.error) throw ruleRecipientsResult.error;
 
+  const p0LinkRows = (p0BugLinksResult.data || []).map((row) => ({
+    ...row,
+    task_id: row.p0_bug_item_id
+  }));
+
   return {
-    items: itemsResult.data || [],
+    items: (itemsResult.data || []).map(withLegacyPlannerAliases),
     dependencies: dependenciesResult.data || [],
     calendar_rules: rulesResult.data || [],
-    owner_rows: ownersResult.data || [],
-    p0_bug_link_rows: p0BugLinksResult.data || [],
-    rule_recipient_rows: ruleRecipientsResult.data || []
+    owner_rows: (peopleResult.data || []).map((row) => ({
+      ...row,
+      owner_type: 'owner'
+    })),
+    p0_bug_link_rows: p0LinkRows,
+    rule_recipient_rows: ruleRecipientsResult.data || [],
+    drive_practice_bug_report_rows: p0LinkRows.filter((row) => !!row?.report_area)
   };
 }
 
 export async function fetchPlannerBundle(db, team, { warnings = [] } = {}) {
-  const [snapshot, people, p0BugRows] = await Promise.all([
+  const people = await fetchPlannerTeamPeople(db, team);
+  const [snapshot, p0BugRows, teamParts] = await Promise.all([
     fetchPlannerSnapshot(db, team),
-    fetchPlannerTeamPeople(db, team),
-    fetchPlannerP0BugRows(db, team)
+    fetchPlannerP0BugRows(db, team, { includeCompleted: true, people }),
+    fetchPlannerTeamParts(db, team)
   ]);
 
   const peopleMap = new Map(people.map((person) => [person.id, person]));
-  const hydrateBug = (row) => ({
-    ...row,
-    assignee: row?.assignee_id ? (peopleMap.get(row.assignee_id) || null) : null,
-    reviewer: row?.reviewer_id ? (peopleMap.get(row.reviewer_id) || null) : null,
-    creator: row?.created_by ? (peopleMap.get(row.created_by) || null) : null
-  });
-  const linkedBugIds = Array.from(new Set((snapshot.p0_bug_link_rows || []).map((row) => row?.task_id).filter(Boolean)));
-  const linkedBugRows = linkedBugIds.length
-    ? await fetchPlannerTaskRows(db, team, { taskIds: linkedBugIds, includeClosed: true })
-    : [];
-  const activeP0BugMap = new Map(p0BugRows.map((row) => [row.id, hydrateBug(row)]));
-  const linkedBugMap = new Map(linkedBugRows.map((row) => [row.id, hydrateBug(row)]));
+  const activeP0BugMap = new Map(p0BugRows.map((row) => [row.id, row]));
+  const partById = new Map(teamParts.map((part) => [Number(part.id), part]));
   const ownersByItem = new Map();
   for (const ownerRow of snapshot.owner_rows) {
     if (!ownersByItem.has(ownerRow.planner_item_id)) ownersByItem.set(ownerRow.planner_item_id, []);
     ownersByItem.get(ownerRow.planner_item_id).push(ownerRow);
   }
+
+  const itemIds = snapshot.items.map((item) => item.id).filter(Boolean);
+  const itemPartRows = await fetchPlannerItemPartRows(db, team, itemIds);
+  const partIdsByItem = new Map();
+  for (const partRow of itemPartRows) {
+    if (!partIdsByItem.has(partRow.planner_item_id)) partIdsByItem.set(partRow.planner_item_id, []);
+    partIdsByItem.get(partRow.planner_item_id).push(Number(partRow.part_id));
+  }
+
   const p0BugsByItem = new Map();
   for (const linkRow of snapshot.p0_bug_link_rows || []) {
+    if (linkRow?.report_area) continue;
     if (!p0BugsByItem.has(linkRow.planner_item_id)) p0BugsByItem.set(linkRow.planner_item_id, []);
     p0BugsByItem.get(linkRow.planner_item_id).push(linkRow.task_id);
   }
+
   const recipientsByRule = new Map();
   for (const recipientRow of snapshot.rule_recipient_rows || []) {
     if (!recipientsByRule.has(recipientRow.planner_calendar_rule_id)) recipientsByRule.set(recipientRow.planner_calendar_rule_id, []);
@@ -287,27 +453,27 @@ export async function fetchPlannerBundle(db, team, { warnings = [] } = {}) {
   const items = rollupPlannerStatuses(snapshot.items.map((item) => {
     const ownerRows = ownersByItem.get(item.id) || [];
     const owners = ownerRows
-      .filter((row) => row.owner_type === 'owner')
       .map((row) => peopleMap.get(row.user_id))
       .filter(Boolean);
-    const accountableRow = ownerRows.find((row) => row.owner_type === 'accountable');
-    const accountable = accountableRow ? (peopleMap.get(accountableRow.user_id) || null) : null;
     const p0BugIds = Array.from(new Set((p0BugsByItem.get(item.id) || []).filter(Boolean)));
+    const partIds = Array.from(new Set((partIdsByItem.get(item.id) || []).filter(Number.isFinite)));
+    const milestoneOwner = item.item_type === 'milestone' ? (owners[0] || null) : null;
     return {
       ...item,
-      task_mode: normalizePlannerTaskMode(item?.task_mode),
       owners,
       owner_ids: owners.map((owner) => owner.id),
       p0_bug_ids: p0BugIds,
       p0_bugs: p0BugIds
-        .map((bugId) => activeP0BugMap.get(bugId) || linkedBugMap.get(bugId) || null)
+        .map((bugId) => activeP0BugMap.get(bugId) || null)
         .filter(Boolean),
-      accountable,
-      accountable_user_id: accountable?.id || null
+      part_ids: partIds,
+      linked_parts: partIds
+        .map((partId) => partById.get(Number(partId)) || null)
+        .filter(Boolean),
+      accountable: milestoneOwner,
+      accountable_user_id: milestoneOwner?.id || null
     };
   }), snapshot.dependencies);
-
-  const p0_bugs = p0BugRows.map(hydrateBug);
 
   const calendar_rules = snapshot.calendar_rules.map((rule) => {
     const recipientRows = recipientsByRule.get(rule.id) || [];
@@ -326,37 +492,33 @@ export async function fetchPlannerBundle(db, team, { warnings = [] } = {}) {
     dependencies: snapshot.dependencies,
     calendar_rules,
     people,
-    p0_bugs,
+    parts: teamParts,
+    p0_bugs: p0BugRows,
     warnings
   };
 }
 
 export async function replacePlannerOwners(db, team, itemId, ownerIds = [], accountableUserId = null) {
   await db
-    .from('planner_item_owners')
+    .from('planner_item_people')
     .delete()
     .eq('frc_team', team)
     .eq('planner_item_id', itemId);
 
-  const inserts = [];
-  for (const ownerId of Array.from(new Set(ownerIds.filter(Boolean)))) {
-    inserts.push({
-      frc_team: team,
-      planner_item_id: itemId,
-      user_id: ownerId,
-      owner_type: 'owner'
-    });
-  }
-  if (accountableUserId) {
-    inserts.push({
-      frc_team: team,
-      planner_item_id: itemId,
-      user_id: accountableUserId,
-      owner_type: 'accountable'
-    });
-  }
-  if (!inserts.length) return;
-  const { error } = await db.from('planner_item_owners').insert(inserts);
+  const combinedOwnerIds = Array.from(new Set([
+    ...ownerIds.filter(Boolean),
+    accountableUserId || null
+  ].filter(Boolean)));
+
+  if (!combinedOwnerIds.length) return;
+
+  const inserts = combinedOwnerIds.map((userId) => ({
+    frc_team: team,
+    planner_item_id: itemId,
+    user_id: userId
+  }));
+
+  const { error } = await db.from('planner_item_people').insert(inserts);
   if (error) throw error;
 }
 
@@ -365,17 +527,68 @@ export async function replacePlannerP0BugLinks(db, team, itemId, taskIds = [], c
     .from('planner_item_p0_bugs')
     .delete()
     .eq('frc_team', team)
-    .eq('planner_item_id', itemId);
+    .eq('planner_item_id', itemId)
+    .is('report_area', null);
 
   const inserts = Array.from(new Set((taskIds || []).filter(Boolean))).map((taskId) => ({
     frc_team: team,
     planner_item_id: itemId,
-    task_id: taskId,
+    p0_bug_item_id: taskId,
+    report_area: null,
     created_by: createdBy
   }));
 
   if (!inserts.length) return;
   const { error } = await db.from('planner_item_p0_bugs').insert(inserts);
+  if (error) throw error;
+}
+
+export async function addDrivePracticeBugReportLinks(db, team, itemId, taskIds = [], createdBy = null, reportArea = null) {
+  const uniqueTaskIds = Array.from(new Set((taskIds || []).filter(Boolean)));
+  if (!itemId || !uniqueTaskIds.length || !createdBy || !reportArea) return;
+
+  const { data: existing, error: existingError } = await db
+    .from('planner_item_p0_bugs')
+    .select('p0_bug_item_id')
+    .eq('frc_team', team)
+    .eq('planner_item_id', itemId)
+    .eq('report_area', reportArea)
+    .in('p0_bug_item_id', uniqueTaskIds);
+  if (existingError) throw existingError;
+
+  const existingIds = new Set((existing || []).map((row) => row.p0_bug_item_id).filter(Boolean));
+  const inserts = uniqueTaskIds
+    .filter((taskId) => !existingIds.has(taskId))
+    .map((taskId) => ({
+      frc_team: team,
+      planner_item_id: itemId,
+      p0_bug_item_id: taskId,
+      report_area: reportArea,
+      created_by: createdBy
+    }));
+
+  if (!inserts.length) return;
+  const { error } = await db.from('planner_item_p0_bugs').insert(inserts);
+  if (error) throw error;
+}
+
+export async function replacePlannerItemPartLinks(db, team, itemId, partIds = []) {
+  await db
+    .from('planner_item_parts')
+    .delete()
+    .eq('frc_team', team)
+    .eq('planner_item_id', itemId);
+
+  const uniquePartIds = Array.from(new Set((partIds || []).map((value) => Number(value)).filter(Number.isFinite)));
+  if (!uniquePartIds.length) return;
+
+  const inserts = uniquePartIds.map((partId) => ({
+    frc_team: team,
+    planner_item_id: itemId,
+    part_id: partId
+  }));
+
+  const { error } = await db.from('planner_item_parts').insert(inserts);
   if (error) throw error;
 }
 
@@ -422,18 +635,40 @@ export async function ensurePlannerP0BugsOnTeam(db, team, taskIds = []) {
   const uniqueIds = Array.from(new Set(taskIds.filter(Boolean)));
   if (!uniqueIds.length) return [];
   const { data, error } = await db
-    .from('tasks')
-    .select('id, frc_team')
+    .from('planner_items')
+    .select('id, frc_team, item_type')
+    .eq('item_type', 'p0_bug')
     .in('id', uniqueIds);
   if (error) throw error;
   const valid = new Set(
     (data || [])
-      .filter((row) => row?.id && row?.frc_team === team)
+      .filter((row) => row?.id && row?.frc_team === team && row?.item_type === 'p0_bug')
       .map((row) => row.id)
   );
   for (const taskId of uniqueIds) {
     if (!valid.has(taskId)) {
       throw new Error('All selected P0 bugs must be on your team.');
+    }
+  }
+  return uniqueIds;
+}
+
+export async function ensurePlannerPartsOnTeam(db, team, partIds = []) {
+  const uniqueIds = Array.from(new Set((partIds || []).map((value) => Number(value)).filter(Number.isFinite)));
+  if (!uniqueIds.length) return [];
+  const { data, error } = await db
+    .from('parts')
+    .select('id, frc_team')
+    .in('id', uniqueIds);
+  if (error) throw error;
+  const valid = new Set(
+    (data || [])
+      .filter((row) => Number.isFinite(Number(row?.id)) && row?.frc_team === team)
+      .map((row) => Number(row.id))
+  );
+  for (const partId of uniqueIds) {
+    if (!valid.has(partId)) {
+      throw new Error('All selected parts must belong to your team.');
     }
   }
   return uniqueIds;
@@ -466,11 +701,10 @@ export async function createPlannerFixingTaskFromP0Bug(db, actor, bug) {
     .from('planner_items')
     .insert([{
       frc_team: actor.frcTeam,
-      kind: 'task',
-      task_mode: PLANNER_FIXING_TASK_MODE,
+      item_type: 'fixing_block',
       title: buildPlannerFixingTaskTitle(bug.title),
-      notes: null,
-      category: null,
+      details: null,
+      work_category: null,
       status: 'not_started',
       critical_level: 1,
       duration_minutes: durationMinutes,

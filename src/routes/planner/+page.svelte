@@ -53,14 +53,10 @@
 
   const GENERAL_TYPES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
   const P0_STATUS_OPTIONS = [
-    { value: 'open', label: 'Open' },
-    { value: 'in_progress', label: 'In Progress' },
-    { value: 'file_uploaded', label: 'File Uploaded' },
-    { value: 'under_review', label: 'Under Review' },
-    { value: 'changes_requested', label: 'Changes Requested' },
-    { value: 'approved', label: 'Approved' },
-    { value: 'done', label: 'Done' },
-    { value: 'closed', label: 'Closed' }
+    { value: 'red', label: 'Red' },
+    { value: 'yellow', label: 'Yellow' },
+    { value: 'green', label: 'Green' },
+    { value: 'completed', label: 'Completed' }
   ];
 
   const ganttTaskTypes = [
@@ -80,6 +76,7 @@
     { id: 'status', header: 'Status', width: 90, template: (_value, row) => formatStatus(row.status) }
   ];
   const OWNER_SEARCH_RESULT_LIMIT = 8;
+  const PART_SEARCH_RESULT_LIMIT = 8;
   const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const plannerDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
     timeZone: PLANNER_TIME_ZONE,
@@ -102,6 +99,7 @@
   let dependencies = [];
   let calendarRules = [];
   let people = [];
+  let parts = [];
   let p0Bugs = [];
   let warnings = [];
   let error = '';
@@ -133,6 +131,7 @@
   let p0BugDraft = createP0BugDraft();
   let ownerSearchQuery = '';
   let p0BugSearchQuery = '';
+  let partSearchQuery = '';
 
   function createItemDraft(kind = 'task') {
     return {
@@ -149,6 +148,7 @@
       manual_start_at: '',
       owner_ids: [],
       p0_bug_ids: [],
+      part_ids: [],
       accountable_user_id: ''
     };
   }
@@ -174,18 +174,23 @@
       scope: 'general',
       general_type: 'Other',
       subsystem_id: '',
-      assignee_id: user?.id || '',
-      reviewer_id: user?.id || '',
-      needs_review: false,
+      owner_id: user?.id || '',
       needs_manufacturing: false,
-      deadline_at: toDatetimeLocal(new Date(Date.now() + 24 * 60 * 60 * 1000)),
-      status: 'open'
+      status: 'red'
     };
   }
 
   function formatPerson(person) {
     if (!person) return 'Unassigned';
     return person.full_name || person.email || person.id || 'Unknown';
+  }
+
+  function getP0BugOwner(bug) {
+    return bug?.owner || bug?.assignee || null;
+  }
+
+  function getP0BugOwnerId(bug) {
+    return bug?.owner_id || bug?.assignee_id || '';
   }
 
   function getPersonSearchText(person) {
@@ -299,9 +304,37 @@
     return [
       bug?.title || '',
       formatP0BugType(bug),
-      formatPerson(bug?.assignee),
-      formatPerson(bug?.reviewer),
+      formatPerson(getP0BugOwner(bug)),
       bug?.id || ''
+    ]
+      .join(' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function formatPartStatus(status) {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (!normalized) return 'Unknown';
+    return normalized
+      .split('_')
+      .filter(Boolean)
+      .map((segment) => segment.replace(/^\w/, (char) => char.toUpperCase()))
+      .join(' ');
+  }
+
+  function formatLinkedPartLabel(part) {
+    const id = Number(part?.id);
+    const idLabel = Number.isFinite(id) ? `#${id}` : '#?';
+    const name = String(part?.name || '').trim();
+    return name ? `${idLabel} ${name}` : idLabel;
+  }
+
+  function getPartSearchText(part) {
+    return [
+      formatLinkedPartLabel(part),
+      part?.project_id || '',
+      part?.workflow || '',
+      part?.status || ''
     ]
       .join(' ')
       .trim()
@@ -444,44 +477,28 @@
 
   function formatP0BugStatus(status) {
     const labels = {
-      open: 'Open',
-      in_progress: 'In Progress',
-      file_uploaded: 'File Uploaded',
-      under_review: 'Under Review',
-      changes_requested: 'Changes Requested',
-      approved: 'Approved',
-      done: 'Done',
-      closed: 'Closed'
+      red: 'Red',
+      yellow: 'Yellow',
+      green: 'Green',
+      completed: 'Completed'
     };
     return labels[String(status || '').trim().toLowerCase()] || status || 'Unknown';
   }
 
   function formatP0BugStatusTone(status) {
     const tones = {
-      open: 'pending',
-      in_progress: 'progress',
-      file_uploaded: 'progress',
-      under_review: 'pending',
-      changes_requested: 'risk',
-      approved: 'ready',
-      done: 'ready',
-      closed: 'ready'
+      red: 'risk',
+      yellow: 'pending',
+      green: 'ready',
+      completed: 'completed'
     };
     return tones[String(status || '').trim().toLowerCase()] || 'pending';
   }
 
   function formatP0BugFlags(bug) {
     const flags = [];
-    if (bug?.needs_review) flags.push('Review required');
     if (bug?.needs_manufacturing) flags.push('Manufacturing required');
     return flags;
-  }
-
-  function isPastDue(value) {
-    if (!value) return false;
-    const dueAt = new Date(value);
-    if (!Number.isFinite(dueAt.getTime())) return false;
-    return dueAt.getTime() < Date.now();
   }
 
   function toDatetimeLocal(value) {
@@ -535,6 +552,7 @@
     dependencies = data?.dependencies || [];
     calendarRules = data?.calendar_rules || [];
     people = data?.people || [];
+    parts = data?.parts || [];
     p0Bugs = data?.p0_bugs || [];
     warnings = data?.warnings || [];
   }
@@ -708,6 +726,7 @@
     };
     ownerSearchQuery = '';
     p0BugSearchQuery = '';
+    partSearchQuery = '';
     if (kind === 'task' && user?.id && !(draft.owner_ids || []).length) draft.owner_ids = [user.id];
     if (kind === 'milestone' && user?.id) draft.accountable_user_id = user.id;
     showItemModal = true;
@@ -740,10 +759,12 @@
       manual_start_at: toDatetimeLocal(item.manual_start_at),
       owner_ids: item.owner_ids || [],
       p0_bug_ids: item.p0_bug_ids || [],
+      part_ids: item.part_ids || [],
       accountable_user_id: item.accountable_user_id || ''
     };
     ownerSearchQuery = '';
     p0BugSearchQuery = '';
+    partSearchQuery = '';
     showItemModal = true;
   }
 
@@ -753,6 +774,7 @@
     dependencyTargetId = '';
     ownerSearchQuery = '';
     p0BugSearchQuery = '';
+    partSearchQuery = '';
   }
 
   function openMeetingModal() {
@@ -800,12 +822,9 @@
       scope: bug.scope === 'subsystem' ? 'subsystem' : 'general',
       general_type: bug.general_type || 'Other',
       subsystem_id: bug.subsystem_id || '',
-      assignee_id: bug.assignee_id || '',
-      reviewer_id: bug.reviewer_id || user?.id || '',
-      needs_review: !!bug.needs_review,
+      owner_id: getP0BugOwnerId(bug),
       needs_manufacturing: !!bug.needs_manufacturing,
-      deadline_at: toDatetimeLocal(bug.deadline_at),
-      status: bug.status || 'open'
+      status: bug.status || 'red'
     };
     showP0BugModal = true;
   }
@@ -889,18 +908,18 @@
     openEditP0BugModal(bugId);
   }
 
-  function syncP0BugAssigneeSelection() {
-    const options = p0BugAssigneeOptions;
+  function syncP0BugOwnerSelection() {
+    const options = p0BugOwnerOptions;
     if (p0BugDraft.scope === 'subsystem' && !p0BugDraft.subsystem_id && taskSubsystems.length > 0) {
       p0BugDraft = { ...p0BugDraft, subsystem_id: taskSubsystems[0].id };
       return;
     }
-    if (options.length > 0 && !options.some((opt) => opt.id === p0BugDraft.assignee_id)) {
-      p0BugDraft = { ...p0BugDraft, assignee_id: options[0].id };
+    if (options.length > 0 && !options.some((opt) => opt.id === p0BugDraft.owner_id)) {
+      p0BugDraft = { ...p0BugDraft, owner_id: options[0].id };
       return;
     }
-    if (options.length === 0 && p0BugDraft.assignee_id) {
-      p0BugDraft = { ...p0BugDraft, assignee_id: '' };
+    if (options.length === 0 && p0BugDraft.owner_id) {
+      p0BugDraft = { ...p0BugDraft, owner_id: '' };
     }
   }
 
@@ -915,11 +934,9 @@
         scope: p0BugDraft.scope,
         general_type: p0BugDraft.scope === 'general' ? p0BugDraft.general_type : '',
         subsystem_id: p0BugDraft.scope === 'subsystem' ? p0BugDraft.subsystem_id : '',
-        assignee_id: p0BugDraft.assignee_id,
-        reviewer_id: p0BugDraft.needs_review ? p0BugDraft.reviewer_id : '',
-        needs_review: p0BugDraft.needs_review,
+        owner_id: p0BugDraft.owner_id,
         needs_manufacturing: p0BugDraft.needs_manufacturing,
-        deadline_at: p0BugDraft.deadline_at || ''
+        status: p0BugDraft.status
       };
 
       const payload = await taskRequest('POST', {
@@ -928,10 +945,12 @@
         ...metadataPayload
       });
 
-      const statusPayload = isEditing && p0BugDraft.status
+      const statusTargetId = String(isEditing ? editingP0BugId : payload?.created_task_id || '').trim();
+      const shouldPersistStatus = !!statusTargetId && (!!isEditing || p0BugDraft.status !== 'red');
+      const statusPayload = shouldPersistStatus
         ? await taskRequest('POST', {
           action: 'set-status',
-          task_id: editingP0BugId,
+          task_id: statusTargetId,
           status: p0BugDraft.status
         })
         : payload;
@@ -989,6 +1008,27 @@
     };
   }
 
+  function addPart(partId) {
+    const normalizedPartId = Number(partId);
+    if (!Number.isFinite(normalizedPartId) || (draft.part_ids || []).includes(normalizedPartId)) {
+      partSearchQuery = '';
+      return;
+    }
+    draft = {
+      ...draft,
+      part_ids: [...(draft.part_ids || []), normalizedPartId]
+    };
+    partSearchQuery = '';
+  }
+
+  function removePart(partId) {
+    const normalizedPartId = Number(partId);
+    draft = {
+      ...draft,
+      part_ids: (draft.part_ids || []).filter((currentPartId) => Number(currentPartId) !== normalizedPartId)
+    };
+  }
+
   function handleOwnerSearchKeydown(event) {
     if (event.key === 'Enter' && ownerSearchResults.length > 0) {
       event.preventDefault();
@@ -997,6 +1037,17 @@
     }
     if (event.key === 'Backspace' && !ownerSearchQuery && (draft.owner_ids || []).length > 0) {
       removeOwner(draft.owner_ids[draft.owner_ids.length - 1]);
+    }
+  }
+
+  function handlePartSearchKeydown(event) {
+    if (event.key === 'Enter' && partSearchResults.length > 0) {
+      event.preventDefault();
+      addPart(partSearchResults[0].id);
+      return;
+    }
+    if (event.key === 'Backspace' && !partSearchQuery && (draft.part_ids || []).length > 0) {
+      removePart(draft.part_ids[draft.part_ids.length - 1]);
     }
   }
 
@@ -1052,6 +1103,11 @@
       draft.kind === 'task' &&
       draft.task_mode !== PLANNER_FIXING_TASK_MODE &&
       draft.task_template === PLANNER_FULL_CYCLE_TASK_TEMPLATE;
+    const supportsPartLinks =
+      draft.kind === 'task' &&
+      !isFixingDraft &&
+      !isFullCycleDraft &&
+      draft.category !== PLANNER_DRIVE_PRACTICE_CATEGORY;
     const payload = {
       action,
       ...(editingItemId ? { item_id: editingItemId } : {}),
@@ -1068,6 +1124,7 @@
       manual_start_at: draft.manual_start_at || null,
       owner_ids: draft.kind === 'task' && !isFixingDraft ? draft.owner_ids : [],
       p0_bug_ids: draft.kind === 'task' && isFixingDraft ? draft.p0_bug_ids : [],
+      part_ids: supportsPartLinks ? draft.part_ids : [],
       accountable_user_id: draft.kind === 'milestone' ? draft.accountable_user_id : null
     };
     const successMessage = editingItemId
@@ -1352,15 +1409,27 @@
     });
   })();
   $: peopleById = new Map((people || []).map((person) => [person.id, person]));
+  $: partsById = new Map((parts || []).map((part) => [Number(part.id), part]));
   $: itemMap = new Map((plannerItems || []).map((item) => [item.id, item]));
   $: ownerSearchTerm = String(ownerSearchQuery || '').trim().toLowerCase();
   $: p0BugSearchTerm = String(p0BugSearchQuery || '').trim().toLowerCase();
+  $: partSearchTerm = String(partSearchQuery || '').trim().toLowerCase();
   $: selectedOwners = (draft.owner_ids || []).map((ownerId) => peopleById.get(ownerId) || { id: ownerId });
   $: ownerSearchResults = ownerSearchTerm
     ? (people || [])
       .filter((person) => !(draft.owner_ids || []).includes(person.id))
       .filter((person) => getPersonSearchText(person).includes(ownerSearchTerm))
       .slice(0, OWNER_SEARCH_RESULT_LIMIT)
+    : [];
+  $: selectedParts = (draft.part_ids || []).map((partId) => {
+    const numericPartId = Number(partId);
+    return partsById.get(numericPartId) || { id: numericPartId, name: '', project_id: '', workflow: '', status: '' };
+  });
+  $: partSearchResults = partSearchTerm
+    ? (parts || [])
+      .filter((part) => !(draft.part_ids || []).map((partId) => Number(partId)).includes(Number(part.id)))
+      .filter((part) => getPartSearchText(part).includes(partSearchTerm))
+      .slice(0, PART_SEARCH_RESULT_LIMIT)
     : [];
   $: knownP0BugRows = (() => {
     const map = new Map();
@@ -1404,7 +1473,7 @@
   $: fixingTaskRows = taskRows.filter((item) => isFixingItem(item));
   $: drivePracticeTaskRows = taskRows.filter((item) => isDrivePracticeItem(item));
   $: p0BugRows = p0Bugs || [];
-  $: p0BugAssigneeOptions = (() => {
+  $: p0BugOwnerOptions = (() => {
     const base =
       p0BugDraft.scope === 'subsystem'
         ? (taskSubsystemMembers?.[p0BugDraft.subsystem_id] || [])
@@ -1416,30 +1485,8 @@
       ...base
     ];
   })();
-  $: p0BugReviewerOptions = (() => {
-    const map = new Map();
-    for (const bug of p0BugRows || []) {
-      for (const person of [bug?.assignee, bug?.reviewer]) {
-        if (person?.id && !map.has(person.id)) map.set(person.id, person);
-      }
-    }
-    for (const sid of Object.keys(taskSubsystemMembers || {})) {
-      for (const person of taskSubsystemMembers[sid] || []) {
-        if (person?.id && !map.has(person.id)) map.set(person.id, person);
-      }
-    }
-    for (const key of Object.keys(taskGeneralCandidates || {})) {
-      for (const person of taskGeneralCandidates[key] || []) {
-        if (person?.id && !map.has(person.id)) map.set(person.id, person);
-      }
-    }
-    if (user?.id && !map.has(user.id)) {
-      map.set(user.id, { id: user.id, full_name: user.full_name, email: user.email });
-    }
-    return [...map.values()].sort((a, b) => formatPerson(a).localeCompare(formatPerson(b), undefined, { sensitivity: 'base' }));
-  })();
   $: if (showP0BugModal) {
-    syncP0BugAssigneeSelection();
+    syncP0BugOwnerSelection();
   }
   $: redItems = (plannerItems || []).filter((item) => getPlannerItemStatusTone(item) === 'red');
   $: dependencyCandidateItems = (plannerItems || []).filter((item) => item.id !== editingItemId);
@@ -1767,8 +1814,7 @@
                   <tr>
                     <th>Bug</th>
                     <th>Type</th>
-                    <th>Assignee</th>
-                    <th>Deadline</th>
+                    <th>Owner</th>
                     <th>Status</th>
                     <th>Flags</th>
                     <th></th>
@@ -1778,7 +1824,6 @@
                   {#each p0BugRows as bug (bug.id)}
                     {@const flags = formatP0BugFlags(bug)}
                     <tr
-                      class:planner-p0-bug-row--overdue={isPastDue(bug.deadline_at)}
                       class="planner-table-row"
                       tabindex="0"
                       role="button"
@@ -1795,19 +1840,12 @@
                       <td><span class="planner-type-chip">{formatP0BugType(bug)}</span></td>
                       <td>
                         <div class="planner-table-secondary-stack">
-                          <span>{formatPerson(bug.assignee)}</span>
-                          {#if bug.needs_review}
-                            <span>Reviewer: {formatPerson(bug.reviewer)}</span>
-                          {/if}
+                          <span>{formatPerson(getP0BugOwner(bug))}</span>
                         </div>
                       </td>
-                      <td>{formatDeadline(bug.deadline_at)}</td>
                       <td>
                         <div class="planner-table-secondary-stack">
                           <span class={`status-chip status-chip--${formatP0BugStatusTone(bug.status)}`}>{formatP0BugStatus(bug.status)}</span>
-                          {#if bug.review_notes}
-                            <span>{bug.review_notes}</span>
-                          {/if}
                         </div>
                       </td>
                       <td>
@@ -1843,7 +1881,7 @@
         <div>
           <p class="planner-modal-kicker">P0 Bug</p>
           <h2>{editingP0BugId ? 'Edit P0 Bug' : 'Create P0 Bug'}</h2>
-          <p class="planner-modal-subtitle">Keep ownership, deadline, and review state up to date without leaving the planner.</p>
+          <p class="planner-modal-subtitle">Track the owner, manufacturing need, and red/yellow/green state without leaving the planner.</p>
         </div>
         <button class="modal-close-button" type="button" aria-label="Close" on:click={closeP0BugModal}>&times;</button>
       </div>
@@ -1855,7 +1893,7 @@
           </label>
           <label class="form-group">
             <span class="form-label">Type Mode</span>
-            <select class="form-select" bind:value={p0BugDraft.scope} on:change={syncP0BugAssigneeSelection}>
+            <select class="form-select" bind:value={p0BugDraft.scope} on:change={syncP0BugOwnerSelection}>
               <option value="general">General Type</option>
               <option value="subsystem">Subsystem</option>
             </select>
@@ -1863,7 +1901,7 @@
           {#if p0BugDraft.scope === 'general'}
             <label class="form-group">
               <span class="form-label">General Type</span>
-              <select class="form-select" bind:value={p0BugDraft.general_type} on:change={syncP0BugAssigneeSelection}>
+              <select class="form-select" bind:value={p0BugDraft.general_type} on:change={syncP0BugOwnerSelection}>
                 {#each GENERAL_TYPES as type}
                   <option value={type}>{type}</option>
                 {/each}
@@ -1872,7 +1910,7 @@
           {:else}
             <label class="form-group">
               <span class="form-label">Subsystem</span>
-              <select class="form-select" bind:value={p0BugDraft.subsystem_id} on:change={syncP0BugAssigneeSelection}>
+              <select class="form-select" bind:value={p0BugDraft.subsystem_id} on:change={syncP0BugOwnerSelection}>
                 {#if taskSubsystems.length === 0}
                   <option value="">No subsystems on your team</option>
                 {:else}
@@ -1884,40 +1922,25 @@
             </label>
           {/if}
           <label class="form-group">
-            <span class="form-label">Assignee</span>
-            <select class="form-select" bind:value={p0BugDraft.assignee_id}>
-              {#if p0BugAssigneeOptions.length === 0}
+            <span class="form-label">Owner</span>
+            <select class="form-select" bind:value={p0BugDraft.owner_id}>
+              {#if p0BugOwnerOptions.length === 0}
                 <option value="">No eligible members</option>
               {:else}
-                {#each p0BugAssigneeOptions as member}
+                {#each p0BugOwnerOptions as member}
                   <option value={member.id}>{formatPerson(member)}</option>
                 {/each}
               {/if}
             </select>
           </label>
           <label class="form-group">
-            <span class="form-label">Reviewer</span>
-            <select class="form-select" bind:value={p0BugDraft.reviewer_id} disabled={!p0BugDraft.needs_review}>
-              {#each p0BugReviewerOptions as member}
-                <option value={member.id}>{formatPerson(member)}</option>
+            <span class="form-label">Status</span>
+            <select class="form-select" bind:value={p0BugDraft.status}>
+              {#each P0_STATUS_OPTIONS as option}
+                <option value={option.value}>{option.label}</option>
               {/each}
             </select>
           </label>
-          <label class="form-group">
-            <span class="form-label">Deadline</span>
-            <input class="form-input" type="datetime-local" bind:value={p0BugDraft.deadline_at} />
-            <small class="form-help">Deadlines are saved in Pacific Time.</small>
-          </label>
-          {#if editingP0BugId}
-            <label class="form-group">
-              <span class="form-label">Status</span>
-              <select class="form-select" bind:value={p0BugDraft.status}>
-                {#each P0_STATUS_OPTIONS as option}
-                  <option value={option.value}>{option.label}</option>
-                {/each}
-              </select>
-            </label>
-          {/if}
         </div>
         <label class="form-group planner-form-group--wide">
           <span class="form-label">Description</span>
@@ -1950,10 +1973,6 @@
         {/if}
         <div class="check-row">
           <label class="checkbox-line">
-            <input type="checkbox" bind:checked={p0BugDraft.needs_review} />
-            Needs Review
-          </label>
-          <label class="checkbox-line">
             <input type="checkbox" bind:checked={p0BugDraft.needs_manufacturing} />
             Needs Manufacturing
           </label>
@@ -1964,7 +1983,7 @@
           <button class="btn btn-outline-danger btn-sm" type="button" disabled={saving} on:click={deleteP0Bug}>Delete P0 Bug</button>
         {/if}
         <button class="btn btn-secondary btn-sm" type="button" on:click={closeP0BugModal}>Cancel</button>
-        <button class="btn btn-primary btn-sm" type="button" disabled={saving || !p0BugDraft.title.trim() || !p0BugDraft.assignee_id} on:click={saveP0Bug}>
+        <button class="btn btn-primary btn-sm" type="button" disabled={saving || !p0BugDraft.title.trim() || !p0BugDraft.owner_id} on:click={saveP0Bug}>
           {saving ? 'Saving...' : editingP0BugId ? 'Save P0 Bug' : 'Create P0 Bug'}
         </button>
       </div>
@@ -2190,7 +2209,7 @@
                   type="search"
                   bind:value={p0BugSearchQuery}
                   autocomplete="off"
-                  placeholder="Search by bug title, type, or assignee"
+                  placeholder="Search by bug title, type, or owner"
                 />
                 <small class="form-help">Closed bugs only appear here if this task is already linked to them.</small>
               </label>
@@ -2207,7 +2226,7 @@
                       <div class="planner-p0-option-copy">
                         <strong>{bug.title || 'Untitled P0 bug'}</strong>
                         <span>{formatP0BugType(bug)}</span>
-                        <span>{formatPerson(bug.assignee)}</span>
+                        <span>{formatPerson(getP0BugOwner(bug))}</span>
                       </div>
                       <span class={`status-chip status-chip--${formatP0BugStatusTone(bug.status)}`}>{formatP0BugStatus(bug.status)}</span>
                     </label>
@@ -2296,6 +2315,70 @@
                 {/if}
               </div>
             </div>
+
+            {#if !fullCycleDraft && !drivePracticeDraft}
+              <div class="owner-picker">
+                <div class="planner-modal-panel-head">
+                  <div class="planner-subsection-head">
+                    <div class="form-label">Linked Parts</div>
+                    <p class="muted">Link the manufacturing parts this task owns. Standard tasks will auto-complete once every linked part reaches a done state.</p>
+                  </div>
+                  <span class="planner-count-pill">{(draft.part_ids || []).length} part{(draft.part_ids || []).length === 1 ? '' : 's'}</span>
+                </div>
+                <div class="owner-selection">
+                  {#if selectedParts.length > 0}
+                    <div class="owner-tag-list" aria-label="Selected parts">
+                      {#each selectedParts as part (part.id)}
+                        <span class="chip chip-soft owner-tag">
+                          <span class="owner-tag-label">{formatLinkedPartLabel(part)}</span>
+                          <button
+                            class="chip-remove"
+                            type="button"
+                            aria-label={`Remove ${formatLinkedPartLabel(part)}`}
+                            on:click={() => removePart(part.id)}
+                          >
+                            x
+                          </button>
+                        </span>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="planner-empty-inline">No parts linked yet.</div>
+                  {/if}
+
+                  <label class="form-group planner-form-group--flush">
+                    <span class="form-label">Add part</span>
+                    <input
+                      class="form-input"
+                      type="search"
+                      bind:value={partSearchQuery}
+                      autocomplete="off"
+                      placeholder="Search by part name, project, workflow, or ID"
+                      on:keydown={handlePartSearchKeydown}
+                    />
+                    <small class="form-help">Linked parts are unique, and each part can only belong to one planner task.</small>
+                  </label>
+
+                  {#if partSearchTerm}
+                    <div class="owner-search-results" aria-label="Matching parts">
+                      {#if partSearchResults.length > 0}
+                        {#each partSearchResults as part (part.id)}
+                          <button class="owner-search-result" type="button" on:click={() => addPart(part.id)}>
+                            <span class="owner-search-result-copy">
+                              <strong>{formatLinkedPartLabel(part)}</strong>
+                              <small>{[part.project_id || 'No project', part.workflow || 'No workflow', formatPartStatus(part.status)].join(' • ')}</small>
+                            </span>
+                            <span class="planner-count-pill">Add</span>
+                          </button>
+                        {/each}
+                      {:else}
+                        <div class="planner-empty-inline">No parts match "{partSearchQuery.trim()}".</div>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           {/if}
         </section>
 

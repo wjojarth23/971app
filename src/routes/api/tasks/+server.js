@@ -1,8 +1,16 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
-import { parsePacificDateTimeInput } from '$lib/timezone.js';
-import { createPlannerFixingTaskFromP0Bug, recomputePlannerTeam } from '$lib/server/planner_data.js';
+import {
+  addDrivePracticeBugReportLinks,
+  ensurePlannerP0BugsOnTeam,
+  ensurePlannerUsersOnTeam,
+  fetchPlannerP0BugRows,
+  fetchPlannerTeamPeople,
+  normalizeP0BugStatus,
+  recomputePlannerTeam,
+  replacePlannerOwners
+} from '$lib/server/planner_data.js';
 import {
   notifyTaskAssignedById,
   notifyTaskReviewRequestedById,
@@ -10,50 +18,6 @@ import {
 } from '$lib/server/slack_notifications.js';
 
 const GENERAL_TYPES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
-const OPEN_STATUSES = new Set(['open', 'in_progress', 'file_uploaded', 'under_review', 'changes_requested']);
-const CLOSABLE_STATUSES = new Set([...OPEN_STATUSES, 'approved', 'done', 'closed']);
-
-async function validateTaskAssignment(db, { actor, scope, generalType, subsystemId, assigneeId, reviewerId, needsReview }) {
-  if (scope === 'subsystem') {
-    const { data: subsystem } = await db
-      .from('subsystems')
-      .select('id, frc_team')
-      .eq('id', subsystemId)
-      .maybeSingle();
-    if (!subsystem?.id || subsystem?.frc_team !== actor.frcTeam) {
-      return { error: 'Invalid subsystem for your team' };
-    }
-  }
-
-  const { data: assigneeProfile } = await db
-    .from('user_profiles')
-    .select('id, frc_team')
-    .eq('id', assigneeId)
-    .maybeSingle();
-  if (!assigneeProfile?.id || assigneeProfile.frc_team !== actor.frcTeam) {
-    return { error: 'Assignee must be on your FRC team' };
-  }
-
-  if (needsReview) {
-    const { data: reviewerProfile } = await db
-      .from('user_profiles')
-      .select('id, frc_team')
-      .eq('id', reviewerId)
-      .maybeSingle();
-    if (!reviewerProfile?.id || reviewerProfile.frc_team !== actor.frcTeam) {
-      return { error: 'Reviewer must be on your FRC team' };
-    }
-  }
-
-  if (scope === 'general' && !GENERAL_TYPES.includes(generalType)) {
-    return { error: 'general_type required for general tasks' };
-  }
-  if (scope === 'subsystem' && !subsystemId) {
-    return { error: 'subsystem_id required for subsystem tasks' };
-  }
-
-  return { error: null };
-}
 
 function getClientFromRequest(request) {
   const auth = request?.headers?.get('authorization') || '';
@@ -64,17 +28,6 @@ function getClientFromRequest(request) {
 
 function normalizeKey(value) {
   return String(value || '').trim().toLowerCase();
-}
-
-function toGeneralTypeFromKey(keyName) {
-  const key = normalizeKey(keyName);
-  if (!key) return null;
-  if (key.includes('cad')) return 'CAD';
-  if (key.includes('mechanical')) return 'Mechanical';
-  if (key.includes('electrical')) return 'Electrical';
-  if (key.includes('software')) return 'Software';
-  if (key.includes('other')) return 'Other';
-  return null;
 }
 
 function sanitizeFileName(raw) {
@@ -117,35 +70,38 @@ async function fetchSubsystemMembers(db, subsystemIds, team) {
       .select('id, full_name, email, frc_team, banned')
       .in('id', userIds);
     if (userError) throw userError;
-    userMap = new Map((users || []).map((u) => [u.id, u]));
+    userMap = new Map((users || []).map((user) => [user.id, user]));
   }
 
   for (const row of data || []) {
-    const sid = row?.subsystem_id;
+    const subsystemId = row?.subsystem_id;
     const user = row?.user_id ? userMap.get(row.user_id) : null;
-    if (!sid || !user?.id || user?.banned || user?.frc_team !== team) continue;
-    if (!bySubsystem[sid]) bySubsystem[sid] = [];
-    bySubsystem[sid].push({
+    if (!subsystemId || !user?.id || user?.banned || user?.frc_team !== team) continue;
+    if (!bySubsystem[subsystemId]) bySubsystem[subsystemId] = [];
+    bySubsystem[subsystemId].push({
       id: user.id,
       full_name: user.full_name || null,
       email: user.email || null
     });
   }
-  for (const sid of Object.keys(bySubsystem)) {
-    bySubsystem[sid].sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || '', undefined, { sensitivity: 'base' }));
+
+  for (const subsystemId of Object.keys(bySubsystem)) {
+    bySubsystem[subsystemId].sort((left, right) =>
+      (left.full_name || left.email || '').localeCompare(right.full_name || right.email || '', undefined, { sensitivity: 'base' })
+    );
   }
   return bySubsystem;
 }
 
 async function fetchGeneralCandidates(db, team) {
-  const grouped = Object.fromEntries(GENERAL_TYPES.map((k) => [k, []]));
+  const grouped = Object.fromEntries(GENERAL_TYPES.map((key) => [key, []]));
   const { data: users, error } = await db
     .from('user_profiles')
     .select('id, full_name, email, frc_team, banned, task_general_categories')
     .eq('frc_team', team);
   if (error) {
-    const msg = String(error?.message || '').toLowerCase();
-    if (msg.includes('task_general_categories')) return grouped;
+    const message = String(error?.message || '').toLowerCase();
+    if (message.includes('task_general_categories')) return grouped;
     throw error;
   }
 
@@ -155,9 +111,9 @@ async function fetchGeneralCandidates(db, team) {
       ? user.task_general_categories
       : [];
     for (const rawCategory of categories) {
-      const category = GENERAL_TYPES.find((t) => normalizeKey(t) === normalizeKey(rawCategory));
-      if (!category) continue;
-      grouped[category].push({
+      const match = GENERAL_TYPES.find((type) => normalizeKey(type) === normalizeKey(rawCategory));
+      if (!match) continue;
+      grouped[match].push({
         id: user.id,
         full_name: user.full_name || null,
         email: user.email || null
@@ -167,14 +123,66 @@ async function fetchGeneralCandidates(db, team) {
 
   for (const type of GENERAL_TYPES) {
     const seenIds = new Set();
-    grouped[type] = grouped[type].filter((person) => {
-      if (!person?.id || seenIds.has(person.id)) return false;
-      seenIds.add(person.id);
-      return true;
-    });
-    grouped[type].sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || '', undefined, { sensitivity: 'base' }));
+    grouped[type] = grouped[type]
+      .filter((person) => {
+        if (!person?.id || seenIds.has(person.id)) return false;
+        seenIds.add(person.id);
+        return true;
+      })
+      .sort((left, right) =>
+        (left.full_name || left.email || '').localeCompare(right.full_name || right.email || '', undefined, { sensitivity: 'base' })
+      );
   }
+
   return grouped;
+}
+
+async function fetchTaskOwnerId(db, taskId) {
+  const { data, error } = await db
+    .from('planner_item_people')
+    .select('user_id')
+    .eq('planner_item_id', taskId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.user_id || null;
+}
+
+async function fetchTaskPartIds(db, team, taskId) {
+  const { data, error } = await db
+    .from('planner_item_parts')
+    .select('part_id')
+    .eq('frc_team', team)
+    .eq('planner_item_id', taskId);
+  if (error) throw error;
+  return Array.from(new Set((data || []).map((row) => Number(row.part_id)).filter(Number.isFinite)));
+}
+
+async function validateTaskOwnership(db, { actor, scope, generalType, subsystemId, ownerId }) {
+  if (!ownerId) {
+    return { error: 'owner_id required' };
+  }
+
+  if (scope === 'general' && !GENERAL_TYPES.includes(generalType)) {
+    return { error: 'general_type required for general P0 bugs' };
+  }
+
+  if (scope === 'subsystem') {
+    if (!subsystemId) return { error: 'subsystem_id required for subsystem P0 bugs' };
+    const { data: subsystem, error: subsystemError } = await db
+      .from('subsystems')
+      .select('id, frc_team')
+      .eq('id', subsystemId)
+      .maybeSingle();
+    if (subsystemError) throw subsystemError;
+    if (!subsystem?.id || subsystem?.frc_team !== actor.frcTeam) {
+      return { error: 'Invalid subsystem for your team' };
+    }
+  }
+
+  await ensurePlannerUsersOnTeam(db, actor.frcTeam, [ownerId]);
+  return { error: null };
 }
 
 async function fetchTasksBundle(db, team) {
@@ -185,75 +193,41 @@ async function fetchTasksBundle(db, team) {
     .order('name', { ascending: true });
   if (subsystemsError) throw subsystemsError;
 
-  const subsystemIds = (subsystems || []).map((s) => s.id).filter(Boolean);
-  const [subsystemMembers, generalCandidates] = await Promise.all([
+  const subsystemIds = (subsystems || []).map((subsystem) => subsystem.id).filter(Boolean);
+  const [subsystemMembers, generalCandidates, people, tasks] = await Promise.all([
     fetchSubsystemMembers(db, subsystemIds, team),
-    fetchGeneralCandidates(db, team)
+    fetchGeneralCandidates(db, team),
+    fetchPlannerTeamPeople(db, team),
+    fetchPlannerP0BugRows(db, team, { includeCompleted: true })
   ]);
 
-  const { data: taskRows, error: tasksError } = await db
-    .from('tasks')
-    .select(`
-      id,
-      frc_team,
-      title,
-      description,
-      scope,
-      general_type,
-      subsystem_id,
-      assignee_id,
-      reviewer_id,
-      created_by,
-      needs_review,
-      needs_manufacturing,
-      deadline_at,
-      status,
-      review_decision,
-      review_notes,
-      reviewed_at,
-      attachment_path,
-      attachment_name,
-      attachment_uploaded_at,
-      parts_id,
-      created_at,
-      updated_at
-    `)
-    .eq('frc_team', team)
-    .order('created_at', { ascending: false });
-  if (tasksError) throw tasksError;
-
-  const userIds = new Set();
-  for (const row of taskRows || []) {
-    if (row?.assignee_id) userIds.add(row.assignee_id);
-    if (row?.reviewer_id) userIds.add(row.reviewer_id);
-    if (row?.created_by) userIds.add(row.created_by);
-  }
-  const userIdList = [...userIds];
-  let userMap = new Map();
-  if (userIdList.length) {
-    const { data: users, error: usersError } = await db
-      .from('user_profiles')
-      .select('id, full_name, email')
-      .in('id', userIdList);
-    if (usersError) throw usersError;
-    userMap = new Map((users || []).map((u) => [u.id, { id: u.id, full_name: u.full_name || null, email: u.email || null }]));
-  }
-
-  const subsystemMap = new Map((subsystems || []).map((s) => [s.id, { id: s.id, name: s.name }]));
-  const tasks = (taskRows || []).map((row) => ({
-    ...row,
-    subsystem: row?.subsystem_id ? subsystemMap.get(row.subsystem_id) || null : null,
-    assignee: row?.assignee_id ? userMap.get(row.assignee_id) || null : null,
-    reviewer: row?.reviewer_id ? userMap.get(row.reviewer_id) || null : null,
-    creator: row?.created_by ? userMap.get(row.created_by) || null : null
-  }));
-
   return {
-    tasks: tasks || [],
+    tasks,
+    people,
     subsystems: subsystems || [],
     subsystem_members: subsystemMembers,
     general_candidates: generalCandidates
   };
+}
+
+function normalizeP0Scope(rawValue) {
+  return String(rawValue || '').trim().toLowerCase() === 'subsystem' ? 'subsystem' : 'general';
+}
+
+function canMutateTask(actor, existing, ownerId) {
+  return actor.role === 'admin' || actor.id === existing.created_by || actor.id === ownerId;
+}
+
+async function fetchExistingP0Bug(db, team, taskId) {
+  const { data: existing, error } = await db
+    .from('planner_items')
+    .select('id, frc_team, item_type, created_by, status, title, scope, general_type, subsystem_id, needs_manufacturing, attachment_path, attachment_name, attachment_uploaded_at')
+    .eq('id', taskId)
+    .eq('frc_team', team)
+    .eq('item_type', 'p0_bug')
+    .maybeSingle();
+  if (error) throw error;
+  return existing || null;
 }
 
 export async function GET({ request }) {
@@ -286,251 +260,192 @@ export async function POST({ request }) {
   try {
     if (action === 'create') {
       const title = String(body?.title || '').trim();
-      const description = String(body?.description || '').trim() || null;
-      const scope = body?.scope === 'subsystem' ? 'subsystem' : 'general';
+      const details = String(body?.details ?? body?.description ?? '').trim() || null;
+      const scope = normalizeP0Scope(body?.scope);
       const generalType = scope === 'general' ? String(body?.general_type || '').trim() : null;
       const subsystemId = scope === 'subsystem' ? String(body?.subsystem_id || '').trim() : null;
-      const assigneeId = String(body?.assignee_id || '').trim() || null;
-      const reviewerIdRaw = String(body?.reviewer_id || '').trim();
-      const needsReview = !!body?.needs_review;
+      const ownerId = String(body?.owner_id || body?.assignee_id || actor.id || '').trim() || null;
       const needsManufacturing = !!body?.needs_manufacturing;
-      const reviewerId = needsReview ? (reviewerIdRaw || actor.id) : null;
-      const rawDeadlineAt = String(body?.deadline_at || '').trim();
-      const parsedDeadlineAt = rawDeadlineAt ? parsePacificDateTimeInput(rawDeadlineAt) : null;
-      const deadlineAt = parsedDeadlineAt ? parsedDeadlineAt.toISOString() : null;
+      const status = normalizeP0BugStatus(body?.status);
 
       if (!title) return json({ error: 'title required' }, { status: 400 });
-      if (!assigneeId) return json({ error: 'assignee_id required' }, { status: 400 });
-      if (rawDeadlineAt && !parsedDeadlineAt) {
-        return json({ error: 'deadline_at must be a valid Pacific time' }, { status: 400 });
-      }
-      const assignmentValidation = await validateTaskAssignment(db, {
+
+      const ownershipValidation = await validateTaskOwnership(db, {
         actor,
         scope,
         generalType,
         subsystemId,
-        assigneeId,
-        reviewerId,
-        needsReview
+        ownerId
       });
-      if (assignmentValidation.error) {
-        return json({ error: assignmentValidation.error }, { status: 400 });
+      if (ownershipValidation.error) {
+        return json({ error: ownershipValidation.error }, { status: 400 });
       }
 
-      const payload = {
-        frc_team: actor.frcTeam,
-        title,
-        description,
-        scope,
-        general_type: scope === 'general' ? generalType : null,
-        subsystem_id: scope === 'subsystem' ? subsystemId : null,
-        assignee_id: assigneeId,
-        reviewer_id: needsReview ? reviewerId : null,
-        created_by: actor.id,
-        needs_review: needsReview,
-        needs_manufacturing: needsManufacturing,
-        deadline_at: deadlineAt,
-        status: 'open'
-      };
+      const { data: lastItem } = await db
+        .from('planner_items')
+        .select('sort_order')
+        .eq('frc_team', actor.frcTeam)
+        .order('sort_order', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const sortOrder = (Number(lastItem?.sort_order) || 0) + 1000;
 
       const { data: created, error: createError } = await db
-        .from('tasks')
-        .insert([payload])
-        .select('id, title, created_at')
-        .single();
-      if (createError) throw createError;
-
-      try {
-        await createPlannerFixingTaskFromP0Bug(db, actor, created);
-      } catch (plannerError) {
-        await db
-          .from('tasks')
-          .delete()
-          .eq('frc_team', actor.frcTeam)
-          .eq('id', created.id);
-        throw plannerError;
-      }
-
-      await notifyTaskAssignedById(created.id);
-      const bundle = await fetchTasksBundle(db, actor.frcTeam);
-      return json({ success: true, data: bundle });
-    }
-
-    if (action === 'update-metadata') {
-      const taskId = String(body?.task_id || '').trim();
-      const title = String(body?.title || '').trim();
-      const description = String(body?.description || '').trim() || null;
-      const scope = body?.scope === 'subsystem' ? 'subsystem' : 'general';
-      const generalType = scope === 'general' ? String(body?.general_type || '').trim() : null;
-      const subsystemId = scope === 'subsystem' ? String(body?.subsystem_id || '').trim() : null;
-      const assigneeId = String(body?.assignee_id || '').trim() || null;
-      const reviewerIdRaw = String(body?.reviewer_id || '').trim();
-      const needsReview = !!body?.needs_review;
-      const needsManufacturing = !!body?.needs_manufacturing;
-      const reviewerId = needsReview ? (reviewerIdRaw || actor.id) : null;
-      const rawDeadlineAt = String(body?.deadline_at || '').trim();
-      const parsedDeadlineAt = rawDeadlineAt ? parsePacificDateTimeInput(rawDeadlineAt) : null;
-      const deadlineAt = parsedDeadlineAt ? parsedDeadlineAt.toISOString() : null;
-
-      if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
-      if (!title) return json({ error: 'title required' }, { status: 400 });
-      if (!assigneeId) return json({ error: 'assignee_id required' }, { status: 400 });
-      if (rawDeadlineAt && !parsedDeadlineAt) {
-        return json({ error: 'deadline_at must be a valid Pacific time' }, { status: 400 });
-      }
-
-      const { data: existing, error: existingError } = await db
-        .from('tasks')
-        .select('id, frc_team, created_by, reviewer_id, assignee_id')
-        .eq('id', taskId)
-        .maybeSingle();
-      if (existingError) throw existingError;
-      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
-
-      const canUpdate = actor.id === existing.assignee_id || actor.id === existing.created_by || actor.id === existing.reviewer_id || actor.role === 'admin';
-      if (!canUpdate) return json({ error: 'Forbidden' }, { status: 403 });
-
-      const assignmentValidation = await validateTaskAssignment(db, {
-        actor,
-        scope,
-        generalType,
-        subsystemId,
-        assigneeId,
-        reviewerId,
-        needsReview
-      });
-      if (assignmentValidation.error) {
-        return json({ error: assignmentValidation.error }, { status: 400 });
-      }
-
-      const { error: updateError } = await db
-        .from('tasks')
-        .update({
+        .from('planner_items')
+        .insert([{
+          frc_team: actor.frcTeam,
+          item_type: 'p0_bug',
           title,
-          description,
+          details,
+          work_category: null,
+          status,
+          critical_level: 1,
+          duration_minutes: 120,
+          requested_duration_minutes: 120,
+          min_duration_minutes: 30,
+          manual_start_at: null,
+          sort_order: sortOrder,
+          created_by: actor.id,
           scope,
           general_type: scope === 'general' ? generalType : null,
           subsystem_id: scope === 'subsystem' ? subsystemId : null,
-          assignee_id: assigneeId,
-          reviewer_id: needsReview ? reviewerId : null,
-          needs_review: needsReview,
-          needs_manufacturing: needsManufacturing,
-          deadline_at: deadlineAt
+          needs_manufacturing: needsManufacturing
+        }])
+        .select('id')
+        .single();
+      if (createError) throw createError;
+
+      await replacePlannerOwners(db, actor.frcTeam, created.id, [ownerId], null);
+      await notifyTaskAssignedById(created.id);
+
+      const bundle = await fetchTasksBundle(db, actor.frcTeam);
+      return json({ success: true, data: bundle, created_task_id: created.id });
+    }
+
+    if (action === 'update-metadata') {
+      const taskId = String(body?.task_id || body?.item_id || '').trim();
+      if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
+
+      const existing = await fetchExistingP0Bug(db, actor.frcTeam, taskId);
+      if (!existing?.id) return json({ error: 'Task not found' }, { status: 404 });
+
+      const currentOwnerId = await fetchTaskOwnerId(db, taskId);
+      if (!canMutateTask(actor, existing, currentOwnerId)) {
+        return json({ error: 'Forbidden' }, { status: 403 });
+      }
+
+      const title = String(body?.title || '').trim();
+      const details = String(body?.details ?? body?.description ?? '').trim() || null;
+      const scope = normalizeP0Scope(body?.scope || existing.scope);
+      const generalType = scope === 'general'
+        ? String(body?.general_type ?? existing.general_type ?? '').trim()
+        : null;
+      const subsystemId = scope === 'subsystem'
+        ? String(body?.subsystem_id ?? existing.subsystem_id ?? '').trim()
+        : null;
+      const ownerId = String(body?.owner_id || body?.assignee_id || currentOwnerId || '').trim() || null;
+      const needsManufacturing = body?.needs_manufacturing === undefined
+        ? !!existing.needs_manufacturing
+        : !!body?.needs_manufacturing;
+      const status = body?.status === undefined
+        ? normalizeP0BugStatus(existing.status)
+        : normalizeP0BugStatus(body?.status);
+
+      if (!title) return json({ error: 'title required' }, { status: 400 });
+
+      const ownershipValidation = await validateTaskOwnership(db, {
+        actor,
+        scope,
+        generalType,
+        subsystemId,
+        ownerId
+      });
+      if (ownershipValidation.error) {
+        return json({ error: ownershipValidation.error }, { status: 400 });
+      }
+
+      const { error: updateError } = await db
+        .from('planner_items')
+        .update({
+          title,
+          details,
+          status,
+          scope,
+          general_type: scope === 'general' ? generalType : null,
+          subsystem_id: scope === 'subsystem' ? subsystemId : null,
+          needs_manufacturing: needsManufacturing
         })
         .eq('id', taskId);
       if (updateError) throw updateError;
 
+      await replacePlannerOwners(db, actor.frcTeam, taskId, [ownerId], null);
       const bundle = await fetchTasksBundle(db, actor.frcTeam);
       return json({ success: true, data: bundle });
     }
 
     if (action === 'upload-file') {
-      const taskId = String(body?.task_id || '').trim();
+      const taskId = String(body?.task_id || body?.item_id || '').trim();
       const attachmentPath = String(body?.attachment_path || '').trim();
       const attachmentName = sanitizeFileName(body?.attachment_name || '');
-      if (!taskId || !attachmentPath) return json({ error: 'task_id and attachment_path required' }, { status: 400 });
+      if (!taskId || !attachmentPath) {
+        return json({ error: 'task_id and attachment_path required' }, { status: 400 });
+      }
 
-      const { data: existing, error: existingError } = await db
-        .from('tasks')
-        .select('id, frc_team, assignee_id, needs_review, reviewer_id, status')
-        .eq('id', taskId)
-        .maybeSingle();
-      if (existingError) throw existingError;
-      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
-      if (existing.assignee_id !== actor.id) return json({ error: 'Only the assignee can upload task files' }, { status: 403 });
+      const existing = await fetchExistingP0Bug(db, actor.frcTeam, taskId);
+      if (!existing?.id) return json({ error: 'Task not found' }, { status: 404 });
 
-      const nextStatus = existing.needs_review ? 'under_review' : 'file_uploaded';
+      const currentOwnerId = await fetchTaskOwnerId(db, taskId);
+      if (!canMutateTask(actor, existing, currentOwnerId)) {
+        return json({ error: 'Forbidden' }, { status: 403 });
+      }
+
       const { error: updateError } = await db
-        .from('tasks')
+        .from('planner_items')
         .update({
           attachment_path: attachmentPath,
           attachment_name: attachmentName || null,
-          attachment_uploaded_at: new Date().toISOString(),
-          status: nextStatus
+          attachment_uploaded_at: new Date().toISOString()
         })
         .eq('id', taskId);
       if (updateError) throw updateError;
-
-      if (existing.needs_review && existing.reviewer_id) {
-        await notifyTaskReviewRequestedById(taskId);
-      }
 
       const bundle = await fetchTasksBundle(db, actor.frcTeam);
       return json({ success: true, data: bundle });
     }
 
     if (action === 'review') {
-      const taskId = String(body?.task_id || '').trim();
-      const decision = String(body?.decision || '').trim().toLowerCase();
-      const notes = String(body?.notes || '').trim() || null;
-      if (!taskId || (decision !== 'approve' && decision !== 'changes_requested')) {
-        return json({ error: 'task_id and decision required' }, { status: 400 });
-      }
-
-      const { data: existing, error: existingError } = await db
-        .from('tasks')
-        .select('id, frc_team, reviewer_id, status')
-        .eq('id', taskId)
-        .maybeSingle();
-      if (existingError) throw existingError;
-      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
-      if (existing.reviewer_id !== actor.id) return json({ error: 'Only the assigned reviewer can review this task' }, { status: 403 });
-
-      const previousStatus = existing.status;
-      const nextStatus = decision === 'approve' ? 'approved' : 'changes_requested';
-      const { error: updateError } = await db
-        .from('tasks')
-        .update({
-          status: nextStatus,
-          review_decision: decision === 'approve' ? 'approved' : 'changes_requested',
-          review_notes: notes,
-          reviewed_at: new Date().toISOString()
-        })
-        .eq('id', taskId);
-      if (updateError) throw updateError;
-
-      await notifyTaskStatusChanged({
-        taskId,
-        previousStatus,
-        nextStatus,
-        changedByName: actor.fullName || actor.email || 'Reviewer',
-        changedByUserId: actor.id
-      });
-
-      const bundle = await fetchTasksBundle(db, actor.frcTeam);
-      return json({ success: true, data: bundle });
+      await notifyTaskReviewRequestedById(String(body?.task_id || '').trim());
+      return json({ error: 'P0 bug review flow has been removed.' }, { status: 400 });
     }
 
     if (action === 'set-status') {
-      const taskId = String(body?.task_id || '').trim();
-      const nextStatus = String(body?.status || '').trim().toLowerCase();
-      if (!taskId || !CLOSABLE_STATUSES.has(nextStatus)) {
-        return json({ error: 'task_id and valid status required' }, { status: 400 });
+      const taskId = String(body?.task_id || body?.item_id || '').trim();
+      const nextStatus = normalizeP0BugStatus(body?.status);
+      if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
+
+      const existing = await fetchExistingP0Bug(db, actor.frcTeam, taskId);
+      if (!existing?.id) return json({ error: 'Task not found' }, { status: 404 });
+
+      const currentOwnerId = await fetchTaskOwnerId(db, taskId);
+      if (!canMutateTask(actor, existing, currentOwnerId)) {
+        return json({ error: 'Forbidden' }, { status: 403 });
       }
 
-      const { data: existing, error: existingError } = await db
-        .from('tasks')
-        .select('id, frc_team, status, created_by, reviewer_id, assignee_id')
-        .eq('id', taskId)
-        .maybeSingle();
-      if (existingError) throw existingError;
-      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
-      const canUpdate = actor.id === existing.assignee_id || actor.id === existing.created_by || actor.id === existing.reviewer_id || actor.role === 'admin';
-      if (!canUpdate) return json({ error: 'Forbidden' }, { status: 403 });
-      if (existing.status === nextStatus) {
+      const previousStatus = normalizeP0BugStatus(existing.status);
+      if (previousStatus === nextStatus) {
         const bundle = await fetchTasksBundle(db, actor.frcTeam);
         return json({ success: true, data: bundle });
       }
 
       const { error: updateError } = await db
-        .from('tasks')
+        .from('planner_items')
         .update({ status: nextStatus })
         .eq('id', taskId);
       if (updateError) throw updateError;
 
       await notifyTaskStatusChanged({
         taskId,
-        previousStatus: existing.status,
+        previousStatus,
         nextStatus,
         changedByName: actor.fullName || actor.email || 'Teammate',
         changedByUserId: actor.id
@@ -541,34 +456,33 @@ export async function POST({ request }) {
     }
 
     if (action === 'delete') {
-      const taskId = String(body?.task_id || '').trim();
+      const taskId = String(body?.task_id || body?.item_id || '').trim();
       if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
 
-      const { data: existing, error: existingError } = await db
-        .from('tasks')
-        .select('id, frc_team, status, created_by, reviewer_id, assignee_id')
-        .eq('id', taskId)
-        .maybeSingle();
-      if (existingError) throw existingError;
-      if (!existing?.id || existing.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
+      const existing = await fetchExistingP0Bug(db, actor.frcTeam, taskId);
+      if (!existing?.id) return json({ error: 'Task not found' }, { status: 404 });
 
-      const canDelete = actor.id === existing.assignee_id || actor.id === existing.created_by || actor.id === existing.reviewer_id || actor.role === 'admin';
-      if (!canDelete) return json({ error: 'Forbidden' }, { status: 403 });
+      const currentOwnerId = await fetchTaskOwnerId(db, taskId);
+      if (!canMutateTask(actor, existing, currentOwnerId)) {
+        return json({ error: 'Forbidden' }, { status: 403 });
+      }
 
       const { data: linkedPlannerItems, error: linkedPlannerItemsError } = await db
         .from('planner_item_p0_bugs')
         .select('planner_item_id')
         .eq('frc_team', actor.frcTeam)
-        .eq('task_id', taskId);
+        .eq('p0_bug_item_id', taskId)
+        .is('report_area', null);
       if (linkedPlannerItemsError) throw linkedPlannerItemsError;
 
       const linkedPlannerItemIds = Array.from(new Set((linkedPlannerItems || []).map((row) => row.planner_item_id).filter(Boolean)));
 
       const { error: deleteError } = await db
-        .from('tasks')
+        .from('planner_items')
         .delete()
         .eq('frc_team', actor.frcTeam)
-        .eq('id', taskId);
+        .eq('id', taskId)
+        .eq('item_type', 'p0_bug');
       if (deleteError) throw deleteError;
 
       if (linkedPlannerItemIds.length) {
@@ -576,18 +490,20 @@ export async function POST({ request }) {
           .from('planner_item_p0_bugs')
           .select('planner_item_id')
           .eq('frc_team', actor.frcTeam)
-          .in('planner_item_id', linkedPlannerItemIds);
+          .in('planner_item_id', linkedPlannerItemIds)
+          .is('report_area', null);
         if (remainingLinksError) throw remainingLinksError;
 
-        const plannerItemsWithLinks = new Set((remainingLinks || []).map((row) => row.planner_item_id).filter(Boolean));
-        const orphanedPlannerItemIds = linkedPlannerItemIds.filter((itemId) => !plannerItemsWithLinks.has(itemId));
+        const itemsWithLinks = new Set((remainingLinks || []).map((row) => row.planner_item_id).filter(Boolean));
+        const orphanedIds = linkedPlannerItemIds.filter((itemId) => !itemsWithLinks.has(itemId));
 
-        if (orphanedPlannerItemIds.length) {
+        if (orphanedIds.length) {
           const { error: plannerDeleteError } = await db
             .from('planner_items')
             .delete()
             .eq('frc_team', actor.frcTeam)
-            .in('id', orphanedPlannerItemIds);
+            .eq('item_type', 'fixing_block')
+            .in('id', orphanedIds);
           if (plannerDeleteError) throw plannerDeleteError;
 
           await recomputePlannerTeam(db, actor.frcTeam);
@@ -599,30 +515,32 @@ export async function POST({ request }) {
     }
 
     if (action === 'add-to-parts') {
-      const taskId = String(body?.task_id || '').trim();
+      const taskId = String(body?.task_id || body?.item_id || '').trim();
       const workflow = String(body?.workflow || 'mill').trim();
       if (!taskId) return json({ error: 'task_id required' }, { status: 400 });
 
-      const { data: task, error: taskError } = await db
-        .from('tasks')
-        .select('id, frc_team, title, description, scope, subsystem_id, subsystem:subsystem_id(name), needs_manufacturing, needs_review, status, attachment_path, attachment_name, parts_id')
-        .eq('id', taskId)
-        .maybeSingle();
-      if (taskError) throw taskError;
-      if (!task?.id || task.frc_team !== actor.frcTeam) return json({ error: 'Task not found' }, { status: 404 });
-      if (task.parts_id) return json({ error: 'Task already added to parts list' }, { status: 400 });
+      const task = await fetchExistingP0Bug(db, actor.frcTeam, taskId);
+      if (!task?.id) return json({ error: 'Task not found' }, { status: 404 });
+
+      const linkedPartIds = await fetchTaskPartIds(db, actor.frcTeam, taskId);
+      if (linkedPartIds.length) return json({ error: 'Task already linked to parts' }, { status: 400 });
       if (!task.needs_manufacturing) return json({ error: 'Task is not marked for manufacturing' }, { status: 400 });
       if (!task.attachment_path) return json({ error: 'Task must have an uploaded file before adding to parts' }, { status: 400 });
-      if (task.needs_review && task.status !== 'approved') {
-        return json({ error: 'Task must be approved before adding to parts' }, { status: 400 });
-      }
 
       const safeWorkflow = ['laser-cut', 'router', 'lathe', 'mill', '3d-print'].includes(workflow) ? workflow : 'mill';
       const requester = actor.fullName || actor.email || 'Task System';
-      const projectId =
-        task.scope === 'subsystem'
-          ? (task?.subsystem?.name || 'Task Misc')
-          : `${task.scope === 'general' ? task.title : 'Task'} Misc`;
+      let projectId = 'Task Misc';
+      if (task.scope === 'subsystem' && task.subsystem_id) {
+        const { data: subsystem } = await db
+          .from('subsystems')
+          .select('name')
+          .eq('id', task.subsystem_id)
+          .maybeSingle();
+        projectId = subsystem?.name || 'Task Misc';
+      } else if (task.scope === 'general') {
+        projectId = `${task.general_type || task.title || 'Task'} Misc`;
+      }
+
       const fileName = task.attachment_name || sanitizeFileName(task.title || 'task-file');
       const { data: insertedPart, error: insertError } = await db
         .from('parts')
@@ -642,27 +560,53 @@ export async function POST({ request }) {
         .single();
       if (insertError) throw insertError;
 
-      const { error: updateTaskErr } = await db
-        .from('tasks')
-        .update({ parts_id: insertedPart.id })
-        .eq('id', taskId);
-      if (updateTaskErr) throw updateTaskErr;
+      const { error: linkError } = await db
+        .from('planner_item_parts')
+        .insert([{
+          frc_team: actor.frcTeam,
+          planner_item_id: taskId,
+          part_id: insertedPart.id
+        }]);
+      if (linkError) throw linkError;
 
       const bundle = await fetchTasksBundle(db, actor.frcTeam);
       return json({ success: true, data: bundle });
     }
 
     if (action === 'check-deadline-status') {
-      const nowIso = new Date().toISOString();
-      const { data, error } = await db
-        .from('tasks')
-        .select('id')
-        .eq('frc_team', actor.frcTeam)
-        .not('deadline_at', 'is', null)
-        .lte('deadline_at', nowIso)
-        .in('status', [...OPEN_STATUSES]);
-      if (error) throw error;
-      return json({ success: true, data: { overdue_count: (data || []).length } });
+      return json({ success: true, data: { overdue_count: 0 } });
+    }
+
+    if (action === 'link-drive-practice-bugs') {
+      const plannerItemId = String(body?.planner_item_id || '').trim();
+      const reportArea = String(body?.report_area || '').trim().toLowerCase();
+      const taskIds = Array.isArray(body?.task_ids)
+        ? Array.from(new Set(body.task_ids.map((value) => String(value || '').trim()).filter(Boolean)))
+        : [];
+
+      if (!plannerItemId || !taskIds.length || !reportArea) {
+        return json({ error: 'planner_item_id, report_area, and task_ids required' }, { status: 400 });
+      }
+      if (!['vision', 'software', 'electrical', 'mechanical', 'brownout'].includes(reportArea)) {
+        return json({ error: 'Invalid drive practice report area.' }, { status: 400 });
+      }
+
+      const { data: plannerItem, error: plannerItemError } = await db
+        .from('planner_items')
+        .select('id, frc_team, item_type')
+        .eq('id', plannerItemId)
+        .maybeSingle();
+      if (plannerItemError) throw plannerItemError;
+      if (!plannerItem?.id || plannerItem.frc_team !== actor.frcTeam) {
+        return json({ error: 'Drive practice not found' }, { status: 404 });
+      }
+      if (plannerItem.item_type !== 'drive_practice_session') {
+        return json({ error: 'Only drive practice tasks can track reported P0 bugs.' }, { status: 400 });
+      }
+
+      await ensurePlannerP0BugsOnTeam(db, actor.frcTeam, taskIds);
+      await addDrivePracticeBugReportLinks(db, actor.frcTeam, plannerItemId, taskIds, actor.id, reportArea);
+      return json({ success: true, linked_task_ids: taskIds });
     }
 
     return json({ error: 'Unknown action' }, { status: 400 });

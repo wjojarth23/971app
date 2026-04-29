@@ -1,4 +1,5 @@
 import { workingMinutesBetween } from './schedule.js';
+import { plannerItemKind } from './constants.js';
 
 function hasOwnValue(object, key) {
   return !!object && Object.prototype.hasOwnProperty.call(object, key);
@@ -48,7 +49,7 @@ function snapToDirectionalStep(rawValue, baseValue, step) {
 }
 
 export function buildPlannerTaskUpdatePayload(source, eventTask, current, calendarRules = []) {
-  if (!source || source.kind !== 'task' || !current?.start || !current?.end) {
+  if (!source || plannerItemKind(source) !== 'task' || !current?.start || !current?.end) {
     return null;
   }
 
@@ -97,7 +98,7 @@ export function buildPlannerOptimisticItem(source, current, payload = {}) {
   const nextEnd = toIsoStringOrNull(current?.end);
   const nextItem = { ...source };
 
-  if (source.kind === 'milestone') {
+  if (plannerItemKind(source) === 'milestone') {
     const milestoneStart = toIsoStringOrNull(payload?.manual_start_at) || nextStart;
     if (!milestoneStart) return nextItem;
     nextItem.manual_start_at = milestoneStart;

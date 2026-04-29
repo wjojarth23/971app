@@ -2,7 +2,8 @@ import {
   PLANNER_DEFAULT_MIN_DURATION_MINUTES,
   PLANNER_DEFAULT_TASK_DURATION_MINUTES,
   PLANNER_SLOT_MINUTES,
-  isPlannerDrivePracticeTask
+  isPlannerDrivePracticeTask,
+  plannerItemKind
 } from './constants.js';
 import {
   addPlannerDays,
@@ -330,7 +331,7 @@ export function workingMinutesBetween(startValue, endValue, rawRules = []) {
 }
 
 function normalizeItem(item, fallbackSort = 0) {
-  const kind = item?.kind === 'milestone' ? 'milestone' : 'task';
+  const kind = plannerItemKind(item);
   const criticalLevel = Math.min(4, Math.max(1, Number(item?.critical_level) || 3));
   const requestedDurationMinutes = kind === 'milestone'
     ? null

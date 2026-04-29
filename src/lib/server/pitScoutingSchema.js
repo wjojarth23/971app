@@ -2,7 +2,8 @@ const PIT_SCOUT_OPTIONAL_COLUMN_DEFAULTS = Object.freeze({
   likely_breaking_component: null,
   estimated_bps: null,
   climb_options: [],
-  auto_options: []
+  auto_options: [],
+  technical_details: {}
 });
 
 const BASE_PIT_SCOUT_SELECT_COLUMNS = [
@@ -31,7 +32,8 @@ export function buildPitScoutSchema(supportedColumns = PIT_SCOUT_OPTIONAL_COLUMN
     likely_breaking_component: supported.has('likely_breaking_component'),
     estimated_bps: supported.has('estimated_bps'),
     climb_options: supported.has('climb_options'),
-    auto_options: supported.has('auto_options')
+    auto_options: supported.has('auto_options'),
+    technical_details: supported.has('technical_details')
   };
 }
 
@@ -85,6 +87,7 @@ export function pitScoutSchemaWarning(schema = buildPitScoutSchema()) {
   if (!schema?.estimated_bps) missing.push('estimated BPS');
   if (!schema?.climb_options) missing.push('climb options');
   if (!schema?.auto_options) missing.push('auto options');
+  if (!schema?.technical_details) missing.push('technical details');
 
   return missing.length
     ? `Pit scout optional fields are unavailable until the latest migration runs: ${missing.join(', ')}.`

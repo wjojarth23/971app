@@ -32,12 +32,12 @@ function getPlannerLink(itemId) {
 
 function getDrivePracticeReportLink(item, scheduledFor) {
   const params = new URLSearchParams({
-    report_p0: '1',
+    item_id: String(item?.id || ''),
     source: 'drive_practice',
     practice_label: String(item?.title || 'Drive Practice'),
     scheduled_for: new Date(scheduledFor).toISOString()
   });
-  return `${getAppBaseUrl()}/tasks?${params.toString()}`;
+  return `${getAppBaseUrl()}/tasks/report-p0?${params.toString()}`;
 }
 
 function checkpointLabel(checkpoint) {
@@ -383,7 +383,7 @@ export async function handlePlannerReaction({ channel, ts, reaction, reactingUse
 
   const { data: item, error: itemError } = await supa
     .from('planner_items')
-    .select('id, frc_team, title, status, category')
+    .select('id, frc_team, item_type, work_category, title, status')
     .eq('id', prompt.planner_item_id)
     .maybeSingle();
   if (itemError) throw itemError;

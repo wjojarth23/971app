@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import {
+  ensurePlannerPartsOnTeam,
   ensurePlannerP0BugsOnTeam,
   fetchPlannerBundle,
   fetchPlannerSnapshot,
@@ -7,6 +8,7 @@ import {
   getPlannerDbFromRequest,
   plannerTeamEnabled,
   recomputePlannerTeam,
+  replacePlannerItemPartLinks,
   replacePlannerP0BugLinks,
   replacePlannerOwners,
   replacePlannerRuleRecipients,
@@ -20,8 +22,10 @@ import {
   PLANNER_DEFAULT_MIN_DURATION_MINUTES,
   PLANNER_DEFAULT_TASK_DURATION_MINUTES,
   PLANNER_FIXING_TASK_MODE,
+  PLANNER_WORK_CATEGORIES,
   PLANNER_STANDARD_TASK_MODE,
-  PLANNER_STATUSES
+  PLANNER_STATUSES,
+  plannerItemType
 } from '$lib/planner/constants.js';
 import {
   buildFullCycleTaskSteps,
@@ -39,8 +43,8 @@ function normalizeKind(rawValue) {
   return String(rawValue || '').trim().toLowerCase() === 'milestone' ? 'milestone' : 'task';
 }
 
-function defaultStatusForKind(kind = 'task') {
-  return kind === 'task' ? PLANNER_DEFAULT_TASK_STATUS : PLANNER_DEFAULT_MILESTONE_STATUS;
+function defaultStatusForItemType(itemType = 'task') {
+  return itemType === 'milestone' ? PLANNER_DEFAULT_MILESTONE_STATUS : PLANNER_DEFAULT_TASK_STATUS;
 }
 
 function normalizeStatus(rawValue, fallback = PLANNER_DEFAULT_TASK_STATUS) {
@@ -51,6 +55,11 @@ function normalizeStatus(rawValue, fallback = PLANNER_DEFAULT_TASK_STATUS) {
 function normalizeCategory(rawValue) {
   const value = String(rawValue || '').trim().toLowerCase();
   return PLANNER_CATEGORIES.includes(value) ? value : null;
+}
+
+function normalizeWorkCategory(rawValue) {
+  const value = String(rawValue || '').trim().toLowerCase();
+  return PLANNER_WORK_CATEGORIES.includes(value) ? value : null;
 }
 
 function normalizeCriticalLevel(rawValue) {
@@ -97,6 +106,43 @@ function normalizeTaskMode(rawValue) {
   return String(rawValue || '').trim().toLowerCase() === PLANNER_FIXING_TASK_MODE
     ? PLANNER_FIXING_TASK_MODE
     : PLANNER_STANDARD_TASK_MODE;
+}
+
+function normalizeItemType(body, fallback = 'task') {
+  const explicit = plannerItemType(body?.item_type || fallback);
+  if (body?.item_type) return explicit;
+
+  const kind = normalizeKind(body?.kind || fallback);
+  if (kind === 'milestone') return 'milestone';
+
+  const taskMode = normalizeTaskMode(body?.task_mode);
+  if (taskMode === PLANNER_FIXING_TASK_MODE) return 'fixing_block';
+
+  const category = normalizeCategory(body?.category || body?.work_category);
+  if (category === 'drive_practice') return 'drive_practice_session';
+
+  return 'task';
+}
+
+function legacyKindForItemType(itemType) {
+  return itemType === 'milestone' ? 'milestone' : 'task';
+}
+
+function legacyTaskModeForItemType(itemType) {
+  return itemType === 'fixing_block' ? PLANNER_FIXING_TASK_MODE : PLANNER_STANDARD_TASK_MODE;
+}
+
+function workCategoryForItemType(itemType, rawCategory) {
+  if (itemType !== 'task') return null;
+  return normalizeWorkCategory(rawCategory);
+}
+
+function ownerIdsForItemType(itemType, ownerIds = [], accountableUserId = null) {
+  if (itemType === 'fixing_block') return [];
+  if (itemType === 'milestone') {
+    return Array.from(new Set([accountableUserId, ...ownerIds].filter(Boolean))).slice(0, 1);
+  }
+  return Array.from(new Set(ownerIds.filter(Boolean)));
 }
 
 function normalizeDateTime(rawValue) {
@@ -146,17 +192,6 @@ function normalizeRulePayload(body) {
 
 function normalizePlannerActionError(error) {
   const message = String(error?.message || '').trim();
-  const code = String(error?.code || '').trim();
-
-  if (
-    (code === '23514' || message.includes('violates check constraint'))
-    && message.includes('planner_items_category_check')
-  ) {
-    return {
-      status: 500,
-      message: 'Planner database is missing the drive practice category update. Apply migration 20260401_planner_drive_practice_category_guard.sql.'
-    };
-  }
 
   return {
     status: 500,
@@ -205,50 +240,54 @@ export async function POST({ request }) {
   try {
     if (action === 'create-item') {
       const snapshot = await fetchPlannerSnapshot(db, actor.frcTeam);
-      const kind = normalizeKind(body?.kind);
-      const taskTemplate = kind === 'task' ? normalizePlannerTaskTemplate(body?.task_template) : null;
-      const taskMode = kind === 'task' ? normalizeTaskMode(body?.task_mode) : PLANNER_STANDARD_TASK_MODE;
+      const itemType = normalizeItemType(body);
+      const kind = legacyKindForItemType(itemType);
+      const taskTemplate = itemType === 'task' ? normalizePlannerTaskTemplate(body?.task_template) : null;
+      const taskMode = legacyTaskModeForItemType(itemType);
       const title = String(body?.title || '').trim();
-      const notes = kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE
+      const details = itemType === 'fixing_block'
         ? null
-        : (String(body?.notes || '').trim() || null);
+        : (String(body?.details ?? body?.notes ?? '').trim() || null);
       const ownerIds = normalizeOwnerIds(body?.owner_ids);
       const p0BugIds = normalizeIdList(body?.p0_bug_ids);
+      const partIds = Array.isArray(body?.part_ids) ? body.part_ids : [];
       const accountableUserId = String(body?.accountable_user_id || '').trim() || null;
-      const normalizedStatus = normalizeStatus(body?.status, defaultStatusForKind(kind));
+      const nextOwnerIds = ownerIdsForItemType(itemType, ownerIds, accountableUserId);
+      const normalizedStatus = normalizeStatus(body?.status, defaultStatusForItemType(itemType));
       const criticalLevel = normalizeCriticalLevel(body?.critical_level);
 
       if (!title) return json({ error: 'title required' }, { status: 400 });
-      if (kind === 'task' && taskMode !== PLANNER_FIXING_TASK_MODE && ownerIds.length === 0) {
+      if ((itemType === 'task' || itemType === 'drive_practice_session') && nextOwnerIds.length === 0) {
         return json({ error: 'Tasks need at least one owner.' }, { status: 400 });
       }
-      if (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE && p0BugIds.length === 0) {
+      if (itemType === 'fixing_block' && p0BugIds.length === 0) {
         return json({ error: 'Fixing tasks need at least one linked P0 bug.' }, { status: 400 });
       }
-      if (kind === 'milestone' && !accountableUserId) {
-        return json({ error: 'Milestones need an accountable person.' }, { status: 400 });
+      if (itemType === 'milestone' && nextOwnerIds.length !== 1) {
+        return json({ error: 'Milestones need exactly one owner.' }, { status: 400 });
       }
 
       await ensurePlannerUsersOnTeam(
         db,
         actor.frcTeam,
-        [...(taskMode === PLANNER_FIXING_TASK_MODE ? [] : ownerIds), accountableUserId].filter(Boolean)
+        nextOwnerIds
       );
-      if (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE) {
+      if (itemType === 'task' && partIds.length) {
+        await ensurePlannerPartsOnTeam(db, actor.frcTeam, partIds);
+      }
+      if (itemType === 'fixing_block') {
         await ensurePlannerP0BugsOnTeam(db, actor.frcTeam, p0BugIds);
       }
 
       const durationMinutes = kind === 'task'
         ? normalizeDurationMinutes(body, PLANNER_DEFAULT_TASK_DURATION_MINUTES)
         : null;
-      const manualStartAt = kind === 'task'
-        ? normalizeDateTime(body?.manual_start_at)
-        : normalizeDateTime(body?.manual_start_at);
+      const manualStartAt = normalizeDateTime(body?.manual_start_at);
       const sortOrder = snapshot.items.length
         ? Math.max(...snapshot.items.map((item) => Number(item.sort_order) || 0)) + 1000
         : 0;
 
-      if (kind === 'task' && taskMode !== PLANNER_FIXING_TASK_MODE && taskTemplate === PLANNER_FULL_CYCLE_TASK_TEMPLATE) {
+      if (itemType === 'task' && taskTemplate === PLANNER_FULL_CYCLE_TASK_TEMPLATE) {
         const fullCycleSteps = buildFullCycleTaskSteps(durationMinutes);
         const createdItemIds = [];
 
@@ -258,11 +297,10 @@ export async function POST({ request }) {
               .from('planner_items')
               .insert([{
                 frc_team: actor.frcTeam,
-                kind: 'task',
-                task_mode: PLANNER_STANDARD_TASK_MODE,
+                item_type: 'task',
                 title: formatFullCycleTaskTitle(title, step.label),
-                notes,
-                category: step.category,
+                details,
+                work_category: step.category,
                 status: normalizedStatus,
                 critical_level: criticalLevel,
                 duration_minutes: step.duration_minutes,
@@ -277,7 +315,7 @@ export async function POST({ request }) {
 
             if (createError) throw createError;
             createdItemIds.push(created.id);
-            await replacePlannerOwners(db, actor.frcTeam, created.id, ownerIds, null);
+            await replacePlannerOwners(db, actor.frcTeam, created.id, nextOwnerIds, null);
           }
 
           const dependencyInserts = createdItemIds.slice(1).map((successorId, index) => ({
@@ -316,14 +354,10 @@ export async function POST({ request }) {
         .from('planner_items')
         .insert([{
           frc_team: actor.frcTeam,
-          kind,
-          task_mode: kind === 'task' ? taskMode : PLANNER_STANDARD_TASK_MODE,
+          item_type: itemType,
           title,
-          notes,
-          category:
-            kind === 'task' && taskMode !== PLANNER_FIXING_TASK_MODE
-              ? normalizeCategory(body?.category)
-              : null,
+          details,
+          work_category: workCategoryForItemType(itemType, body?.work_category ?? body?.category),
           status: normalizedStatus,
           critical_level: criticalLevel,
           duration_minutes: durationMinutes,
@@ -338,16 +372,13 @@ export async function POST({ request }) {
 
       if (createError) throw createError;
 
-      if (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE) {
+      if (itemType === 'fixing_block') {
         await replacePlannerP0BugLinks(db, actor.frcTeam, created.id, p0BugIds, actor.id);
       }
-      await replacePlannerOwners(
-        db,
-        actor.frcTeam,
-        created.id,
-        kind === 'task' && taskMode !== PLANNER_FIXING_TASK_MODE ? ownerIds : [],
-        kind === 'milestone' ? accountableUserId : null
-      );
+      await replacePlannerOwners(db, actor.frcTeam, created.id, nextOwnerIds, null);
+      if (itemType === 'task') {
+        await replacePlannerItemPartLinks(db, actor.frcTeam, created.id, partIds);
+      }
       const recompute = await recomputePlannerTeam(db, actor.frcTeam);
       return await bundleResponse(db, actor.frcTeam, recompute.warnings);
     }
@@ -358,7 +389,7 @@ export async function POST({ request }) {
 
       const { data: existing, error: existingError } = await db
         .from('planner_items')
-        .select('id, frc_team, kind, status, task_mode, duration_minutes, requested_duration_minutes, min_duration_minutes')
+        .select('id, frc_team, item_type, status, duration_minutes, requested_duration_minutes, min_duration_minutes')
         .eq('id', itemId)
         .maybeSingle();
       if (existingError) throw existingError;
@@ -366,33 +397,33 @@ export async function POST({ request }) {
         return json({ error: 'Planner item not found' }, { status: 404 });
       }
 
-      const kind = existing.kind === 'milestone' ? 'milestone' : normalizeKind(body?.kind || existing.kind);
-      const taskMode = kind === 'task'
-        ? normalizeTaskMode(body?.task_mode || existing.task_mode)
-        : PLANNER_STANDARD_TASK_MODE;
-      const existingTaskMode = normalizeTaskMode(existing.task_mode);
+      const existingItemType = plannerItemType(existing.item_type);
+      const itemType = body?.item_type !== undefined || body?.kind !== undefined || body?.task_mode !== undefined || body?.category !== undefined
+        ? normalizeItemType(body, existingItemType)
+        : existingItemType;
+      const kind = legacyKindForItemType(itemType);
+      const existingTaskMode = legacyTaskModeForItemType(existingItemType);
+      const taskMode = legacyTaskModeForItemType(itemType);
       const updatePayload = {};
       if (body?.title !== undefined) {
         const title = String(body.title || '').trim();
         if (!title) return json({ error: 'title required' }, { status: 400 });
         updatePayload.title = title;
       }
-      if (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE) {
-        updatePayload.notes = null;
-      } else if (body?.notes !== undefined) {
-        updatePayload.notes = String(body.notes || '').trim() || null;
+      if (body?.details !== undefined || body?.notes !== undefined || itemType === 'fixing_block') {
+        updatePayload.details = itemType === 'fixing_block'
+          ? null
+          : (String(body?.details ?? body?.notes ?? '').trim() || null);
       }
       if (body?.status !== undefined) {
-        updatePayload.status = normalizeStatus(body.status, existing.status || defaultStatusForKind(kind));
+        updatePayload.status = normalizeStatus(body.status, existing.status || defaultStatusForItemType(itemType));
       }
       if (body?.critical_level !== undefined) updatePayload.critical_level = normalizeCriticalLevel(body.critical_level);
-      if (kind === 'task') {
-        updatePayload.task_mode = taskMode;
+      if (body?.item_type !== undefined || body?.kind !== undefined || body?.task_mode !== undefined || body?.category !== undefined || body?.work_category !== undefined) {
+        updatePayload.item_type = itemType;
       }
-      if (body?.category !== undefined || (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE)) {
-        updatePayload.category = kind === 'task' && taskMode !== PLANNER_FIXING_TASK_MODE
-          ? normalizeCategory(body.category)
-          : null;
+      if (body?.category !== undefined || body?.work_category !== undefined || itemType !== 'task') {
+        updatePayload.work_category = workCategoryForItemType(itemType, body?.work_category ?? body?.category);
       }
 
       if (kind === 'task') {
@@ -419,8 +450,7 @@ export async function POST({ request }) {
         if (body?.manual_start_at !== undefined) {
           updatePayload.manual_start_at = normalizeDateTime(body.manual_start_at);
         }
-        updatePayload.category = null;
-        updatePayload.task_mode = PLANNER_STANDARD_TASK_MODE;
+        updatePayload.work_category = null;
       }
 
       if (Object.keys(updatePayload).length) {
@@ -437,16 +467,16 @@ export async function POST({ request }) {
         ? (String(body.accountable_user_id || '').trim() || null)
         : undefined;
 
-      if (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE) {
+      if (itemType === 'fixing_block') {
         let nextP0BugIds = p0BugIds;
         if (nextP0BugIds === null) {
           const { data: existingLinks, error: linkError } = await db
             .from('planner_item_p0_bugs')
-            .select('task_id')
+            .select('p0_bug_item_id')
             .eq('frc_team', actor.frcTeam)
             .eq('planner_item_id', itemId);
           if (linkError) throw linkError;
-          nextP0BugIds = (existingLinks || []).map((row) => row.task_id).filter(Boolean);
+          nextP0BugIds = (existingLinks || []).map((row) => row.p0_bug_item_id).filter(Boolean);
         }
         if (!nextP0BugIds.length) {
           return json({ error: 'Fixing tasks need at least one linked P0 bug.' }, { status: 400 });
@@ -454,7 +484,7 @@ export async function POST({ request }) {
         await ensurePlannerP0BugsOnTeam(db, actor.frcTeam, nextP0BugIds);
         await replacePlannerP0BugLinks(db, actor.frcTeam, itemId, nextP0BugIds, actor.id);
         await replacePlannerOwners(db, actor.frcTeam, itemId, [], null);
-      } else if (kind === 'task' && existingTaskMode === PLANNER_FIXING_TASK_MODE) {
+      } else if (existingItemType === 'fixing_block') {
         if (ownerIds === null) {
           return json({ error: 'Tasks need at least one owner.' }, { status: 400 });
         }
@@ -464,20 +494,32 @@ export async function POST({ request }) {
       }
 
       if (ownerIds !== null || accountableUserId !== undefined) {
-        const nextOwnerIds = ownerIds ?? [];
-        const nextAccountable = accountableUserId === undefined ? null : accountableUserId;
-        if (kind === 'task' && taskMode !== PLANNER_FIXING_TASK_MODE && nextOwnerIds.length === 0) {
+        const nextOwnerIds = ownerIdsForItemType(
+          itemType,
+          ownerIds ?? [],
+          accountableUserId === undefined ? null : accountableUserId
+        );
+        if ((itemType === 'task' || itemType === 'drive_practice_session') && nextOwnerIds.length === 0) {
           return json({ error: 'Tasks need at least one owner.' }, { status: 400 });
         }
-        if (kind === 'milestone' && !nextAccountable) {
-          return json({ error: 'Milestones need an accountable person.' }, { status: 400 });
+        if (itemType === 'milestone' && nextOwnerIds.length !== 1) {
+          return json({ error: 'Milestones need exactly one owner.' }, { status: 400 });
         }
-        if (kind === 'task' && taskMode === PLANNER_FIXING_TASK_MODE) {
+        if (itemType === 'fixing_block') {
           // Fixing tasks deliberately keep ownership empty and only track linked P0 bugs.
         } else {
-          await ensurePlannerUsersOnTeam(db, actor.frcTeam, [...nextOwnerIds, nextAccountable].filter(Boolean));
-          await replacePlannerOwners(db, actor.frcTeam, itemId, nextOwnerIds, nextAccountable);
+          await ensurePlannerUsersOnTeam(db, actor.frcTeam, nextOwnerIds);
+          await replacePlannerOwners(db, actor.frcTeam, itemId, nextOwnerIds, null);
         }
+      }
+
+      if (body?.part_ids !== undefined) {
+        if (itemType !== 'task') {
+          return json({ error: 'Only standard tasks can link parts.' }, { status: 400 });
+        }
+        const partIds = Array.isArray(body.part_ids) ? body.part_ids : [];
+        await ensurePlannerPartsOnTeam(db, actor.frcTeam, partIds);
+        await replacePlannerItemPartLinks(db, actor.frcTeam, itemId, partIds);
       }
 
       const recompute = await recomputePlannerTeam(db, actor.frcTeam);

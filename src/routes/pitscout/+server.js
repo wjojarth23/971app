@@ -7,6 +7,75 @@ import { selectPitScoutEntries, upsertPitScoutEntry } from '$lib/server/pitScout
 const NO_CLIMB_OPTION = 'No Climb';
 const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
 
+const TECHNICAL_DETAIL_OPTIONS = {
+  use_net: ['Yes', 'No'],
+  intake_style: ['Slapdown Intake', 'Linkage Intake', 'Other'],
+  main_breaker_brand: ['Bussmann', 'OptiFuse', 'Other'],
+  sb_connector: ['SB60', 'SB40', 'Other'],
+  main_breaker_shroud: ['Yes', 'No'],
+  wire_insulation: ['Silicone', 'Other'],
+  electrical_connectors: [
+    'Molex SL CAN',
+    'WAGO CAN',
+    'WAGO Power',
+    'Anderson Power',
+    'Ring Terminal Power',
+    'Ring Terminal CAN',
+    'Non-locking CAN',
+    'WCP Powerpole Board',
+    'Custom Powerpole Board',
+    'Custom PCBs',
+    'Other'
+  ],
+  battery_type: ['Energizer', 'Duracell', 'MK Battery', 'Other'],
+  ground_intake_kicker: ['Yes', 'No'],
+  motor_controllers: ['Talon FX', 'Victor SPX', 'Spark MAX', 'Redux', 'Thrifty'],
+  motor_types: ['X60', 'X44', '550', 'Vortex', 'Thrifty', 'CIM'],
+  uses_canivore: ['Yes', 'No'],
+  auto_tools: ['Bline', 'PathPlanner', 'Choreo', 'Custom'],
+  vision: ['PhotonVision', 'Limelight', 'Custom'],
+  coprocessor: ['Orin', 'Limelight', 'Orange Pi', 'Raspberry Pi', 'Mac Mini', 'Other'],
+  programming_language: ['Java', 'C++', 'Python'],
+  uses_wpilib: ['Yes', 'No'],
+  grip_tape: ['Cat Tongue', 'Silicone', 'Other'],
+  swerve_module: ['MK5n', 'MK5i', 'MK4i', 'MK4n', 'MK4', 'WCP X2i', 'X2t', 'X2c', 'X2', 'ThriftySwerve', 'Other'],
+  hopper_wall_reinforcement: ['Reinforced Corners', 'Polycarbonate Flanges', 'Other'],
+  fits_under_trench: ['Yes', 'No'],
+  drives_over_mound: ['Yes', 'No'],
+  bumper_foam: ['Pool Noodle', 'EVA', 'XPE', 'Other'],
+  hardware_standards: ['E-clip', 'Metric Fasteners', 'Metric Bearings'],
+  encoder_types: ['PWM', 'CAN Through Bore', 'Other'],
+  printed_roller_hubs: ['Yes', 'No']
+};
+
+const TECHNICAL_MULTI_FIELDS = new Set([
+  'electrical_connectors',
+  'motor_controllers',
+  'motor_types',
+  'auto_tools',
+  'vision',
+  'programming_language',
+  'hardware_standards',
+  'encoder_types'
+]);
+
+const TECHNICAL_TEXT_FIELDS = new Set([
+  'mostly_used_wire_gauge',
+  'drivebase_tube_thickness',
+  'roller_hub_material'
+]);
+
+const TECHNICAL_NUMBER_FIELDS = new Set([
+  'ground_roller_motor_count',
+  'bumper_length',
+  'bumper_width',
+  'bumper_height',
+  'can_bus_count',
+  'electrical_rating',
+  'drivebase_rating',
+  'overall_reliability_rating'
+]);
+
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
   return createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
@@ -93,6 +162,56 @@ function sanitizeClimbOptions(input) {
   return CLIMB_OPTIONS.filter((value) => value !== NO_CLIMB_OPTION && selected.has(value));
 }
 
+function sanitizeTechnicalSelect(field, value) {
+  const clean = String(value || '').trim();
+  if (!clean) return '';
+  return TECHNICAL_DETAIL_OPTIONS[field]?.includes(clean) ? clean : '';
+}
+
+function sanitizeTechnicalMulti(field, input) {
+  if (!Array.isArray(input)) return [];
+  const allowed = new Set(TECHNICAL_DETAIL_OPTIONS[field] || []);
+  const clean = [];
+  for (const value of input) {
+    const option = String(value || '').trim();
+    if (!allowed.has(option) || clean.includes(option)) continue;
+    clean.push(option);
+  }
+  return clean;
+}
+
+function sanitizeTechnicalNumber(input, { min = 0, max = null, integer = false } = {}) {
+  if (input === null || input === undefined) return null;
+  const raw = typeof input === 'string' ? input.trim() : input;
+  if (raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min || (max !== null && parsed > max)) return null;
+  return integer ? Math.round(parsed) : Math.round(parsed * 1000) / 1000;
+}
+
+function sanitizeTechnicalDetails(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const clean = {};
+
+  for (const field of Object.keys(TECHNICAL_DETAIL_OPTIONS)) {
+    clean[field] = TECHNICAL_MULTI_FIELDS.has(field)
+      ? sanitizeTechnicalMulti(field, source[field])
+      : sanitizeTechnicalSelect(field, source[field]);
+  }
+
+  for (const field of TECHNICAL_TEXT_FIELDS) {
+    clean[field] = sanitizeLongText(source[field], 80) || '';
+  }
+
+  for (const field of TECHNICAL_NUMBER_FIELDS) {
+    clean[field] = field.endsWith('_rating')
+      ? sanitizeTechnicalNumber(source[field], { min: 1, max: 10, integer: true })
+      : sanitizeTechnicalNumber(source[field]);
+  }
+
+  return clean;
+}
+
 export async function POST({ request, url }) {
   try {
     const body = await request.json();
@@ -116,6 +235,7 @@ export async function POST({ request, url }) {
     const climb_options = sanitizeClimbOptions(body?.climb_options);
     const photo_paths = sanitizePhotoPaths(body?.photo_paths);
     const auto_options = sanitizeAutoOptions(body?.auto_options);
+    const technical_details = sanitizeTechnicalDetails(body?.technical_details);
 
     if (!event_key || !team_key) {
       return json({ error: 'event_key and team_key are required' }, { status: 400 });
@@ -132,6 +252,7 @@ export async function POST({ request, url }) {
       estimated_bps,
       climb_options,
       auto_options,
+      technical_details,
       photo_paths,
       created_by: actor?.id || body?.user_id || null,
       updated_at: new Date().toISOString()

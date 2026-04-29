@@ -3,22 +3,16 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
   import {
-    formatPacific,
-    formatPacificDateTimeInputValue,
-    formatPacificDateTimeWithZone
+    formatPacific
   } from '$lib/timezone.js';
   import { goto } from '$app/navigation';
 
   const GENERAL_TYPES = ['CAD', 'Mechanical', 'Electrical', 'Software', 'Other'];
   const STATUS_OPTIONS = [
-    { value: 'open', label: 'Open' },
-    { value: 'in_progress', label: 'In Progress' },
-    { value: 'file_uploaded', label: 'File Uploaded' },
-    { value: 'under_review', label: 'Under Review' },
-    { value: 'changes_requested', label: 'Changes Requested' },
-    { value: 'approved', label: 'Approved' },
-    { value: 'done', label: 'Done' },
-    { value: 'closed', label: 'Closed' }
+    { value: 'red', label: 'Red' },
+    { value: 'yellow', label: 'Yellow' },
+    { value: 'green', label: 'Green' },
+    { value: 'completed', label: 'Completed' }
   ];
 
   let loading = true;
@@ -31,7 +25,6 @@
   let apiError = '';
   let info = '';
   let uploadingByTask = {};
-  let reviewingTask = null;
   let showCreateModal = false;
   let selectedTask = null;
   let uploadingDescriptionImage = false;
@@ -45,11 +38,9 @@
       scope: 'general',
       general_type: 'CAD',
       subsystem_id: '',
-      assignee_id: '',
-      reviewer_id: '',
-      needs_review: false,
+      owner_id: '',
       needs_manufacturing: false,
-      deadline_at: ''
+      status: 'red'
     };
   }
 
@@ -66,31 +57,12 @@
 
   function statusTone(status) {
     const tones = {
-      open: 'pending',
-      in_progress: 'progress',
-      file_uploaded: 'progress',
-      under_review: 'pending',
-      changes_requested: 'risk',
-      approved: 'ready',
-      done: 'ready',
-      closed: 'ready'
+      red: 'risk',
+      yellow: 'pending',
+      green: 'ready',
+      completed: 'ready'
     };
     return tones[status] || 'pending';
-  }
-
-  function deadlineDisplay(value) {
-    if (!value) return 'No deadline';
-    try {
-      return formatPacificDateTimeWithZone(value) || String(value);
-    } catch {
-      return value;
-    }
-  }
-
-  function toDatetimeLocalString(date) {
-    const safeDate = date instanceof Date ? date : new Date(date);
-    if (!Number.isFinite(safeDate.getTime())) return '';
-    return formatPacificDateTimeInputValue(safeDate);
   }
 
   function formatReportMoment(value) {
@@ -130,9 +102,7 @@
   function buildP0ReportForm(context = p0ReportContext) {
     const base = createDefaultForm();
     base.general_type = 'Other';
-    base.assignee_id = user?.id || '';
-    base.reviewer_id = user?.id || '';
-    base.deadline_at = toDatetimeLocalString(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    base.owner_id = user?.id || '';
     base.description = buildP0ReportDescription(context);
     return base;
   }
@@ -185,7 +155,7 @@
     subsystems = data?.subsystems || [];
     subsystemMembers = data?.subsystem_members || {};
     generalCandidates = data?.general_candidates || {};
-    syncAssigneeSelection();
+    syncOwnerSelection();
   }
 
   async function loadTasks() {
@@ -194,11 +164,8 @@
     try {
       const payload = await apiRequest('GET');
       hydrateBundle(payload?.data || {});
-      if (!form.reviewer_id && user?.id) {
-        form.reviewer_id = user.id;
-      }
     } catch (error) {
-      apiError = error.message || 'Failed to load tasks.';
+      apiError = error.message || 'Failed to load P0 bugs.';
     } finally {
       loading = false;
     }
@@ -207,7 +174,6 @@
   onMount(async () => {
     const unsub = userStore.subscribe((value) => {
       user = value;
-      if (!form.reviewer_id && user?.id) form.reviewer_id = user.id;
     });
     await loadUserFromUUID(supabase);
     const { data } = await supabase.auth.getSession();
@@ -232,7 +198,7 @@
     return () => unsub?.();
   });
 
-  $: assigneeOptions = (() => {
+  $: ownerOptions = (() => {
     const base =
       form.scope === 'subsystem'
         ? (subsystemMembers?.[form.subsystem_id] || [])
@@ -245,47 +211,23 @@
     ];
   })();
 
-  $: reviewerOptions = (() => {
-    const map = new Map();
-    for (const t of tasks) {
-      const options = [t?.assignee, t?.reviewer, t?.creator];
-      for (const p of options) {
-        if (p?.id && !map.has(p.id)) map.set(p.id, p);
-      }
-    }
-    for (const sid of Object.keys(subsystemMembers || {})) {
-      for (const p of subsystemMembers[sid] || []) {
-        if (p?.id && !map.has(p.id)) map.set(p.id, p);
-      }
-    }
-    for (const key of Object.keys(generalCandidates || {})) {
-      for (const p of generalCandidates[key] || []) {
-        if (p?.id && !map.has(p.id)) map.set(p.id, p);
-      }
-    }
-    if (user?.id && !map.has(user.id)) {
-      map.set(user.id, { id: user.id, full_name: user.full_name, email: user.email });
-    }
-    return [...map.values()].sort((a, b) => formatPerson(a).localeCompare(formatPerson(b), undefined, { sensitivity: 'base' }));
-  })();
-
-  function syncAssigneeSelection() {
-    const options = assigneeOptions;
+  function syncOwnerSelection() {
+    const options = ownerOptions;
     if (form.scope === 'subsystem' && !form.subsystem_id && subsystems.length > 0) {
       form = { ...form, subsystem_id: subsystems[0].id };
       return;
     }
-    if (options.length > 0 && !options.some((opt) => opt.id === form.assignee_id)) {
-      form = { ...form, assignee_id: options[0].id };
+    if (options.length > 0 && !options.some((opt) => opt.id === form.owner_id)) {
+      form = { ...form, owner_id: options[0].id };
       return;
     }
-    if (options.length === 0 && form.assignee_id) {
-      form = { ...form, assignee_id: '' };
+    if (options.length === 0 && form.owner_id) {
+      form = { ...form, owner_id: '' };
     }
   }
 
-  $: if (p0ReportContext && user?.id && !form.assignee_id) {
-    form = { ...form, assignee_id: user.id, reviewer_id: form.reviewer_id || user.id };
+  $: if (p0ReportContext && user?.id && !form.owner_id) {
+    form = { ...form, owner_id: user.id };
   }
 
   function extractImageUrls(text) {
@@ -365,8 +307,7 @@
     try {
       const payload = await apiRequest('POST', {
         action: 'create',
-        ...form,
-        reviewer_id: form.needs_review ? form.reviewer_id : ''
+        ...form
       });
       hydrateBundle(payload?.data || {});
       if (p0ReportContext) {
@@ -374,28 +315,16 @@
         form = buildP0ReportForm(p0ReportContext);
         showCreateModal = true;
       } else {
-        info = 'Task created.';
-        form = {
-          ...form,
-          title: '',
-          description: '',
-          needs_review: false,
-          needs_manufacturing: false,
-          deadline_at: ''
-        };
+        info = 'P0 bug created.';
+        form = createDefaultForm();
         showCreateModal = false;
       }
       descriptionImageError = '';
     } catch (error) {
-      apiError = error.message || 'Failed to create task.';
+      apiError = error.message || 'Failed to create P0 bug.';
     } finally {
       saving = false;
     }
-  }
-
-  function setQuickDeadline(hours) {
-    const date = new Date(Date.now() + hours * 60 * 60 * 1000);
-    form = { ...form, deadline_at: formatPacificDateTimeInputValue(date) };
   }
 
   async function setTaskStatus(task, status) {
@@ -431,9 +360,9 @@
         attachment_name: file.name
       });
       hydrateBundle(payload?.data || {});
-      info = 'Task file uploaded.';
+      info = 'P0 bug file uploaded.';
     } catch (error) {
-      apiError = error.message || 'Failed to upload task file.';
+      apiError = error.message || 'Failed to upload P0 bug file.';
     } finally {
       uploadingByTask = { ...uploadingByTask, [task.id]: false };
       if (event?.target) event.target.value = '';
@@ -454,27 +383,6 @@
     }
   }
 
-  async function reviewTask(task, decision) {
-    apiError = '';
-    const shouldPromptForNotes = decision === 'changes_requested';
-    const notes = shouldPromptForNotes ? prompt('Review notes (optional):') || '' : '';
-    reviewingTask = task.id;
-    try {
-      const payload = await apiRequest('POST', {
-        action: 'review',
-        task_id: task.id,
-        decision,
-        notes
-      });
-      hydrateBundle(payload?.data || {});
-      info = decision === 'approve' ? 'Task approved.' : 'Changes requested.';
-    } catch (error) {
-      apiError = error.message || 'Failed to submit review.';
-    } finally {
-      reviewingTask = null;
-    }
-  }
-
   async function addToParts(task) {
     apiError = '';
     const workflowByType = {
@@ -491,32 +399,18 @@
         workflow: workflowByType[task.general_type] || 'mill'
       });
       hydrateBundle(payload?.data || {});
-      info = 'Task attachment added to parts list.';
+      info = 'Linked part created from this P0 bug.';
     } catch (error) {
-      apiError = error.message || 'Failed to add task to parts list.';
+      apiError = error.message || 'Failed to add this P0 bug to parts.';
     }
   }
 
   function canUpload(task) {
-    return (task.needs_review || task.needs_manufacturing) && task.assignee_id === user?.id && !task.attachment_path;
-  }
-
-  function canReview(task) {
-    return task.needs_review && task.reviewer_id === user?.id && task.status === 'under_review';
+    return task.needs_manufacturing && (task.owner_id || task.assignee_id) === user?.id && !task.attachment_path;
   }
 
   function canAddToParts(task) {
-    if (!task.needs_manufacturing || !task.attachment_path || task.parts_id) return false;
-    if (task.needs_review) return task.status === 'approved';
-    return true;
-  }
-
-  function isOverdue(task) {
-    if (!task?.deadline_at) return false;
-    const due = new Date(task.deadline_at).getTime();
-    if (!Number.isFinite(due)) return false;
-    const finished = new Set(['approved', 'done', 'closed']);
-    return Date.now() > due && !finished.has(task.status);
+    return !!task.needs_manufacturing && !!task.attachment_path && !task.parts_id;
   }
 
   function openTaskDetails(task) {
@@ -545,18 +439,18 @@
 </script>
 
 <svelte:head>
-  <title>Tasks - 971 Hub</title>
+  <title>P0 Bugs - 971 Hub</title>
 </svelte:head>
 
 <div class="container tasks-page">
   <div class="page-header">
     <div>
-      <h1>Tasks</h1>
+      <h1>P0 Bugs</h1>
       {#if user?.frc_team}
         <p class="tasks-subtitle">Team-scoped view: Team {user.frc_team}</p>
       {/if}
     </div>
-    <button class="btn btn-primary btn-sm" type="button" on:click={() => p0ReportContext ? applyP0ReportContext(p0ReportContext) : (showCreateModal = true)}>{p0ReportContext ? 'Report P0 Bug' : 'Create Task'}</button>
+    <button class="btn btn-primary btn-sm" type="button" on:click={() => p0ReportContext ? applyP0ReportContext(p0ReportContext) : (showCreateModal = true)}>{p0ReportContext ? 'Report P0 Bug' : 'Create P0 Bug'}</button>
   </div>
 
   {#if apiError}
@@ -571,14 +465,14 @@
       class="modal-backdrop"
       role="button"
       tabindex="0"
-      aria-label="Close create task dialog"
+      aria-label="Close create P0 bug dialog"
       on:click|self={() => (showCreateModal = false)}
       on:keydown={(e) => e.key === 'Escape' && (showCreateModal = false)}
     >
       <section class="modal modal--wide" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation>
         <div class="modal-header">
           <div>
-            <h2>{p0ReportContext ? 'Report P0 Bug' : 'Create Task'}</h2>
+            <h2>{p0ReportContext ? 'Report P0 Bug' : 'Create P0 Bug'}</h2>
             {#if p0ReportContext}
               <p class="tasks-subtitle">Drive practice: {p0ReportContext.practiceLabel}{p0ReportContext.scheduledFor ? ` - ended ${formatReportMoment(p0ReportContext.scheduledFor)}` : ''}</p>
             {/if}
@@ -586,7 +480,7 @@
           <button
             type="button"
             class="modal-close-button"
-            aria-label="Close create task dialog"
+            aria-label="Close create P0 bug dialog"
             on:click={() => (showCreateModal = false)}
           >
             x
@@ -599,14 +493,14 @@
               Use this form to log each P0 bug you found. Each submission creates a new item that will also appear on the planner P0 bug list.
             </div>
           {/if}
-          <div class="form-grid">
+            <div class="form-grid">
             <label class="form-group">
-              <span class="form-label">{p0ReportContext ? 'Bug Title' : 'Task Name'}</span>
-            <input class="form-input" bind:value={form.title} placeholder={p0ReportContext ? 'Short summary of the bug' : 'Task title'} />
+              <span class="form-label">Bug Title</span>
+            <input class="form-input" bind:value={form.title} placeholder="Short summary of the bug" />
           </label>
             <label class="form-group">
               <span class="form-label">Type Mode</span>
-              <select class="form-select" bind:value={form.scope} on:change={syncAssigneeSelection}>
+              <select class="form-select" bind:value={form.scope} on:change={syncOwnerSelection}>
                 <option value="general">General Type</option>
                 <option value="subsystem">Subsystem</option>
               </select>
@@ -615,7 +509,7 @@
             {#if form.scope === 'general'}
               <label class="form-group">
                 <span class="form-label">General Type</span>
-                <select class="form-select" bind:value={form.general_type} on:change={syncAssigneeSelection}>
+                <select class="form-select" bind:value={form.general_type} on:change={syncOwnerSelection}>
                   {#each GENERAL_TYPES as type}
                     <option value={type}>{type}</option>
                   {/each}
@@ -624,7 +518,7 @@
             {:else}
               <label class="form-group">
                 <span class="form-label">Subsystem</span>
-                <select class="form-select" bind:value={form.subsystem_id} on:change={syncAssigneeSelection}>
+                <select class="form-select" bind:value={form.subsystem_id} on:change={syncOwnerSelection}>
                   {#if subsystems.length === 0}
                     <option value="">No subsystems on your team</option>
                   {:else}
@@ -637,37 +531,24 @@
             {/if}
 
             <label class="form-group">
-              <span class="form-label">Assignee</span>
-              <select class="form-select" bind:value={form.assignee_id}>
-                {#if assigneeOptions.length === 0}
+              <span class="form-label">Owner</span>
+              <select class="form-select" bind:value={form.owner_id}>
+                {#if ownerOptions.length === 0}
                   <option value="">No eligible members</option>
                 {:else}
-                  {#each assigneeOptions as member}
+                  {#each ownerOptions as member}
                     <option value={member.id}>{formatPerson(member)}</option>
                   {/each}
                 {/if}
               </select>
             </label>
-
-            {#if form.needs_review}
-              <label class="form-group">
-                <span class="form-label">Reviewer</span>
-                <select class="form-select" bind:value={form.reviewer_id}>
-                  {#each reviewerOptions as member}
-                    <option value={member.id}>{formatPerson(member)}</option>
-                  {/each}
-                </select>
-              </label>
-            {/if}
-
             <label class="form-group">
-              <span class="form-label">Deadline</span>
-              <div class="deadline-row">
-                <input class="form-input" type="datetime-local" bind:value={form.deadline_at} />
-                <button class="btn btn-secondary btn-sm" type="button" on:click={() => setQuickDeadline(24)}>+24h</button>
-                <button class="btn btn-secondary btn-sm" type="button" on:click={() => setQuickDeadline(48)}>+48h</button>
-              </div>
-              <div class="meta-text muted">Deadlines are shown and saved in Pacific Time.</div>
+              <span class="form-label">Status</span>
+              <select class="form-select" bind:value={form.status}>
+                {#each STATUS_OPTIONS as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
             </label>
           </div>
 
@@ -688,17 +569,13 @@
                 on:change={handleDescriptionPhotos}
               />
             </label>
-            <span class="meta-text muted">Photos are added to the description as links and shown inline on tasks.</span>
+            <span class="meta-text muted">Photos are added to the description as links and shown inline on P0 bugs.</span>
           </div>
           {#if descriptionImageError}
             <div class="error-message">{descriptionImageError}</div>
           {/if}
 
           <div class="check-row">
-            <label class="checkbox-line">
-              <input type="checkbox" bind:checked={form.needs_review} />
-              Needs Review
-            </label>
             <label class="checkbox-line">
               <input type="checkbox" bind:checked={form.needs_manufacturing} />
               Needs Manufacturing
@@ -709,7 +586,7 @@
         <div class="modal-footer">
           <button class="btn btn-secondary btn-sm" type="button" on:click={() => (showCreateModal = false)}>Cancel</button>
           <button class="btn btn-primary btn-sm" type="button" disabled={saving} on:click={createTask}>
-            {saving ? 'Creating...' : p0ReportContext ? 'Add P0 Bug' : 'Create Task'}
+            {saving ? 'Creating...' : 'Create P0 Bug'}
           </button>
         </div>
       </section>
@@ -721,7 +598,7 @@
       class="modal-backdrop"
       role="button"
       tabindex="0"
-      aria-label="Close task details dialog"
+      aria-label="Close P0 bug details dialog"
       on:click|self={closeTaskDetails}
       on:keydown={(e) => e.key === 'Escape' && closeTaskDetails()}
     >
@@ -731,7 +608,7 @@
           <button
             type="button"
             class="modal-close-button"
-            aria-label="Close task details dialog"
+            aria-label="Close P0 bug details dialog"
             on:click={closeTaskDetails}
           >
             x
@@ -747,7 +624,7 @@
             <div class="task-photo-grid">
               {#each extractImageUrls(selectedTask.description) as imageUrl}
                 <a href={imageUrl} target="_blank" rel="noopener noreferrer">
-                  <img src={imageUrl} alt="Task photo" loading="lazy" />
+                  <img src={imageUrl} alt="P0 bug photo" loading="lazy" />
                 </a>
               {/each}
             </div>
@@ -758,24 +635,23 @@
   {/if}
 
   <section class="section-card task-list-section">
-    <h2>Task List</h2>
+    <h2>P0 Bug List</h2>
     {#if loading}
-      <p>Loading tasks...</p>
+      <p>Loading P0 bugs...</p>
     {:else if tasks.length === 0}
       <div class="empty-state">
-        <h3>No tasks yet</h3>
-        <p>Team {user?.frc_team || 'your team'} has no tasks yet.</p>
+        <h3>No P0 bugs yet</h3>
+        <p>Team {user?.frc_team || 'your team'} has no P0 bugs yet.</p>
       </div>
     {:else}
       <div class="table-container">
         <table class="table">
           <thead>
             <tr>
-              <th>Task</th>
+              <th>P0 Bug</th>
               <th>Type</th>
-              <th>Assignee</th>
+              <th>Owner</th>
               <th>Created By</th>
-              <th>Deadline</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -783,7 +659,6 @@
           <tbody>
             {#each tasks as task (task.id)}
               <tr
-                class:overdue={isOverdue(task)}
                 class="task-row"
                 tabindex="0"
                 role="button"
@@ -793,11 +668,9 @@
               >
                 <td>
                   <strong>{task.title}</strong>
-                  {#if task.needs_review || task.needs_manufacturing}
+                  {#if task.needs_manufacturing}
                     <div class="meta-text muted">
-                      {task.needs_review ? 'Review required' : ''}
-                      {task.needs_review && task.needs_manufacturing ? ' | ' : ''}
-                      {task.needs_manufacturing ? 'Manufacturing required' : ''}
+                      Manufacturing required
                     </div>
                   {/if}
                 </td>
@@ -809,22 +682,18 @@
                   {/if}
                 </td>
                 <td>
-                  <div>{formatPerson(task.assignee)}</div>
-                  {#if task.needs_review}
-                    <div class="meta-text muted">Reviewer: {formatPerson(task.reviewer)}</div>
-                  {/if}
+                  <div>{formatPerson(task.owner || task.assignee)}</div>
                 </td>
                 <td>{formatPerson(task.creator)}</td>
-                <td>{deadlineDisplay(task.deadline_at)}</td>
                 <td>
                   <span class="status-pill status-{statusTone(task.status)}">{statusLabel(task.status)}</span>
-                  {#if task.review_notes}
-                    <div class="meta-text muted">Review notes: {task.review_notes}</div>
+                  {#if task.parts_id || (task.part_ids || []).length > 0}
+                    <div class="meta-text muted">{(task.part_ids || []).length || 1} linked part{((task.part_ids || []).length || 1) === 1 ? '' : 's'}</div>
                   {/if}
                 </td>
                 <td>
                   <div class="action-stack">
-                    {#if task.needs_review || task.needs_manufacturing}
+                    {#if task.needs_manufacturing}
                       <label class="btn btn-secondary btn-sm" class:disabled={!canUpload(task) || !!uploadingByTask[task.id]}>
                         {uploadingByTask[task.id] ? 'Uploading...' : 'Upload File'}
                         <input
@@ -840,16 +709,11 @@
                       <button class="btn btn-secondary btn-sm" type="button" on:click={() => downloadTaskFile(task)}>Open File</button>
                     {/if}
 
-                    {#if canReview(task)}
-                      <button class="btn btn-primary btn-sm" type="button" on:click={() => reviewTask(task, 'approve')}>Approve</button>
-                      <button class="btn btn-secondary btn-sm" type="button" on:click={() => reviewTask(task, 'changes_requested')}>Request Changes</button>
-                    {/if}
-
                     {#if canAddToParts(task)}
                       <button class="btn btn-primary btn-sm" type="button" on:click={() => addToParts(task)}>Add To Parts List</button>
                     {/if}
 
-                    {#if user?.id === task.assignee_id || user?.id === task.created_by || user?.id === task.reviewer_id}
+                    {#if user?.id === (task.owner_id || task.assignee_id) || user?.id === task.created_by}
                       <select class="form-select status-select" value={task.status} on:change={(event) => setTaskStatus(task, event.currentTarget.value)}>
                         {#each STATUS_OPTIONS as option}
                           <option value={option.value}>{option.label}</option>
