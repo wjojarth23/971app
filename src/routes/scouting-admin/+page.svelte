@@ -18,7 +18,7 @@
   let deletingAllScoutingData = false;
 
   let metrics = {
-    pit: { percent: 0, scouted_teams: 0, total_teams: 0 },
+    pit: { percent: 0, scouted_teams: 0, pending_teams: 0, needs_photo_teams: 0, completed_teams: 0, total_teams: 0 },
     data: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0, missed_shifts: 0, assigned_matches: 0, scouted_matches: 0, total_matches: 0 },
     note: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0, missed_shifts: 0, assigned_matches: 0, scouted_matches: 0, total_matches: 0 },
     overall: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0 }
@@ -373,7 +373,9 @@
         <div class="stat-content">
           <div class="stat-label">Pit Scouted</div>
           <div class="stat-value">{metrics.pit.percent}%</div>
-          <div class="stat-sub">{metrics.pit.scouted_teams}/{metrics.pit.total_teams} teams</div>
+          <div class="stat-sub">
+            {metrics.pit.completed_teams ?? metrics.pit.scouted_teams}/{metrics.pit.total_teams} teams - Pending {metrics.pit.pending_teams ?? 0}, Needs photo {metrics.pit.needs_photo_teams ?? 0}
+          </div>
         </div>
       </div>
       <div class="card stat-card">

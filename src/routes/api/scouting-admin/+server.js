@@ -10,6 +10,37 @@ import { selectPitScoutEntries } from '$lib/server/pitScoutingSchema.js';
 const COMPETITION_LEAD = String(TEAM_ROLES.COMPETITION_LEAD || 'Competition Lead');
 const ALL_FRC_TEAMS = new Set(Object.values(FRC_TEAMS).map(String));
 const PIT_SCOUT_PHOTO_BUCKET = 'pit-scout-photos';
+
+function hasAnyPitData(row) {
+  if (!row) return false;
+  const climbOptions = Array.isArray(row?.climb_options) ? row.climb_options.filter(Boolean) : [];
+  const autoOptions = Array.isArray(row?.auto_options) ? row.auto_options.filter((option) => option?.name || option?.description) : [];
+  const technicalDetails = row?.technical_details && typeof row.technical_details === 'object' && !Array.isArray(row.technical_details)
+    ? row.technical_details
+    : {};
+
+  return Boolean(
+    String(row?.drivebase_type || '').trim() ||
+    String(row?.shooter_type || '').trim() ||
+    String(row?.hopper_type || '').trim() ||
+    String(row?.human_player_balls_in_auto || '').trim() ||
+    String(row?.likely_breaking_component || '').trim() ||
+    row?.estimated_bps !== null && row?.estimated_bps !== undefined ||
+    climbOptions.length ||
+    autoOptions.length ||
+    Object.values(technicalDetails).some((value) => (
+      Array.isArray(value)
+        ? value.filter(Boolean).length
+        : value !== '' && value !== null && value !== undefined
+    ))
+  );
+}
+
+function getPitScoutStatus(row) {
+  if (!hasAnyPitData(row)) return 'pending';
+  const photoPaths = Array.isArray(row?.photo_paths) ? row.photo_paths.filter(Boolean) : [];
+  return photoPaths.length ? 'completed' : 'needs_photo';
+}
 const COMPETITION_ROLE_PRIORITY = [
   'Scouting Lead',
   'Data Scout Lead',
@@ -1042,25 +1073,19 @@ export async function GET({ request }) {
 
     const pitRows = pitRes.data || [];
     const pitSchema = pitRes.schema || {};
-    const pitCompleteSet = new Set(
+    const pitStatusByTeam = new Map(
       pitRows
-        .filter((row) => {
-          const climbOptions = Array.isArray(row?.climb_options) ? row.climb_options.filter(Boolean) : [];
-          return Boolean(
-            row?.drivebase_type &&
-            row?.shooter_type &&
-            row?.hopper_type &&
-            row?.human_player_balls_in_auto &&
-            (!pitSchema.likely_breaking_component || String(row?.likely_breaking_component || '').trim()) &&
-            (!pitSchema.estimated_bps || (row?.estimated_bps !== null && row?.estimated_bps !== undefined)) &&
-            (!pitSchema.climb_options || climbOptions.length)
-          );
-        })
-        .map((row) => row.team_key)
+        .filter((row) => row?.team_key)
+        .map((row) => [row.team_key, getPitScoutStatus(row)])
     );
 
     const totalTeams = teamSet.size;
-    const pitScoutedTeams = [...pitCompleteSet].filter((teamKey) => teamSet.has(teamKey)).length;
+    const pitStatusCounts = { pending: 0, needs_photo: 0, completed: 0 };
+    for (const teamKey of teamSet) {
+      const status = pitStatusByTeam.get(teamKey) || 'pending';
+      pitStatusCounts[status] = (pitStatusCounts[status] || 0) + 1;
+    }
+    const pitScoutedTeams = pitStatusCounts.completed;
 
     const totalMatches = matches.length;
     const missedMatches = computeMissedMatchList(dataMetrics.missed_assignments, noteMetrics.missed_assignments);
@@ -1085,6 +1110,9 @@ export async function GET({ request }) {
         metrics: {
           pit: {
             scouted_teams: pitScoutedTeams,
+            pending_teams: pitStatusCounts.pending,
+            needs_photo_teams: pitStatusCounts.needs_photo,
+            completed_teams: pitStatusCounts.completed,
             total_teams: totalTeams,
             percent: pct(pitScoutedTeams, totalTeams)
           },

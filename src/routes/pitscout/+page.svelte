@@ -13,6 +13,11 @@
   const MAX_AUTO_NAME_LENGTH = 60;
   const MAX_AUTO_DESCRIPTION_LENGTH = 220;
   const MAX_BREAKING_COMPONENT_LENGTH = 240;
+  const PIT_STATUS = Object.freeze({
+    pending: { label: 'Pending', className: 'status-pending', sort: 0 },
+    needs_photo: { label: 'Needs photo', className: 'status-needs-photo', sort: 1 },
+    completed: { label: 'Completed', className: 'status-complete', sort: 2 }
+  });
   const YES_NO_OPTIONS = ['Yes', 'No'];
   const INTAKE_STYLE_OPTIONS = ['Slapdown Intake', 'Linkage Intake', 'Other'];
   const MAIN_BREAKER_OPTIONS = ['Bussmann', 'OptiFuse', 'Other'];
@@ -279,23 +284,50 @@
   }
 
   function teamListSort(a, b) {
-    const aComplete = isComplete(entriesByTeam[a]);
-    const bComplete = isComplete(entriesByTeam[b]);
-    if (aComplete !== bComplete) return aComplete ? 1 : -1;
+    const aStatus = getPitScoutStatus(entriesByTeam[a]);
+    const bStatus = getPitScoutStatus(entriesByTeam[b]);
+    if (aStatus !== bStatus) return PIT_STATUS[aStatus].sort - PIT_STATUS[bStatus].sort;
     return teamSort(a, b);
   }
 
-  function isComplete(entry) {
+  function hasAnyPitData(entry) {
     if (!entry) return false;
+    const technicalDetails = entry.technical_details && typeof entry.technical_details === 'object'
+      ? entry.technical_details
+      : {};
     return Boolean(
       entry.drivebase_type &&
+      String(entry.drivebase_type).trim() ||
       entry.shooter_type &&
+      String(entry.shooter_type).trim() ||
       entry.hopper_type &&
+      String(entry.hopper_type).trim() ||
       entry.human_player_balls_in_auto &&
-      (!pitSchema.likely_breaking_component || normalizeLikelyBreakingComponent(entry.likely_breaking_component)) &&
-      (!pitSchema.estimated_bps || hasEstimatedBps(entry.estimated_bps)) &&
-      (!pitSchema.climb_options || normalizeClimbOptions(entry.climb_options).length)
+      String(entry.human_player_balls_in_auto).trim() ||
+      normalizeLikelyBreakingComponent(entry.likely_breaking_component) ||
+      hasEstimatedBps(entry.estimated_bps) ||
+      normalizeClimbOptions(entry.climb_options).length ||
+      getFilledAutoOptions(entry.auto_options).length ||
+      Object.values(technicalDetails).some((value) => (
+        Array.isArray(value)
+          ? value.filter(Boolean).length
+          : value !== '' && value !== null && value !== undefined
+      ))
     );
+  }
+
+  function getPitScoutStatus(entry) {
+    if (!hasAnyPitData(entry)) return 'pending';
+    const photoPaths = Array.isArray(entry?.photo_paths) ? entry.photo_paths.filter(Boolean) : [];
+    return photoPaths.length ? 'completed' : 'needs_photo';
+  }
+
+  function getPitScoutStatusLabel(entry) {
+    return PIT_STATUS[getPitScoutStatus(entry)].label;
+  }
+
+  function getPitScoutStatusClass(entry) {
+    return PIT_STATUS[getPitScoutStatus(entry)].className;
   }
 
   function photoUrl(path) {
@@ -612,8 +644,17 @@
     return Boolean(navigator.userAgentData?.mobile || mobileUserAgent);
   }
 
-  $: pendingCount = teams.filter((teamKey) => !isComplete(entriesByTeam[teamKey])).length;
-  $: completeCount = teams.length - pendingCount;
+  $: pitStatusCounts = teams.reduce(
+    (counts, teamKey) => {
+      const status = getPitScoutStatus(entriesByTeam[teamKey]);
+      counts[status] += 1;
+      return counts;
+    },
+    { pending: 0, needs_photo: 0, completed: 0 }
+  );
+  $: pendingCount = pitStatusCounts.pending;
+  $: needsPhotoCount = pitStatusCounts.needs_photo;
+  $: completeCount = pitStatusCounts.completed;
   $: filteredTeams = teams
     .filter((teamKey) => !teamSearch || displayTeam(teamKey).includes(teamSearch))
     .sort(teamListSort);
@@ -647,7 +688,11 @@
       <strong>{pendingCount}</strong>
     </div>
     <div class="summary-pill">
-      <span>Complete</span>
+      <span>Needs photo</span>
+      <strong>{needsPhotoCount}</strong>
+    </div>
+    <div class="summary-pill">
+      <span>Completed</span>
       <strong>{completeCount}</strong>
     </div>
     <button class="btn btn-secondary" type="button" on:click={loadAll} disabled={loading}>
@@ -685,9 +730,7 @@
         {#each filteredTeams as teamKey}
           <button class="team-row" type="button" on:click={() => openEntry(teamKey)}>
             <span class="team-row-main">Team {displayTeam(teamKey)}</span>
-            <span class={isComplete(entriesByTeam[teamKey]) ? 'status-complete' : 'status-pending'}>
-              {isComplete(entriesByTeam[teamKey]) ? 'Complete' : 'Pending'}
-            </span>
+            <span class={getPitScoutStatusClass(entriesByTeam[teamKey])}>{getPitScoutStatusLabel(entriesByTeam[teamKey])}</span>
           </button>
         {/each}
       </div>
@@ -1479,6 +1522,12 @@
 
   .status-pending {
     color: var(--danger);
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .status-needs-photo {
+    color: var(--warning);
     font-weight: 600;
     font-size: 0.85rem;
   }
