@@ -429,7 +429,7 @@
           <Briefcase size={32} />
           <h1>971 Hub</h1>
         </div>
-        <p class="subtitle">Centralized Platform for Workflow Management</p>
+        <p class="subtitle">Spartan Robotics</p>
       </div>
 
       <div class="auth-form">
