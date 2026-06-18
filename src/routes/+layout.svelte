@@ -1,7 +1,7 @@
 <script>
   import '../app.css';
   import { onMount } from 'svelte';
-  import { initAuth, user as authUserStore, userStore, authReady as authReadyStore } from '$lib/stores/auth.js';
+  import { initAuth, user as authUserStore, userStore, authReady as authReadyStore, fetchUserProfile } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
@@ -98,7 +98,16 @@
     }
   }
 
+  // Re-fetch the signed-in user's profile so role/permission changes made by an
+  // admin (e.g. granting admin access) show up live — the Admin tab appears as
+  // soon as the fresh profile loads, without needing a manual hard reload.
+  function refreshOwnProfile() {
+    const id = authUser?.id || profile?.id;
+    if (id) void fetchUserProfile(id);
+  }
+
   afterNavigate(() => {
+    refreshOwnProfile();
     if (profile) {
       void checkAttendance(profile);
     }
@@ -116,8 +125,12 @@
         closeMobileMenu();
       }
     };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshOwnProfile();
+    };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('visibilitychange', onVisibility);
 
     const unsubAuth = authUserStore.subscribe((v) => { authUser = v; });
     const unsubProfile = userStore.subscribe((v) => {
@@ -135,6 +148,7 @@
       document.body.style.overflow = '';
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('visibilitychange', onVisibility);
       unsubAuth?.();
       unsubProfile?.();
       unsubAuthReady?.();
