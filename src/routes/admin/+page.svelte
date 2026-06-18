@@ -22,6 +22,7 @@
   } from '$lib/attendance.js';
   import BudgetsTab from './BudgetsTab.svelte';
   import PlannerCalendarTab from './PlannerCalendarTab.svelte';
+  import ActivityLogTab from './ActivityLogTab.svelte';
   const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
 
   // Tab management
@@ -1398,6 +1399,11 @@
         Budgets
       </button>
     {/if}
+    {#if $currentUser?.role === 'admin'}
+      <button type="button" class:active={activeTab === 'activity'} on:click={() => setActiveTab('activity')}>
+        Activity Log
+      </button>
+    {/if}
   </nav>
 
   {#if activeTab === 'access'}
@@ -2381,6 +2387,8 @@
     </section>
   {:else if activeTab === 'budgets'}
     <BudgetsTab />
+  {:else if activeTab === 'activity'}
+    <ActivityLogTab />
   {/if}
 </div>
 
