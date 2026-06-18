@@ -21,7 +21,7 @@
   // Edit Mode vs View Mode
   let editMode = false;
 
-  // The subtab determines router vs postprocessing â€” driven by local state
+  // The subtab determines router vs postprocessing — driven by local state
 
   // Drag-and-drop state
   let dragPart = null;
@@ -43,7 +43,7 @@
     'ShopSabre': { bg: 'var(--purple-soft)', text: 'var(--purple-strong)', border: 'var(--purple-base, #9c27b0)' }
   };
 
-  // Stock color map â€” color by material type
+  // Stock color map — color by material type
   function getStockColor(stock) {
     if (!stock) return { bg: 'var(--surface-2)', text: 'var(--text-muted)', border: 'var(--border)' };
     const s = stock.toLowerCase();
@@ -667,7 +667,7 @@
                     </span>
                   {/if}
                 {:else}
-                  <span class="text-muted">â€”</span>
+                  <span class="text-muted">—</span>
                 {/if}
               </div>
               <div class="status-summary-card">
@@ -682,7 +682,7 @@
                     </span>
                   {/if}
                 {:else}
-                  <span class="text-muted">â€”</span>
+                  <span class="text-muted">—</span>
                 {/if}
               </div>
             </div>
@@ -858,7 +858,7 @@
                             {g.machine}
                           </span>
                         {:else}
-                          <span class="text-muted">â€”</span>
+                          <span class="text-muted">—</span>
                         {/if}
                       {/if}
                     </div>
@@ -885,7 +885,7 @@
                             {g.stock}
                           </span>
                         {:else}
-                          <span class="text-muted">â€”</span>
+                          <span class="text-muted">—</span>
                         {/if}
                       {/if}
                     </div>
@@ -932,7 +932,7 @@
                             {formatPacificDate(g.target_date)}
                           </span>
                         {:else}
-                          <span class="text-muted">â€”</span>
+                          <span class="text-muted">—</span>
                         {/if}
                       {/if}
                     </div>
