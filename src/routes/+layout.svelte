@@ -83,10 +83,6 @@
     openMobileFolders = { ...openMobileFolders, [idx]: !openMobileFolders[idx] };
   }
 
-  function can(perm) {
-    return hasPermission(activeProfile, perm);
-  }
-
   async function checkAttendance(currentProfile) {
     if (typeof window === 'undefined') return;
     if (!currentProfile?.id) return;
@@ -263,6 +259,7 @@
 
   function canRenderTabKey(key) {
     const k = normalizeKey(key);
+    if (k === 'admin') return hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
     if (k === 'scouting-admin') return activeProfile?.team_role === 'Competition Lead';
     return true;
   }
@@ -309,7 +306,7 @@
     }).filter(Boolean);
   }
 
-  function fallbackTabs() {
+  function fallbackTabs(eventKey, profile) {
     const tabs = [];
     if (navConfig?.tabs?.manufacture !== false) tabs.push({ key: 'manufacture', label: 'Manufacture' });
     if (navConfig?.tabs?.kitting !== false) tabs.push({ key: 'kitting', label: 'Kitting' });
@@ -318,13 +315,13 @@
     tabs.push({ key: 'purchasing', label: 'Purchasing' });
     if (navConfig?.tabs?.planner !== false) tabs.push({ key: 'planner', label: 'Planner' });
     if (navConfig?.tabs?.tasks !== false) tabs.push({ key: 'tasks', label: 'Tasks' });
-    if (scoutingEventKey) {
+    if (eventKey) {
       if (navConfig?.tabs?.notescout !== false) tabs.push({ key: 'notescout', label: 'Note Scouting' });
       const hasLegacyDatascoutFlag = Object.prototype.hasOwnProperty.call(navConfig?.tabs || {}, 'datascout');
       const teamViewEnabled = navConfig?.tabs?.teamview !== false || (hasLegacyDatascoutFlag && navConfig?.tabs?.datascout !== false);
       if (teamViewEnabled) tabs.push({ key: 'teamview', label: 'Team View' });
       if (navConfig?.tabs?.pitscout !== false) tabs.push({ key: 'pitscout', label: 'Pit Scouting' });
-      if (activeProfile?.team_role === 'Competition Lead') tabs.push({ key: 'scouting-admin', label: 'Scouting Admin' });
+      if (profile?.team_role === 'Competition Lead') tabs.push({ key: 'scouting-admin', label: 'Scouting Admin' });
     }
     if (navConfig?.tabs?.['cots-stocking'] !== false) tabs.push({ key: 'cots-stocking', label: 'COTS Stocking' });
     return tabs;
@@ -341,16 +338,25 @@
     return false;
   }
 
-  function addAdminTabIfAllowed(tabs) {
+  function addAdminTabIfAllowed(tabs, canView) {
     const list = Array.isArray(tabs) ? [...tabs] : [];
-    if (!can('VIEW_ADMIN_PANEL')) return list;
+    if (!canView) return list;
     if (hasTabKey(list, 'admin')) return list;
     list.push({ key: 'admin', label: 'Admin' });
     return list;
   }
 
+  // Track permission/profile/event directly so these recompute when the profile
+  // loads. (Svelte 5 only invalidates on value change and ignores reads that
+  // happen inside called functions, so the deps must be referenced here.)
+  $: canViewAdmin = hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
   $: customTabs = sanitizeTabs(activeProfile?.header_tabs);
-  $: baseNavTabs = addAdminTabIfAllowed(customTabs ?? fallbackTabs());
+  // An empty custom-tabs list means "no customization" — fall back to the
+  // default regular nav so nobody (admins included) ends up with an empty bar.
+  $: effectiveTabs = (customTabs && customTabs.length)
+    ? customTabs
+    : fallbackTabs(scoutingEventKey, activeProfile);
+  $: baseNavTabs = addAdminTabIfAllowed(effectiveTabs, canViewAdmin);
   $: navItems = isApproved ? buildNavItems(baseNavTabs) : [];
   $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || authUser?.email || 'Profile';
 </script>
@@ -583,6 +589,7 @@
     position: relative;
     transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     min-height: 34px;
+    flex-shrink: 0;
   }
 
   .nav-item:hover {
@@ -605,6 +612,7 @@
   /* ========== DESKTOP DROPDOWN ========== */
   .nav-dropdown {
     position: relative;
+    flex-shrink: 0;
   }
 
   :global(.caret) {
@@ -1021,10 +1029,15 @@
 
     .desktop-nav {
       gap: 0.2rem;
-      padding: 0;
+      row-gap: 0.15rem;
+      padding: 0.3rem 0;
       border: none;
       border-radius: 0;
       background: transparent;
+      /* Wrap onto another row when tabs exceed the bar width instead of
+         compressing/overlapping. overflow stays visible so folder dropdown
+         menus (from the account-settings tab editor) are not clipped. */
+      flex-wrap: wrap;
       overflow: visible;
     }
 
