@@ -1042,29 +1042,28 @@
     }
 
     .desktop-nav {
-      gap: 0.2rem;
-      row-gap: 0.15rem;
-      padding: 0.3rem 0;
+      gap: 0.12rem;
+      padding: 0;
       border: none;
       border-radius: 0;
       background: transparent;
-      /* Wrap onto another row when tabs exceed the bar width instead of
-         compressing/overlapping. overflow stays visible so folder dropdown
-         menus (from the account-settings tab editor) are not clipped. */
-      flex-wrap: wrap;
-      overflow: visible;
+      /* Keep all tabs on a single row. If they exceed the bar width, scroll
+         horizontally (scrollbar hidden) instead of wrapping or overlapping. */
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: visible;
     }
 
     .nav-item {
-      gap: 0.45rem;
-      padding: 0.55rem 0.7rem;
+      gap: 0.3rem;
+      padding: 0.5rem 0.5rem;
       min-height: var(--desktop-nav-item-height);
       height: var(--desktop-nav-item-height);
       border: 1px solid transparent;
       border-radius: var(--radius-sm);
       background: transparent;
       color: var(--secondary);
-      font-size: 0.84rem;
+      font-size: 0.8rem;
       font-weight: 600;
       line-height: 1;
     }
