@@ -4,6 +4,7 @@
   import { Upload, FileText, Wrench, Zap } from 'lucide-svelte';
   import { onMount } from 'svelte';
   import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
+  import { validateStepFile } from '$lib/step_validation.js';
   
   let partName = '';
   let requesterName = '';
@@ -46,7 +47,7 @@
 
   // No material field: parts list only tracks stock_assignment.
 
-  function handleFileUpload(event) {
+  async function handleFileUpload(event) {
     const file = event.target.files[0];
     if (file) {
       const fileExtension = file.name.split('.').pop().toLowerCase();
@@ -56,6 +57,14 @@
         alert(`Please upload a ${extMsg} file for ${selectedWorkflow.name} workflow.`);
         event.target.value = '';
         return;
+      }
+      if (requiredFileType === 'step') {
+        const { valid, reason } = await validateStepFile(file);
+        if (!valid) {
+          alert(`This STEP file is not valid:\n\n${reason}`);
+          event.target.value = '';
+          return;
+        }
       }
       uploadedFile = file;
     }
@@ -72,10 +81,10 @@
     event.currentTarget.classList.remove('active');
   }
 
-  function handleDrop(event) {
+  async function handleDrop(event) {
     event.preventDefault();
     event.currentTarget.classList.remove('active');
-    
+
     const files = event.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
@@ -86,17 +95,38 @@
         alert(`Please upload a ${extMsg} file for ${selectedWorkflow.name} workflow.`);
         return;
       }
+      if (requiredFileType === 'step') {
+        const { valid, reason } = await validateStepFile(file);
+        if (!valid) {
+          alert(`This STEP file is not valid:\n\n${reason}`);
+          return;
+        }
+      }
       uploadedFile = file;
     }
   }
 
+  // Validate extension + actual STEP content. Returns true if the file is a
+  // usable solid model; alerts and returns false otherwise.
+  async function acceptStepFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['step', 'stp'].includes(ext)) {
+      alert('Please upload a STEP (.step or .stp) file.');
+      return false;
+    }
+    const { valid, reason } = await validateStepFile(file);
+    if (!valid) {
+      alert(`This STEP file is not valid:\n\n${reason}`);
+      return false;
+    }
+    return true;
+  }
+
   // Router-specific STEP handler
-  function handleStepUpload(event) {
+  async function handleStepUpload(event) {
     const file = event.target.files[0];
     if (file) {
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (!['step', 'stp'].includes(ext)) {
-        alert('Please upload a STEP (.step or .stp) file.');
+      if (!(await acceptStepFile(file))) {
         event.target.value = '';
         return;
       }
@@ -104,17 +134,13 @@
     }
   }
   // Handle drag-and-drop for STEP and DXF zones
-  function handleDropStep(event) {
+  async function handleDropStep(event) {
     event.preventDefault();
     event.currentTarget.classList.remove('active');
     const files = event.dataTransfer?.files;
     if (files && files.length > 0) {
       const file = files[0];
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (!['step', 'stp'].includes(ext)) {
-        alert('Please drop a STEP (.step or .stp) file.');
-        return;
-      }
+      if (!(await acceptStepFile(file))) return;
       uploadedStepFile = file;
     }
   }
@@ -182,6 +208,12 @@
       alert('Router parts require a STEP file.');
       return;
     }
+    // Final gate: never let a bad STEP reach the machine, even if the picker was bypassed.
+    const stepCheck = await validateStepFile(uploadedStepFile);
+    if (!stepCheck.valid) {
+      alert(`This STEP file is not valid:\n\n${stepCheck.reason}`);
+      return;
+    }
 
     isSubmitting = true;
     try {
@@ -194,7 +226,7 @@
         .upload(stepName, uploadedStepFile, { cacheControl: '3600', upsert: false });
       if (stepErr) throw stepErr;
 
-      const fileMeta = { step_file: stepName };
+      const fileMeta = { step_file: stepName, step_valid: true };
   const { error: insertError } = await supabase
         .from('parts')
         .insert([{

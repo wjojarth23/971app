@@ -5,6 +5,7 @@
   import { supabase } from '$lib/supabase.js';
   import { toastActions } from '$lib/toast.js';
   import navigation from '$lib/navigation.json';
+  import { defaultHeaderTabs } from '$lib/defaultTabs.js';
   import HeaderPreview from '$lib/components/HeaderPreview.svelte';
   import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
   import { mergeNotificationSettings } from '$lib/notifications/settings.js';
@@ -99,8 +100,14 @@
   }
 
   // Basic tab manipulation helpers (in-memory; saved when profile saved)
+  // When a user hasn't customized their nav yet (header_tabs is null/empty),
+  // they're currently seeing the default tabs. Seed those defaults so that
+  // adding a tab APPENDS to them instead of replacing the whole bar with the
+  // single new tab.
   function ensureHeaderTabs() {
-    if (!header_tabs || !Array.isArray(header_tabs)) header_tabs = [];
+    if (!header_tabs || !Array.isArray(header_tabs) || header_tabs.length === 0) {
+      header_tabs = defaultHeaderTabs();
+    }
   }
 
   function createFolder() {
@@ -116,9 +123,23 @@
     autosave();
   }
 
+  // Does a tab with this key already exist anywhere (top level or in a folder)?
+  function tabKeyExists(key) {
+    if (!Array.isArray(header_tabs)) return false;
+    return header_tabs.some(it =>
+      (it?.type === 'tab' && it.key === key) ||
+      (it?.type === 'folder' && Array.isArray(it.children) && it.children.some(c => c?.key === key))
+    );
+  }
+
   function addTab() {
     if (!addTabKey) return toastActions.show('Select a tab to add');
     ensureHeaderTabs();
+    if (tabKeyExists(addTabKey)) {
+      toastActions.show('That tab is already in your navigation');
+      addTabKey = '';
+      return;
+    }
     const raw = String(addTabKey || '').trim();
     const label = raw.toLowerCase() === 'cad' ? 'CAD' : raw.replace(/^(.)/, (m) => m.toUpperCase());
     const newTab = { type: 'tab', key: addTabKey, label };

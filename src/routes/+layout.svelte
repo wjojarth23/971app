@@ -5,6 +5,7 @@
   import { hasPermission } from '$lib/permissions.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
+  import { defaultHeaderTabs } from '$lib/defaultTabs.js';
   import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
@@ -320,25 +321,13 @@
     }).filter(Boolean);
   }
 
-  function fallbackTabs(eventKey, profile) {
-    const tabs = [];
-    if (navConfig?.tabs?.manufacture !== false) tabs.push({ key: 'manufacture', label: 'Manufacture' });
-    if (navConfig?.tabs?.kitting !== false) tabs.push({ key: 'kitting', label: 'Kitting' });
-    tabs.push({ key: 'cad', label: 'CAD' });
-    if (navConfig?.tabs?.build !== false) tabs.push({ key: 'build', label: 'Build' });
-    tabs.push({ key: 'purchasing', label: 'Purchasing' });
-    if (navConfig?.tabs?.planner !== false) tabs.push({ key: 'planner', label: 'Planner' });
-    if (navConfig?.tabs?.tasks !== false) tabs.push({ key: 'tasks', label: 'Tasks' });
-    if (eventKey) {
-      if (navConfig?.tabs?.notescout !== false) tabs.push({ key: 'notescout', label: 'Note Scouting' });
-      const hasLegacyDatascoutFlag = Object.prototype.hasOwnProperty.call(navConfig?.tabs || {}, 'datascout');
-      const teamViewEnabled = navConfig?.tabs?.teamview !== false || (hasLegacyDatascoutFlag && navConfig?.tabs?.datascout !== false);
-      if (teamViewEnabled) tabs.push({ key: 'teamview', label: 'Team View' });
-      if (navConfig?.tabs?.pitscout !== false) tabs.push({ key: 'pitscout', label: 'Pit Scouting' });
-      if (profile?.team_role === 'Competition Lead') tabs.push({ key: 'scouting-admin', label: 'Scouting Admin' });
-    }
-    if (navConfig?.tabs?.['cots-stocking'] !== false) tabs.push({ key: 'cots-stocking', label: 'COTS Stocking' });
-    return tabs;
+  // Default tabs shown to every user before they customize their header.
+  // Home is rendered separately (always present) and Admin is appended for
+  // admins via addAdminTabIfAllowed(). All other tabs (Kitting, Build,
+  // Planner, Tasks, scouting, etc.) are opt-in via the "Add tab" UI in the
+  // profile page. See $lib/defaultTabs.js for the shared list.
+  function fallbackTabs() {
+    return defaultHeaderTabs(navConfig);
   }
 
   function hasTabKey(items, wantedKey) {
@@ -369,7 +358,7 @@
   // default regular nav so nobody (admins included) ends up with an empty bar.
   $: effectiveTabs = (customTabs && customTabs.length)
     ? customTabs
-    : fallbackTabs(scoutingEventKey, activeProfile);
+    : fallbackTabs();
   $: baseNavTabs = addAdminTabIfAllowed(effectiveTabs, canViewAdmin);
   $: navItems = isApproved ? buildNavItems(baseNavTabs) : [];
   $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || authUser?.email || 'Profile';

@@ -1098,7 +1098,8 @@
               </div>
               <div class="budget-progress-track">
                 <div 
-                   class="budget-progress-fill" 
+                   class="budget-progress-fill"
+                   class:near={subsystem.budget.spent <= subsystem.budget.amount && subsystem.budget.spent / subsystem.budget.amount >= 0.8}
                    class:over={subsystem.budget.spent > subsystem.budget.amount}
                    style="width: {Math.min((subsystem.budget.spent / subsystem.budget.amount) * 100, 100)}%"
                 ></div>
@@ -1516,8 +1517,10 @@
 
 <style>
   .cad-container { max-width: 1200px; margin: var(--space-7) auto; padding: 0 var(--space-4); }
-  .header-content h1 { font-size: var(--font-2xl); }
-  .header-content p { margin: var(--space-2) 0 0 0; font-size: var(--font-md); }
+  .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--gap-4); flex-wrap: wrap; margin-bottom: var(--space-7); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border); }
+  .header-content { display: flex; align-items: center; gap: var(--gap-3); color: var(--accent-strong); }
+  .header-content h1 { font-size: var(--font-2xl); margin: 0; color: var(--text); letter-spacing: -0.01em; }
+  .header-content p { margin: var(--space-1) 0 0 0; font-size: var(--font-md); color: var(--text-muted); }
 
   .general-task-signup {
     margin-bottom: var(--space-4);
@@ -1577,10 +1580,9 @@
     cursor: not-allowed;
   }
   .subsystems-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: var(--gap-6); }
-  .subsystem-card { background: var(--primary); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: var(--space-6); margin-bottom: var(--space-4); transition: all 0.2s ease; }
-  .subsystem-card.clickable { cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
-  .subsystem-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); border-color: var(--primary); }
-  .subsystem-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+  .subsystem-card { background: var(--surface-1); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: var(--space-6); margin-bottom: var(--space-4); box-shadow: var(--shadow-sm); transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+  .subsystem-card.clickable { cursor: pointer; }
+  .subsystem-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--accent); }
   .subsystem-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-4); gap: var(--gap-2); flex-wrap: wrap; }
   .subsystem-title, .build-title { display: flex; align-items: center; gap: var(--gap-1); flex: 1; min-width: 0; }
   .subsystem-toolbar { display: flex; align-items: center; gap: var(--gap-2); flex-shrink: 0; flex-wrap: wrap; }
@@ -1593,7 +1595,18 @@
   .subsystem-description { color: var(--neutral-500); margin-bottom: var(--space-4); line-height: 1.5; }
   .subsystem-info { display: flex; flex-direction: column; gap: var(--gap-2); margin-bottom: var(--space-4); }
   .lead-label { font-weight: 500; color: var(--secondary); }
-  .onshape-section { background: var(--background); border-radius: var(--radius-sm); border: 1px solid var(--border); padding: var(--space-4); margin-bottom: var(--space-4); }
+
+  /* Budget bar (desktop) */
+  .subsystem-budget { margin-bottom: var(--space-4); }
+  .budget-label { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--font-xs); font-weight: 600; margin-bottom: var(--space-2); }
+  .budget-title { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .budget-values { color: var(--text); font-variant-numeric: tabular-nums; }
+  .budget-progress-track { height: 8px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden; }
+  .budget-progress-fill { height: 100%; background: var(--green-base); border-radius: var(--radius-sm); transition: width 0.3s ease, background 0.3s ease; }
+  .budget-progress-fill.near { background: var(--brand-gold-base); }
+  .budget-progress-fill.over { background: var(--red-strong); }
+  .budget-values.over-budget { color: var(--red-strong); }
+  .onshape-section { background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid transparent; padding: var(--space-4); margin-bottom: var(--space-4); }
   .onshape-header { display: flex; align-items: center; gap: var(--gap-2); color: var(--secondary); font-weight: 500; }
   .external-link { color: var(--accent); text-decoration: none; margin-left: auto; }
   .external-link:hover { color: var(--secondary); }
@@ -1626,7 +1639,7 @@
   .build-info .info-item span:first-child { font-weight: 500; color: var(--secondary); }
   .build-info code { background: var(--primary); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-family: monospace; font-size: var(--font-xs); }
   .build-actions { display: flex; gap: var(--gap-3); }
-  .document-info { display: flex; flex-direction: column; gap: var(--gap-1); padding: var(--space-3); background: var(--background); border-radius: var(--radius-lg); border: 1px solid var(--border); }
+  .document-info { display: flex; flex-direction: column; gap: var(--gap-1); padding: var(--space-3) 0 0 0; }
   .doc-name { font-weight: 500; color: var(--text); font-size: var(--font-xs); }
   .click-hint { margin-top: var(--space-2); }
   .click-hint span { font-size: var(--font-xs); color: var(--secondary); font-style: italic; }
@@ -1761,19 +1774,5 @@
       font-weight: 600;
       margin-bottom: var(--space-2);
     }
-    .budget-title { color: var(--text-2); }
-    .budget-progress-track {
-      height: 6px;
-      background: var(--surface-2);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    .budget-progress-fill {
-      height: 100%;
-      background: var(--brand-gold-strong);
-      border-radius: 4px;
-    }
-    .budget-progress-fill.over { background: var(--red-strong); }
-    .budget-values.over-budget { color: var(--red-strong); }
   }
 </style>

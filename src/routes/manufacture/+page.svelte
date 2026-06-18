@@ -11,10 +11,11 @@
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
-  import { isManufacturingLead } from '$lib/permissions.js';
+  import { isManufacturingLead, canCamReview as camReviewAllowed } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
   import PartDueDate from '$lib/components/PartDueDate.svelte';
+  import PartNotes from '$lib/components/PartNotes.svelte';
 
   const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
   const QUICK_PRINT_STOCK_OPTIONS = stockData['3d-print'] || [];
@@ -52,7 +53,7 @@
   let selectedPartIds = [];
   let batchSelectMode = false;
   $: canUseAssignMode = isManufacturingLead(user);
-  $: canCamReview = isManufacturingLead(user);
+  $: canCamReview = camReviewAllowed(user);
   $: if (!canUseAssignMode && assignMode) {
     assignMode = false;
   }
@@ -118,7 +119,9 @@
   let editStock = '';
   let editCustomStock = '';
   let editQuantity = 1;
-  
+  let editNotes = '';
+  let editDueDate = '';
+
   // Part Preview Modal State
   let showPreviewModal = false;
   let previewPart = null;
@@ -130,6 +133,8 @@
   let previewStock = '';
   let previewCustomStock = '';
   let previewQuantity = 1;
+  let previewNotes = '';
+  let previewDueDate = '';
 
   function getPartKey(partOrId) {
     return String(typeof partOrId === 'object' ? partOrId?.id : partOrId);
@@ -555,6 +560,7 @@
       // If part is still "pending", automatically mark it as "in-progress"
       if (currentStatus === 'pending') {
         await updatePartStatus(part.id, 'in-progress');
+        setLocalStatus(part.id, 'in-progress');
       }
       // If this part requires a drawing (lathe/mill) we no longer generate or download PDFs.
       // Instead, open the subsystem/document for the part.
@@ -694,7 +700,8 @@
       if (newStatus === 'complete') {
         await sendNotification('part-complete', { part_id: partId });
       }
-      await loadParts();
+      // NOTE: no loadParts() here — callers use setLocalStatus for an optimistic update
+      // so the hub doesn't flash/reload on every button click.
     } catch (error) {
       console.error('Error updating part status:', error);
       alert('Error updating part status. Please try again.');
@@ -782,7 +789,7 @@
         .update({ file_url: JSON.stringify(root), updated_at: new Date().toISOString() })
         .eq('id', part.id);
       if (error) console.warn('updateRouterMeta error:', error.message);
-      await loadParts();
+      // NOTE: no loadParts() here — callers use setLocalRouterMeta for an optimistic update.
     } catch (e) {
       console.warn('updateRouterMeta exception:', e?.message || e);
     }
@@ -796,10 +803,25 @@
     }
   }
 
+  // STEP-file health for router parts. Returns:
+  //   'missing' - router part with no STEP file at all
+  //   'invalid' - a STEP file is present but failed validation at upload
+  //   null      - fine (or not applicable: non-router / Onshape on-demand)
+  function stepFileWarning(part) {
+    if (part.workflow !== 'router') return null;
+    // Onshape parts download their STEP on demand — not stored, never "missing".
+    if (part.source_type === 'onshape_api') return null;
+    const meta = getFileMeta(part);
+    if (!meta.step_file && !part.file_name) return 'missing';
+    if (meta.step_valid === false) return 'invalid';
+    return null;
+  }
+
   async function ensureInProgress(part) {
     try {
       if (part?.status === 'pending') {
         await updatePartStatus(part.id, 'in-progress');
+        setLocalStatus(part.id, 'in-progress');
       }
     } catch {}
   }
@@ -1039,6 +1061,8 @@
     editStock = part.stock_assignment || '';
     editCustomStock = '';
     editQuantity = part.quantity || 1;
+    editNotes = part.notes || '';
+    editDueDate = (part.due_date || '').slice(0, 10);
     showEditModal = true;
   }
 
@@ -1111,7 +1135,9 @@
     previewStock = part.stock_assignment || '';
     previewCustomStock = '';
     previewQuantity = part.quantity || 1;
-    
+    previewNotes = part.notes || '';
+    previewDueDate = (part.due_date || '').slice(0, 10);
+
     // Check if we have a cached preview image URL first
     if (part.preview_image_url) {
       const { data: urlData } = supabase.storage.from('part-previews').getPublicUrl(part.preview_image_url);
@@ -1227,6 +1253,8 @@
     previewStock = '';
     previewCustomStock = '';
     previewQuantity = 1;
+    previewNotes = '';
+    previewDueDate = '';
   }
 
   async function savePreviewEdits() {
@@ -1237,6 +1265,8 @@
       status: previewStatus === 'cam_review' ? 'in-progress' : previewStatus,
       workflow: previewWorkflow,
       quantity: Math.max(1, Number(previewQuantity) || 1),
+      notes: (previewNotes || '').trim() || null,
+      due_date: previewDueDate || null,
       updated_at: new Date().toISOString()
     };
     if (effectiveStock) update.stock_assignment = effectiveStock;
@@ -1292,6 +1322,8 @@
       status: editStatus === 'cam_review' ? 'in-progress' : editStatus,
       workflow: editWorkflow,
       quantity: Math.max(1, Number(editQuantity) || 1),
+      notes: (editNotes || '').trim() || null,
+      due_date: editDueDate || null,
       updated_at: new Date().toISOString()
     };
     if (effectiveStock) update.stock_assignment = effectiveStock;
@@ -1620,10 +1652,17 @@
             {#if isTeam9584(part.frc_team)}
               <span class="tag team-tag tag-9584">9584</span>
             {/if}
+            {#if stepFileWarning(part) === 'missing'}
+              <span class="tag tag-warning" title="No STEP file uploaded for this router part">⚠ No STEP</span>
+            {:else if stepFileWarning(part) === 'invalid'}
+              <span class="tag tag-warning" title="The uploaded STEP file failed validation">⚠ Bad STEP</span>
+            {/if}
           </div>
           <span class="status-badge {getBadgeClass(part.status, getRouterMeta(part))}">{getStatusDisplay(part)}</span>
         </div>
-        
+
+        <PartNotes item={part} table="parts" on:update={() => loadParts()} />
+
         <div class="part-card-meta">
           <span class={`tag workflow-tag ${getWorkflowClass(part.workflow)}`}>
             {getWorkflowLabel(part.workflow)}
@@ -1702,7 +1741,7 @@
             {:else}
               <button
                 class="btn btn-primary btn-sm"
-                on:click|stopPropagation={() => updatePartStatus(part.id, 'in-progress')}
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'in-progress'); setLocalStatus(part.id, 'in-progress'); }}
               >
                 <Clock size={14} /> Start
               </button>
@@ -1726,6 +1765,15 @@
                   </button>
                 {/if}
               {/if}
+            {/if}
+          {:else if part.status === 'cammed'}
+            {#if part.workflow === 'router'}
+              <button
+                class="btn btn-primary btn-sm"
+                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'machined'); await updateRouterMeta(part, { step: 'machined' }); setLocalStatus(part.id, 'machined'); setLocalRouterMeta(part.id, { step: 'machined' }); }}
+              >
+                <Wrench size={14} /> Machine
+              </button>
             {/if}
           {/if}
         </div>
@@ -1784,7 +1832,13 @@
                 {#if isTeam9584(part.frc_team)}
                   <span class="tag team-tag tag-9584" title="Requested by Team 9584">9584</span>
                 {/if}
+                {#if stepFileWarning(part) === 'missing'}
+                  <span class="tag tag-warning" title="No STEP file uploaded for this router part">⚠ No STEP</span>
+                {:else if stepFileWarning(part) === 'invalid'}
+                  <span class="tag tag-warning" title="The uploaded STEP file failed validation">⚠ Bad STEP</span>
+                {/if}
               </div>
+              <PartNotes item={part} table="parts" on:update={() => loadParts()} />
               {#if part.assigned_to}
                  <span class="assigned-user-badge pill pill-soft pill-assigned">
                    {assignedUserNames[part.assigned_to] || 'Assigned'}
@@ -1899,7 +1953,7 @@
                 {#if part.workflow === 'router'}
                 <button
                   class="btn btn-secondary btn-sm"
-                  on:click={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); }}
+                  on:click={async () => { await updatePartStatus(part.id, 'in-progress'); await updateRouterMeta(part, { step: 'cam_ing' }); setLocalStatus(part.id, 'in-progress'); setLocalRouterMeta(part.id, { step: 'cam_ing' }); }}
                   title="Start"
                 >
                   <Clock size={14} />
@@ -1908,7 +1962,7 @@
                 {:else}
                 <button
                   class="btn btn-secondary btn-sm"
-                  on:click={() => updatePartStatus(part.id, 'in-progress')}
+                  on:click={async () => { await updatePartStatus(part.id, 'in-progress'); setLocalStatus(part.id, 'in-progress'); }}
                   title="Start Work"
                 >
                   <Clock size={14} />
@@ -1923,7 +1977,7 @@
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updateRouterMeta(part, { step: 'cam_review' }); }}
+                      on:click={async () => { await updateRouterMeta(part, { step: 'cam_review' }); setLocalRouterMeta(part.id, { step: 'cam_review' }); }}
                       title="CAM Done"
                     >
                       CAM Done
@@ -1942,6 +1996,19 @@
                     </div>
                   {/if}
                   {/if}
+                {/if}
+              {:else if part.status === 'cammed'}
+                {#if part.workflow === 'router'}
+                  <div class="actions-col">
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      on:click={async () => { await updatePartStatus(part.id, 'machined'); await updateRouterMeta(part, { step: 'machined' }); setLocalStatus(part.id, 'machined'); setLocalRouterMeta(part.id, { step: 'machined' }); }}
+                      title="Machine"
+                    >
+                      <Wrench size={14} />
+                      Machine
+                    </button>
+                  </div>
                 {/if}
               {/if}
             </td>
@@ -2035,7 +2102,7 @@
     on:click|self={closeEditModal}
     role="button"
     tabindex="0"
-    on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeEditModal(); } }}
+    on:keydown={(e) => { if (e.key === 'Escape' && e.target === e.currentTarget) { e.preventDefault(); closeEditModal(); } }}
   >
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-header">
@@ -2103,6 +2170,14 @@
           <input class="form-input" type="text" placeholder="Custom stock" bind:value={editCustomStock} />
         </div>
         {/if}
+        <div class="form-group">
+          <label class="form-label" for="edit-due-date">Due Date</label>
+          <input id="edit-due-date" class="form-input" type="date" bind:value={editDueDate} />
+        </div>
+        <div class="form-group form-group-full">
+          <label class="form-label" for="edit-notes">Notes</label>
+          <textarea id="edit-notes" class="form-input" rows="4" bind:value={editNotes} placeholder="Add notes for this part (context, machining notes, blockers...)"></textarea>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-danger" on:click={deleteCurrentPart}>
@@ -2211,6 +2286,14 @@
               <input class="form-input" type="text" placeholder="Custom stock" bind:value={previewCustomStock} />
             </div>
             {/if}
+            <div class="form-group">
+              <label class="form-label" for="preview-due-date">Due Date</label>
+              <input id="preview-due-date" class="form-input" type="date" bind:value={previewDueDate} />
+            </div>
+            <div class="form-group form-group-full">
+              <label class="form-label" for="preview-notes">Notes</label>
+              <textarea id="preview-notes" class="form-input" rows="4" bind:value={previewNotes} placeholder="Add notes for this part (context, machining notes, blockers...)"></textarea>
+            </div>
           </div>
         {/if}
       </div>
@@ -2271,6 +2354,27 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+  }
+
+  .notes-indicator {
+    display: inline-flex;
+    align-items: center;
+    color: var(--brand-gold-strong, #8f5f00);
+    cursor: help;
+  }
+
+  .form-group-full {
+    grid-column: 1 / -1;
+  }
+
+  .form-group-full textarea.form-input {
+    width: 100%;
+    height: auto;
+    min-height: 90px;
+    line-height: 1.45;
+    padding: 0.5rem 0.6rem;
+    resize: vertical;
+    font-family: inherit;
   }
 
   .source-cell {

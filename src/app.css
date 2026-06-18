@@ -626,7 +626,24 @@ textarea,
   height: var(--control-height-lg);
   padding: var(--control-padding-lg);
   font-size: var(--control-font-lg);
+  font-family: inherit;
+  line-height: var(--control-height-lg);
+  vertical-align: middle;
   transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+/* Textareas are multi-line: override the single-line control height/padding so
+   they respect their `rows`, vertically pad their text, and align to the top. */
+textarea,
+.modal textarea,
+.form-input textarea,
+textarea.form-input {
+  height: auto;
+  min-height: calc(var(--control-height-lg) * 2.5);
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.5;
+  vertical-align: top;
+  resize: vertical;
 }
 
 .form-input:focus,
@@ -1118,6 +1135,13 @@ textarea:focus,
   background: var(--brand-gold-soft);
   color: var(--brand-gold-strong);
   border-color: var(--brand-gold-soft);
+}
+
+.tag-warning {
+  background: var(--yellow-soft, #fef9c3);
+  color: var(--yellow-strong, #854d0e);
+  border-color: var(--yellow-base, #ca8a04);
+  font-weight: 700;
 }
 
 .badge-row {

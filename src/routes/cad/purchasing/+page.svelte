@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { hasPermission } from '$lib/permissions.js';
+  import { hasPermission, canManagePurchasing } from '$lib/permissions.js';
   import { isTeam9584 } from '$lib/frcTeams.js';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { formatPacificDate } from '$lib/timezone.js';
   import { goto } from '$app/navigation';
+  import PartNotes from '$lib/components/PartNotes.svelte';
   // Base URL for the Slack bot service (971bot). Defaults to the in-app endpoint.
   // Optionally expose via a public env var and import from $env/static/public
   const BOT_BASE_URL = import.meta.env?.VITE_BOT_BASE_URL || '/api/971bot';
@@ -523,7 +524,10 @@
   }
 
   // Row interaction: open edit modal on row click (when permitted)
+  // Admins and Purchasing Leads can open ANY entry (any status) to see full
+  // details and delete; everyone else keeps the old rule (own pending items).
   function canEdit(part) {
+    if (canManagePurchasing(user)) return true;
     return (part.status || 'pending') === 'pending' && hasPermission(user, 'PLACE_ORDERS_MISC');
   }
   function onRowClick(e, part) {
@@ -848,7 +852,7 @@
       </div>
       <div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap: wrap;">
           {#if hasPermission(user, 'PLACE_ORDERS_MISC')}
-            <button class="btn btn-secondary" on:click={() => { showAddMiscModal = true; }}>Add Misc Item</button>
+            <button class="btn btn-secondary" on:click={() => { showAddMiscModal = true; }}>Add Custom Item</button>
           {/if}
           {#if hasPermission(user, 'APPROVE_PURCHASES')}
             {#if !orderMode}
@@ -1008,12 +1012,10 @@
                 <td class="part-name">
                   <div class="name-cell">
                     {part.name}
-                    {#if part.notes && !orderMode}
-                      <button class="notes-badge" title="View notes" on:click={() => { notesModalPart = part; showNotesModal = true; }}>
-                        !
-                      </button>
-                    {/if}
                   </div>
+                  {#if !orderMode}
+                    <PartNotes item={part} table="purchasing" on:update={() => loadParts()} />
+                  {/if}
                 </td>
                 <td class="material">
                   {part.vendor || '—'}
@@ -1277,7 +1279,9 @@
         </div>
         <div class="modal-actions">
           <button class="btn" on:click={() => { showEditModal = false; editPart = null; }}>Cancel</button>
-          <button class="btn btn-danger" on:click={deleteEditPart}>Delete</button>
+          {#if canManagePurchasing(user)}
+            <button class="btn btn-danger" on:click={deleteEditPart}>Delete</button>
+          {/if}
           <button class="btn btn-primary" on:click={saveEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
@@ -1287,7 +1291,7 @@
   {#if showAddMiscModal}
     <div class="modal-backdrop">
       <div class="modal" style="--modal-width: 460px;">
-        <h3>Add Misc Purchasing Item (not linked to a build)</h3>
+        <h3>Add Custom Purchasing Item (not linked to a build)</h3>
         <div class="form-row">
           <label for="misc-project">Item name</label>
           <input id="misc-project" type="text" bind:value={miscProjectText} placeholder="Robot parts" />

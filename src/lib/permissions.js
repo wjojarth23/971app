@@ -124,6 +124,24 @@ export function isManufacturingLead(user) {
   return user?.team_role === TEAM_ROLES.MANUFACTURING_LEAD;
 }
 
+// Temporary CAM review allowlist — only these leads may CAM review for now.
+// Replace with a role-based check when ready.
+export const CAM_REVIEW_LEADS = ['Liam', 'Caden', 'Arya', 'Arnav', 'David'];
+
+export function canCamReview(user) {
+  if (!user) return false;
+  const firstName = (user.full_name || '').trim().split(/\s+/)[0];
+  return CAM_REVIEW_LEADS.includes(firstName);
+}
+
+// Who can open any purchasing entry's full details and delete it, regardless of
+// status: admins and Purchasing Leads (who hold VIEW_PURCHASING_ADMIN).
+export function canManagePurchasing(user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return hasPermission(user, 'VIEW_PURCHASING_ADMIN');
+}
+
 export function normalizePermissions(arr) {
   if (!arr) return [];
   if (Array.isArray(arr)) return arr.map(String);
