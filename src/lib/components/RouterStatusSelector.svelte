@@ -99,8 +99,8 @@
       await updateRouterStep(part, 'cam_review');
       dispatch('update');
     } catch (e) {
-      console.error('Failed to set CAM Review Ready', e);
-      alert('Failed to set CAM Review Ready');
+      console.error('Failed to set CAM Review Pending', e);
+      alert('Failed to set CAM Review Pending');
     }
   }
 

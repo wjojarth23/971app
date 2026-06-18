@@ -63,7 +63,7 @@
   }
 
   function getStatusColors(status) {
-    if (status === BUTTONS.TRAVIS || status === 'TravisProgged') return { bg: 'var(--green-soft)', text: 'var(--green-strong)', border: 'var(--green-base)' };
+    if (status === BUTTONS.JPROGGED || status === 'Jprogged') return { bg: 'var(--green-soft)', text: 'var(--green-strong)', border: 'var(--green-base)' };
     if (status === BUTTONS.MACHINED || status === 'Machined') return { bg: 'var(--blue-soft)', text: 'var(--blue-strong)', border: 'var(--blue-base)' };
     if (status === BUTTONS.CAM_REVIEWED || status === 'CAM Reviewed') return { bg: 'var(--purple-soft)', text: 'var(--purple-strong)', border: 'var(--purple-base, #9c27b0)' };
     return { bg: 'var(--brand-gold-soft)', text: 'var(--brand-gold-strong)', border: 'var(--brand-gold-base)' };
@@ -96,7 +96,7 @@
       const total = p.quantity || 1;
       return queued >= total;
     });
-    if (allTravis) return BUTTONS.TRAVIS;
+    if (allTravis) return BUTTONS.JPROGGED;
     const allCammed = g.parts.every((p) => {
       const counts = getRouterStageCounts(p);
       const cammed = counts.cammed || 0;
@@ -317,7 +317,7 @@
     for (const machine of MACHINES) {
       const groups = routerGroups.filter(g => g.machine === machine);
       const cutting = groups.find(g =>
-        g.status === BUTTONS.TRAVIS || getGroupDisplayStatus(g) === BUTTONS.TRAVIS
+        g.status === BUTTONS.JPROGGED || getGroupDisplayStatus(g) === BUTTONS.JPROGGED
       ) || (groups.length > 0 ? groups[0] : null);
       const upNext = groups.find(g => g !== cutting) || null;
       result[machine] = { cutting, upNext };
@@ -570,7 +570,7 @@
     await updateGroupField(gid, 'status', newStatus);
     const group = groupMap[gid];
     if (!group) return;
-    if (newStatus === BUTTONS.TRAVIS) {
+    if (newStatus === BUTTONS.JPROGGED) {
       for (const p of group.parts) {
         const update = buildRouterProgressUpdate(p, { queued: p.quantity || 1 });
         await supabase.from('parts').update(update).eq('id', p.id);
@@ -807,7 +807,7 @@
                                   {/if}
                                 {/if}
                                 {#if getPartStageCount(p, 'cammed') > 0}
-                                  <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cammed', 'queued')}>Travis 1</button>
+                                  <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'cammed', 'queued')}>Jprogg 1</button>
                                 {/if}
                                 {#if getPartStageCount(p, 'queued') > 0}
                                   <button type="button" class="btn btn-secondary btn-sm" on:click={() => movePartStage(p, 'queued', 'cut')}>Cut 1</button>
@@ -895,7 +895,7 @@
                         >
                           <option value={BUTTONS.PENDING}>{BUTTONS.PENDING}</option>
                           <option value={BUTTONS.CAM_REVIEWED}>{BUTTONS.CAM_REVIEWED}</option>
-                          <option value={BUTTONS.TRAVIS}>{BUTTONS.TRAVIS}</option>
+                          <option value={BUTTONS.JPROGGED}>{BUTTONS.JPROGGED}</option>
                           <option value={BUTTONS.MACHINED}>{BUTTONS.MACHINED}</option>
                         </select>
                       {/each}

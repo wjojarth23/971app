@@ -17,7 +17,7 @@ export const ROUTER_STAGE_LABELS = {
   cam_ing: 'CAMing',
   cam_review: 'CAM Review',
   cammed: 'CAM Reviewed',
-  queued: 'TravisProgged',
+  queued: 'Jprogged',
   cut: 'Cut',
   jigsawed: 'Jigsawed',
   countersinking: 'Countersunk',

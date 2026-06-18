@@ -92,7 +92,7 @@
     { value: 'machining', label: 'Machining' },
     { value: 'inspection', label: 'Inspection' },
     { value: 'cammed', label: 'CAM Reviewed' },
-    { value: 'cam_review', label: 'CAM Review Ready' },
+    { value: 'cam_review', label: 'CAM Review Pending' },
     { value: 'machined', label: 'Machined' },
     { value: 'complete', label: 'Complete' }
   ];
