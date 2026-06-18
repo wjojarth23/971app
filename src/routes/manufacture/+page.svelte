@@ -11,7 +11,7 @@
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
-  import { isManufacturingLead, canCamReview as camReviewAllowed } from '$lib/permissions.js';
+  import { isManufacturingLead, canCamReview as camReviewAllowed, canDeleteParts } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
   import PartDueDate from '$lib/components/PartDueDate.svelte';
@@ -54,6 +54,7 @@
   let batchSelectMode = false;
   $: canUseAssignMode = isManufacturingLead(user);
   $: canCamReview = camReviewAllowed(user);
+  $: canDelete = canDeleteParts(user);
   $: if (!canUseAssignMode && assignMode) {
     assignMode = false;
   }
@@ -1492,11 +1493,13 @@
 <div class="page-header">
   <h1>Parts List</h1>
   <div class="page-actions">
-    <button class="btn {batchSelectMode ? 'btn-primary' : 'btn-secondary'}" on:click={toggleBatchSelectMode}>
-      <Package size={16} />
-      {batchSelectMode ? 'Exit Batch Select' : 'Batch Select'}
-    </button>
-    {#if batchSelectMode && selectedFilteredCount > 0}
+    {#if canDelete}
+      <button class="btn {batchSelectMode ? 'btn-primary' : 'btn-secondary'}" on:click={toggleBatchSelectMode}>
+        <Package size={16} />
+        {batchSelectMode ? 'Exit Batch Select' : 'Batch Select'}
+      </button>
+    {/if}
+    {#if canDelete && batchSelectMode && selectedFilteredCount > 0}
       <button class="btn btn-danger" on:click={bulkDeleteSelected}>
         <Trash2 size={16} />
         Delete Selected ({selectedFilteredCount})
@@ -2180,10 +2183,12 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-danger" on:click={deleteCurrentPart}>
-          <Trash2 size={16} />
-          Delete
-        </button>
+        {#if canDelete}
+          <button class="btn btn-danger" on:click={deleteCurrentPart}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+        {/if}
         <div class="spacer"></div>
         <button class="btn" on:click={closeEditModal}>Cancel</button>
         <button class="btn btn-primary" on:click={saveEdits}>Save</button>
@@ -2298,10 +2303,12 @@
         {/if}
       </div>
       <div class="modal-footer">
-        <button class="btn btn-danger" on:click={deletePreviewPart}>
-          <Trash2 size={16} />
-          Delete
-        </button>
+        {#if canDelete}
+          <button class="btn btn-danger" on:click={deletePreviewPart}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+        {/if}
         <div class="spacer"></div>
         <button class="btn" on:click={closePreviewModal}>Cancel</button>
         <button class="btn btn-primary" on:click={savePreviewEdits}>Save</button>

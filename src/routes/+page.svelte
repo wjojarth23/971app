@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
   import { initAuth, userStore, signOut, authReady as authReadyStore } from '$lib/stores/auth.js';
-  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users } from 'lucide-svelte';
+  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users, Layers, Receipt, Clock } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
   
@@ -19,6 +19,9 @@
   let buildsLoading = false;
   let purchases = [];
   let purchasesLoading = false;
+
+  // At-a-glance dashboard stats
+  $: pendingPurchases = purchases.filter(p => (p.status || 'pending') === 'pending').length;
   let listsLoaded = false;
   let authMode = 'login'; // 'login' or 'register'  
   let formData = {
@@ -302,6 +305,38 @@
         </div>
       </div>
     {:else}
+      <!-- At-a-glance stats -->
+      <div class="stat-grid">
+        <a href="/cad" class="stat-card">
+          <div class="stat-icon"><Layers size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{subsystemsLoading ? '—' : subsystems.length}</span>
+            <span class="stat-label">Your Subsystems</span>
+          </div>
+        </a>
+        <a href="/cad/build" class="stat-card">
+          <div class="stat-icon"><Briefcase size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{buildsLoading ? '—' : builds.length}</span>
+            <span class="stat-label">Your Builds</span>
+          </div>
+        </a>
+        <a href="/cad/purchasing" class="stat-card">
+          <div class="stat-icon"><Receipt size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{purchasesLoading ? '—' : purchases.length}</span>
+            <span class="stat-label">Purchase Requests</span>
+          </div>
+        </a>
+        <a href="/cad/purchasing" class="stat-card" class:stat-card-alert={pendingPurchases > 0}>
+          <div class="stat-icon"><Clock size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{purchasesLoading ? '—' : pendingPurchases}</span>
+            <span class="stat-label">Pending Approval</span>
+          </div>
+        </a>
+      </div>
+
       <div class="dashboard-actions">
         <h3>Quick Actions</h3>
         <div class="action-grid">
@@ -700,6 +735,77 @@
     margin: 0 0 var(--space-6) 0;
     color: var(--secondary);
     font-size: var(--font-xl);
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--gap-4);
+    margin-bottom: var(--space-7);
+  }
+
+  .stat-card {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    background: var(--primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
+    text-decoration: none;
+    color: inherit;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--accent);
+  }
+
+  .stat-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
+  }
+
+  .stat-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .stat-value {
+    font-size: var(--font-2xl);
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--secondary);
+  }
+
+  .stat-label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .stat-card-alert .stat-icon {
+    background: var(--red-soft, #fee2e2);
+    color: var(--red-strong, #991b1b);
+  }
+
+  .stat-card-alert .stat-value {
+    color: var(--red-strong, #991b1b);
   }
 
   .pending-notice {

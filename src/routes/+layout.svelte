@@ -1,6 +1,6 @@
 <script>
   import '../app.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { initAuth, user as authUserStore, userStore, authReady as authReadyStore, fetchUserProfile } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
@@ -129,9 +129,11 @@
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshOwnProfile();
     };
+    const onResize = () => updateUnderline();
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('resize', onResize);
 
     const unsubAuth = authUserStore.subscribe((v) => { authUser = v; });
     const unsubProfile = userStore.subscribe((v) => {
@@ -145,11 +147,13 @@
       scoutingEventKey = k || '';
     });
     const uninit = initAuth();
+    setTimeout(updateUnderline, 120);
     return () => {
       document.body.style.overflow = '';
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('resize', onResize);
       unsubAuth?.();
       unsubProfile?.();
       unsubAuthReady?.();
@@ -164,6 +168,29 @@
   function isActive(path) {
     return $page.url.pathname === path;
   }
+
+  // Sliding underline that follows the active desktop nav tab.
+  let navEl;
+  let underlineLeft = 0;
+  let underlineWidth = 0;
+
+  function updateUnderline() {
+    if (!navEl) return;
+    const active = navEl.querySelector('.nav-item.active');
+    if (!active) { underlineWidth = 0; return; }
+    const navRect = navEl.getBoundingClientRect();
+    const aRect = active.getBoundingClientRect();
+    underlineLeft = aRect.left - navRect.left + navEl.scrollLeft;
+    underlineWidth = aRect.width;
+  }
+
+  async function scheduleUnderline() {
+    await tick();
+    updateUnderline();
+  }
+
+  // Recompute whenever the route or the rendered tab set changes.
+  $: if (navEl && (currentPath, navItems)) scheduleUnderline();
 
   function isFolderActive(folder) {
     if (!folder?.children) return false;
@@ -275,7 +302,11 @@
   function canRenderTabKey(key) {
     const k = normalizeKey(key);
     if (k === 'admin') return hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
-    if (k === 'scouting-admin') return activeProfile?.team_role === 'Competition Lead';
+    // Scouting Admin: Competition Leads, or admins (who can access everything).
+    if (k === 'scouting-admin') {
+      return activeProfile?.team_role === 'Competition Lead'
+        || hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
+    }
     return true;
   }
 
@@ -374,7 +405,13 @@
       </a>
 
       <!-- Desktop Nav -->
-      <nav class="desktop-nav" aria-label="Primary navigation">
+      <nav class="desktop-nav" aria-label="Primary navigation" bind:this={navEl}>
+        <span
+          class="nav-underline"
+          class:visible={underlineWidth > 0}
+          style="transform: translateX({underlineLeft}px); width: {underlineWidth}px;"
+          aria-hidden="true"
+        ></span>
         <a href="/" class="nav-item" class:active={isActive('/')} on:click={closeDesktopFolders}>
           <Home size={16} />
           <span>Home</span>
@@ -569,6 +606,26 @@
     padding: 0;
     overflow-x: auto;
     scrollbar-width: none;
+    position: relative;
+  }
+
+  /* Sliding indicator that animates between active tabs */
+  .nav-underline {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--accent-strong, var(--accent));
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s ease;
+  }
+
+  .nav-underline.visible {
+    opacity: 1;
   }
 
   .desktop-nav::-webkit-scrollbar {

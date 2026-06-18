@@ -142,6 +142,13 @@ export function canManagePurchasing(user) {
   return hasPermission(user, 'VIEW_PURCHASING_ADMIN');
 }
 
+// Who can delete parts in the manufacturing hub: admins and Manufacturing Leads.
+export function canDeleteParts(user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return isManufacturingLead(user);
+}
+
 export function normalizePermissions(arr) {
   if (!arr) return [];
   if (Array.isArray(arr)) return arr.map(String);
