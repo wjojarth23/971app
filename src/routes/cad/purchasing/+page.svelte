@@ -3,7 +3,8 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { hasPermission, canManagePurchasing } from '$lib/permissions.js';
-  import { isTeam9584 } from '$lib/frcTeams.js';
+  import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
+  import TeamFilter from '$lib/components/TeamFilter.svelte';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { formatPacificDate } from '$lib/timezone.js';
@@ -34,6 +35,8 @@
   let vendorFilter = '';
   let projectFilter = '';
   let statusFilter = '';
+  let show971 = true;
+  let show9584 = true;
 
   // Derived options and filtered view
   $: vendorOptions = Array.from(new Set(parts.map(p => (p.vendor || '').toString()).filter(v => v && v !== '') ))
@@ -65,6 +68,7 @@
       const ps = (p.status || 'pending').toString().toLowerCase();
       if (ps !== statusFilter.toString().toLowerCase()) return false;
     }
+    if (!passesTeamFilter(p.frc_team, show971, show9584)) return false;
     return true;
   });
   
@@ -523,11 +527,24 @@
     showEditModal = true;
   }
 
+  // Did the current user create this purchase request?
+  function isOwnPurchase(part) {
+    if (!part || !user) return false;
+    if (user.id && part.purchaser && user.id === part.purchaser) return true;
+    const me = (user.full_name || user.email || '').toString().toLowerCase().trim();
+    const requester = (part.requester || '').toString().toLowerCase().trim();
+    return !!me && me === requester;
+  }
+  // Anyone who can delete this entry: admins/purchasing leads, or its creator.
+  function canDeletePurchase(part) {
+    return canManagePurchasing(user) || isOwnPurchase(part);
+  }
+
   // Row interaction: open edit modal on row click (when permitted)
-  // Admins and Purchasing Leads can open ANY entry (any status) to see full
-  // details and delete; everyone else keeps the old rule (own pending items).
+  // Admins and Purchasing Leads can open ANY entry (any status); creators can
+  // open their own entry to view/delete; everyone else keeps the old rule.
   function canEdit(part) {
-    if (canManagePurchasing(user)) return true;
+    if (canManagePurchasing(user) || isOwnPurchase(part)) return true;
     return (part.status || 'pending') === 'pending' && hasPermission(user, 'PLACE_ORDERS_MISC');
   }
   function onRowClick(e, part) {
@@ -960,6 +977,9 @@
           </select>
         </div>
       </div>
+      <div class="team-filter-row">
+        <TeamFilter bind:show971 bind:show9584 />
+      </div>
     </div>
 
     {#if (orderMode ? displayedOrderItems : filteredParts).length > 0}
@@ -1279,7 +1299,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn" on:click={() => { showEditModal = false; editPart = null; }}>Cancel</button>
-          {#if canManagePurchasing(user)}
+          {#if canDeletePurchase(editPart)}
             <button class="btn btn-danger" on:click={deleteEditPart}>Delete</button>
           {/if}
           <button class="btn btn-primary" on:click={saveEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
@@ -1893,6 +1913,12 @@
   @media (max-width: 1200px) { 
     .parts-container { margin: 1rem; padding: 0; } 
     .page-header { padding: 1.5rem; } 
-    .header-content { flex-direction: column; align-items: flex-start; } 
+    .header-content { flex-direction: column; align-items: flex-start; }
+  }
+
+  .team-filter-row {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
   }
 </style>

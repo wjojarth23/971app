@@ -4,14 +4,16 @@
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { isTeam9584 } from '$lib/frcTeams.js';
+  import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
+  import TeamFilter from '$lib/components/TeamFilter.svelte';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
-  import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users } from 'lucide-svelte';
+  import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users, Box } from 'lucide-svelte';
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
   import { isManufacturingLead, canCamReview as camReviewAllowed, canDeleteParts } from '$lib/permissions.js';
+  import CadViewer from '$lib/components/CadViewer.svelte';
   import stockData from '$lib/stock.json';
   import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
   import PartDueDate from '$lib/components/PartDueDate.svelte';
@@ -29,6 +31,8 @@
   let filterWorkflow = '';
   let filterStatus = '';
   let filterProject = '';
+  let show971 = true;
+  let show9584 = true;
   let toastMessage = '';
   let showToast = false;
   let subsystemOptions = [];
@@ -55,6 +59,18 @@
   $: canUseAssignMode = isManufacturingLead(user);
   $: canCamReview = camReviewAllowed(user);
   $: canDelete = canDeleteParts(user);
+
+  // A user may delete a part they created (matched by requester name), in
+  // addition to admins / manufacturing leads (canDelete).
+  function isOwnPart(part) {
+    if (!part || !user) return false;
+    const requester = (part.requester || '').trim().toLowerCase();
+    const name = (user.full_name || '').trim().toLowerCase();
+    return !!requester && requester === name;
+  }
+  function canDeletePart(part) {
+    return canDelete || isOwnPart(part);
+  }
   $: if (!canUseAssignMode && assignMode) {
     assignMode = false;
   }
@@ -827,6 +843,35 @@
     } catch {}
   }
 
+  // CAD viewer modal state
+  let showCadModal = false;
+  let cadViewerPart = null;
+
+  // The storage path of an uploaded STEP file for a router part, if any.
+  function getStepFileName(part) {
+    const meta = getFileMeta(part);
+    if (meta.step_file) return meta.step_file;
+    if (part.file_name && /\.(step|stp)$/i.test(part.file_name)) return part.file_name;
+    return null;
+  }
+
+  // Show "View CAD" only when the part has an uploaded STEP file we can render
+  // client-side. (Onshape parts without an uploaded STEP, and STL/other uploads,
+  // do not qualify.)
+  function canViewCad(part) {
+    return !!getStepFileName(part);
+  }
+
+  function openCadViewer(part) {
+    cadViewerPart = part;
+    showCadModal = true;
+  }
+
+  function closeCadViewer() {
+    showCadModal = false;
+    cadViewerPart = null;
+  }
+
   async function downloadStepFromOnshape(part) {
     await ensureInProgress(part);
     const params = new URLSearchParams({
@@ -1423,8 +1468,9 @@
       (filterStatus === 'cam_review' && meta.step === 'cam_review');
     const matchesProject = !filterProject || part.project_id === filterProject;
     const notCompleted = !isPartFullyCompleted(part);
-    
-    return matchesSearch && matchesWorkflow && matchesStatus && matchesProject && notCompleted;
+    const matchesTeam = passesTeamFilter(part.frc_team, show971, show9584);
+
+    return matchesSearch && matchesWorkflow && matchesStatus && matchesProject && notCompleted && matchesTeam;
   });
 
   $: filteredPartKeys = filteredParts.map(getPartKey);
@@ -1595,6 +1641,9 @@
       </select>
     </div>
   </div>
+  <div class="team-filter-row">
+    <TeamFilter bind:show971 bind:show9584 />
+  </div>
 </div>
 
 {#if loading}
@@ -1721,15 +1770,30 @@
                 <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
                   <Download size={14} /> STEP
                 </button>
+                {#if canViewCad(part)}
+                  <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openCadViewer(part)} title="View 3D model">
+                    <Box size={14} /> View
+                  </button>
+                {/if}
               {:else}
               <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFile(part, part.status)}>
                 <Download size={14} /> File
               </button>
+              {#if canViewCad(part)}
+                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openCadViewer(part)} title="View 3D model">
+                  <Box size={14} /> View
+                </button>
+              {/if}
             {/if}
           {:else if part.file_name}
             <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
               <Download size={14} /> File
             </button>
+            {#if canViewCad(part)}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openCadViewer(part)} title="View 3D model">
+                <Box size={14} /> View
+              </button>
+            {/if}
           {/if}
           
           <!-- Status action buttons -->
@@ -1892,6 +1956,18 @@
                       <Download size={14} />
                       STEP
                     </button>
+                    {#if canViewCad(part)}
+                      <button
+                        type="button"
+                        class="view-cad-link"
+                        aria-label="View 3D model"
+                        title="View 3D model"
+                        on:click|stopPropagation={() => openCadViewer(part)}
+                      >
+                        <Box size={13} />
+                        View CAD
+                      </button>
+                    {/if}
                   {:else}
                     <button
                       type="button"
@@ -1903,6 +1979,18 @@
                       <Download size={14} />
                       {part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')}
                     </button>
+                    {#if canViewCad(part)}
+                      <button
+                        type="button"
+                        class="view-cad-link"
+                        aria-label="View 3D model"
+                        title="View 3D model"
+                        on:click|stopPropagation={() => openCadViewer(part)}
+                      >
+                        <Box size={13} />
+                        View CAD
+                      </button>
+                    {/if}
                   {/if}
                 </div>
               {:else if part.workflow === 'router'}
@@ -1926,6 +2014,18 @@
                         <Download size={16} />
                       </button>
                     {/if}
+                    {#if canViewCad(part)}
+                      <button
+                        type="button"
+                        class="view-cad-link"
+                        aria-label="View 3D model"
+                        title="View 3D model"
+                        on:click|stopPropagation={() => openCadViewer(part)}
+                      >
+                        <Box size={13} />
+                        View CAD
+                      </button>
+                    {/if}
                   </div>
                 {/await}
               {:else if part.file_name}
@@ -1934,6 +2034,18 @@
                   <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
                     <Download size={16} />
                   </button>
+                  {#if canViewCad(part)}
+                    <button
+                      type="button"
+                      class="view-cad-link"
+                      aria-label="View 3D model"
+                      title="View 3D model"
+                      on:click|stopPropagation={() => openCadViewer(part)}
+                    >
+                      <Box size={13} />
+                      View CAD
+                    </button>
+                  {/if}
                 </div>
               {:else}
                 <span class="text-muted">-</span>
@@ -2183,7 +2295,7 @@
         </div>
       </div>
       <div class="modal-footer">
-        {#if canDelete}
+        {#if canDeletePart(editPart)}
           <button class="btn btn-danger" on:click={deleteCurrentPart}>
             <Trash2 size={16} />
             Delete
@@ -2303,7 +2415,7 @@
         {/if}
       </div>
       <div class="modal-footer">
-        {#if canDelete}
+        {#if canDeletePart(previewPart)}
           <button class="btn btn-danger" on:click={deletePreviewPart}>
             <Trash2 size={16} />
             Delete
@@ -2312,6 +2424,30 @@
         <div class="spacer"></div>
         <button class="btn" on:click={closePreviewModal}>Cancel</button>
         <button class="btn btn-primary" on:click={savePreviewEdits}>Save</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- CAD 3D Viewer Modal -->
+{#if showCadModal && cadViewerPart}
+  <div
+    class="modal-backdrop"
+    on:click|self={closeCadViewer}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeCadViewer(); } }}
+  >
+    <div class="modal cad-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>{cadViewerPart.name || '3D Model'}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeCadViewer}>
+          <X size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <CadViewer part={cadViewerPart} stepFileName={getStepFileName(cadViewerPart)} />
+        <p class="cad-modal-hint">Drag to rotate · scroll to zoom · right-drag to pan</p>
       </div>
     </div>
   </div>
@@ -2913,5 +3049,41 @@
       min-height: 200px;
       height: 200px;
     }
+  }
+
+  .team-filter-row {
+    margin-top: var(--space-3, 0.75rem);
+    padding-top: var(--space-3, 0.75rem);
+    border-top: 1px solid var(--border);
+  }
+
+  .view-cad-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--accent-strong, #1d4ed8);
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .view-cad-link:hover { opacity: 0.8; }
+
+  .cad-modal {
+    width: min(900px, 95vw);
+    max-width: 95vw;
+  }
+
+  .cad-modal-hint {
+    margin: var(--space-2) 0 0 0;
+    text-align: center;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
   }
 </style>

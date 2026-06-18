@@ -1,6 +1,6 @@
 {
   "tabs": {
-    "kitting": false,
+    "kitting": true,
     "build": true,
     "manufacture": true,
     "cad": true,

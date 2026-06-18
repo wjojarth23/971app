@@ -234,26 +234,31 @@
         budget: budgetMap[subsystem.id] || null
       }));
 
-      // Load OnShape data for subsystems with linked documents
-      for (const subsystem of subsystems) {
-        if (subsystem.onshape_document_id && onShapeAPI.accessKey && onShapeAPI.secretKey) {
-          try {
-            const docInfo = await onShapeAPI.getDocumentInfo(subsystem.onshape_document_id);
-            onshapeData[subsystem.id] = { 
-              docInfo: docInfo || null,
-              releases: [] // Placeholder until we find the correct releases endpoint
-            };
-          } catch (error) {
-            console.error(`Error loading OnShape data for ${subsystem.name}:`, error);
-            onshapeData[subsystem.id] = { docInfo: null, releases: [] };
-          }
-        } else if (subsystem.onshape_document_id) {
-          onshapeData[subsystem.id] = { docInfo: null, releases: [] };
-        }
-      }
+      // Load OnShape doc info in the background — don't block the page render on
+      // it. These are per-subsystem Onshape API round-trips; running them
+      // sequentially made the CAD tab slow to appear. Fire-and-forget + parallel.
+      loadOnshapeDocInfo(subsystems);
     } catch (error) {
       console.error('Error loading subsystems:', error);
     }
+  }
+
+  // Fetch Onshape document info for all linked subsystems in parallel and fill it
+  // in as it arrives (reassigning onshapeData per result so Svelte re-renders).
+  async function loadOnshapeDocInfo(subs) {
+    const targets = (subs || []).filter((s) => s.onshape_document_id);
+    await Promise.all(targets.map(async (subsystem) => {
+      let entry = { docInfo: null, releases: [] };
+      if (onShapeAPI.accessKey && onShapeAPI.secretKey) {
+        try {
+          const docInfo = await onShapeAPI.getDocumentInfo(subsystem.onshape_document_id);
+          entry = { docInfo: docInfo || null, releases: [] };
+        } catch (error) {
+          console.error(`Error loading OnShape data for ${subsystem.name}:`, error);
+        }
+      }
+      onshapeData = { ...onshapeData, [subsystem.id]: entry };
+    }));
   }
 
   async function createSubsystem() {

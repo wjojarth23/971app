@@ -115,6 +115,30 @@ export async function POST({ request }) {
       return json({ success: true });
     }
 
+    if (action === 'remove') {
+      if (!isActorAdmin && !actorPerms.includes('BAN_USERS')) {
+        return json({ error: 'Not authorized to remove users' }, { status: 403 });
+      }
+      if (String(actor_id) === String(target_id)) {
+        return json({ error: 'You cannot remove your own account' }, { status: 400 });
+      }
+      // Don't allow removing another admin unless the actor is an admin.
+      const { data: target } = await supa
+        .from('user_profiles')
+        .select('role')
+        .eq('id', target_id)
+        .single();
+      if (target?.role === 'admin' && !isActorAdmin) {
+        return json({ error: 'Only an admin can remove another admin' }, { status: 403 });
+      }
+      const { error } = await supa
+        .from('user_profiles')
+        .delete()
+        .eq('id', target_id);
+      if (error) return json({ error: error.message }, { status: 500 });
+      return json({ success: true });
+    }
+
     if (action === 'approve') {
       if (!isActorAdmin && !actorPerms.includes('APPROVE_USERS')) {
         return json({ error: 'Not authorized to approve users' }, { status: 403 });

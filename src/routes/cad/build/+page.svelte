@@ -163,8 +163,10 @@
       if (error) throw error;
       builds = data || [];
       
-      // Get parts data for each build using build_bom table (same approach as detailed build page)
-      for (const build of builds) {
+      // Enrich each build with its BOM/parts/purchasing/kitting. Run all builds
+      // in parallel — this was previously a sequential loop (N builds × up to 4
+      // queries each), which was the main cause of slow Build-tab load times.
+      await Promise.all(builds.map(async (build) => {
         try {
           // Load BOM snapshot for this build
           const { data: bomData, error: bomErr } = await supabase
@@ -284,8 +286,8 @@
           build.kitting = [];
           build.totalPurchasingCost = 0;
         }
-      }
-      
+      }));
+
       // Calculate stats and update build statuses
       buildStats = {
         total: builds.length,

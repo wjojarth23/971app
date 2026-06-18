@@ -36,3 +36,9 @@ export function getFrcTeamMeta(team) {
 export function isTeam9584(team) {
   return Boolean(team) && team === TEAM_9584;
 }
+
+// Team-filter buckets: 9584 is explicit; everything else (971 / mentor / unset)
+// counts as 971. Returns true when the row passes the current checkbox state.
+export function passesTeamFilter(team, show971, show9584) {
+  return isTeam9584(team) ? show9584 : show971;
+}

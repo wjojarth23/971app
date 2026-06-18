@@ -484,6 +484,82 @@
   let adminAccessChecked = false;
   // Check if user has admin access (only leads can access this page)
   $: canAccessAdmin = !!($currentUser && hasPermission($currentUser, 'VIEW_ADMIN_PANEL'));
+  // Per-action permission flags (admins can do everything).
+  $: isAdminUser = $currentUser?.role === 'admin';
+  $: canApproveUsers = !!($currentUser && (isAdminUser || hasPermission($currentUser, 'APPROVE_USERS')));
+  $: canBanUsers = !!($currentUser && (isAdminUser || hasPermission($currentUser, 'BAN_USERS')));
+  $: canPromoteUsers = !!($currentUser && (isAdminUser || hasPermission($currentUser, 'PROMOTE_USERS')));
+  $: canRemoveUsers = canBanUsers;
+  // Show an Actions column when the current user can do at least one action.
+  $: showUserActions = canApproveUsers || canBanUsers || canPromoteUsers || canRemoveUsers;
+
+  // In-app confirmation modal (replaces window.confirm for destructive actions).
+  let pendingConfirm = null; // { title, message, confirmLabel, danger, run }
+  function askConfirm(cfg) { pendingConfirm = cfg; }
+  function cancelConfirm() { pendingConfirm = null; }
+  async function runConfirm() {
+    const cfg = pendingConfirm;
+    pendingConfirm = null;
+    if (cfg?.run) await cfg.run();
+  }
+
+  const userLabel = (user) => user.full_name || user.email || 'this user';
+
+  // --- Action executors -------------------------------------------------------
+  async function doUserAction(user, action, { successMsg, removeFromList = false } = {}) {
+    setSaving(user.id, true);
+    try {
+      await performUserAction(user.id, action);
+      if (removeFromList) {
+        users = users.filter((u) => u.id !== user.id);
+      } else {
+        await loadUsers();
+      }
+      toastActions.show(successMsg || 'Done');
+    } catch (err) {
+      console.error(`Failed to ${action} user`, err);
+      toastActions.show(err.message || `Failed to ${action} user`);
+    } finally {
+      setSaving(user.id, false);
+    }
+  }
+
+  function approveUser(user) {
+    doUserAction(user, 'approve', { successMsg: `${userLabel(user)} approved` });
+  }
+
+  function promoteUser(user) {
+    askConfirm({
+      title: 'Make admin',
+      message: `Grant ${userLabel(user)} full admin access? They will be able to manage all users, permissions, and settings.`,
+      confirmLabel: 'Make admin',
+      danger: false,
+      run: () => doUserAction(user, 'promote', { successMsg: `${userLabel(user)} is now an admin` })
+    });
+  }
+
+  function banUser(user) {
+    if (get(currentUser)?.id === user.id) { toastActions.show('You cannot ban your own account'); return; }
+    askConfirm({
+      title: 'Ban user',
+      message: `Ban ${userLabel(user)}? They will lose access until unbanned.`,
+      confirmLabel: 'Ban user',
+      danger: true,
+      run: () => doUserAction(user, 'ban', { successMsg: `${userLabel(user)} banned` })
+    });
+  }
+
+  // Permanently delete a user's account profile — always behind confirmation.
+  function removeUser(user) {
+    if (get(currentUser)?.id === user.id) { toastActions.show('You cannot remove your own account'); return; }
+    askConfirm({
+      title: 'Remove user',
+      message: `Permanently delete ${userLabel(user)}? This deletes their account and cannot be undone.`,
+      confirmLabel: 'Remove',
+      danger: true,
+      run: () => doUserAction(user, 'remove', { successMsg: `${userLabel(user)} removed`, removeFromList: true })
+    });
+  }
 
   onMount(async () => {
     adminAccessChecked = false;
@@ -1463,6 +1539,22 @@
                   </select>
                 </div>
               </div>
+              {#if showUserActions}
+                <div class="user-card-actions">
+                  {#if canApproveUsers && !isUserApproved(user)}
+                    <button class="btn btn-sm btn-primary" disabled={savingRoleIds.has(user.id)} on:click={() => approveUser(user)}>Approve</button>
+                  {/if}
+                  {#if canPromoteUsers && user.role !== 'admin'}
+                    <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => promoteUser(user)}>Make Admin</button>
+                  {/if}
+                  {#if canBanUsers && !user.banned && user.id !== $currentUser?.id}
+                    <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => banUser(user)}>Ban</button>
+                  {/if}
+                  {#if canRemoveUsers && user.id !== $currentUser?.id}
+                    <button class="btn btn-sm btn-danger" disabled={savingRoleIds.has(user.id)} on:click={() => removeUser(user)}>Remove</button>
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/each}
         </div>
@@ -1478,6 +1570,7 @@
                 <th>General Role</th>
                 <th>Purchasing Role</th>
                 <th>Team Role</th>
+                {#if showUserActions}<th>Actions</th>{/if}
               </tr>
             </thead>
             <tbody>
@@ -1556,6 +1649,24 @@
                       {/each}
                     </select>
                   </td>
+                  {#if showUserActions}
+                    <td>
+                      <div class="user-action-buttons">
+                        {#if canApproveUsers && !isUserApproved(user)}
+                          <button class="btn btn-sm btn-primary" disabled={savingRoleIds.has(user.id)} on:click={() => approveUser(user)}>Approve</button>
+                        {/if}
+                        {#if canPromoteUsers && user.role !== 'admin'}
+                          <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => promoteUser(user)}>Make Admin</button>
+                        {/if}
+                        {#if canBanUsers && !user.banned && user.id !== $currentUser?.id}
+                          <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => banUser(user)}>Ban</button>
+                        {/if}
+                        {#if canRemoveUsers && user.id !== $currentUser?.id}
+                          <button class="btn btn-sm btn-danger" disabled={savingRoleIds.has(user.id)} on:click={() => removeUser(user)}>Remove</button>
+                        {/if}
+                      </div>
+                    </td>
+                  {/if}
                 </tr>
               {/each}
             </tbody>
@@ -2431,6 +2542,28 @@
 {/if}
 {/if}
 
+<!-- Confirmation modal for destructive / privileged user actions -->
+{#if pendingConfirm}
+  <div
+    class="modal-backdrop"
+    on:click|self={cancelConfirm}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancelConfirm(); } }}
+  >
+    <div class="modal confirm-modal" role="dialog" aria-modal="true">
+      <h3>{pendingConfirm.title}</h3>
+      <p class="confirm-message">{pendingConfirm.message}</p>
+      <div class="confirm-actions">
+        <button class="btn" on:click={cancelConfirm}>Cancel</button>
+        <button class="btn {pendingConfirm.danger ? 'btn-danger' : 'btn-primary'}" on:click={runConfirm}>
+          {pendingConfirm.confirmLabel || 'Confirm'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .access-denied {
     text-align: center;
@@ -2649,5 +2782,30 @@
     .user-card {
       padding: var(--space-3);
     }
+  }
+
+  .user-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-1, 0.25rem);
+  }
+
+  .confirm-modal {
+    width: min(420px, 92vw);
+    padding: var(--space-6, 1.5rem);
+  }
+
+  .confirm-modal h3 { margin: 0 0 var(--space-3, 0.75rem); }
+
+  .confirm-message {
+    margin: 0 0 var(--space-4, 1rem);
+    color: var(--text, #1f2933);
+    line-height: 1.5;
+  }
+
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--gap-2, 0.5rem);
   }
 </style>
