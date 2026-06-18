@@ -14,6 +14,7 @@
   import { isManufacturingLead } from '$lib/permissions.js';
   import stockData from '$lib/stock.json';
   import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
+  import PartDueDate from '$lib/components/PartDueDate.svelte';
 
   const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
   const QUICK_PRINT_STOCK_OPTIONS = stockData['3d-print'] || [];
@@ -1652,6 +1653,12 @@
             <span class="detail-label">Created</span>
             <span class="detail-value">{formatDate(part.created_at)}</span>
           </div>
+          <div class="part-card-detail">
+            <span class="detail-label">Due</span>
+            <span class="detail-value" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+              <PartDueDate {part} on:update={() => loadParts()} />
+            </span>
+          </div>
         </div>
         {#if part.workflow === 'router' && getRouterProgressSummary(part)}
           <div class="part-card-progress">{getRouterProgressSummary(part)}</div>
@@ -1743,6 +1750,7 @@
           <th class:hidden={assignMode}>Stock</th>
           <th class="source-col" class:hidden={assignMode}>Source</th>
           <th>Status</th>
+          <th class:hidden={assignMode}>Due</th>
           <th class:hidden={assignMode}>Created</th>
           <th class:hidden={assignMode}>Actions</th>
         </tr>
@@ -1879,6 +1887,9 @@
               {#if part.workflow === 'router' && getRouterProgressSummary(part)}
                 <div class="router-progress-note">{getRouterProgressSummary(part)}</div>
               {/if}
+            </td>
+            <td class:hidden={assignMode} on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+              <PartDueDate {part} on:update={() => loadParts()} />
             </td>
             <td class:hidden={assignMode}>{formatDate(part.created_at)}</td>
             <td class:hidden={assignMode}>

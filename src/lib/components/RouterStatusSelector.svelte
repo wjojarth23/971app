@@ -44,8 +44,8 @@
         await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
         await updateRouterStep(part, 'cam_ing');
 
-      } else if (newStatusLabel === BUTTONS.CAM_REVIEW_READY) {
-        // CAM Review Ready -> Status: in-progress, Step: cam_review (CAM work done, awaiting review)
+      } else if (newStatusLabel === BUTTONS.CAM_REVIEW_PENDING) {
+        // CAM Review Pending -> Status: in-progress, Step: cam_review (CAM work done, awaiting review)
         await supabase.from('parts').update({ status: 'in-progress', updated_at: new Date().toISOString() }).eq('id', part.id);
         await updateRouterStep(part, 'cam_review');
 
@@ -59,10 +59,15 @@
          m.router_meta.step = 'cammed'; // Explicit step to avoid falling back to other states
          await supabase.from('parts').update({ file_url: JSON.stringify(m), updated_at: new Date().toISOString() }).eq('id', part.id);
 
-      } else if (newStatusLabel === BUTTONS.TRAVIS) {
-        // TravisProgged
-        await supabase.from('parts').update({ status: 'cammed', updated_at: new Date().toISOString() }).eq('id', part.id);
-        await updateRouterStep(part, 'queued', { travis_progged: true });
+      } else if (newStatusLabel === BUTTONS.POSTPROCESSED) {
+        // Postprocessed -> CAM output has been post-processed into machine G-code
+        await supabase.from('parts').update({ status: 'postprocessed', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterStep(part, 'cammed');
+
+      } else if (newStatusLabel === BUTTONS.JPROGGED) {
+        // Jprogged -> program loaded/queued on the machine (replaces legacy TravisProgged)
+        await supabase.from('parts').update({ status: 'jprogged', updated_at: new Date().toISOString() }).eq('id', part.id);
+        await updateRouterStep(part, 'queued', { jprogged: true, travis_progged: true });
 
       } else if (newStatusLabel === BUTTONS.MACHINED) {
         // Machined -> Step: cut
@@ -201,6 +206,18 @@
     background-color: var(--green-soft, #d1fae5);
     color: var(--green-strong, #166534);
     border-color: var(--green-base, #4ea953);
+  }
+
+  select.status-select.status-postprocessed {
+    background-color: #e0f2fe;
+    color: #075985;
+    border-color: #38bdf8;
+  }
+
+  select.status-select.status-jprogged {
+    background-color: #fae8ff;
+    color: #86198f;
+    border-color: #d946ef;
   }
 
   select.status-select.status-complete {

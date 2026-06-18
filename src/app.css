@@ -747,6 +747,20 @@ textarea:focus,
   border-color: rgba(11,102,35,0.12);
 }
 
+/* Postprocessed badge: sky blue */
+.status-postprocessed {
+  background: #e0f2fe;
+  color: #075985;
+  border: 1px solid #38bdf8;
+}
+
+/* Jprogged badge: fuchsia */
+.status-jprogged {
+  background: #fae8ff;
+  color: #86198f;
+  border: 1px solid #d946ef;
+}
+
 /* Additional status helpers for consistency across pages */
 .status-ordered {
   background: var(--info);
