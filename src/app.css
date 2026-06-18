@@ -729,53 +729,75 @@ textarea:focus,
   box-sizing: border-box;
 }
 
+/* Each status has its own distinct color (soft background + strong text). */
 .status-pending {
-  background: var(--warning);
-  color: var(--primary);
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
 }
 
-/* Autocammed badge: amber/orange to indicate needs review */
+/* Autocammed: amber */
 .status-autocammed {
-  background: var(--brand-gold-base, #f1c331);
-  color: var(--brand-gold-strong, #8f5f00);
-  border: 1px solid var(--brand-gold-base, #f1c331);
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f1c331;
 }
 
+/* In Progress: blue */
 .status-in-progress, /* alias */
 .status-progress {
-  background: var(--blue-base);
-  color: var(--primary);
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #60a5fa;
 }
 
+/* CAM Review Pending: orange */
+.status-cam-review {
+  background: #ffedd5;
+  color: #9a3412;
+  border: 1px solid #fb923c;
+}
+
+/* CAM Reviewed: purple */
 .status-cammed {
-  background: var(--purple-strong);
-  color: var(--primary);
+  background: #f3e8ff;
+  color: #6b21a8;
+  border: 1px solid #c084fc;
 }
 
-.status-complete {
-  background: var(--success);
-  color: var(--primary);
-}
-
-/* Travis-progged (queued) badge: green */
-.status-travis {
-  background: var(--green-soft);
-  color: var(--green-strong);
-  border-color: rgba(11,102,35,0.12);
-}
-
-/* Postprocessed badge: sky blue */
+/* Postprocessed: cyan */
 .status-postprocessed {
-  background: #e0f2fe;
-  color: #075985;
-  border: 1px solid #38bdf8;
+  background: #cffafe;
+  color: #155e75;
+  border: 1px solid #22d3ee;
 }
 
-/* Jprogged badge: fuchsia */
+/* Jprogged: fuchsia */
 .status-jprogged {
   background: #fae8ff;
   color: #86198f;
   border: 1px solid #d946ef;
+}
+
+/* Machined: indigo */
+.status-machined {
+  background: #e0e7ff;
+  color: #3730a3;
+  border: 1px solid #818cf8;
+}
+
+/* Kitted / Complete: green */
+.status-complete {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #4ade80;
+}
+
+/* Travis-progged (queued) badge alias: green */
+.status-travis {
+  background: var(--green-soft);
+  color: var(--green-strong);
+  border-color: rgba(11,102,35,0.12);
 }
 
 /* Additional status helpers for consistency across pages */

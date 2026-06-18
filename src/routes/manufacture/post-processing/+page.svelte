@@ -188,6 +188,36 @@
     updatePartInGroups(part.id, update);
   }
 
+  // Send a part back to be re-cut: reset to Pending (clears router stage
+  // progress) so it leaves Post Processing and returns to the Router / ToDo tabs.
+  async function recutPart(part) {
+    if (savingPartIds.has(part.id)) return;
+    if (!confirm(`Send "${part.name}" back to be re-cut? It will return to Pending and leave Post Processing.`)) return;
+
+    const root = parseMeta(part);
+    const routerMeta = { ...(root.router_meta || {}) };
+    delete routerMeta.stage_counts;
+    delete routerMeta.step;
+    delete routerMeta.travis_progged;
+    const update = {
+      status: 'pending',
+      file_url: JSON.stringify({ ...root, router_meta: routerMeta }),
+      updated_at: new Date().toISOString()
+    };
+
+    setPartSaving(part.id, true);
+    const { error } = await supabase.from('parts').update(update).eq('id', part.id);
+    setPartSaving(part.id, false);
+
+    if (error) {
+      console.error('Failed to recut part', error);
+      alert('Failed to recut part.');
+      return;
+    }
+    updatePartInGroups(part.id, update);
+    await loadGroups();
+  }
+
   onMount(loadGroups);
 </script>
 
@@ -282,6 +312,7 @@
                 {#if getPartStageCount(p, 'inspecting') > 0}
                   <button type="button" class="btn btn-primary btn-sm pp-advance-btn" on:click={() => movePartStage(p, 'inspecting', 'kitted')} disabled={savingPartIds.has(p.id)}>Kit 1</button>
                 {/if}
+                <button type="button" class="btn btn-secondary btn-sm pp-recut-btn" on:click={() => recutPart(p)} disabled={savingPartIds.has(p.id)} title="Send back to be re-cut">Recut</button>
               </div>
             </div>
           {/each}

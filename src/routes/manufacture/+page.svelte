@@ -11,7 +11,7 @@
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users, Box } from 'lucide-svelte';
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
-  import { summarizeRouterStages, isFullyKitted } from '$lib/router_progress.js';
+  import { summarizeRouterStages, isFullyKitted, buildRouterProgressUpdate } from '$lib/router_progress.js';
   import { isManufacturingLead, canCamReview as camReviewAllowed, canDeleteParts } from '$lib/permissions.js';
   import CadViewer from '$lib/components/CadViewer.svelte';
   import stockData from '$lib/stock.json';
@@ -811,6 +811,25 @@
       console.warn('updateRouterMeta exception:', e?.message || e);
     }
   }
+
+  // Mark a router part as Machined: set the full quantity to the 'cut' stage so
+  // the part is genuinely "fully cut" and flows into the Post Processing tab
+  // (which is group/stage based), rather than just flipping a status label.
+  async function markPartMachined(part) {
+    const qty = part.quantity || 1;
+    const update = buildRouterProgressUpdate(part, { cut: qty });
+    try {
+      const { error } = await supabase.from('parts').update(update).eq('id', part.id);
+      if (error) throw error;
+    } catch (e) {
+      console.error('Failed to mark part machined:', e);
+      alert('Failed to mark part machined. Please try again.');
+      return;
+    }
+    // Optimistic local update (status + router_meta both live in the update).
+    parts = parts.map((p) => (p.id === part.id ? { ...p, status: update.status, file_url: update.file_url } : p));
+  }
+
   // Additional file meta helpers for router STEP/DXF handling
   function getFileMeta(part) {
     try {
@@ -991,23 +1010,16 @@
   }
 
   function getStatusDisplay(part) {
-    // Router: reflect sub-steps using router_meta; prefer sub-step label if present
-    if (part.workflow === 'router') {
-      const meta = getRouterMeta(part);
-      return getDisplayStatus(part.status, meta);
-    }
-
-  // Lathe/Mill: no inspection stage; show raw status
-
+    // Completed parts show their bin / delivery state instead of a status label.
     if (part.status === 'complete') {
-      if (part.kitting_bin) {
-        return part.kitting_bin;
-      } else if (part.delivered) {
-        return 'Delivered';
-      }
+      if (part.kitting_bin) return part.kitting_bin;
+      if (part.delivered) return 'Delivered';
       return 'Complete';
     }
-    return part.status;
+    // All workflows share the unified status set — map the raw status (and any
+    // router_meta sub-step like cam_review) to its display label.
+    const meta = getRouterMeta(part);
+    return getDisplayStatus(part.status, meta);
   }
 
   function getStatusBadgeClass(status) {
@@ -1837,7 +1849,7 @@
             {#if part.workflow === 'router'}
               <button
                 class="btn btn-primary btn-sm"
-                on:click|stopPropagation={async () => { await updatePartStatus(part.id, 'machined'); await updateRouterMeta(part, { step: 'machined' }); setLocalStatus(part.id, 'machined'); setLocalRouterMeta(part.id, { step: 'machined' }); }}
+                on:click|stopPropagation={() => markPartMachined(part)}
               >
                 <Wrench size={14} /> Machine
               </button>
@@ -2117,7 +2129,7 @@
                   <div class="actions-col">
                     <button
                       class="btn btn-secondary btn-sm"
-                      on:click={async () => { await updatePartStatus(part.id, 'machined'); await updateRouterMeta(part, { step: 'machined' }); setLocalStatus(part.id, 'machined'); setLocalRouterMeta(part.id, { step: 'machined' }); }}
+                      on:click={() => markPartMachined(part)}
                       title="Machine"
                     >
                       <Wrench size={14} />
@@ -2602,11 +2614,16 @@
     color: var(--secondary);
   }
 
-  .status-badge.status-table.status-pending { --badge-bg: var(--brand-gold-soft); background: var(--brand-gold-soft); color: var(--orange-strong); border-color: var(--brand-gold-base); }
-  .status-badge.status-table.status-progress { --badge-bg: var(--blue-soft); background: var(--blue-soft); color: var(--blue-base); border-color: var(--blue-base); }
-  .status-badge.status-table.status-cammed { --badge-bg: var(--purple-soft); background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-base); }
-  .status-badge.status-table.status-complete { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--success); border-color: var(--green-base); }
-  .status-badge.status-table.status-travis { --badge-bg: var(--green-soft); background: var(--green-soft); color: var(--green-strong); border-color: var(--green-base); }
+  .status-badge.status-table.status-pending { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+  .status-badge.status-table.status-autocammed { background: #fef3c7; color: #92400e; border-color: #f1c331; }
+  .status-badge.status-table.status-progress { background: #dbeafe; color: #1e40af; border-color: #60a5fa; }
+  .status-badge.status-table.status-cam-review { background: #ffedd5; color: #9a3412; border-color: #fb923c; }
+  .status-badge.status-table.status-cammed { background: #f3e8ff; color: #6b21a8; border-color: #c084fc; }
+  .status-badge.status-table.status-postprocessed { background: #cffafe; color: #155e75; border-color: #22d3ee; }
+  .status-badge.status-table.status-jprogged { background: #fae8ff; color: #86198f; border-color: #d946ef; }
+  .status-badge.status-table.status-machined { background: #e0e7ff; color: #3730a3; border-color: #818cf8; }
+  .status-badge.status-table.status-complete { background: #dcfce7; color: #166534; border-color: #4ade80; }
+  .status-badge.status-table.status-travis { background: var(--green-soft); color: var(--green-strong); border-color: var(--green-base); }
 
   .parts-row {
     cursor: pointer;

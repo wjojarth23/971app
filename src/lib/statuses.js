@@ -92,13 +92,16 @@ export function getDisplayStatus(status, meta) {
 export function getBadgeClass(status, meta) {
   const step = meta?.step ?? meta?.router_meta?.step;
 
-  if (step === 'cam_review') return 'status-cammed';
+  // Each status gets its own distinct color class.
+  if (step === 'cam_review') return 'status-cam-review';
+  if (status === 'pending') return 'status-pending';
   if (status === 'autocammed') return 'status-autocammed';
-  if (status === 'cam_review' || status === 'cammed') return 'status-cammed';
   if (status === 'in-progress') return 'status-progress';
+  if (status === 'cam_review') return 'status-cam-review';
+  if (status === 'cammed') return 'status-cammed';
   if (status === 'postprocessed') return 'status-postprocessed';
   if (status === 'jprogged') return 'status-jprogged';
-  if (status === 'machined' || status === 'inspected') return 'status-progress';
+  if (status === 'machined' || status === 'inspected') return 'status-machined';
   if (status === 'complete' || status === 'kitted') return 'status-complete';
   return 'status-pending';
 }

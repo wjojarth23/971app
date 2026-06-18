@@ -429,6 +429,7 @@
 
   async function handleDropOnGroup(event, group) {
     event.preventDefault();
+    event.stopPropagation(); // don't bubble to the panel's "create new group" drop
     dragOverTarget = null;
     if (!dragPart) return;
     await addPartToGroup(dragPart, group.id);
@@ -438,6 +439,7 @@
 
   async function handleDropOnPart(event, targetPart) {
     event.preventDefault();
+    event.stopPropagation(); // don't bubble to the panel's "create new group" drop
     dragOverTarget = null;
     if (!dragPart || dragPart.id === targetPart.id) return;
     const targetGroupId = findGroupIdForPart(targetPart);
@@ -566,28 +568,28 @@
   }
 
   // ==================== Group Status Change ====================
+  // Map each selectable status to the router stage it should set on every part.
+  const STATUS_TO_STAGE = {
+    [BUTTONS.PENDING]: 'pending',
+    [BUTTONS.IN_PROGRESS]: 'cam_ing',
+    [BUTTONS.CAM_REVIEW_PENDING]: 'cam_review',
+    [BUTTONS.CAM_REVIEWED]: 'cammed',
+    [BUTTONS.POSTPROCESSED]: 'postprocessed',
+    [BUTTONS.JPROGGED]: 'queued',
+    [BUTTONS.MACHINED]: 'cut',
+    [BUTTONS.KITTED]: 'kitted'
+  };
+
   async function handleGroupStatusChange(gid, newStatus) {
     await updateGroupField(gid, 'status', newStatus);
     const group = groupMap[gid];
     if (!group) return;
-    if (newStatus === BUTTONS.JPROGGED) {
-      for (const p of group.parts) {
-        const update = buildRouterProgressUpdate(p, { queued: p.quantity || 1 });
-        await supabase.from('parts').update(update).eq('id', p.id);
-        updatePartInGroups(p.id, update);
-      }
-    } else if (newStatus === BUTTONS.MACHINED) {
-      for (const p of group.parts) {
-        const update = buildRouterProgressUpdate(p, { cut: p.quantity || 1 });
-        await supabase.from('parts').update(update).eq('id', p.id);
-        updatePartInGroups(p.id, update);
-      }
-    } else if (newStatus === BUTTONS.CAM_REVIEWED) {
-      for (const p of group.parts) {
-        const update = buildRouterProgressUpdate(p, { cammed: p.quantity || 1 });
-        await supabase.from('parts').update(update).eq('id', p.id);
-        updatePartInGroups(p.id, update);
-      }
+    const stage = STATUS_TO_STAGE[newStatus];
+    if (!stage) return;
+    for (const p of group.parts) {
+      const update = buildRouterProgressUpdate(p, { [stage]: p.quantity || 1 });
+      await supabase.from('parts').update(update).eq('id', p.id);
+      updatePartInGroups(p.id, update);
     }
   }
 
@@ -721,7 +723,14 @@
       {/if}
 
       <!-- Groups Panel -->
-      <div class="groups-panel">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="groups-panel"
+        class:panel-drag-over={editMode && dragOverTarget === '__new_group__'}
+        on:dragover={(e) => { if (editMode && dragPart) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; dragOverTarget = '__new_group__'; } }}
+        on:dragleave={handleDragLeave}
+        on:drop={(e) => editMode && handleDropOnEmptySpace(e)}
+      >
         <h2 class="section-title">Router Queue</h2>
 
         {#if routerGroups.length === 0}
@@ -894,9 +903,13 @@
                           on:change={(e) => handleGroupStatusChange(g.id, e.target.value)}
                         >
                           <option value={BUTTONS.PENDING}>{BUTTONS.PENDING}</option>
+                          <option value={BUTTONS.IN_PROGRESS}>{BUTTONS.IN_PROGRESS}</option>
+                          <option value={BUTTONS.CAM_REVIEW_PENDING}>{BUTTONS.CAM_REVIEW_PENDING}</option>
                           <option value={BUTTONS.CAM_REVIEWED}>{BUTTONS.CAM_REVIEWED}</option>
+                          <option value={BUTTONS.POSTPROCESSED}>{BUTTONS.POSTPROCESSED}</option>
                           <option value={BUTTONS.JPROGGED}>{BUTTONS.JPROGGED}</option>
                           <option value={BUTTONS.MACHINED}>{BUTTONS.MACHINED}</option>
+                          <option value={BUTTONS.KITTED}>{BUTTONS.KITTED}</option>
                         </select>
                       {/each}
                     </div>
@@ -1151,6 +1164,14 @@
   .groups-panel {
     flex: 1;
     min-width: 0;
+    border-radius: var(--radius-sm, 4px);
+    transition: background 0.12s ease, box-shadow 0.12s ease;
+  }
+
+  /* Highlight the whole queue area as a drop target for creating a new group */
+  .groups-panel.panel-drag-over {
+    background: var(--brand-gold-soft, #fff4cc);
+    box-shadow: inset 0 0 0 2px var(--brand-gold-base, #f1c331);
   }
 
   .groups-list {
