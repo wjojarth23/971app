@@ -72,11 +72,6 @@
     return true;
   });
 
-  // Totals for the currently displayed items.
-  $: shownItems = orderMode ? displayedOrderItems : filteredParts;
-  $: shownTotal = shownItems.reduce((sum, p) => sum + ((p.final_price || p.price || 0) * (p.quantity || 1)), 0);
-  $: shownQty = shownItems.reduce((sum, p) => sum + (p.quantity || 1), 0);
-
   // Debug logging
   $: if (parts.length > 0) {
     console.log(`Filtering: ${parts.length} total parts -> ${filteredParts.length} filtered parts`);
@@ -986,13 +981,6 @@
         <TeamFilter bind:show971 bind:show9584 />
       </div>
     </div>
-
-    {#if shownItems.length > 0}
-      <div class="purchasing-summary">
-        <span class="ps-count">{shownItems.length} item{shownItems.length === 1 ? '' : 's'} · {shownQty} qty</span>
-        <span class="ps-total">Total: <strong>${shownTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
-      </div>
-    {/if}
 
     {#if (orderMode ? displayedOrderItems : filteredParts).length > 0}
       <div class="table-container">
@@ -1927,23 +1915,6 @@
     .page-header { padding: 1.5rem; } 
     .header-content { flex-direction: column; align-items: flex-start; }
   }
-
-  .purchasing-summary {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin: 0.75rem 0;
-    padding: 0.6rem 0.9rem;
-    background: var(--brand-gold-soft);
-    border: 1px solid var(--brand-gold-base);
-    border-radius: var(--radius-sm);
-    font-size: 0.85rem;
-  }
-  .purchasing-summary .ps-count { color: var(--brand-gold-strong); font-weight: 600; }
-  .purchasing-summary .ps-total { color: var(--text); }
-  .purchasing-summary .ps-total strong { font-size: 1.05rem; color: var(--secondary); font-variant-numeric: tabular-nums; }
 
   .team-filter-row {
     margin-top: 0.75rem;
