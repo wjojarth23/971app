@@ -5,6 +5,7 @@
   import { supabase } from '$lib/supabase.js';
   import { toastActions } from '$lib/toast.js';
   import navigation from '$lib/navigation.json';
+  import { theme, setTheme } from '$lib/stores/theme.js';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
   import HeaderPreview from '$lib/components/HeaderPreview.svelte';
   import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
@@ -550,6 +551,16 @@
           {resettingNav ? 'Resetting...' : 'Reset to Defaults'}
         </button>
       </div>
+    </section>
+
+    <section class="card">
+      <h3>Theme</h3>
+      <label class="form-label" for="theme-select">Appearance</label>
+      <select class="form-select" id="theme-select" value={$theme} on:change={(e) => setTheme(e.target.value)}>
+        <option value="light">Light (default)</option>
+        <option value="dark">Dark</option>
+      </select>
+      <p class="muted" style="margin-top:0.5rem;">Applies instantly and is remembered on this device.</p>
     </section>
 
     <section class="card">

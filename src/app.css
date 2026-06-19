@@ -136,6 +136,51 @@
   --toast-shadow: var(--shadow-md);
 }
 
+/* ===== DARK THEME =====
+   Opt-in via <html data-theme="dark"> (set by the theme store). Remaps the
+   semantic surface/text/border tokens; brand gold accent is preserved. */
+[data-theme="dark"] {
+  --color-white: #161b24;   /* "white" surfaces become dark */
+  --color-black: #e6e9ef;   /* "black" text becomes light */
+
+  --neutral-100: #1e2530;
+  --neutral-300: #2a323f;
+  --neutral-500: #9aa4b2;
+  --neutral-800: #e6e9ef;
+
+  --primary: #161b24;
+  --secondary: #e6e9ef;
+  --background: #0e1218;
+  --card: #161b24;
+  --surface-1: #161b24;
+  --surface-2: #1e2530;
+  --surface-3: #283040;
+  --text: #e6e9ef;
+  --text-secondary: #9aa4b2;
+  --text-muted: #98a2b3;
+  --muted: #98a2b3;
+  --muted-bg: #1e2530;
+  --border: #2a323f;
+  --divider: #2a323f;
+  --on-primary: #161b24;
+
+  /* Soft accent/status backgrounds: darker, translucent so chips read on dark */
+  --brand-gold-soft: rgba(241, 195, 49, 0.16);
+  --blue-soft: rgba(96, 165, 250, 0.18);
+  --green-soft: rgba(74, 222, 128, 0.18);
+  --red-soft: rgba(248, 113, 113, 0.18);
+  --purple-soft: rgba(192, 132, 252, 0.20);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  --modal-overlay: rgba(0, 0, 0, 0.7);
+}
+
+/* Smooth the flip between themes */
+body { transition: background-color 0.2s ease, color 0.2s ease; }
+
 * {
   box-sizing: border-box;
 }
