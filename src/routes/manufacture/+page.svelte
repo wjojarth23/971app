@@ -2473,6 +2473,11 @@
 {/if}
 
 <style>
+  /* No hover effects on the manufacture tab (dense buttons + table rows) */
+  .btn:hover { box-shadow: none; }
+  .table tbody tr:hover { background: transparent; }
+  .table tbody tr:nth-child(even):hover { background: rgba(16, 24, 40, 0.018); }
+
   .manufacture-page-container {
     max-width: 1400px;
     margin: 0 auto;

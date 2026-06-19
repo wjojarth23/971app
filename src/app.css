@@ -87,10 +87,10 @@
 
   /* ===== UNIVERSAL BORDER RADIUS ===== */
   --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-lg: 4px;
-  --radius-xl: 4px;
-  --radius-full: 4px;
+  --radius-sm: 6px;   /* inputs, buttons, badges — kept tight */
+  --radius-lg: 10px;  /* cards */
+  --radius-xl: 12px;  /* large section cards */
+  --radius-full: 999px;
 
   /* ===== UNIVERSAL GAP SCALE ===== */
   --gap-1: var(--space-1);  /* 4px */
@@ -99,9 +99,9 @@
   --gap-4: var(--space-4);  /* 16px */
   --gap-6: var(--space-6);  /* 24px */
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 2px 4px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.14);
 
   /* ===== CONTROL + COMPONENT TOKENS ===== */
   --control-height: 32px;  /* Unified height for all buttons, tags, dropdowns, inputs */
@@ -126,7 +126,7 @@
 
   --modal-bg: var(--surface-1);
   --modal-border-color: var(--border);
-  --modal-radius: 4px;
+  --modal-radius: 14px;
   --modal-padding: clamp(var(--space-4), 2vw, var(--space-6));
   --modal-shadow: var(--shadow-lg);
 
@@ -274,7 +274,19 @@ body {
   background-color: var(--background);
   color: var(--text);
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
+
+/* Tighter, more confident headings across the app */
+h1, h2, h3 {
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--secondary);
+}
+h1 { font-weight: 700; }
+h2, h3 { font-weight: 650; }
 
 .container {
   max-width: 1440px;
@@ -342,6 +354,7 @@ body {
   background: var(--btn-hover-bg, var(--btn-bg));
   color: var(--btn-hover-color, var(--btn-color));
   border-color: var(--btn-hover-border, var(--btn-border));
+  box-shadow: var(--shadow-sm);
 }
 
 .btn:focus-visible,
@@ -898,31 +911,34 @@ textarea:focus,
 }
 
 .table th {
-  padding: var(--space-4) var(--space-3);
+  padding: var(--space-3);
   text-align: left;
   font-weight: 600;
-  color: var(--secondary);
-  border-right: 1px solid var(--border);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
   white-space: nowrap;
-}
-
-.table th:last-child {
-  border-right: none;
 }
 
 .table td {
   padding: var(--space-3);
   border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border);
   vertical-align: middle;
 }
 
-.table td:last-child {
-  border-right: none;
+/* Zebra striping + smooth hover for scannability */
+.table tbody tr:nth-child(even) {
+  background: rgba(16, 24, 40, 0.018);
 }
-
+.table tbody tr {
+  transition: background 0.12s ease;
+}
 .table tbody tr:hover {
-  background: var(--neutral-100);
+  background: var(--brand-gold-soft);
+}
+.table tbody tr:last-child td {
+  border-bottom: none;
 }
 .status-fade {
   white-space: nowrap;
