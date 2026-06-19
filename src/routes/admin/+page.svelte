@@ -539,17 +539,6 @@
     });
   }
 
-  function banUser(user) {
-    if (get(currentUser)?.id === user.id) { toastActions.show('You cannot ban your own account'); return; }
-    askConfirm({
-      title: 'Ban user',
-      message: `Ban ${userLabel(user)}? They will lose access until unbanned.`,
-      confirmLabel: 'Ban user',
-      danger: true,
-      run: () => doUserAction(user, 'ban', { successMsg: `${userLabel(user)} banned` })
-    });
-  }
-
   // Permanently delete a user's account profile — always behind confirmation.
   function removeUser(user) {
     if (get(currentUser)?.id === user.id) { toastActions.show('You cannot remove your own account'); return; }
@@ -1553,9 +1542,6 @@
                   {#if canPromoteUsers && user.role !== 'admin'}
                     <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => promoteUser(user)}>Make Admin</button>
                   {/if}
-                  {#if canBanUsers && !user.banned && user.id !== $currentUser?.id}
-                    <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => banUser(user)}>Ban</button>
-                  {/if}
                   {#if canRemoveUsers && user.id !== $currentUser?.id}
                     <button class="btn btn-sm btn-danger" disabled={savingRoleIds.has(user.id)} on:click={() => removeUser(user)}>Remove</button>
                   {/if}
@@ -1663,9 +1649,6 @@
                         {/if}
                         {#if canPromoteUsers && user.role !== 'admin'}
                           <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => promoteUser(user)}>Make Admin</button>
-                        {/if}
-                        {#if canBanUsers && !user.banned && user.id !== $currentUser?.id}
-                          <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => banUser(user)}>Ban</button>
                         {/if}
                         {#if canRemoveUsers && user.id !== $currentUser?.id}
                           <button class="btn btn-sm btn-danger" disabled={savingRoleIds.has(user.id)} on:click={() => removeUser(user)}>Remove</button>
