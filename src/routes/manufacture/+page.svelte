@@ -2473,18 +2473,18 @@
 {/if}
 
 <style>
-  /* No hover effects on the manufacture tab (dense buttons + table rows) */
+  /* No hover effects on the manufacture tab (dense buttons + table rows).
+     Use theme tokens so rows flip correctly in dark mode. */
   .btn:hover { box-shadow: none; }
-  .table tbody tr:hover { background: transparent; }
-  .table tbody tr:nth-child(even):hover { background: rgba(16, 24, 40, 0.018); }
+  .table tr { background: var(--surface-1); }
+  .table tbody tr:nth-child(even) { background: var(--surface-2); }
+  .table tbody tr:hover { background: var(--surface-1); }
+  .table tbody tr:nth-child(even):hover { background: var(--surface-2); }
 
   .manufacture-page-container {
     max-width: 1400px;
     margin: 0 auto;
   }
-  
-  .table tr { background: white; }
-  .table tbody tr:nth-child(even) { background: var(--color-white); }
 
   .select-col {
     width: 40px;

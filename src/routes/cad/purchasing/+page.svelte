@@ -1786,8 +1786,8 @@
   .approver-name { font-size: 0.9rem; color: var(--neutral-500); }
 
   .status-select {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    background: white;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
     color: var(--text);
     min-width: 120px;
     border-radius: 4px;
@@ -1867,6 +1867,17 @@
     color: var(--red-strong);
     border-color: color-mix(in srgb, var(--red-strong) 35%, transparent);
   }
+
+  /* Dark mode: the tinted backgrounds stay, but text needs to be light to read */
+  [data-theme="dark"] .status-select.colorful[data-status="pending"] { color: #fcd34d; }
+  [data-theme="dark"] .status-select.colorful[data-status="ordered"],
+  [data-theme="dark"] .status-select.colorful[data-status="pickup"] { color: #d8b4fe; }
+  [data-theme="dark"] .status-select.colorful[data-status="delivered"],
+  [data-theme="dark"] .status-select.colorful[data-status="picked_up"],
+  [data-theme="dark"] .status-select.colorful[data-status="kitted"],
+  [data-theme="dark"] .status-select.colorful[data-status="approved"] { color: #6ee7a8; }
+  [data-theme="dark"] .status-select.colorful[data-status="rejected"] { color: #fca5a5; }
+  [data-theme="dark"] .status-select.colorful { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
 
   .status-select.colorful option[value="pending"] { background: var(--brand-gold-soft); }
   .status-select.colorful option[value="rejected"] { background: var(--red-soft); }

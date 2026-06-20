@@ -106,8 +106,9 @@
         const width = container.clientWidth || 600;
         const height = container.clientHeight || 400;
 
+        const isDark = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark';
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xf3f4f6);
+        scene.background = new THREE.Color(isDark ? 0x0e1218 : 0xf3f4f6);
         camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000000);
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -206,7 +207,7 @@
     min-height: 320px;
     border-radius: var(--radius-sm, 4px);
     overflow: hidden;
-    background: #f3f4f6;
+    background: var(--surface-2, #f3f4f6);
   }
 
   .cad-viewer-overlay {

@@ -140,6 +140,7 @@
    Opt-in via <html data-theme="dark"> (set by the theme store). Remaps the
    semantic surface/text/border tokens; brand gold accent is preserved. */
 [data-theme="dark"] {
+  color-scheme: dark;       /* native selects, date pickers, scrollbars render dark */
   --color-white: #161b24;   /* "white" surfaces become dark */
   --color-black: #e6e9ef;   /* "black" text becomes light */
 
