@@ -136,6 +136,16 @@ export async function POST({ request }) {
         .delete()
         .eq('id', target_id);
       if (error) return json({ error: error.message }, { status: 500 });
+
+      // Also delete the Supabase Auth account so the email frees up and the
+      // person can re-register from scratch. Requires service-role access.
+      try {
+        const admin = getSupabase();
+        await admin.auth.admin.deleteUser(target_id);
+      } catch (e) {
+        // Profile is gone either way; log but don't fail the request.
+        console.warn('Could not delete auth user (they can still re-register if profile-gated):', e?.message || e);
+      }
       return json({ success: true });
     }
 
