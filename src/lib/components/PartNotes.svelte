@@ -71,7 +71,7 @@
     role="button"
     tabindex="0"
   >
-    <div class="note-modal" role="dialog" aria-modal="true" on:click|stopPropagation on:keydown|stopPropagation>
+    <div class="note-modal" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
       <h3>Note</h3>
       {#if editable}
         <textarea

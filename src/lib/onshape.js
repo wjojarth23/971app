@@ -3,6 +3,12 @@ import { partClassificationService } from './bom_classify.js';
 
 const ENABLE_BBOX = false;
 
+// Circuit breaker for Onshape rate limiting (HTTP 402). When Onshape reports
+// the API limit is exceeded, firing more requests only makes it worse, so we
+// pause document-info calls for a short cooldown instead of retrying.
+let rateLimitedUntil = 0;
+const RATE_LIMIT_COOLDOWN_MS = 60_000;
+
 function normalizeOnshapeWvmType(value) {
     if (!value) return null;
     const normalized = String(value).trim().toLowerCase();
@@ -61,13 +67,23 @@ class OnShapeAPI {
         return null;
     }    // Get document information
     async getDocumentInfo(documentId) {
+        // Skip the request entirely while we're in the rate-limit cooldown.
+        if (Date.now() < rateLimitedUntil) {
+            throw new Error('Onshape API rate limited (402) — cooling down');
+        }
         try {
             const response = await fetch(`${this.apiRoute}?action=document-info&documentId=${documentId}`);
-            
+
+            // Onshape API limit exceeded — start a cooldown and stop retrying.
+            if (response.status === 402) {
+                rateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+                throw new Error('Onshape API limit exceeded (402)');
+            }
+
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-            
+
             return await response.json();
         } catch (error) {
             console.error('Error fetching document info:', error);

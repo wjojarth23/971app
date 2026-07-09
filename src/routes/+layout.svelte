@@ -108,6 +108,15 @@
     }
   }
 
+  // Record attendance once per session, as soon as the profile first loads.
+  // The server dedupes per day per user, so re-running it on every navigation
+  // or profile refresh just floods the endpoint with redundant requests.
+  let hasCheckedAttendance = false;
+  $: if (profile?.id && !hasCheckedAttendance) {
+    hasCheckedAttendance = true;
+    void checkAttendance(profile);
+  }
+
   // Re-fetch the signed-in user's profile so role/permission changes made by an
   // admin (e.g. granting admin access) show up live — the Admin tab appears as
   // soon as the fresh profile loads, without needing a manual hard reload.
@@ -118,9 +127,6 @@
 
   afterNavigate(() => {
     refreshOwnProfile();
-    if (profile) {
-      void checkAttendance(profile);
-    }
   });
 
   onMount(() => {
@@ -147,9 +153,6 @@
     const unsubAuth = authUserStore.subscribe((v) => { authUser = v; });
     const unsubProfile = userStore.subscribe((v) => {
       profile = v;
-      if (v) {
-        void checkAttendance(v);
-      }
     });
     const unsubAuthReady = authReadyStore.subscribe((value) => { authReady = value; });
     void fetchActiveScoutingEventKey().then((k) => {

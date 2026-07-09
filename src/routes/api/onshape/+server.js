@@ -3,6 +3,13 @@ import { json } from '@sveltejs/kit';
 
 const ONSHAPE_BASE_URL = PUBLIC_ONSHAPE_BASE_URL || 'https://frc971.onshape.com';
 
+// Short-lived in-memory cache for document-info responses. Onshape enforces a
+// hard API rate limit (HTTP 402), and the CAD page fetches document-info for
+// every linked subsystem on each load/mutation — without this the same
+// documents get re-fetched constantly and quickly trip the limit.
+const documentInfoCache = new Map(); // documentId -> { data, expires }
+const DOCUMENT_INFO_TTL_MS = 60_000;
+
 /* ── SVG Conversion Helper Functions ─────────────────────────────── */
 async function getBoundingBox(documentId, wvm, wvmId, elementId, partId) {
   const url = `${ONSHAPE_BASE_URL}/api/v5/parts/d/${documentId}/${wvm}/${wvmId}/e/${elementId}/partid/${partId}/boundingboxes`;
@@ -558,6 +565,15 @@ export async function GET({ url }) {
         return json({ error: 'Missing required parameters' }, { status: 400 });
     }
 
+    // Serve document-info from the short-lived cache when a fresh copy exists,
+    // so repeated loads of the same document don't hit the Onshape API again.
+    if (action === 'document-info') {
+        const cached = documentInfoCache.get(documentId);
+        if (cached && cached.expires > Date.now()) {
+            return json(cached.data);
+        }
+    }
+
     try {
         let apiPath;
         
@@ -916,6 +932,9 @@ export async function GET({ url }) {
         }
 
         const data = await response.json();
+        if (action === 'document-info') {
+            documentInfoCache.set(documentId, { data, expires: Date.now() + DOCUMENT_INFO_TTL_MS });
+        }
         return json(data);
     } catch (error) {
         console.error('Error calling OnShape API:', error);

@@ -2069,7 +2069,8 @@
                 <div class="router-progress-note">{getRouterProgressSummary(part)}</div>
               {/if}
             </td>
-            <td class:hidden={assignMode} on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <td class:hidden={assignMode} on:click|stopPropagation on:keydown|stopPropagation>
               <PartDueDate {part} on:update={() => loadParts()} />
             </td>
             <td class:hidden={assignMode}>{formatDate(part.created_at)}</td>
