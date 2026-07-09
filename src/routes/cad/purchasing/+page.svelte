@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { hasPermission, canManagePurchasing } from '$lib/permissions.js';
+  import { hasPermission, canManagePurchasing, canCreateOrders } from '$lib/permissions.js';
   import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
@@ -402,6 +402,10 @@
   async function placeOrder() {
     if (!user) {
       toastActions.show('You must be signed in to place orders');
+      return;
+    }
+    if (!canCreateOrders(user)) {
+      toastActions.show('You do not have permission to create orders');
       return;
     }
 
@@ -871,7 +875,7 @@
           {#if hasPermission(user, 'PLACE_ORDERS_MISC')}
             <button class="btn btn-secondary" on:click={() => { showAddMiscModal = true; }}>Add Custom Item</button>
           {/if}
-          {#if hasPermission(user, 'APPROVE_PURCHASES')}
+          {#if canCreateOrders(user)}
             {#if !orderMode}
               <button class="btn btn-primary" on:click={toggleOrderMode}>
                   <Package size={16} /> Create Order

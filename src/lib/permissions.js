@@ -161,6 +161,17 @@ export function canDeleteParts(user) {
   return isManufacturingLead(user);
 }
 
+// Who can create orders — bundle requested items into an order and enter the
+// total cost after shipping. Restricted to admins, Purchasing Leads, and
+// mentors (frc_team = 'Mentor'). Everyone else can only *request* items via
+// PLACE_ORDERS_MISC; approving requests is a separate step (APPROVE_PURCHASES).
+export function canCreateOrders(user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.frc_team === FRC_TEAMS.MENTOR) return true;
+  return user.team_role === TEAM_ROLES.PURCHASING_LEAD;
+}
+
 export function normalizePermissions(arr) {
   if (!arr) return [];
   if (Array.isArray(arr)) return arr.map(String);
