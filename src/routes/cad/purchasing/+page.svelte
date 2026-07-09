@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
-  import { hasPermission, canManagePurchasing, canCreateOrders } from '$lib/permissions.js';
+  import { hasPermission, canManagePurchasing, canCreateOrders, canApprovePurchases } from '$lib/permissions.js';
   import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
@@ -777,6 +777,10 @@
       alert('You must be signed in to approve items');
       return;
     }
+    if (!canApprovePurchases(user)) {
+      alert('You do not have permission to approve items');
+      return;
+    }
     try {
       const approverName = user.full_name || user.email || null;
       const { error } = await supabase
@@ -796,6 +800,10 @@
   async function rejectPart(part) {
     if (!user) {
       alert('You must be signed in to reject items');
+      return;
+    }
+    if (!canApprovePurchases(user)) {
+      alert('You do not have permission to reject items');
       return;
     }
     try {
@@ -1103,8 +1111,8 @@
                       <span class="rejected-text">Rejected</span>
                     </button>
                   {:else}
-                    {#if hasPermission(user, 'APPROVE_PURCHASES')}
-                      <button class="btn btn-approve btn-sm" 
+                    {#if canApprovePurchases(user)}
+                      <button class="btn btn-approve btn-sm"
                         on:click={() => approvePart(part)}
                         on:contextmenu={(e) => { e.preventDefault(); rejectPart(part); }}
                         title="Left click to approve, Right click to reject">
@@ -1132,7 +1140,19 @@
                     data-status={part.status || 'pending'}
                     on:change={(e) => {
                       const val = e.target.value;
-                      if (val === '__approved__') return; // placeholder only
+                      if (val === '__approved__') {
+                        const cur = (part.status || '').toString().toLowerCase();
+                        // Already approved or beyond — this is just the placeholder, no-op
+                        if (getApprovedStatuses(part).includes(cur)) return;
+                        // Approving a pending item via the dropdown
+                        if (!canApprovePurchases(user)) {
+                          alert('You do not have permission to approve items.');
+                          loadParts();
+                          return;
+                        }
+                        approvePart(part);
+                        return;
+                      }
                       if ((val === 'ordered' || val === 'delivered' || val === 'pickup' || val === 'picked_up') && !hasPermission(user, 'PLACE_ORDERS_MISC')) {
                         alert('You do not have permission to change order status.');
                         loadParts();
@@ -1141,10 +1161,10 @@
                       updatePartStatus(part, 'status', val);
                     }}
                   >
-                    
+
                     <option value="pending" data-color="#ffc107">{isPickupItem(part) ? 'Needs Approval' : 'Pending'}</option>
                     <option value="rejected" data-color="#e74c3c">Rejected</option>
-                    {#if getApprovedStatuses(part).includes((part.status || '').toString().toLowerCase())}
+                    {#if canApprovePurchases(user) || getApprovedStatuses(part).includes((part.status || '').toString().toLowerCase())}
                       <option value="__approved__" data-color="#4caf50">Approved</option>
                     {/if}
                     {#if isPickupItem(part)}

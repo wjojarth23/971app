@@ -172,6 +172,16 @@ export function canCreateOrders(user) {
   return user.team_role === TEAM_ROLES.PURCHASING_LEAD;
 }
 
+// Who can approve or reject purchase requests: admins, mentors (frc_team =
+// 'Mentor'), and anyone holding APPROVE_PURCHASES (purchasing approver/lead
+// roles and the Purchasing Lead team role).
+export function canApprovePurchases(user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.frc_team === FRC_TEAMS.MENTOR) return true;
+  return hasPermission(user, 'APPROVE_PURCHASES');
+}
+
 export function normalizePermissions(arr) {
   if (!arr) return [];
   if (Array.isArray(arr)) return arr.map(String);
