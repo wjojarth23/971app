@@ -1,17 +1,20 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { initAuth, userStore, signOut, authReady as authReadyStore } from '$lib/stores/auth.js';
+  import { initAuth, userStore, signOut, authReady as authReadyStore, user as authUserStore } from '$lib/stores/auth.js';
   import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users, Layers, Receipt, Clock } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
   
   let user = null;
+  let authUser = null;
 
   function can(perm) {
     return hasPermission(user, perm);
   }
   let loading = true;
+  // Keep spinner while auth is ready but profile hasn't loaded yet
+  $: isLoading = loading || (authUser !== null && user === null);
   // New state for user-specific lists
   let subsystems = [];
   let subsystemsLoading = false;
@@ -23,7 +26,7 @@
   // At-a-glance dashboard stats
   $: pendingPurchases = purchases.filter(p => (p.status || 'pending') === 'pending').length;
   let listsLoaded = false;
-  let authMode = 'login'; // 'login' or 'register'  
+  let authMode = 'login'; // 'login', 'register', or 'forgot'
   let formData = {
     email: '',
     password: '',
@@ -33,6 +36,10 @@
   let authLoading = false;
   let authError = '';
   let authSuccess = '';
+  let forgotEmail = '';
+  let forgotLoading = false;
+  let forgotError = '';
+  let forgotSuccess = '';
 
   // Scouting assignment alert state
   let myScoutAssignments = [];
@@ -62,11 +69,12 @@
 
   onMount(() => {
     const unsub = userStore.subscribe((v) => { user = v; });
+    const unsubAuthUser = authUserStore.subscribe((v) => { authUser = v; });
     const unsubReady = authReadyStore.subscribe((value) => {
       loading = !value;
     });
     const uninit = initAuth();
-    return () => { unsub?.(); unsubReady?.(); uninit?.(); };
+    return () => { unsub?.(); unsubAuthUser?.(); unsubReady?.(); uninit?.(); };
   });
 
   async function loadUserLists() {
@@ -251,10 +259,29 @@
     };
     authError = '';
     authSuccess = '';
+    forgotEmail = '';
+    forgotError = '';
+    forgotSuccess = '';
   }
   function switchMode() {
     authMode = authMode === 'login' ? 'register' : 'login';
     resetForm();
+  }
+
+  async function handleForgotPassword() {
+    if (!forgotEmail) return;
+    forgotLoading = true;
+    forgotError = '';
+    forgotSuccess = '';
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail);
+      if (error) throw error;
+      forgotSuccess = 'Check your email for a password reset link.';
+    } catch (e) {
+      forgotError = e.message;
+    } finally {
+      forgotLoading = false;
+    }
   }
 
   async function handleLogout() {
@@ -266,7 +293,7 @@
   <title>971 Hub - Login</title>
 </svelte:head>
 
-{#if loading}
+{#if isLoading}
   <div class="loading-container">
     <div class="loading-spinner"></div>
     <p>Loading...</p>
@@ -433,15 +460,16 @@
       </div>
 
       <div class="auth-form">
+        {#if authMode !== 'forgot'}
         <div class="form-tabs">
-          <button 
+          <button
             class="tab-btn {authMode === 'login' ? 'active' : ''}"
             on:click={() => { authMode = 'login'; resetForm(); }}
           >
             <LogIn size={16} />
             Sign In
           </button>
-          <button 
+          <button
             class="tab-btn {authMode === 'register' ? 'active' : ''}"
             on:click={() => { authMode = 'register'; resetForm(); }}
           >
@@ -449,7 +477,57 @@
             Register
           </button>
         </div>
+        {/if}
 
+        {#if authMode === 'forgot'}
+          <div class="forgot-header">
+            <h3>Reset your password</h3>
+            <p class="muted">Enter your email and we'll send you a reset link.</p>
+          </div>
+          <form on:submit|preventDefault={handleForgotPassword}>
+            <div class="form-group">
+              <label class="form-label" for="forgot-email">
+                <Mail size={18} />
+                Email Address
+              </label>
+              <input
+                id="forgot-email"
+                type="email"
+                class="form-input"
+                bind:value={forgotEmail}
+                placeholder="Enter your email"
+                required
+              />
+            </div>
+            {#if forgotError}
+              <div class="alert alert-error">
+                <AlertCircle size={18} />
+                {forgotError}
+              </div>
+            {/if}
+            {#if forgotSuccess}
+              <div class="alert alert-success">
+                <CheckCircle size={18} />
+                {forgotSuccess}
+              </div>
+            {/if}
+            <button type="submit" class="btn btn-primary auth-submit" disabled={forgotLoading}>
+              {#if forgotLoading}
+                <div class="loading-spinner small"></div>
+              {:else}
+                <Mail size={18} />
+              {/if}
+              Send Reset Link
+            </button>
+          </form>
+          <div class="auth-footer">
+            <p>
+              <button class="link-btn" on:click={() => { authMode = 'login'; resetForm(); }}>
+                Back to Sign In
+              </button>
+            </p>
+          </div>
+        {:else}
         <form on:submit|preventDefault={handleAuth}>
           {#if authMode === 'register'}
             <div class="form-group">
@@ -518,6 +596,10 @@
             />
             {#if authMode === 'register'}
               <small class="form-help">Password must be at least 6 characters long</small>
+            {:else}
+              <button type="button" class="forgot-link" on:click={() => { forgotEmail = formData.email; authMode = 'forgot'; }}>
+                Forgot password?
+              </button>
             {/if}
           </div>
 
@@ -557,7 +639,9 @@
             <button class="link-btn" on:click={switchMode}>
               {authMode === 'login' ? 'Register here' : 'Sign in here'}
             </button>
-          </p>        </div>
+          </p>
+        </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -715,6 +799,36 @@
 
   .link-btn:hover {
     color: var(--brand-gold-base);
+  }
+
+  .forgot-link {
+    background: none;
+    border: none;
+    color: var(--neutral-500);
+    cursor: pointer;
+    font-size: var(--font-xs);
+    padding: var(--space-1) 0 0;
+    display: block;
+    text-decoration: underline;
+  }
+
+  .forgot-link:hover {
+    color: var(--accent);
+  }
+
+  .forgot-header {
+    margin-bottom: var(--space-6);
+  }
+
+  .forgot-header h3 {
+    margin: 0 0 var(--space-2) 0;
+    color: var(--secondary);
+    font-size: var(--font-md);
+  }
+
+  .forgot-header p {
+    margin: 0;
+    font-size: var(--font-xs);
   }
 
   .dashboard-container {

@@ -141,6 +141,7 @@
     [TEAM_ROLES.SOFTWARE_LEAD]: { bg: '#ddd6fe', border: '#c4b5fd', text: '#5b21b6' },
     [TEAM_ROLES.MANUFACTURING_LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' },
     [TEAM_ROLES.MANUFACTURING_MEMBER]: { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412' },
+    [TEAM_ROLES.PURCHASING_LEAD]: { bg: '#ccfbf1', border: '#99f6e4', text: '#115e59' },
     [TEAM_ROLES.CAD_MEMBER]: { bg: '#fef2f2', border: '#fee2e2', text: '#991b1b' },
     [TEAM_ROLES.SOFTWARE_MEMBER]: { bg: '#e0f2fe', border: '#bae6fd', text: '#075985' },
     [TEAM_ROLES.OTHER]: { bg: '#f3f4f6', border: '#e5e7eb', text: '#374151' }

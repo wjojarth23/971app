@@ -41,6 +41,7 @@ export const TEAM_ROLES = {
   SOFTWARE_LEAD: 'Software Lead',
   MANUFACTURING_LEAD: 'Manufacturing Lead',
   MANUFACTURING_MEMBER: 'Manufacturing Member',
+  PURCHASING_LEAD: 'Purchasing Lead',
   CAD_MEMBER: 'CAD Member',
   SOFTWARE_MEMBER: 'Software Member',
   OTHER: 'Other'
@@ -82,10 +83,18 @@ const ROSTER_KEY_PERMISSIONS = {
   'Data Scout Lead': ['DATA_SCOUT_ADMIN', 'NOTE_SCOUT_ADMIN']
 };
 
-export function getRoleDerivedPermissions({ general_role = GENERAL_ROLES.NONE, purchasing_role = PURCHASING_ROLES.BASIC, roster_keys = [] } = {}) {
+// Some team roles carry permissions of their own, independent of the general /
+// purchasing role axes. Purchasing Lead grants full control over the purchasing
+// tab (place/approve orders, purchasing admin, add vendors, edit budgets).
+export const TEAM_ROLE_PERMISSIONS = {
+  [TEAM_ROLES.PURCHASING_LEAD]: ['CAN_SEE_ROUTES', 'PLACE_ORDERS_MISC', 'APPROVE_PURCHASES', 'VIEW_PURCHASING_ADMIN', 'ADD_VENDORS', 'EDIT_BUDGETS']
+};
+
+export function getRoleDerivedPermissions({ general_role = GENERAL_ROLES.NONE, purchasing_role = PURCHASING_ROLES.BASIC, team_role, roster_keys = [] } = {}) {
   const derived = new Set();
   (GENERAL_ROLE_PERMISSIONS[general_role] || []).forEach((perm) => derived.add(perm));
   (PURCHASING_ROLE_PERMISSIONS[purchasing_role] || []).forEach((perm) => derived.add(perm));
+  (TEAM_ROLE_PERMISSIONS[team_role] || []).forEach((perm) => derived.add(perm));
 
   if (Array.isArray(roster_keys)) {
     for (const key of roster_keys) {
@@ -108,6 +117,9 @@ export function hasPermission(user, perm) {
   // Check Purchasing Role
   const purchasingRole = user.purchasing_role || PURCHASING_ROLES.BASIC;
   if (PURCHASING_ROLE_PERMISSIONS[purchasingRole]?.includes(perm)) return true;
+
+  // Check Team Role (e.g. Purchasing Lead grants full purchasing control)
+  if (user.team_role && TEAM_ROLE_PERMISSIONS[user.team_role]?.includes(perm)) return true;
 
   // Check Roster Permissions (assuming user.roster_keys is an array of strings)
   if (user.roster_keys && Array.isArray(user.roster_keys)) {

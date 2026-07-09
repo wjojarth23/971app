@@ -196,16 +196,19 @@ export async function POST({ request }) {
       const existingPerms = normalizePermissions(targetRow.permissions);
       const prevRolePerms = getRoleDerivedPermissions({
         general_role: targetRow.general_role,
-        purchasing_role: targetRow.purchasing_role
+        purchasing_role: targetRow.purchasing_role,
+        team_role: targetRow.team_role
       });
       const manualExtras = existingPerms.filter((perm) => !prevRolePerms.has(perm));
 
       const nextGeneralRole = general_role ?? targetRow.general_role ?? GENERAL_ROLES.NONE;
       const nextPurchasingRole = purchasing_role ?? targetRow.purchasing_role ?? PURCHASING_ROLES.BASIC;
+      const nextTeamRole = team_role ?? targetRow.team_role;
 
       const nextRolePerms = getRoleDerivedPermissions({
         general_role: nextGeneralRole,
-        purchasing_role: nextPurchasingRole
+        purchasing_role: nextPurchasingRole,
+        team_role: nextTeamRole
       });
       let merged = Array.from(new Set([...nextRolePerms, ...manualExtras])).filter((perm) => PERMISSIONS.includes(perm));
 

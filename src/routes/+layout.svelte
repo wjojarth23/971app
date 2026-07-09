@@ -1,7 +1,7 @@
 <script>
   import '../app.css';
   import { onMount, tick } from 'svelte';
-  import { initAuth, user as authUserStore, userStore, authReady as authReadyStore, fetchUserProfile } from '$lib/stores/auth.js';
+  import { initAuth, user as authUserStore, userStore, authReady as authReadyStore, fetchUserProfile, signOut } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
@@ -49,6 +49,15 @@
       goto('/');
     }
   }
+
+  // Guard: sign out banned users immediately
+  let _bannedHandled = false;
+  $: if (authReady && activeProfile?.banned && !_bannedHandled) {
+    _bannedHandled = true;
+    toastActions.show('Your account has been suspended. Please contact an administrator.');
+    void signOut();
+  }
+  $: if (!activeProfile) _bannedHandled = false;
 
   // Close menus on route change
   $: if (currentPath) {
