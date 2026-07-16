@@ -167,10 +167,17 @@
   function calculateBudgetSpent(budget, allParts) {
     const BUDGET_EXEMPT_PROJECT = 'Budget Exempt';
 
+    // Per-budget project exclusions (metadata.exclude_projects), e.g. the
+    // offseason grant budget excludes competition expenses.
+    const excludedProjects = Array.isArray(budget.metadata?.exclude_projects)
+      ? budget.metadata.exclude_projects
+      : [];
+
     // Filter parts that match the budget scope
     const matches = allParts.filter(p => {
       // Exclude budget-exempt projects from any budget counts
       if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
+      if (excludedProjects.includes((p.project_id || '').trim())) return false;
 
       // Only count non-rejected items
       if (p.status === 'rejected') return false;
