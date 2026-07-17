@@ -3,6 +3,7 @@
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { hasPermission, canManagePurchasing, canCreateOrders, canApprovePurchases } from '$lib/permissions.js';
+  import { calculateBudgetSpent } from '$lib/budget.js';
   import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
@@ -162,52 +163,6 @@
     } finally {
       loadingPins = false;
     }
-  }
-
-  function calculateBudgetSpent(budget, allParts) {
-    const BUDGET_EXEMPT_PROJECT = 'Budget Exempt';
-
-    // Per-budget project exclusions (metadata.exclude_projects), e.g. the
-    // offseason grant budget excludes competition expenses.
-    const excludedProjects = Array.isArray(budget.metadata?.exclude_projects)
-      ? budget.metadata.exclude_projects
-      : [];
-
-    // Filter parts that match the budget scope
-    const matches = allParts.filter(p => {
-      // Exclude budget-exempt projects from any budget counts
-      if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
-      if (excludedProjects.includes((p.project_id || '').trim())) return false;
-
-      // Only count non-rejected items
-      if (p.status === 'rejected') return false;
-
-      // Date filter
-      if (budget.start_date && new Date(p.created_at) < new Date(budget.start_date)) return false;
-      if (budget.end_date && new Date(p.created_at) > new Date(budget.end_date)) return false;
-
-      // Scope filter
-      if (budget.scope_type === 'overall') return true;
-      if (budget.scope_type === 'project') {
-        return p.project_id === budget.scope_value;
-      }
-      if (budget.scope_type === 'subsystem') {
-        // Match by subsystem - would need to join with builds table in real implementation
-        return p.project_id && p.project_id.includes(budget.scope_value);
-      }
-      if (budget.scope_type === 'build') {
-        return p.project_id === budget.scope_value;
-      }
-      if (budget.scope_type === 'build_group') {
-        return p.project_id && p.project_id.includes(budget.scope_value);
-      }
-      return false;
-    });
-
-    // Sum cost
-    return matches.reduce((sum, p) => {
-      return sum + ((p.final_price || p.price || 0) * (p.quantity || 1));
-    }, 0);
   }
 
   async function togglePin(budget) {

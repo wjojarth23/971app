@@ -6,6 +6,7 @@
   import { Plus, Edit, Trash2, DollarSign, Calendar, Target, Folder } from 'lucide-svelte';
   import { userStore } from '$lib/stores/user.js';
   import { formatPacificDate } from '$lib/timezone.js';
+  import { calculateBudgetSpent } from '$lib/budget.js';
 
   export let subsystems = []; // Passed from parent or loaded here if needed
 
@@ -155,50 +156,6 @@
     } finally {
       loading = false;
     }
-  }
-
-  function calculateBudgetSpent(budget, allPurchases) {
-    const BUDGET_EXEMPT_PROJECT = 'Budget Exempt';
-    
-    // Per-budget project exclusions (metadata.exclude_projects), e.g. the
-    // offseason grant budget excludes competition expenses.
-    const excludedProjects = Array.isArray(budget.metadata?.exclude_projects)
-      ? budget.metadata.exclude_projects
-      : [];
-
-    const matches = allPurchases.filter(p => {
-      // Exclude budget-exempt projects from any budget counts
-      if ((p.project_id || '').trim() === BUDGET_EXEMPT_PROJECT) return false;
-      if (excludedProjects.includes((p.project_id || '').trim())) return false;
-
-      // Only count non-rejected items
-      if (p.status === 'rejected') return false;
-      
-      // Date filter
-      if (budget.start_date && new Date(p.created_at) < new Date(budget.start_date)) return false;
-      if (budget.end_date && new Date(p.created_at) > new Date(budget.end_date)) return false;
-
-      // Scope filter
-      if (budget.scope_type === 'overall') return true;
-      if (budget.scope_type === 'project') {
-        return p.project_id === budget.scope_value;
-      }
-      if (budget.scope_type === 'subsystem') {
-        // Match by subsystem - would need to join with builds table in real implementation
-        return p.project_id && p.project_id.includes(budget.scope_value);
-      }
-      if (budget.scope_type === 'build') {
-        return p.project_id === budget.scope_value;
-      }
-      if (budget.scope_type === 'build_group') {
-        return p.project_id && p.project_id.includes(budget.scope_value);
-      }
-      return false;
-    });
-
-    return matches.reduce((sum, p) => {
-      return sum + ((p.final_price || p.price || 0) * (p.quantity || 1));
-    }, 0);
   }
 
   function openCreateModal() {

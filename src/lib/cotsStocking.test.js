@@ -72,9 +72,10 @@ describe('cots stocking helpers', () => {
   });
 
   it('keeps learned aliases unique and capped', () => {
+    // '84 tooth gear' normalizes to '84t gear' (tooth → t), so it dedupes
+    // against the incoming query rather than surviving as a third alias.
     const aliases = mergeAliases(['84 tooth gear', 'gear eighty four'], '84t gear', 'Gear 84T');
-    expect(aliases[0]).toBe('84t gear');
-    expect(aliases).toHaveLength(3);
+    expect(aliases).toEqual(['84t gear', 'gear eighty four']);
   });
 
   it('does not learn aliases with conflicting exclusive part types', () => {
