@@ -5,6 +5,7 @@
   import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users, Layers, Receipt, Clock } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
+  import { theme, setTheme } from '$lib/stores/theme.js';
   
   let user = null;
   let authUser = null;
@@ -397,7 +398,7 @@
             </div>
           {/if}
 
-          <h4 style="margin-top:1rem">Your Builds</h4>
+          <h4>Your Builds</h4>
           {#if buildsLoading}
             <div class="loading-spinner small"></div>
           {:else if builds.length === 0}
@@ -413,7 +414,7 @@
             </div>
           {/if}
 
-          <h4 style="margin-top:1rem">Your Purchase Requests</h4>
+          <h4>Your Purchase Requests</h4>
           {#if purchasesLoading}
             <div class="loading-spinner small"></div>
           {:else if purchases.length === 0}
@@ -633,15 +634,28 @@
           </button>
         </form>
 
-        <div class="auth-footer">
-          <p>
-            {authMode === 'login' ? "Don't have an account?" : 'Already have an account?'}
-            <button class="link-btn" on:click={switchMode}>
-              {authMode === 'login' ? 'Register here' : 'Sign in here'}
-            </button>
-          </p>
-        </div>
         {/if}
+
+        <div class="auth-bottom">
+          {#if authMode !== 'forgot'}
+            <p class="auth-switch">
+              {authMode === 'login' ? "Don't have an account?" : 'Already have an account?'}
+              <button class="link-btn" on:click={switchMode}>
+                {authMode === 'login' ? 'Register here' : 'Sign in here'}
+              </button>
+            </p>
+          {:else}
+            <span></span>
+          {/if}
+          <div class="theme-picker">
+            <label for="login-theme-select">Theme</label>
+            <select id="login-theme-select" value={$theme} on:change={(e) => setTheme(e.target.value)}>
+              <option value="light">Legacy (default)</option>
+              <option value="modern">Modern Light</option>
+              <option value="modern-dark">Modern Dark</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -837,27 +851,36 @@
     padding: 0 var(--space-4);
   }
 
+  /* Compact masthead with a gold spine — no dead vertical space */
   .user-welcome {
     background: var(--primary);
     border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
     border-radius: var(--radius-lg);
-    padding: var(--space-7);
-    margin-bottom: var(--space-7);
+    padding: var(--space-5) var(--space-6);
+    margin-bottom: var(--space-6);
   }
 
   .user-welcome h2 {
-    margin: 0 0 var(--space-6) 0;
+    margin: 0 0 var(--space-1) 0;
     color: var(--secondary);
     font-size: var(--font-xl);
+  }
+
+  .user-welcome .muted {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
   }
 
   .stat-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: var(--gap-4);
-    margin-bottom: var(--space-7);
+    gap: var(--gap-3);
+    margin-bottom: var(--space-6);
   }
 
+  /* Instrument-readout cards: mono label over a big tabular number, flat hover */
   .stat-card {
     display: flex;
     align-items: center;
@@ -868,22 +891,20 @@
     padding: var(--space-4) var(--space-5);
     text-decoration: none;
     color: inherit;
-    box-shadow: var(--shadow-sm);
-    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    transition: border-color 0.1s ease, background-color 0.1s ease;
   }
 
   .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-    border-color: var(--accent);
+    background: var(--surface-2);
+    border-color: var(--accent-strong);
   }
 
   .stat-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     flex-shrink: 0;
     border-radius: var(--radius-sm);
     background: var(--brand-gold-soft);
@@ -892,22 +913,24 @@
 
   .stat-body {
     display: flex;
-    flex-direction: column;
+    flex-direction: column-reverse; /* label reads first, number below */
     min-width: 0;
   }
 
   .stat-value {
-    font-size: var(--font-2xl);
-    font-weight: 700;
+    font-family: var(--font-mono-stack);
+    font-size: 1.6rem;
+    font-weight: 600;
     line-height: 1.1;
     color: var(--secondary);
   }
 
   .stat-label {
-    font-size: var(--font-xs);
+    font-family: var(--font-mono-stack);
+    font-size: 0.62rem;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -958,34 +981,48 @@
   .action-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: var(--gap-6);
+    gap: var(--gap-3);
   }
 
+  /* Compact horizontal action rows: gold icon tile beside title + description */
   .action-card {
-    display: block;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: var(--space-4);
+    align-items: center;
     background: var(--primary);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: var(--space-6);
+    padding: var(--space-5) var(--space-6);
     text-decoration: none;
     color: inherit;
-    transition: all 0.2s ease;
-    box-shadow: var(--shadow-sm);
+    transition: border-color 0.1s ease, background-color 0.1s ease;
   }
 
   .action-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    border-color: var(--accent);
+    background: var(--surface-2);
+    border-color: var(--accent-strong);
+  }
+
+  .action-card :global(svg) {
+    grid-row: 1 / span 2;
+    width: 22px;
+    height: 22px;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    background: var(--brand-gold-soft);
+    color: var(--brand-gold-strong);
   }
 
   .action-card h4 {
-    margin: var(--space-2) 0;
+    grid-column: 2;
+    margin: 0;
     color: var(--secondary);
     font-size: var(--font-md);
   }
 
   .action-card p {
+    grid-column: 2;
     margin: 0;
     color: var(--neutral-500);
     font-size: var(--font-xs);
@@ -995,7 +1032,7 @@
   .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: var(--gap-4);
+    gap: var(--gap-3);
     margin-top: var(--space-2);
   }
 
@@ -1004,11 +1041,17 @@
     display: block;
     text-decoration: none;
     color: inherit;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
+    transition: border-color 0.1s ease, background-color 0.1s ease;
   }
 
   .subsystem-card:hover,
   .build-card:hover {
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    background: var(--surface-2);
+    border-color: var(--accent-strong);
   }
 
   .subsystem-card h5,
@@ -1079,4 +1122,64 @@
       font-size: var(--font-base);
     }
   }
+
+  /* Bottom row of the auth card: mode-switch text left, theme picker right */
+  .auth-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-3);
+    flex-wrap: wrap;
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+  }
+  .auth-switch {
+    margin: 0;
+    color: var(--neutral-500);
+    font-size: var(--font-xs);
+  }
+  .theme-picker {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+  }
+  .theme-picker label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+  }
+  .theme-picker select {
+    height: var(--control-height);
+    padding: var(--control-padding-sm);
+    font-size: var(--control-font-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    color: var(--text);
+  }
+
+  /* Ledger-style section labels: mono small caps over a strong rule */
+  .user-lists h4 {
+    font-family: var(--font-mono-stack);
+    font-size: 0.68rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    border-bottom: 2px solid var(--neutral-800);
+    padding-bottom: var(--space-2);
+    margin: var(--space-6) 0 var(--space-3);
+  }
+
+  /* Empty states read as intentional placeholders, not stray text */
+  .user-lists > .muted {
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    padding: var(--space-4) var(--space-5);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
 </style>

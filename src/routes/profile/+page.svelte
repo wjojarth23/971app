@@ -10,7 +10,6 @@
   import HeaderPreview from '$lib/components/HeaderPreview.svelte';
   import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
   import { mergeNotificationSettings } from '$lib/notifications/settings.js';
-  import { getUserAttendanceStats, getUserAttendanceHistory } from '$lib/attendance.js';
   import { FRC_TEAMS } from '$lib/permissions.js';
 
   let user = null;
@@ -35,10 +34,6 @@
   let targetFolderIdx = '';
   let resettingNav = false;
   let notificationSettings = mergeNotificationSettings();
-  let attendanceStats = null;
-  let attendanceHistory = [];
-  let attendanceLoading = false;
-  let attendanceUserId = null;
 
   const frcTeamOptions = Object.values(FRC_TEAMS);
 
@@ -59,44 +54,6 @@
       toastActions.show('Failed to sign out');
     } finally {
       loggingOut = false;
-    }
-  }
-
-  function formatAttendanceMoment(value) {
-    if (!value) return '—';
-    try {
-      return new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit'
-      }).format(new Date(value));
-    } catch {
-      return value;
-    }
-  }
-
-  async function loadAttendanceSummary(force = false) {
-    if (!user?.id) {
-      attendanceStats = null;
-      attendanceHistory = [];
-      return;
-    }
-    if (!force && attendanceUserId === user.id && attendanceStats) return;
-    attendanceLoading = true;
-    attendanceUserId = user.id;
-    try {
-      const [stats, history] = await Promise.all([
-        getUserAttendanceStats(user.id),
-        getUserAttendanceHistory(user.id, 12)
-      ]);
-      attendanceStats = stats;
-      attendanceHistory = history;
-    } catch (err) {
-      console.error('Failed to load attendance summary', err);
-      toastActions.show('Unable to load attendance');
-    } finally {
-      attendanceLoading = false;
     }
   }
 
@@ -229,7 +186,6 @@
         header_tabs = user.header_tabs || null;
         dashboard_layout = user.dashboard_layout || 'grid';
         notificationSettings = mergeNotificationSettings(user.notification_settings);
-        void loadAttendanceSummary(true);
       }
     });
     return () => unsub?.();
@@ -360,6 +316,14 @@
         </select>
         <small class="form-help">Which FRC team are you affiliated with?</small>
       </label>
+      <label class="form-label" for="theme-select">Theme
+        <select class="form-select" id="theme-select" value={$theme} on:change={(e) => setTheme(e.target.value)}>
+          <option value="light">Legacy (default)</option>
+          <option value="modern">Modern Light</option>
+          <option value="modern-dark">Modern Dark</option>
+        </select>
+        <small class="form-help">Applies instantly and is remembered on this device.</small>
+      </label>
       <div class="actions">
         <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save'}</button>
         <button class="btn btn-outline" on:click={logout} disabled={loggingOut} style="margin-left:8px">{loggingOut ? 'Signing out...' : 'Sign Out'}</button>
@@ -389,48 +353,6 @@
     </section>
 
     <section class="card">
-      <div class="attendance-card-header">
-        <h3>Your Attendance</h3>
-        <button type="button" class="btn btn-sm btn-nowrap" on:click={() => loadAttendanceSummary(true)} disabled={attendanceLoading}>
-          {attendanceLoading ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
-      <p class="muted">Attendance is captured automatically when you join during an active schedule from an approved network.</p>
-      {#if attendanceLoading}
-        <div class="empty-state">Loading attendance…</div>
-      {:else}
-        <div class="attendance-stats">
-          <div class="stat-block">
-            <span class="stat-label">Days in the last 30 days</span>
-            <strong class="stat-value">{attendanceStats?.days_attended ?? 0}</strong>
-          </div>
-          <div class="stat-block">
-            <span class="stat-label">Last check-in</span>
-            <strong class="stat-value">{formatAttendanceMoment(attendanceStats?.last_attended_at)}</strong>
-          </div>
-        </div>
-        <div class="attendance-history">
-          <h4>Recent check-ins</h4>
-          {#if attendanceHistory.length === 0}
-            <div class="empty-state">No recorded attendance yet.</div>
-          {:else}
-            <ul>
-              {#each attendanceHistory as entry (entry.id)}
-                <li>
-                  <div>
-                    <strong>{entry.schedule?.label || 'Attendance window'}</strong>
-                    <div class="muted">{entry.location?.name || 'Unknown location'}</div>
-                  </div>
-                  <span>{formatAttendanceMoment(entry.recorded_at)}</span>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      {/if}
-    </section>
-
-    <section class="card">
       <h3>Change Password</h3>
       <label class="form-label">New password
         <input class="form-input" type="password" bind:value={newPassword} />
@@ -440,29 +362,6 @@
       </label>
       <div class="actions">
         <button class="btn" on:click={changePassword} disabled={changingPassword}>{changingPassword ? 'Changing...' : 'Change Password'}</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h3>Notifications</h3>
-      <p class="muted"><strong>New users:</strong> Choose which Slack DMs you want to receive.</p>
-      <div class="notification-grid">
-        {#each NOTIFICATION_UI_OPTIONS as option}
-          <label class="notify-row">
-            <input
-              type="checkbox"
-              checked={notificationSettings?.[option.key] !== false}
-              on:change={(event) => toggleNotification(option.key, event.currentTarget.checked)}
-            />
-            <div>
-              <div class="notify-label">{option.label}</div>
-              <div class="notify-desc">{option.description}</div>
-            </div>
-          </label>
-        {/each}
-      </div>
-      <div class="actions">
-        <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save Notifications'}</button>
       </div>
     </section>
 
@@ -554,27 +453,25 @@
     </section>
 
     <section class="card">
-      <h3>Theme</h3>
-      <label class="form-label" for="theme-select">Appearance</label>
-      <select class="form-select" id="theme-select" value={$theme} on:change={(e) => setTheme(e.target.value)}>
-        <option value="light">Light (default)</option>
-        <option value="dark">Dark</option>
-      </select>
-      <p class="muted" style="margin-top:0.5rem;">Applies instantly and is remembered on this device.</p>
-    </section>
-
-    <section class="card">
-      <h3>Dashboard Layout</h3>
-      <label class="form-label" for="dashboard-layout">Layout style</label>
-      <select class="form-select" id="dashboard-layout" bind:value={dashboard_layout}>
-        <option value="grid">Grid</option>
-        <option value="compact">Compact</option>
-        <option value="detailed">Detailed</option>
-      </select>
+      <h3>Notifications</h3>
+      <p class="muted"><strong>New users:</strong> Choose which Slack DMs you want to receive.</p>
+      <div class="notification-grid">
+        {#each NOTIFICATION_UI_OPTIONS as option}
+          <label class="notify-row">
+            <input
+              type="checkbox"
+              checked={notificationSettings?.[option.key] !== false}
+              on:change={(event) => toggleNotification(option.key, event.currentTarget.checked)}
+            />
+            <div>
+              <div class="notify-label">{option.label}</div>
+              <div class="notify-desc">{option.description}</div>
+            </div>
+          </label>
+        {/each}
+      </div>
       <div class="actions">
-        <button class="btn" on:click={saveProfile} disabled={savingProfile}>
-          {savingProfile ? 'Saving...' : 'Save Layout'}
-        </button>
+        <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save Notifications'}</button>
       </div>
     </section>
   </div>

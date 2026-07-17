@@ -1,4 +1,9 @@
 :root {
+  /* Typography roles (all themes): characterful grotesque for headings,
+     mono for data readouts — body stays on the system stack */
+  --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono-stack: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
   /* Base neutrals */
   --color-white: #ffffff;
   --color-black: #050505;
@@ -26,7 +31,13 @@
   --red-strong: #7a0b0b;
 
   --purple-soft: #ede7f6;
+  --purple-base: #9333ea;  /* was referenced but never defined */
   --purple-strong: #7b1fa2;
+
+  /* Orange family — referenced across chips/notices but never defined */
+  --orange-soft: #ffedd5;
+  --orange-base: #fb923c;
+  --orange-strong: #9a3412;
 
   /* Application roles */
   --primary: var(--color-white);
@@ -74,22 +85,31 @@
   --space-2: 0.5rem;    /* 8px */
   --space-3: 0.75rem;   /* 12px */
   --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px — was referenced but never defined, which made
+                           `padding: ... var(--space-5)` declarations invalid
+                           and collapse to 0 (icons/text touching card edges) */
   --space-6: 1.5rem;    /* 24px */
   --space-7: 2rem;      /* 32px */
   --space-8: 3rem;      /* 48px */
 
   /* ===== UNIVERSAL FONT SIZE SCALE ===== */
   --font-xs: 0.75rem;   /* 12px */
+  --font-sm: 0.875rem;  /* 14px — was referenced but never defined (invalid declarations) */
   --font-base: 1rem;    /* 16px */
   --font-md: 1.1rem;    /* ~18px */
+  --font-lg: 1.25rem;   /* 20px — was referenced but never defined */
   --font-xl: 1.5rem;    /* 24px */
   --font-2xl: 2rem;     /* 32px */
+  --font-mono: var(--font-mono-stack); /* was referenced but never defined */
 
   /* ===== UNIVERSAL BORDER RADIUS ===== */
-  --radius-xs: 2px;
-  --radius-sm: 6px;   /* inputs, buttons, badges — kept tight */
-  --radius-lg: 10px;  /* cards */
-  --radius-xl: 12px;  /* large section cards */
+  /* Sharp, engineered corners (all themes): controls near-square, cards
+     barely rounded */
+  --radius-xs: 1px;
+  --radius-sm: 2px;   /* inputs, buttons, badges */
+  --radius-md: 3px;
+  --radius-lg: 4px;   /* cards */
+  --radius-xl: 4px;   /* large section cards */
   --radius-full: 999px;
 
   /* ===== UNIVERSAL GAP SCALE ===== */
@@ -99,12 +119,14 @@
   --gap-4: var(--space-4);  /* 16px */
   --gap-6: var(--space-6);  /* 24px */
 
-  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 2px 4px rgba(16, 24, 40, 0.04);
-  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.14);
+  /* Flat + borders (all themes): surfaces are defined by hairlines, not
+     shadow. Only floating layers (modals, toasts, dropdowns) keep one. */
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.16);
 
   /* ===== CONTROL + COMPONENT TOKENS ===== */
-  --control-height: 32px;  /* Unified height for all buttons, tags, dropdowns, inputs */
+  --control-height: 28px;  /* Unified height for all buttons, tags, dropdowns, inputs */
   --control-height-lg: var(--control-height);
   --control-height-sm: var(--control-height);
   --control-padding-lg: 0 0.75rem;
@@ -126,57 +148,14 @@
 
   --modal-bg: var(--surface-1);
   --modal-border-color: var(--border);
-  --modal-radius: 14px;
+  --modal-radius: 4px;
   --modal-padding: clamp(var(--space-4), 2vw, var(--space-6));
   --modal-shadow: var(--shadow-lg);
 
   --toast-bg: var(--secondary);
   --toast-color: var(--primary);
-  --toast-radius: 4px;
-  --toast-shadow: var(--shadow-md);
-}
-
-/* ===== DARK THEME =====
-   Opt-in via <html data-theme="dark"> (set by the theme store). Remaps the
-   semantic surface/text/border tokens; brand gold accent is preserved. */
-[data-theme="dark"] {
-  color-scheme: dark;       /* native selects, date pickers, scrollbars render dark */
-  --color-white: #161b24;   /* "white" surfaces become dark */
-  --color-black: #e6e9ef;   /* "black" text becomes light */
-
-  --neutral-100: #1e2530;
-  --neutral-300: #2a323f;
-  --neutral-500: #9aa4b2;
-  --neutral-800: #e6e9ef;
-
-  --primary: #161b24;
-  --secondary: #e6e9ef;
-  --background: #0e1218;
-  --card: #161b24;
-  --surface-1: #161b24;
-  --surface-2: #1e2530;
-  --surface-3: #283040;
-  --text: #e6e9ef;
-  --text-secondary: #9aa4b2;
-  --text-muted: #98a2b3;
-  --muted: #98a2b3;
-  --muted-bg: #1e2530;
-  --border: #2a323f;
-  --divider: #2a323f;
-  --on-primary: #161b24;
-
-  /* Soft accent/status backgrounds: darker, translucent so chips read on dark */
-  --brand-gold-soft: rgba(241, 195, 49, 0.16);
-  --blue-soft: rgba(96, 165, 250, 0.18);
-  --green-soft: rgba(74, 222, 128, 0.18);
-  --red-soft: rgba(248, 113, 113, 0.18);
-  --purple-soft: rgba(192, 132, 252, 0.20);
-
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.55);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
-
-  --modal-overlay: rgba(0, 0, 0, 0.7);
+  --toast-radius: 2px;
+  --toast-shadow: var(--shadow-lg);
 }
 
 /* Smooth the flip between themes */
@@ -194,7 +173,7 @@ body { transition: background-color 0.2s ease, color 0.2s ease; }
 .text-muted { color: var(--text-muted); }
 .text-error { color: var(--danger); }
 .strong { font-weight: 600; }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 0.875rem; }
+.mono { font-family: var(--font-mono-stack); font-size: 0.85rem; }
 
 /* ===== FLEX LAYOUT UTILITIES ===== */
 /* Row layouts - horizontal flex with gap */
@@ -219,16 +198,16 @@ body { transition: background-color 0.2s ease, color 0.2s ease; }
   padding: var(--space-4);
 }
 
-/* Hover-lift card (for clickable cards) */
+/* Clickable cards (all themes): flat — hover is a border + tint shift,
+   no lift or shadow */
 .hover-card {
   padding: var(--space-4);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: border-color 0.1s ease, background-color 0.1s ease;
   cursor: pointer;
 }
 .hover-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border-color: var(--accent);
+  background: var(--surface-2);
+  border-color: var(--accent-strong);
 }
 
 /* Section card - for content sections */
@@ -271,16 +250,17 @@ body { transition: background-color 0.2s ease, color 0.2s ease; }
 /* ===== PROGRESS BAR (global) ===== */
 .progress-bar { width: 100%; height: 8px; background: var(--surface-3); border-radius: 4px; overflow: hidden; }
 .progress-bar.small { height: 6px; }
-.progress-fill { height: 100%; transition: width 0.3s ease; background: linear-gradient(90deg, var(--brand-gold-soft), var(--brand-gold-strong)); }
+/* Solid fills (all themes) — gradients read as decoration, not data */
+.progress-fill { height: 100%; transition: width 0.2s ease; background: var(--brand-gold-base); }
 .progress-fill.success, .progress-fill.mfg { background: var(--green-base); }
-.progress-fill.warning, .progress-fill.pur { background: linear-gradient(90deg, var(--brand-gold-soft), var(--brand-gold-strong)); }
-.progress-fill.info, .progress-fill.kit { background: linear-gradient(90deg, var(--purple-soft), var(--purple-strong)); }
+.progress-fill.warning, .progress-fill.pur { background: var(--brand-gold-base); }
+.progress-fill.info, .progress-fill.kit { background: var(--purple-strong); }
 
 /* ===== BOM TABLE (global) ===== */
 .bom-table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); }
-.bom-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-.bom-table th, .bom-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
-.bom-table th { background: var(--background); font-weight: 600; color: var(--text); }
+.bom-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.bom-table th, .bom-table td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
+.bom-table th { background: var(--surface-1); border-bottom: 2px solid var(--neutral-800); font-family: var(--font-mono-stack); font-weight: 500; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
 .bom-table tbody tr { background: var(--color-white); }
 .bom-table tbody tr:hover { background: var(--neutral-100); }
 .bom-table tbody tr:last-child td { border-bottom: none; }
@@ -319,20 +299,25 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background-color: var(--background);
   color: var(--text);
-  line-height: 1.6;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
-/* Tighter, more confident headings across the app */
-h1, h2, h3 {
-  letter-spacing: -0.015em;
-  line-height: 1.2;
+/* Headings carry the brand voice (all themes): a characterful grotesque,
+   tight and confident. Body stays on the system stack. */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
   color: var(--secondary);
 }
 h1 { font-weight: 700; }
-h2, h3 { font-weight: 650; }
+h2, h3, h4 { font-weight: 600; }
+
+/* Numbers line up in columns everywhere (prices, quantities, dates) */
+table { font-variant-numeric: tabular-nums; }
 
 .container {
   max-width: 1440px;
@@ -392,7 +377,7 @@ h2, h3 { font-weight: 650; }
   justify-content: center;
   gap: var(--btn-gap);
   line-height: 1;
-  transition: background-color 0.2s, box-shadow 0.2s, transform 0.05s, border-color 0.2s, color 0.2s;
+  transition: background-color 0.1s, border-color 0.1s, color 0.1s;
 }
 
 .btn:hover:not(:disabled),
@@ -911,8 +896,10 @@ textarea:focus,
 }
 
 .nav-brand {
+  font-family: var(--font-display);
   font-size: var(--font-xl);
-  font-weight: bold;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--secondary);
 }
 
@@ -949,42 +936,55 @@ textarea:focus,
 }
 
 .table thead {
-  background: var(--background);
-  border-bottom: 2px solid var(--border);
+  background: var(--surface-1);
+  border-bottom: 2px solid var(--neutral-800);
   position: sticky;
   top: 0;
   z-index: 1;
 }
 
+/* Ledger-style header row (all themes): mono spec-sheet labels over a
+   strong rule */
 .table th {
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   text-align: left;
-  font-weight: 600;
-  font-size: 0.68rem;
+  font-family: var(--font-mono-stack);
+  font-weight: 500;
+  font-size: 0.66rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .table td {
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 
-/* Zebra striping + smooth hover for scannability */
-.table tbody tr:nth-child(even) {
-  background: rgba(16, 24, 40, 0.018);
-}
+/* Ruled hairlines only — no zebra; hover is a faint gold wash that follows
+   the theme's own gold */
 .table tbody tr {
-  transition: background 0.12s ease;
+  transition: background 0.1s ease;
 }
 .table tbody tr:hover {
-  background: var(--brand-gold-soft);
+  background: color-mix(in srgb, var(--brand-gold-base) 8%, transparent);
 }
 .table tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* Data readouts in mono: prices, quantities, shipping, dates, IDs */
+.table td.price,
+.table td.quantity,
+.table td.qty,
+.table td.shipping,
+.table td.date,
+.table td.order-number,
+.table td.part-number {
+  font-family: var(--font-mono-stack);
+  font-size: 0.8rem;
 }
 .status-fade {
   white-space: nowrap;
@@ -2007,4 +2007,183 @@ textarea:focus,
 .tag-action svg {
   width: 14px;
   height: 14px;
+}
+
+/* ========================================================================
+   UNCONDITIONAL FIXES (all themes)
+   ======================================================================== */
+
+/* Status labels never truncate — a chopped badge ("CAM REVIEW PENDIN…")
+   looks broken. Statuses are a small bounded set; let badges fit their text. */
+.status-fade {
+  max-width: none;
+  overflow: visible;
+}
+.status-fade::after { display: none; }
+
+/* ========================================================================
+   MODERN THEME (prototype)
+   Opt-in via the Theme dropdown on the login page. The default look (no
+   data-theme, or "light") is the original legacy design; everything
+   below applies only under <html data-theme="modern"> or "modern-dark".
+   ======================================================================== */
+
+:root[data-theme="modern"],
+:root[data-theme="modern-dark"] {
+  /* Warm, paper-leaning neutrals (not cold gray-blue) */
+  --color-white: #fdfcf9;
+  --color-black: #16130c;
+  --neutral-100: #f1ede3;
+  --neutral-300: #d9d3c4;
+  --neutral-500: #6f6a5d;
+  --neutral-800: #262216;
+
+  /* Refined, deeper gold */
+  --brand-gold-soft: #f8ecca;
+  --brand-gold-base: #d9a413;
+  --brand-gold-strong: #7d5600;
+
+  --shadow-lg: 0 8px 24px rgba(22, 19, 12, 0.16);
+  --btn-focus-ring: rgba(217, 164, 19, 0.32);
+}
+
+/* Modern dark: warm charcoal, brighter gold, dark text on gold controls */
+:root[data-theme="modern-dark"] {
+  color-scheme: dark;
+  --color-white: #1c1913;
+  --color-black: #ece7db;
+  --neutral-100: #242019;
+  --neutral-300: #373226;
+  --neutral-500: #a49c8a;
+  --neutral-800: #ece7db;
+
+  --primary: #1c1913;
+  --secondary: #ece7db;
+  --background: #131109;
+  --card: #1c1913;
+  --surface-1: #1c1913;
+  --surface-2: #242019;
+  --surface-3: #2d2820;
+  --text: #ece7db;
+  --text-secondary: #a49c8a;
+  --text-muted: #a49c8a;
+  --muted: #a49c8a;
+  --muted-bg: #242019;
+  --border: #373226;
+  --divider: #373226;
+  --on-primary: #1c1913;
+
+  --brand-gold-base: #e9b830;
+  --brand-gold-strong: #f0cd6a;
+  --brand-gold-soft: rgba(233, 184, 48, 0.14);
+  --blue-soft: rgba(96, 165, 250, 0.16);
+  --green-soft: rgba(74, 222, 128, 0.16);
+  --red-soft: rgba(248, 113, 113, 0.16);
+  --purple-soft: rgba(192, 132, 252, 0.18);
+  --orange-soft: rgba(251, 146, 60, 0.14);
+
+  /* Base/strong hues brighten on dark so chip text and borders stay readable */
+  --blue-base: #60a5fa;
+  --blue-strong: #93c5fd;
+  --green-base: #4ade80;
+  --green-strong: #86efac;
+  --red-base: #f87171;
+  --red-strong: #fca5a5;
+  --purple-base: #c084fc;
+  --purple-strong: #d8b4fe;
+  --orange-strong: #fdba74;
+
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
+
+  /* Dark text on gold-filled controls (light text would wash out) */
+  --btn-color-default: var(--on-primary);
+  --btn-hover-color-default: var(--on-primary);
+
+  --modal-overlay: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="modern-dark"] .subtabs a.active,
+[data-theme="modern-dark"] .subtabs button.active { color: var(--on-primary); }
+
+
+/* ========================================================================
+   DARK THEME CHIP READABILITY (Modern Dark)
+   The status badge classes above use hardcoded light-pastel backgrounds
+   with dark ink — unreadable and jarring on dark surfaces. On dark themes
+   every chip becomes a translucent tint with a light text tone. Light
+   themes (legacy and modern) are untouched.
+   ======================================================================== */
+
+[data-theme="modern-dark"] .status-pending {
+  background: rgba(148, 163, 184, 0.14);
+  color: #b8c4d4;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+[data-theme="modern-dark"] .status-autocammed {
+  background: rgba(241, 195, 49, 0.14);
+  color: #fcd34d;
+  border-color: rgba(241, 195, 49, 0.4);
+}
+
+[data-theme="modern-dark"] .status-in-progress,
+[data-theme="modern-dark"] .status-progress {
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+[data-theme="modern-dark"] .status-cam-review {
+  background: rgba(251, 146, 60, 0.14);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.4);
+}
+
+[data-theme="modern-dark"] .status-cammed {
+  background: rgba(192, 132, 252, 0.14);
+  color: #d8b4fe;
+  border-color: rgba(192, 132, 252, 0.4);
+}
+
+[data-theme="modern-dark"] .status-postprocessed {
+  background: rgba(34, 211, 238, 0.12);
+  color: #67e8f9;
+  border-color: rgba(34, 211, 238, 0.4);
+}
+
+[data-theme="modern-dark"] .status-jprogged {
+  background: rgba(217, 70, 239, 0.14);
+  color: #f0abfc;
+  border-color: rgba(217, 70, 239, 0.4);
+}
+
+[data-theme="modern-dark"] .status-machined {
+  background: rgba(129, 140, 248, 0.14);
+  color: #a5b4fc;
+  border-color: rgba(129, 140, 248, 0.4);
+}
+
+[data-theme="modern-dark"] .status-complete {
+  background: rgba(74, 222, 128, 0.14);
+  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+/* Solid-fill helpers become tints too (ordered / delivered / ready) */
+[data-theme="modern-dark"] .status-ordered {
+  background: rgba(96, 165, 250, 0.16);
+  color: #93c5fd;
+}
+
+[data-theme="modern-dark"] .status-delivered,
+[data-theme="modern-dark"] .status-ready {
+  background: rgba(74, 222, 128, 0.16);
+  color: #86efac;
+}
+
+/* btn-warning pairs gold bg with gold-strong text; with strong now light on
+   dark themes it needs dark ink instead */
+[data-theme="modern-dark"] .btn-warning {
+  --btn-color: var(--on-primary);
+  --btn-hover-color: var(--primary);
 }

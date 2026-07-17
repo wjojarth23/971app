@@ -603,8 +603,10 @@
   }
 
   .brand-name {
+    font-family: var(--font-display);
     font-size: var(--font-xl);
     font-weight: 700;
+    letter-spacing: -0.02em;
     white-space: nowrap;
   }
 

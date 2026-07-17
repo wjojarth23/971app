@@ -703,9 +703,10 @@
   }
 
   .page-header {
-    padding: 0 0 var(--space-1);
+    /* The global .page-header renders as a bordered card, so it needs real
+       internal padding — zeroing it left the text touching the card corners. */
+    padding: var(--space-4) var(--space-5);
     margin-bottom: 0;
-    border-bottom: 1px solid var(--border);
   }
 
   .header-copy {

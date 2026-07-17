@@ -5,12 +5,18 @@
 		<link rel="icon" sizes="192x192" href="https://static.wixstatic.com/media/00c1f8_0a42211e70da48f38c087700a496534b%7Emv2.png/v1/fill/w_192%2Ch_192%2Clg_1%2Cusm_0.66_1.00_0.01/00c1f8_0a42211e70da48f38c087700a496534b%7Emv2.png" type="image/png">
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="build-marker" content="adminfix-2026-06-18" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 		<title>Manufacturing Management System</title>
 		<script>
 			// Apply saved theme before render to avoid a flash of the wrong theme.
 			try {
 				var t = localStorage.getItem('app-theme');
-				if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+				if (t === 'dark') t = 'modern-dark'; // legacy dark removed — migrate
+				if (t === 'modern' || t === 'modern-dark') {
+					document.documentElement.setAttribute('data-theme', t);
+				}
 			} catch (e) {}
 		</script>
 		%sveltekit.head%

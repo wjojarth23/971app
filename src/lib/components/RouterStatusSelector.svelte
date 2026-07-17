@@ -234,10 +234,10 @@
   }
 
   /* Dark mode: legible select text + dark dropdown options */
-  [data-theme="dark"] select.status-select { color: #e6e9ef; }
-  [data-theme="dark"] option {
-    background-color: #1e2530;
-    color: #e6e9ef;
+  [data-theme="modern-dark"] select.status-select { color: var(--text); }
+  [data-theme="modern-dark"] option {
+    background-color: var(--surface-2);
+    color: var(--text);
   }
 
   /* CAM action button styling */

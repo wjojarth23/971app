@@ -2571,6 +2571,14 @@
   .role-filters { display: flex; flex-wrap: wrap; gap: var(--gap-3); margin-bottom: var(--space-3); align-items: center; }
   .filter-input { flex: 1 1 160px; min-width: 160px; }
   .role-select { border-color: var(--role-border, var(--border)); background: var(--role-bg, var(--primary)); color: var(--role-text, var(--text)); font-weight: 600; transition: border-color 0.2s ease, background 0.2s ease; }
+  /* Dark theme: the inline role themes are light pastels (unreadable and
+     glaring on dark). Derive a translucent chip from each role's hue so the
+     color coding survives; light themes keep the original pastel look. */
+  :global([data-theme="modern-dark"]) .role-select {
+    background: color-mix(in srgb, var(--role-border, var(--border)) 14%, transparent);
+    border-color: color-mix(in srgb, var(--role-border, var(--border)) 45%, transparent);
+    color: color-mix(in srgb, var(--role-border, var(--border)) 60%, #ffffff);
+  }
   .role-select:disabled { opacity: 0.7; cursor: progress; }
   .role-select option { color: var(--text); background: var(--primary); font-weight: 500; }
   .pending-row { background: var(--neutral-100); }
