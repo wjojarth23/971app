@@ -2169,6 +2169,18 @@ textarea:focus,
   border-color: rgba(74, 222, 128, 0.4);
 }
 
+/* The 3D Print workflow tag otherwise renders with a fully-opaque
+   brightened-purple border (--purple-base) around a near-transparent fill —
+   reads as a harsh neon-violet outline on dark surfaces. Give it the same
+   translucent-border treatment as every other dark-mode chip. */
+[data-theme="modern-dark"] .tag-workflow-3d,
+[data-theme="modern-dark"] .tag-workflow-3d-print,
+[data-theme="modern-dark"] .tag-workflow-3dprint {
+  background: rgba(192, 132, 252, 0.14);
+  color: #d8b4fe;
+  border-color: rgba(192, 132, 252, 0.4);
+}
+
 /* Solid-fill helpers become tints too (ordered / delivered / ready) */
 [data-theme="modern-dark"] .status-ordered {
   background: rgba(96, 165, 250, 0.16);

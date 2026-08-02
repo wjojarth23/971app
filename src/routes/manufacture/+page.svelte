@@ -2631,6 +2631,22 @@
   .status-badge.status-table.status-complete { background: #dcfce7; color: #166534; border-color: #4ade80; }
   .status-badge.status-table.status-travis { background: var(--green-soft); color: var(--green-strong); border-color: var(--green-base); }
 
+  /* These pale, hardcoded light-mode colors above are unreadable/glaring on
+     dark surfaces (this is the "super light things" the pale-status-badge
+     bug reports referred to) — swap to the same translucent-tint + light-ink
+     treatment used everywhere else in the app on modern-dark. Higher
+     specificity than the base rules above (attribute selector), so these win
+     regardless of source order. */
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-pending { background: rgba(148, 163, 184, 0.14); color: #b8c4d4; border-color: rgba(148, 163, 184, 0.35); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-autocammed { background: rgba(241, 195, 49, 0.14); color: #fcd34d; border-color: rgba(241, 195, 49, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-progress { background: rgba(96, 165, 250, 0.14); color: #93c5fd; border-color: rgba(96, 165, 250, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-cam-review { background: rgba(251, 146, 60, 0.14); color: #fdba74; border-color: rgba(251, 146, 60, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-cammed { background: rgba(192, 132, 252, 0.14); color: #d8b4fe; border-color: rgba(192, 132, 252, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-postprocessed { background: rgba(34, 211, 238, 0.12); color: #67e8f9; border-color: rgba(34, 211, 238, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-jprogged { background: rgba(217, 70, 239, 0.14); color: #f0abfc; border-color: rgba(217, 70, 239, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-machined { background: rgba(129, 140, 248, 0.14); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-complete { background: rgba(74, 222, 128, 0.14); color: #86efac; border-color: rgba(74, 222, 128, 0.4); }
+
   .parts-row {
     cursor: pointer;
   }
