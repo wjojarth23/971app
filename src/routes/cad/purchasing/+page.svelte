@@ -221,12 +221,23 @@
   $: orderableItems = parts.filter(p => p.status === 'approved' && !p.order_id && !p.is_pickup);
   
   // When in order mode and a vendor is selected, filter to that vendor only
-  $: displayedOrderItems = orderMode && selectedVendor 
+  $: displayedOrderItems = orderMode && selectedVendor
     ? orderableItems.filter(p => {
         const itemVendor = p.vendor || 'Other';
         return itemVendor === selectedVendor;
       })
     : orderableItems;
+
+  // Bulk approve mode — lets an approver select multiple pending items
+  // (within the current filters) and approve them in one action.
+  let approveMode = false;
+  let selectedApprovals = new Set();
+  let bulkApproving = false;
+
+  // Items eligible for approval within the current filtered view
+  $: approvableItems = filteredParts.filter(
+    (p) => !p.approved && (p.status || 'pending').toString().toLowerCase() !== 'rejected'
+  );
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -759,6 +770,92 @@
     }
   }
 
+  function toggleApproveMode() {
+    if (!approveMode && !canApprovePurchases(user)) return;
+    approveMode = !approveMode;
+    if (approveMode) {
+      // Mutually exclusive with order mode — leave it if active
+      if (orderMode) {
+        orderMode = false;
+        selectedItems.clear();
+        selectedItems = selectedItems;
+        selectedVendor = null;
+      }
+    } else {
+      selectedApprovals.clear();
+      selectedApprovals = selectedApprovals;
+    }
+  }
+
+  // Defense in depth: if permissions change mid-session (e.g. an admin
+  // revokes the approver role), immediately drop out of bulk-approve mode.
+  $: if (approveMode && !canApprovePurchases(user)) {
+    approveMode = false;
+    selectedApprovals.clear();
+    selectedApprovals = selectedApprovals;
+  }
+
+  function toggleApprovalSelection(part) {
+    if (selectedApprovals.has(part.id)) {
+      selectedApprovals.delete(part.id);
+    } else {
+      selectedApprovals.add(part.id);
+    }
+    selectedApprovals = selectedApprovals;
+  }
+
+  function toggleSelectAllApprovals() {
+    const allSelected = approvableItems.length > 0 && approvableItems.every((p) => selectedApprovals.has(p.id));
+    if (allSelected) {
+      selectedApprovals.clear();
+    } else {
+      approvableItems.forEach((p) => selectedApprovals.add(p.id));
+    }
+    selectedApprovals = selectedApprovals;
+  }
+
+  async function bulkApprovePending() {
+    if (!user) {
+      toastActions.show('You must be signed in to approve items');
+      return;
+    }
+    if (!canApprovePurchases(user)) {
+      toastActions.show('You do not have permission to approve items');
+      return;
+    }
+    const ids = Array.from(selectedApprovals);
+    if (ids.length === 0) {
+      toastActions.show('Select at least one item to approve');
+      return;
+    }
+    if (!confirm(`Approve ${ids.length} item${ids.length === 1 ? '' : 's'}?`)) return;
+
+    bulkApproving = true;
+    try {
+      const approverName = user.full_name || user.email || null;
+      const { error } = await supabase
+        .from('purchasing')
+        .update({ approved: true, approver: approverName, status: 'approved' })
+        .in('id', ids);
+
+      if (error) throw error;
+
+      // Best-effort notifications — don't let one failure block the rest
+      await Promise.allSettled(ids.map((id) => sendNotification('purchase-approved', { purchase_id: id })));
+
+      toastActions.show(`Approved ${ids.length} item${ids.length === 1 ? '' : 's'}`);
+      selectedApprovals.clear();
+      selectedApprovals = selectedApprovals;
+      approveMode = false;
+      await loadParts();
+    } catch (err) {
+      console.error('Failed to bulk approve', err);
+      toastActions.show('Failed to approve items');
+    } finally {
+      bulkApproving = false;
+    }
+  }
+
   async function rejectPart(part) {
     if (!user) {
       alert('You must be signed in to reject items');
@@ -847,7 +944,7 @@
           {/if}
           {#if canCreateOrders(user)}
             {#if !orderMode}
-              <button class="btn btn-primary" on:click={toggleOrderMode}>
+              <button class="btn btn-primary" on:click={toggleOrderMode} disabled={approveMode}>
                   <Package size={16} /> Create Order
                 </button>
               {:else}
@@ -856,6 +953,18 @@
                   <CheckCircle size={16} /> Confirm Order ({selectedItems.size} items)
                 </button>
               <button class="btn btn-secondary" on:click={toggleOrderMode}>Cancel</button>
+            {/if}
+          {/if}
+          {#if canApprovePurchases(user)}
+            {#if !approveMode}
+              <button class="btn btn-secondary" on:click={toggleApproveMode} disabled={orderMode}>
+                <CheckCircle size={16} /> Bulk Approve
+              </button>
+            {:else}
+              <button class="btn btn-primary" on:click={bulkApprovePending} disabled={selectedApprovals.size === 0 || bulkApproving}>
+                <CheckCircle size={16} /> {bulkApproving ? 'Approving…' : `Approve Selected (${selectedApprovals.size})`}
+              </button>
+              <button class="btn btn-secondary" on:click={toggleApproveMode} disabled={bulkApproving}>Cancel</button>
             {/if}
           {/if}
         </div>
@@ -965,6 +1074,16 @@
                 <th style="width: 40px;">
                   <input type="checkbox" disabled style="opacity: 0.3;" />
                 </th>
+              {:else if approveMode && canApprovePurchases(user)}
+                <th style="width: 40px;">
+                  <input
+                    type="checkbox"
+                    checked={approvableItems.length > 0 && approvableItems.every((p) => selectedApprovals.has(p.id))}
+                    disabled={approvableItems.length === 0}
+                    on:change={toggleSelectAllApprovals}
+                    title="Select all approvable items"
+                  />
+                </th>
               {/if}
               <th>Name</th>
               <th>Vendor</th>
@@ -987,16 +1106,31 @@
           <tbody>
             {#each (orderMode ? displayedOrderItems : filteredParts) as part}
               <tr
-                on:click={(e) => orderMode ? null : onRowClick(e, part)}
-                on:keydown={(e) => orderMode ? null : onRowKeyDown(e, part)}
-                role={orderMode ? undefined : (canEdit(part) ? 'button' : undefined)}
-                tabindex={orderMode ? undefined : (canEdit(part) ? '0' : undefined)}
-                style={orderMode ? '' : (canEdit(part) ? 'cursor: pointer;' : '')}
-                class={orderMode && selectedItems.has(part.id) ? 'selected-row' : ''}
+                on:click={(e) => (orderMode || approveMode) ? null : onRowClick(e, part)}
+                on:keydown={(e) => (orderMode || approveMode) ? null : onRowKeyDown(e, part)}
+                role={(orderMode || approveMode) ? undefined : (canEdit(part) ? 'button' : undefined)}
+                tabindex={(orderMode || approveMode) ? undefined : (canEdit(part) ? '0' : undefined)}
+                style={(orderMode || approveMode) ? '' : (canEdit(part) ? 'cursor: pointer;' : '')}
+                class={
+                  (orderMode && selectedItems.has(part.id)) || (approveMode && selectedApprovals.has(part.id))
+                    ? 'selected-row'
+                    : ''
+                }
               >
+                {#if approveMode && canApprovePurchases(user)}
+                  <td on:click|stopPropagation>
+                    {#if !part.approved && (part.status || 'pending').toString().toLowerCase() !== 'rejected'}
+                      <input
+                        type="checkbox"
+                        checked={selectedApprovals.has(part.id)}
+                        on:change={() => toggleApprovalSelection(part)}
+                      />
+                    {/if}
+                  </td>
+                {/if}
                 {#if orderMode}
                   <td on:click|stopPropagation>
-                    <input 
+                    <input
                       type="checkbox" 
                       checked={selectedItems.has(part.id)}
                       on:change={() => toggleItemSelection(part)}

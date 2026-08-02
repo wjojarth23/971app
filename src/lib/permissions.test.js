@@ -106,13 +106,34 @@ describe('canCreateOrders', () => {
 });
 
 describe('canApprovePurchases', () => {
+  // This is the exact gate the purchasing page's "Bulk Approve" button, its
+  // select-all/per-row checkboxes, and the batched approval write all use —
+  // there is no separate bulk-approve permission function. Covering every
+  // role combination here is what keeps bulk-approve access correct.
   it('allows admins, mentors, and APPROVE_PURCHASES holders', () => {
     expect(canApprovePurchases({ role: 'admin' })).toBe(true);
     expect(canApprovePurchases({ frc_team: FRC_TEAMS.MENTOR })).toBe(true);
     expect(canApprovePurchases({ purchasing_role: 'approver' })).toBe(true);
+    expect(canApprovePurchases({ purchasing_role: 'lead' })).toBe(true);
     expect(canApprovePurchases({ team_role: TEAM_ROLES.PURCHASING_LEAD })).toBe(true);
+    expect(canApprovePurchases({ permissions: ['APPROVE_PURCHASES'] })).toBe(true);
+  });
+
+  it('denies everyday members and non-approving roles', () => {
+    // Plain member: PLACE_ORDERS_MISC only, no approve
     expect(canApprovePurchases({ general_role: 'member', frc_team: '971' })).toBe(false);
+    // general_role 'lead' grants admin-panel perms but NOT purchase approval —
+    // easy to confuse with the Purchasing Lead *team* role, which does grant it
+    expect(canApprovePurchases({ general_role: 'lead' })).toBe(false);
+    // basic/budgeting purchasing roles don't grant APPROVE_PURCHASES
+    expect(canApprovePurchases({ purchasing_role: 'basic' })).toBe(false);
+    expect(canApprovePurchases({ purchasing_role: 'budgeting' })).toBe(false);
+    // A non-Purchasing-Lead team role grants nothing here
+    expect(canApprovePurchases({ team_role: TEAM_ROLES.MANUFACTURING_LEAD })).toBe(false);
+    // frc_team set to a real team (not 'Mentor') grants nothing
+    expect(canApprovePurchases({ frc_team: FRC_TEAMS.TEAM_971 })).toBe(false);
     expect(canApprovePurchases(null)).toBe(false);
+    expect(canApprovePurchases(undefined)).toBe(false);
   });
 });
 
