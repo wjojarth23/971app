@@ -2475,12 +2475,11 @@
 
 <style>
   /* No hover effects on the manufacture tab (dense buttons + table rows).
-     Use theme tokens so rows flip correctly in dark mode. */
+     Use theme tokens so rows flip correctly in dark mode. Ruled hairlines
+     only — no zebra striping, matching the rest of the app's tables. */
   .btn:hover { box-shadow: none; }
   .table tr { background: var(--surface-1); }
-  .table tbody tr:nth-child(even) { background: var(--surface-2); }
   .table tbody tr:hover { background: var(--surface-1); }
-  .table tbody tr:nth-child(even):hover { background: var(--surface-2); }
 
   .manufacture-page-container {
     max-width: 1400px;
@@ -2620,32 +2619,33 @@
     color: var(--secondary);
   }
 
-  .status-badge.status-table.status-pending { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
-  .status-badge.status-table.status-autocammed { background: #fef3c7; color: #92400e; border-color: #f1c331; }
-  .status-badge.status-table.status-progress { background: #dbeafe; color: #1e40af; border-color: #60a5fa; }
-  .status-badge.status-table.status-cam-review { background: #ffedd5; color: #9a3412; border-color: #fb923c; }
-  .status-badge.status-table.status-cammed { background: #f3e8ff; color: #6b21a8; border-color: #c084fc; }
-  .status-badge.status-table.status-postprocessed { background: #cffafe; color: #155e75; border-color: #22d3ee; }
-  .status-badge.status-table.status-jprogged { background: #fae8ff; color: #86198f; border-color: #d946ef; }
-  .status-badge.status-table.status-machined { background: #e0e7ff; color: #3730a3; border-color: #818cf8; }
-  .status-badge.status-table.status-complete { background: #dcfce7; color: #166534; border-color: #4ade80; }
-  .status-badge.status-table.status-travis { background: var(--green-soft); color: var(--green-strong); border-color: var(--green-base); }
+  /* Same muted, warm-toned palette as the global .status-* chips (see
+     app.css) — kept in sync here since these .status-table selectors have
+     higher specificity and would otherwise shadow that palette on this
+     exact list view. */
+  .status-badge.status-table.status-pending { background: #efece4; color: #6b6355; border-color: #d9d2c0; }
+  .status-badge.status-table.status-autocammed { background: var(--brand-gold-soft); color: var(--brand-gold-strong); border-color: color-mix(in srgb, var(--brand-gold-strong) 35%, transparent); }
+  .status-badge.status-table.status-progress { background: #e3e9ef; color: #3f5b74; border-color: #c3d1de; }
+  .status-badge.status-table.status-cam-review { background: #f3e2d0; color: #8a4a1f; border-color: #e0c7a8; }
+  .status-badge.status-table.status-cammed { background: #efe1e7; color: #7a3b52; border-color: #dcc3cf; }
+  .status-badge.status-table.status-postprocessed { background: #dfebe8; color: #2f6459; border-color: #c3d9d4; }
+  .status-badge.status-table.status-jprogged { background: #f2e8ce; color: #7a5c12; border-color: #e0cf9a; }
+  .status-badge.status-table.status-machined { background: #e6e3ef; color: #4a4470; border-color: #cfc9e0; }
+  .status-badge.status-table.status-complete,
+  .status-badge.status-table.status-travis { background: #e2e9d7; color: #4b6b34; border-color: #cfdcbb; }
 
-  /* These pale, hardcoded light-mode colors above are unreadable/glaring on
-     dark surfaces (this is the "super light things" the pale-status-badge
-     bug reports referred to) — swap to the same translucent-tint + light-ink
-     treatment used everywhere else in the app on modern-dark. Higher
-     specificity than the base rules above (attribute selector), so these win
-     regardless of source order. */
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-pending { background: rgba(148, 163, 184, 0.14); color: #b8c4d4; border-color: rgba(148, 163, 184, 0.35); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-autocammed { background: rgba(241, 195, 49, 0.14); color: #fcd34d; border-color: rgba(241, 195, 49, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-progress { background: rgba(96, 165, 250, 0.14); color: #93c5fd; border-color: rgba(96, 165, 250, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-cam-review { background: rgba(251, 146, 60, 0.14); color: #fdba74; border-color: rgba(251, 146, 60, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-cammed { background: rgba(192, 132, 252, 0.14); color: #d8b4fe; border-color: rgba(192, 132, 252, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-postprocessed { background: rgba(34, 211, 238, 0.12); color: #67e8f9; border-color: rgba(34, 211, 238, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-jprogged { background: rgba(217, 70, 239, 0.14); color: #f0abfc; border-color: rgba(217, 70, 239, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-machined { background: rgba(129, 140, 248, 0.14); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-complete { background: rgba(74, 222, 128, 0.14); color: #86efac; border-color: rgba(74, 222, 128, 0.4); }
+  /* Dark-mode equivalents — translucent tint + light ink, same hue mapping
+     as the light-mode rules above. Higher specificity than the base rules
+     (attribute selector), so these win regardless of source order. */
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-pending { background: rgba(190, 178, 155, 0.16); color: #c9bfa8; border-color: rgba(190, 178, 155, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-progress { background: rgba(122, 156, 184, 0.16); color: #a9c4da; border-color: rgba(122, 156, 184, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-cam-review { background: rgba(224, 148, 92, 0.16); color: #f2bd91; border-color: rgba(224, 148, 92, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-cammed { background: rgba(196, 133, 160, 0.16); color: #e3b0c7; border-color: rgba(196, 133, 160, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-postprocessed { background: rgba(94, 189, 172, 0.16); color: #8fd6c4; border-color: rgba(94, 189, 172, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-jprogged { background: rgba(212, 168, 74, 0.16); color: #e3c785; border-color: rgba(212, 168, 74, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-machined { background: rgba(146, 133, 196, 0.16); color: #c3b8e0; border-color: rgba(146, 133, 196, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-complete,
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-travis { background: rgba(139, 178, 101, 0.16); color: #bcd89f; border-color: rgba(139, 178, 101, 0.4); }
 
   .parts-row {
     cursor: pointer;

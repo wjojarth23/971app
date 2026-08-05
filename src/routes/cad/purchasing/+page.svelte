@@ -1951,40 +1951,45 @@
   :global([data-theme="modern-dark"]) .status-select.colorful {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
   }
+  /* Status palette: each lifecycle stage gets its own muted, warm-toned
+     hue (teal / plum / terracotta / sage) instead of reusing the same
+     stock green/purple everywhere — reads as a considered system rather
+     than default chip colors, and stays legible against the warm paper
+     background instead of clashing with it. Pending/Rejected keep the
+     existing gold/red (already on-theme, universally understood). */
   .status-select.colorful[data-status="pending"] {
     background: var(--brand-gold-soft);
     color: var(--brand-gold-strong);
     border-color: color-mix(in srgb, var(--brand-gold-strong) 35%, transparent);
   }
-  .status-select.colorful[data-status="ordered"] {
-    background: var(--purple-soft);
-    color: var(--purple-strong);
-    border-color: color-mix(in srgb, var(--purple-strong) 35%, transparent);
-  }
-  .status-select.colorful[data-status="pickup"] {
-    background: var(--purple-soft);
-    color: var(--purple-strong);
-    border-color: color-mix(in srgb, var(--purple-strong) 35%, transparent);
-  }
-  .status-select.colorful[data-status="delivered"] {
-    background: var(--green-soft);
-    color: var(--green-base);
-    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
-  }
-  .status-select.colorful[data-status="picked_up"] {
-    background: var(--green-soft);
-    color: var(--green-base);
-    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
-  }
-  .status-select.colorful[data-status="kitted"] {
-    background: var(--green-soft);
-    color: var(--green-base);
-    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
-  }
+  /* Approved: muted teal — a "verified/authorized" signal, distinct from
+     the received-goods green used for delivered/kitted below */
   .status-select.colorful[data-status="approved"] {
-    background: var(--green-soft);
-    color: var(--green-strong);
-    border-color: color-mix(in srgb, var(--green-strong) 30%, transparent);
+    background: #dfebe8;
+    color: #2f6459;
+    border-color: color-mix(in srgb, #2f6459 32%, transparent);
+  }
+  /* Ordered: warm plum — in-transit, still a cool accent for variety but
+     muted/wine-toned rather than a bright stock violet */
+  .status-select.colorful[data-status="ordered"] {
+    background: #efe1e7;
+    color: #7a3b52;
+    border-color: color-mix(in srgb, #7a3b52 32%, transparent);
+  }
+  /* Pickup: warm terracotta — a distinct "ready, take action" state,
+     previously shared Ordered's exact color with no differentiation */
+  .status-select.colorful[data-status="pickup"] {
+    background: #f3e2d0;
+    color: #8a4a1f;
+    border-color: color-mix(in srgb, #8a4a1f 32%, transparent);
+  }
+  /* Delivered / Picked Up / Kitted: muted sage — the "received" family */
+  .status-select.colorful[data-status="delivered"],
+  .status-select.colorful[data-status="picked_up"],
+  .status-select.colorful[data-status="kitted"] {
+    background: #e2e9d7;
+    color: #4b6b34;
+    border-color: color-mix(in srgb, #4b6b34 32%, transparent);
   }
   .status-select.colorful[data-status="rejected"] {
     background: var(--red-soft);
@@ -1992,13 +1997,37 @@
     border-color: color-mix(in srgb, var(--red-strong) 35%, transparent);
   }
 
+  :global([data-theme="modern-dark"]) .status-select.colorful[data-status="approved"] {
+    background: rgba(94, 189, 172, 0.16);
+    color: #8fd6c4;
+    border-color: rgba(94, 189, 172, 0.4);
+  }
+  :global([data-theme="modern-dark"]) .status-select.colorful[data-status="ordered"] {
+    background: rgba(196, 133, 160, 0.16);
+    color: #e3b0c7;
+    border-color: rgba(196, 133, 160, 0.4);
+  }
+  :global([data-theme="modern-dark"]) .status-select.colorful[data-status="pickup"] {
+    background: rgba(224, 148, 92, 0.16);
+    color: #f2bd91;
+    border-color: rgba(224, 148, 92, 0.4);
+  }
+  :global([data-theme="modern-dark"]) .status-select.colorful[data-status="delivered"],
+  :global([data-theme="modern-dark"]) .status-select.colorful[data-status="picked_up"],
+  :global([data-theme="modern-dark"]) .status-select.colorful[data-status="kitted"] {
+    background: rgba(139, 178, 101, 0.16);
+    color: #bcd89f;
+    border-color: rgba(139, 178, 101, 0.4);
+  }
+
   .status-select.colorful option[value="pending"] { background: var(--brand-gold-soft); }
   .status-select.colorful option[value="rejected"] { background: var(--red-soft); }
-  .status-select.colorful option[value="ordered"] { background: var(--purple-soft); }
-  .status-select.colorful option[value="pickup"] { background: var(--purple-soft); }
-  .status-select.colorful option[value="delivered"] { background: var(--green-soft); }
-  .status-select.colorful option[value="picked_up"] { background: var(--green-soft); }
-  .status-select.colorful option[value="kitted"] { background: var(--green-soft); }
+  .status-select.colorful option[value="approved"] { background: #dfebe8; }
+  .status-select.colorful option[value="ordered"] { background: #efe1e7; }
+  .status-select.colorful option[value="pickup"] { background: #f3e2d0; }
+  .status-select.colorful option[value="delivered"] { background: #e2e9d7; }
+  .status-select.colorful option[value="picked_up"] { background: #e2e9d7; }
+  .status-select.colorful option[value="kitted"] { background: #e2e9d7; }
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }
   .kit-input { min-width: 140px; }
