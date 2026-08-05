@@ -27,6 +27,12 @@
 
   // Tab management
   let activeTab = 'access'; // 'access', 'purchasing', 'rosters', 'planner-calendar'
+
+  // Hidden tabs: kept fully in place (nav button + content + all logic) but
+  // not shown in the tab bar. Flip back to true to re-enable, no code to
+  // restore.
+  const SHOW_GANTT_TAB = false;
+  const SHOW_ATTENDANCE_TAB = false;
   async function notifyUserNeedsApproval(u) {
     try {
       await fetch(`${BOT_BASE_URL}/notify/user_registration`, {
@@ -1370,16 +1376,23 @@
     <button type="button" class:active={activeTab === 'access'} on:click={() => setActiveTab('access')}>
       Roles & Access
     </button>
+    {#if $currentUser?.role === 'admin'}
+      <button type="button" class:active={activeTab === 'activity'} on:click={() => setActiveTab('activity')}>
+        Activity Log
+      </button>
+    {/if}
     <button type="button" class:active={activeTab === 'rosters'} on:click={() => setActiveTab('rosters')}>
       Roster Studio
     </button>
     <button type="button" class:active={activeTab === 'purchasing'} on:click={() => setActiveTab('purchasing')}>
       Purchasing
     </button>
-    <button type="button" class:active={activeTab === 'planner-calendar'} on:click={() => setActiveTab('planner-calendar')}>
-      Gantt Calendar
-    </button>
-    {#if hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
+    {#if SHOW_GANTT_TAB}
+      <button type="button" class:active={activeTab === 'planner-calendar'} on:click={() => setActiveTab('planner-calendar')}>
+        Gantt Calendar
+      </button>
+    {/if}
+    {#if SHOW_ATTENDANCE_TAB && hasPermission($currentUser, 'MANAGE_ATTENDANCE')}
       <button type="button" class:active={activeTab === 'attendance'} on:click={() => setActiveTab('attendance')}>
         Attendance
       </button>
@@ -1387,11 +1400,6 @@
     {#if ($currentUser?.purchasing_role === PURCHASING_ROLES.BUDGETING) || ($currentUser?.permissions?.includes('MANAGE_BUDGETS'))}
       <button type="button" class:active={activeTab === 'budgets'} on:click={() => setActiveTab('budgets')}>
         Budgets
-      </button>
-    {/if}
-    {#if $currentUser?.role === 'admin'}
-      <button type="button" class:active={activeTab === 'activity'} on:click={() => setActiveTab('activity')}>
-        Activity Log
       </button>
     {/if}
   </nav>
