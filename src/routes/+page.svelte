@@ -663,6 +663,9 @@
 
 <style>
   .auth-container {
+    /* Slightly softer than the app-wide sharp-corner default (--radius-lg),
+       without going soft-card-AI-generic. Scoped to this page's own cards. */
+    --home-radius: 8px;
     max-width: 500px;
     margin: var(--space-8) auto;
     display: flex;
@@ -674,7 +677,7 @@
   .auth-card {
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     padding: var(--space-7);
     box-shadow: var(--shadow-sm);
     width: 100%;
@@ -846,6 +849,9 @@
   }
 
   .dashboard-container {
+    /* Slightly softer than the app-wide sharp-corner default (--radius-lg),
+       without going soft-card-AI-generic. Scoped to this page's own cards. */
+    --home-radius: 8px;
     max-width: 1200px;
     margin: var(--space-7) auto;
     padding: 0 var(--space-4);
@@ -856,7 +862,7 @@
     background: var(--primary);
     border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     padding: var(--space-5) var(--space-6);
     margin-bottom: var(--space-6);
   }
@@ -887,7 +893,7 @@
     gap: var(--gap-3);
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     padding: var(--space-4) var(--space-5);
     text-decoration: none;
     color: inherit;
@@ -951,7 +957,7 @@
     gap: var(--gap-4);
     background: var(--brand-gold-soft);
     border: 1px solid var(--orange-soft);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     padding: var(--space-6);
     margin-bottom: var(--space-7);
     color: var(--brand-gold-strong);
@@ -992,7 +998,7 @@
     align-items: center;
     background: var(--primary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     padding: var(--space-5) var(--space-6);
     text-decoration: none;
     color: inherit;
@@ -1043,7 +1049,7 @@
     color: inherit;
     background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     padding: var(--space-4) var(--space-5);
     transition: border-color 0.1s ease, background-color 0.1s ease;
   }
@@ -1174,7 +1180,7 @@
   /* Empty states read as intentional placeholders, not stray text */
   .user-lists > .muted {
     border: 1px dashed var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--home-radius, var(--radius-lg));
     background: var(--surface-1);
     padding: var(--space-4) var(--space-5);
     margin: 0;
