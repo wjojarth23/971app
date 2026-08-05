@@ -12,10 +12,10 @@ import navigation from '$lib/navigation.json';
 export function defaultHeaderTabs(navConfig = navigation) {
   const tabs = [];
   if (navConfig?.tabs?.manufacture !== false) tabs.push({ type: 'tab', key: 'manufacture', label: 'Manufacture' });
+  tabs.push({ type: 'tab', key: 'purchasing', label: 'Purchasing' });
   if (navConfig?.tabs?.kitting !== false) tabs.push({ type: 'tab', key: 'kitting', label: 'Kitting' });
   tabs.push({ type: 'tab', key: 'cad', label: 'CAD' });
   if (navConfig?.tabs?.build !== false) tabs.push({ type: 'tab', key: 'build', label: 'Build' });
-  tabs.push({ type: 'tab', key: 'purchasing', label: 'Purchasing' });
   if (navConfig?.tabs?.['cots-stocking'] !== false) tabs.push({ type: 'tab', key: 'cots-stocking', label: 'COTS Stocking' });
   return tabs;
 }
