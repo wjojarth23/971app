@@ -1327,9 +1327,9 @@ textarea:focus,
 .tag-workflow-3d,
 .tag-workflow-3d-print,
 .tag-workflow-3dprint {
-  background: #efe1e7;
-  color: #7a3b52;
-  border-color: #dcc3cf;
+  background: #dfebe8;
+  color: #2f6459;
+  border-color: #c3d9d4;
 }
 
 .workflow-tag {
@@ -2178,9 +2178,9 @@ textarea:focus,
 [data-theme="modern-dark"] .tag-workflow-3d,
 [data-theme="modern-dark"] .tag-workflow-3d-print,
 [data-theme="modern-dark"] .tag-workflow-3dprint {
-  background: rgba(196, 133, 160, 0.16);
-  color: #e3b0c7;
-  border-color: rgba(196, 133, 160, 0.4);
+  background: rgba(94, 189, 172, 0.16);
+  color: #8fd6c4;
+  border-color: rgba(94, 189, 172, 0.4);
 }
 
 [data-theme="modern-dark"] .tag-workflow-mill {
