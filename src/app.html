@@ -11,9 +11,11 @@
 		<title>Manufacturing Management System</title>
 		<script>
 			// Apply saved theme before render to avoid a flash of the wrong theme.
+			// Modern Light is the default for anyone without a saved preference.
 			try {
 				var t = localStorage.getItem('app-theme');
 				if (t === 'dark') t = 'modern-dark'; // legacy dark removed — migrate
+				if (t === null) t = 'modern';
 				if (t === 'modern' || t === 'modern-dark') {
 					document.documentElement.setAttribute('data-theme', t);
 				}

@@ -2623,29 +2623,29 @@
      app.css) — kept in sync here since these .status-table selectors have
      higher specificity and would otherwise shadow that palette on this
      exact list view. */
-  .status-badge.status-table.status-pending { background: #efece4; color: #6b6355; border-color: #d9d2c0; }
+  .status-badge.status-table.status-pending { background: #ece7db; color: #5c5340; border-color: #cbbfa0; }
   .status-badge.status-table.status-autocammed { background: var(--brand-gold-soft); color: var(--brand-gold-strong); border-color: color-mix(in srgb, var(--brand-gold-strong) 35%, transparent); }
-  .status-badge.status-table.status-progress { background: #e3e9ef; color: #3f5b74; border-color: #c3d1de; }
-  .status-badge.status-table.status-cam-review { background: #f3e2d0; color: #8a4a1f; border-color: #e0c7a8; }
-  .status-badge.status-table.status-cammed { background: #efe1e7; color: #7a3b52; border-color: #dcc3cf; }
-  .status-badge.status-table.status-postprocessed { background: #dfebe8; color: #2f6459; border-color: #c3d9d4; }
-  .status-badge.status-table.status-jprogged { background: #f2e8ce; color: #7a5c12; border-color: #e0cf9a; }
-  .status-badge.status-table.status-machined { background: #e6e3ef; color: #4a4470; border-color: #cfc9e0; }
+  .status-badge.status-table.status-progress { background: #dce7f0; color: #1d5f8f; border-color: #9dc2dc; }
+  .status-badge.status-table.status-cam-review { background: #f6ddc0; color: #a34a12; border-color: #e3ac6c; }
+  .status-badge.status-table.status-cammed { background: #f2dbe6; color: #9c2f5c; border-color: #dda2bf; }
+  .status-badge.status-table.status-postprocessed { background: #d3ece5; color: #0d7a68; border-color: #85cabb; }
+  .status-badge.status-table.status-jprogged { background: #f5e6b8; color: #8a6208; border-color: #ddbb5c; }
+  .status-badge.status-table.status-machined { background: #e2ddf2; color: #5545a0; border-color: #b7a8e0; }
   .status-badge.status-table.status-complete,
-  .status-badge.status-table.status-travis { background: #e2e9d7; color: #4b6b34; border-color: #cfdcbb; }
+  .status-badge.status-table.status-travis { background: #dbe9c8; color: #4f7a2e; border-color: #a3c47a; }
 
   /* Dark-mode equivalents — translucent tint + light ink, same hue mapping
      as the light-mode rules above. Higher specificity than the base rules
      (attribute selector), so these win regardless of source order. */
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-pending { background: rgba(190, 178, 155, 0.16); color: #c9bfa8; border-color: rgba(190, 178, 155, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-progress { background: rgba(122, 156, 184, 0.16); color: #a9c4da; border-color: rgba(122, 156, 184, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-cam-review { background: rgba(224, 148, 92, 0.16); color: #f2bd91; border-color: rgba(224, 148, 92, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-cammed { background: rgba(196, 133, 160, 0.16); color: #e3b0c7; border-color: rgba(196, 133, 160, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-postprocessed { background: rgba(94, 189, 172, 0.16); color: #8fd6c4; border-color: rgba(94, 189, 172, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-jprogged { background: rgba(212, 168, 74, 0.16); color: #e3c785; border-color: rgba(212, 168, 74, 0.4); }
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-machined { background: rgba(146, 133, 196, 0.16); color: #c3b8e0; border-color: rgba(146, 133, 196, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-pending { background: rgba(196, 182, 150, 0.2); color: #d4c7a5; border-color: rgba(196, 182, 150, 0.45); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-progress { background: rgba(56, 138, 186, 0.22); color: #8fc4e3; border-color: rgba(56, 138, 186, 0.5); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-cam-review { background: rgba(224, 148, 92, 0.22); color: #f5c393; border-color: rgba(224, 148, 92, 0.5); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-cammed { background: rgba(199, 110, 150, 0.22); color: #edabc7; border-color: rgba(199, 110, 150, 0.5); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-postprocessed { background: rgba(60, 180, 155, 0.22); color: #82dcc4; border-color: rgba(60, 180, 155, 0.5); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-jprogged { background: rgba(214, 168, 50, 0.22); color: #edcd6f; border-color: rgba(214, 168, 50, 0.5); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-machined { background: rgba(142, 120, 206, 0.22); color: #c3b2ea; border-color: rgba(142, 120, 206, 0.5); }
   :global([data-theme='modern-dark']) .status-badge.status-table.status-complete,
-  :global([data-theme='modern-dark']) .status-badge.status-table.status-travis { background: rgba(139, 178, 101, 0.16); color: #bcd89f; border-color: rgba(139, 178, 101, 0.4); }
+  :global([data-theme='modern-dark']) .status-badge.status-table.status-travis { background: rgba(130, 178, 80, 0.22); color: #b8d68f; border-color: rgba(130, 178, 80, 0.5); }
 
   .parts-row {
     cursor: pointer;

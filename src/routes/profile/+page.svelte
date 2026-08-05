@@ -318,9 +318,9 @@
       </label>
       <label class="form-label" for="theme-select">Theme
         <select class="form-select" id="theme-select" value={$theme} on:change={(e) => setTheme(e.target.value)}>
-          <option value="light">Legacy (default)</option>
-          <option value="modern">Modern Light</option>
+          <option value="modern">Modern Light (default)</option>
           <option value="modern-dark">Modern Dark</option>
+          <option value="light">Legacy</option>
         </select>
         <small class="form-help">Applies instantly and is remembered on this device.</small>
       </label>

@@ -650,9 +650,9 @@
           <div class="theme-picker">
             <label for="login-theme-select">Theme</label>
             <select id="login-theme-select" value={$theme} on:change={(e) => setTheme(e.target.value)}>
-              <option value="light">Legacy (default)</option>
-              <option value="modern">Modern Light</option>
+              <option value="modern">Modern Light (default)</option>
               <option value="modern-dark">Modern Dark</option>
+              <option value="light">Legacy</option>
             </select>
           </div>
         </div>

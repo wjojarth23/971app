@@ -1962,34 +1962,34 @@
     color: var(--brand-gold-strong);
     border-color: color-mix(in srgb, var(--brand-gold-strong) 35%, transparent);
   }
-  /* Approved: muted teal — a "verified/authorized" signal, distinct from
+  /* Approved: emerald-teal — a "verified/authorized" signal, distinct from
      the received-goods green used for delivered/kitted below */
   .status-select.colorful[data-status="approved"] {
-    background: #dfebe8;
-    color: #2f6459;
-    border-color: color-mix(in srgb, #2f6459 32%, transparent);
+    background: #d3ece5;
+    color: #0d7a68;
+    border-color: color-mix(in srgb, #0d7a68 32%, transparent);
   }
-  /* Ordered: warm plum — in-transit, still a cool accent for variety but
-     muted/wine-toned rather than a bright stock violet */
+  /* Ordered: berry-plum — in-transit, still a cool accent for variety but
+     wine-toned rather than a bright stock violet */
   .status-select.colorful[data-status="ordered"] {
-    background: #efe1e7;
-    color: #7a3b52;
-    border-color: color-mix(in srgb, #7a3b52 32%, transparent);
+    background: #f2dbe6;
+    color: #9c2f5c;
+    border-color: color-mix(in srgb, #9c2f5c 32%, transparent);
   }
-  /* Pickup: warm terracotta — a distinct "ready, take action" state,
-     previously shared Ordered's exact color with no differentiation */
+  /* Pickup: terracotta — a distinct "ready, take action" state, previously
+     shared Ordered's exact color with no differentiation */
   .status-select.colorful[data-status="pickup"] {
-    background: #f3e2d0;
-    color: #8a4a1f;
-    border-color: color-mix(in srgb, #8a4a1f 32%, transparent);
+    background: #f6ddc0;
+    color: #a34a12;
+    border-color: color-mix(in srgb, #a34a12 32%, transparent);
   }
-  /* Delivered / Picked Up / Kitted: muted sage — the "received" family */
+  /* Delivered / Picked Up / Kitted: forest green — the "received" family */
   .status-select.colorful[data-status="delivered"],
   .status-select.colorful[data-status="picked_up"],
   .status-select.colorful[data-status="kitted"] {
-    background: #e2e9d7;
-    color: #4b6b34;
-    border-color: color-mix(in srgb, #4b6b34 32%, transparent);
+    background: #dbe9c8;
+    color: #4f7a2e;
+    border-color: color-mix(in srgb, #4f7a2e 32%, transparent);
   }
   .status-select.colorful[data-status="rejected"] {
     background: var(--red-soft);
@@ -1998,36 +1998,36 @@
   }
 
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="approved"] {
-    background: rgba(94, 189, 172, 0.16);
-    color: #8fd6c4;
-    border-color: rgba(94, 189, 172, 0.4);
+    background: rgba(60, 180, 155, 0.22);
+    color: #82dcc4;
+    border-color: rgba(60, 180, 155, 0.5);
   }
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="ordered"] {
-    background: rgba(196, 133, 160, 0.16);
-    color: #e3b0c7;
-    border-color: rgba(196, 133, 160, 0.4);
+    background: rgba(199, 110, 150, 0.22);
+    color: #edabc7;
+    border-color: rgba(199, 110, 150, 0.5);
   }
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="pickup"] {
-    background: rgba(224, 148, 92, 0.16);
-    color: #f2bd91;
-    border-color: rgba(224, 148, 92, 0.4);
+    background: rgba(224, 148, 92, 0.22);
+    color: #f5c393;
+    border-color: rgba(224, 148, 92, 0.5);
   }
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="delivered"],
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="picked_up"],
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="kitted"] {
-    background: rgba(139, 178, 101, 0.16);
-    color: #bcd89f;
-    border-color: rgba(139, 178, 101, 0.4);
+    background: rgba(130, 178, 80, 0.22);
+    color: #b8d68f;
+    border-color: rgba(130, 178, 80, 0.5);
   }
 
   .status-select.colorful option[value="pending"] { background: var(--brand-gold-soft); }
   .status-select.colorful option[value="rejected"] { background: var(--red-soft); }
-  .status-select.colorful option[value="approved"] { background: #dfebe8; }
-  .status-select.colorful option[value="ordered"] { background: #efe1e7; }
-  .status-select.colorful option[value="pickup"] { background: #f3e2d0; }
-  .status-select.colorful option[value="delivered"] { background: #e2e9d7; }
-  .status-select.colorful option[value="picked_up"] { background: #e2e9d7; }
-  .status-select.colorful option[value="kitted"] { background: #e2e9d7; }
+  .status-select.colorful option[value="approved"] { background: #d3ece5; }
+  .status-select.colorful option[value="ordered"] { background: #f2dbe6; }
+  .status-select.colorful option[value="pickup"] { background: #f6ddc0; }
+  .status-select.colorful option[value="delivered"] { background: #dbe9c8; }
+  .status-select.colorful option[value="picked_up"] { background: #dbe9c8; }
+  .status-select.colorful option[value="kitted"] { background: #dbe9c8; }
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }
   .kit-input { min-width: 140px; }
