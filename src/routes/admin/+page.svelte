@@ -494,12 +494,33 @@
   $: canAccessAdmin = !!($currentUser && hasPermission($currentUser, 'VIEW_ADMIN_PANEL'));
   // Per-action permission flags (admins can do everything).
   $: isAdminUser = $currentUser?.role === 'admin';
+  // Devs are a tier above regular admins — see $lib/permissions.js isDev().
+  // Nothing below grants extra day-to-day permissions from this; it only
+  // gates who may touch a dev's own account.
+  $: isDevUser = !!$currentUser?.is_dev;
   $: canApproveUsers = !!($currentUser && (isAdminUser || hasPermission($currentUser, 'APPROVE_USERS')));
   $: canBanUsers = !!($currentUser && (isAdminUser || hasPermission($currentUser, 'BAN_USERS')));
-  $: canPromoteUsers = !!($currentUser && (isAdminUser || hasPermission($currentUser, 'PROMOTE_USERS')));
+  // Granting the 'admin' role itself is admin-only — leads with PROMOTE_USERS
+  // can still approve/manage users elsewhere, just not mint new admins.
+  $: canPromoteUsers = isAdminUser;
   $: canRemoveUsers = canBanUsers;
   // Show an Actions column when the current user can do at least one action.
   $: showUserActions = canApproveUsers || canBanUsers || canPromoteUsers || canRemoveUsers;
+
+  // Who may edit a given target's roles: nobody may edit their own row here
+  // (avoids accidental self-lockout/self-escalation); dev targets require a
+  // dev actor; admin targets (dev or not) require an admin actor; everyone
+  // else is editable by anyone who can reach this page's role editor at all.
+  function canEditRolesOf(target) {
+    if (target?.id && target.id === $currentUser?.id) return false;
+    if (target?.is_dev) return isDevUser;
+    if (target?.role === 'admin') return isAdminUser;
+    return true;
+  }
+
+  // Dev-only audit: every user holding the Lead general role, for the
+  // Dev tab's permission breakdown.
+  $: leadsList = users.filter((u) => u.general_role === GENERAL_ROLES.LEAD);
 
   // In-app confirmation modal (replaces window.confirm for destructive actions).
   let pendingConfirm = null; // { title, message, confirmLabel, danger, run }
@@ -722,20 +743,20 @@
     }
   }
 
-  // Leads (EDIT_PERMISSIONS without full admin) may not change another
-  // admin's roles. The dropdowns stay clickable so attempting a change gives
-  // clear feedback here, rather than a silently-disabled control.
-  function canEditRolesOf(target) {
-    return isAdminUser || target?.role !== 'admin';
-  }
-
   async function updateUserRoles(user, roles) {
     if (!canEditRolesOf(user)) {
-      toastActions.show("Only an admin can change another admin's roles");
+      toastActions.show(
+        user?.id === $currentUser?.id
+          ? "You cannot change your own roles here"
+          : user?.is_dev
+            ? "Only a dev can change another dev's roles"
+            : "Only an admin can change another admin's roles"
+      );
       // Force the role <select> elements to resync to the stored values —
       // the browser already visually applied the user's click before this
-      // guard ran, so without this the dropdown would look changed even
-      // though nothing was saved.
+      // guard ran (in case a disabled select is somehow bypassed), so
+      // without this the dropdown would look changed even though nothing
+      // was saved.
       users = [...users];
       return;
     }
@@ -1418,6 +1439,11 @@
         Budgets
       </button>
     {/if}
+    {#if isDevUser}
+      <button type="button" class:active={activeTab === 'dev'} on:click={() => setActiveTab('dev')}>
+        Dev
+      </button>
+    {/if}
   </nav>
 
   {#if activeTab === 'access'}
@@ -1487,7 +1513,9 @@
               <div class="user-card-header">
                 <div class="user-card-name">
                   <strong>{user.full_name || 'No Name'}</strong>
-                  {#if user.role === 'admin'}
+                  {#if user.is_dev}
+                    <span class="chip chip-pill status-chip status-chip--dev">Dev</span>
+                  {:else if user.role === 'admin'}
                     <span class="chip chip-pill status-chip status-chip--admin">Admin</span>
                   {/if}
                   {#if !isUserApproved(user)}
@@ -1499,12 +1527,7 @@
                   <span class="saving-indicator">Saving…</span>
                 {/if}
               </div>
-              
-              {#if user.role === 'admin'}
-                <div class="user-card-roles user-card-roles--admin">
-                  <span class="chip chip-pill status-chip status-chip--admin-full">All Permissions</span>
-                </div>
-              {:else}
+
               <div class="user-card-roles">
                 <div class="user-card-role">
                   <span class="role-label">FRC Team</span>
@@ -1512,7 +1535,7 @@
                     class="form-select role-select"
                     style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
                     value={user.frc_team || ''}
-                    disabled={savingRoleIds.has(user.id)}
+                    disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
                     aria-label={`FRC Team for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
                   >
@@ -1529,7 +1552,7 @@
                     class="form-select role-select"
                     style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
                     value={user.general_role || defaultGeneralRole}
-                    disabled={savingRoleIds.has(user.id)}
+                    disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
                     aria-label={`General role for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
                   >
@@ -1545,7 +1568,7 @@
                     class="form-select role-select"
                     style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
                     value={user.purchasing_role || defaultPurchasingRole}
-                    disabled={savingRoleIds.has(user.id)}
+                    disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
                     aria-label={`Purchasing role for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
                   >
@@ -1561,7 +1584,7 @@
                     class="form-select role-select"
                     style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
                     value={user.team_role || defaultTeamRole}
-                    disabled={savingRoleIds.has(user.id)}
+                    disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
                     aria-label={`Team role for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
                   >
@@ -1570,8 +1593,19 @@
                     {/each}
                   </select>
                 </div>
+
+                {#if user.is_dev}
+                  <div class="user-card-role">
+                    <span class="role-label">Permissions</span>
+                    <span class="chip chip-pill status-chip status-chip--admin-full">Dev Perms</span>
+                  </div>
+                {:else if user.role === 'admin'}
+                  <div class="user-card-role">
+                    <span class="role-label">Permissions</span>
+                    <span class="chip chip-pill status-chip status-chip--admin-full">All Permissions</span>
+                  </div>
+                {/if}
               </div>
-              {/if}
               {#if showUserActions}
                 <div class="user-card-actions">
                   {#if canApproveUsers && !isUserApproved(user)}
@@ -1580,7 +1614,7 @@
                   {#if canPromoteUsers && user.role !== 'admin'}
                     <button class="btn btn-sm btn-secondary" disabled={savingRoleIds.has(user.id)} on:click={() => promoteUser(user)}>Make Admin</button>
                   {/if}
-                  {#if canRemoveUsers && user.id !== $currentUser?.id}
+                  {#if canRemoveUsers && user.id !== $currentUser?.id && (!user.is_dev || isDevUser)}
                     <button class="btn btn-sm btn-danger" disabled={savingRoleIds.has(user.id)} on:click={() => removeUser(user)}>Remove</button>
                   {/if}
                 </div>
@@ -1600,6 +1634,7 @@
                 <th>General Role</th>
                 <th>Purchasing Role</th>
                 <th>Team Role</th>
+                <th>Permissions</th>
                 {#if showUserActions}<th>Actions</th>{/if}
               </tr>
             </thead>
@@ -1609,7 +1644,9 @@
                   <td>
                     <div class="name-cell">
                       <strong>{user.full_name || 'No Name'}</strong>
-                      {#if user.role === 'admin'}
+                      {#if user.is_dev}
+                        <span class="chip chip-pill status-chip status-chip--dev">Dev</span>
+                      {:else if user.role === 'admin'}
                         <span class="chip chip-pill status-chip status-chip--admin">Admin</span>
                       {/if}
                       {#if !isUserApproved(user)}
@@ -1625,69 +1662,72 @@
                       {/if}
                     </div>
                   </td>
-                  {#if user.role === 'admin'}
-                    <td colspan="4" class="all-permissions-cell">
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
+                      value={user.frc_team || ''}
+                      disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      aria-label={`FRC Team for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
+                    >
+                      <option value="">Not Set</option>
+                      {#each frcTeamOptions as teamValue}
+                        <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
+                      value={user.general_role || defaultGeneralRole}
+                      disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      aria-label={`General role for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
+                    >
+                      {#each generalRoleOptions as roleValue}
+                        <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
+                      value={user.purchasing_role || defaultPurchasingRole}
+                      disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      aria-label={`Purchasing role for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
+                    >
+                      {#each purchasingRoleOptions as roleValue}
+                        <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      class="form-select role-select"
+                      style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
+                      value={user.team_role || defaultTeamRole}
+                      disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      aria-label={`Team role for ${user.full_name || user.email}`}
+                      on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
+                    >
+                      {#each teamRoleOptions as roleValue}
+                        <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td class="all-permissions-cell">
+                    {#if user.is_dev}
+                      <span class="chip chip-pill status-chip status-chip--admin-full">Dev Perms</span>
+                    {:else if user.role === 'admin'}
                       <span class="chip chip-pill status-chip status-chip--admin-full">All Permissions</span>
-                    </td>
-                  {:else}
-                    <td>
-                      <select
-                        class="form-select role-select"
-                        style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
-                        value={user.frc_team || ''}
-                        disabled={savingRoleIds.has(user.id)}
-                        aria-label={`FRC Team for ${user.full_name || user.email}`}
-                        on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
-                      >
-                        <option value="">Not Set</option>
-                        {#each frcTeamOptions as teamValue}
-                          <option value={teamValue}>{formatFrcTeamLabel(teamValue)}</option>
-                        {/each}
-                      </select>
-                    </td>
-                    <td>
-                      <select
-                        class="form-select role-select"
-                        style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
-                        value={user.general_role || defaultGeneralRole}
-                        disabled={savingRoleIds.has(user.id)}
-                        aria-label={`General role for ${user.full_name || user.email}`}
-                        on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
-                      >
-                        {#each generalRoleOptions as roleValue}
-                          <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
-                        {/each}
-                      </select>
-                    </td>
-                    <td>
-                      <select
-                        class="form-select role-select"
-                        style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
-                        value={user.purchasing_role || defaultPurchasingRole}
-                        disabled={savingRoleIds.has(user.id)}
-                        aria-label={`Purchasing role for ${user.full_name || user.email}`}
-                        on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
-                      >
-                        {#each purchasingRoleOptions as roleValue}
-                          <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
-                        {/each}
-                      </select>
-                    </td>
-                    <td>
-                      <select
-                        class="form-select role-select"
-                        style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
-                        value={user.team_role || defaultTeamRole}
-                        disabled={savingRoleIds.has(user.id)}
-                        aria-label={`Team role for ${user.full_name || user.email}`}
-                        on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
-                      >
-                        {#each teamRoleOptions as roleValue}
-                          <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
-                        {/each}
-                      </select>
-                    </td>
-                  {/if}
+                    {:else}
+                      <span class="text-muted">—</span>
+                    {/if}
+                  </td>
                   {#if showUserActions}
                     <td>
                       <div class="user-action-buttons">
@@ -2421,6 +2461,49 @@
     <BudgetsTab />
   {:else if activeTab === 'activity'}
     <ActivityLogTab />
+  {:else if activeTab === 'dev' && isDevUser}
+    <section class="section-card">
+      <div class="section-header">
+        <div>
+          <h3>Lead Permissions</h3>
+          <p>Every permission each Lead currently holds or lacks, computed the same way the app checks access (role-derived + manual grants).</p>
+        </div>
+      </div>
+      {#if leadsList.length === 0}
+        <div class="empty-state">No users currently hold the Lead general role.</div>
+      {:else}
+        <div class="dev-lead-grid">
+          {#each leadsList as lead (lead.id)}
+            <div class="dev-lead-card">
+              <div class="dev-lead-card-header">
+                <strong>{lead.full_name || 'No Name'}</strong>
+                <span class="text-muted">{lead.email || '—'}</span>
+              </div>
+              <div class="dev-perm-group">
+                <span class="dev-perm-label dev-perm-label--has">Has</span>
+                <div class="dev-perm-chips">
+                  {#each PERMISSIONS.filter((p) => hasPermission(lead, p)) as perm}
+                    <span class="chip chip-pill dev-perm-chip dev-perm-chip--yes">{formatRoleLabel(perm)}</span>
+                  {:else}
+                    <span class="text-muted">None</span>
+                  {/each}
+                </div>
+              </div>
+              <div class="dev-perm-group">
+                <span class="dev-perm-label dev-perm-label--missing">Does not have</span>
+                <div class="dev-perm-chips">
+                  {#each PERMISSIONS.filter((p) => !hasPermission(lead, p)) as perm}
+                    <span class="chip chip-pill dev-perm-chip dev-perm-chip--no">{formatRoleLabel(perm)}</span>
+                  {:else}
+                    <span class="text-muted">None — has every permission</span>
+                  {/each}
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
   {/if}
 </div>
 
@@ -2642,14 +2725,64 @@
   .email-cell { display: flex; flex-direction: column; gap: var(--gap-1); font-size: var(--font-xs); }
   .status-chip { text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--font-xs); }
   .status-chip--admin { background: var(--blue-soft); color: var(--blue-strong); border-color: var(--blue-soft); }
-  /* Admins bypass every role check (see hasPermission's role === 'admin'
-     short-circuit), so their general/purchasing/team-role fields are often
-     sparse or stale and misleading to display as-is next to non-admins'
-     real dropdowns. Show one clear statement instead of four unreliable
-     selects. */
+  /* Devs sit above regular admins (see isDev() in $lib/permissions.js) — a
+     distinct hue so the tier reads at a glance instead of blending into the
+     Admin badge. */
+  .status-chip--dev { background: var(--purple-soft); color: var(--purple-strong); border-color: var(--purple-soft); }
+  /* Admin/dev accounts bypass every role check (see hasPermission's
+     role === 'admin' short-circuit), so their general/purchasing/team-role
+     fields are often sparse or stale — the dropdowns still show the real
+     stored values (and stay editable for admins/devs), but this extra chip
+     makes clear those values aren't the whole story. */
   .status-chip--admin-full { background: var(--green-soft); color: var(--green-strong); border-color: var(--green-soft); font-weight: 700; }
   .all-permissions-cell { text-align: left; }
-  .user-card-roles--admin { display: block; }
+
+  /* ===== Dev tab: Lead permissions audit ===== */
+  .dev-lead-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--gap-4);
+  }
+  .dev-lead-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .dev-lead-card-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-1);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .dev-lead-card-header span {
+    font-size: var(--font-xs);
+  }
+  .dev-perm-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-2);
+  }
+  .dev-perm-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .dev-perm-label--has { color: var(--green-strong); }
+  .dev-perm-label--missing { color: var(--text-muted); }
+  .dev-perm-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-1);
+  }
+  .dev-perm-chip { font-size: 0.68rem; }
+  .dev-perm-chip--yes { background: var(--green-soft); color: var(--green-strong); border-color: var(--green-soft); }
+  .dev-perm-chip--no { background: var(--muted-bg); color: var(--text-muted); border-color: var(--border); }
   .status-chip--pending { background: var(--brand-gold-soft); color: var(--brand-gold-strong); border-color: var(--brand-gold-soft); }
   .roster-selector-block { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-6); background: var(--surface-1); display: flex; flex-direction: column; gap: var(--gap-3); box-shadow: var(--shadow-sm); }
   .roster-pill-row { display: flex; flex-wrap: wrap; gap: var(--gap-2); max-height: 240px; overflow-y: auto; }

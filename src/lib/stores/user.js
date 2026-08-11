@@ -51,6 +51,7 @@ function normalizeProfile(row) {
     email: row.email || '',
     full_name: row.full_name || '',
     role: row.role || 'member',
+    is_dev: !!row.is_dev,
     permissions: normalizePermissions(row.permissions),
     general_role: row.general_role || 'member',
     purchasing_role: row.purchasing_role || 'basic',
@@ -87,7 +88,7 @@ export async function fetchUserProfileByUUID(supabase, uuid) {
   try {
       const { data, error } = await supabase
         .from('user_profiles')
-        .select('id, email, full_name, role, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel')
+        .select('id, email, full_name, role, is_dev, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel')
       .eq('id', uuid)
       .single();
 

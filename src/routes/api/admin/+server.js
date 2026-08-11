@@ -54,7 +54,7 @@ export async function GET({ url, request }) {
 
     const { data, error } = await serviceSupa
       .from('user_profiles')
-      .select('id, email, full_name, role, permissions, banned, general_role, purchasing_role, team_role, frc_team')
+      .select('id, email, full_name, role, is_dev, permissions, banned, general_role, purchasing_role, team_role, frc_team')
       .order('full_name', { ascending: true });
 
     if (error) return json({ error: error.message }, { status: 500 });
@@ -78,7 +78,7 @@ export async function POST({ request }) {
     // Fetch actor profile and check permission
     const { data: actor } = await supa
       .from('user_profiles')
-      .select('id, role, permissions')
+      .select('id, role, is_dev, permissions')
       .eq('id', actor_id)
       .single();
 
@@ -89,10 +89,14 @@ export async function POST({ request }) {
         : [];
 
     const isActorAdmin = actor?.role === 'admin';
+    const isActorDev = !!actor?.is_dev;
 
     // Action shortcuts: promote / ban / approve
     if (action === 'promote') {
-      if (!isActorAdmin && !actorPerms.includes('PROMOTE_USERS')) {
+      // Granting the 'admin' role is reserved for existing admins — leads
+      // with PROMOTE_USERS can still promote/approve in other ways, but
+      // minting new admins is not one of them.
+      if (!isActorAdmin) {
         return json({ error: 'Not authorized to promote users' }, { status: 403 });
       }
       const { error } = await supa
@@ -106,6 +110,16 @@ export async function POST({ request }) {
     if (action === 'ban') {
       if (!isActorAdmin && !actorPerms.includes('BAN_USERS')) {
         return json({ error: 'Not authorized to ban users' }, { status: 403 });
+      }
+      // Devs can only be banned by another dev; admins (dev or not) are
+      // otherwise still bannable by anyone holding BAN_USERS, unchanged.
+      const { data: banTarget } = await supa
+        .from('user_profiles')
+        .select('is_dev')
+        .eq('id', target_id)
+        .single();
+      if (banTarget?.is_dev && !isActorDev) {
+        return json({ error: 'Only a dev can ban another dev' }, { status: 403 });
       }
       const { error } = await supa
         .from('user_profiles')
@@ -122,12 +136,16 @@ export async function POST({ request }) {
       if (String(actor_id) === String(target_id)) {
         return json({ error: 'You cannot remove your own account' }, { status: 400 });
       }
-      // Don't allow removing another admin unless the actor is an admin.
+      // Don't allow removing a dev unless the actor is a dev, or removing
+      // another admin unless the actor is an admin.
       const { data: target } = await supa
         .from('user_profiles')
-        .select('role')
+        .select('role, is_dev')
         .eq('id', target_id)
         .single();
+      if (target?.is_dev && !isActorDev) {
+        return json({ error: 'Only a dev can remove another dev' }, { status: 403 });
+      }
       if (target?.role === 'admin' && !isActorAdmin) {
         return json({ error: 'Only an admin can remove another admin' }, { status: 403 });
       }
@@ -185,16 +203,23 @@ export async function POST({ request }) {
       if (!isActorAdmin && !actorPerms.includes('EDIT_PERMISSIONS')) {
         return json({ error: 'Not authorized' }, { status: 403 });
       }
+      if (String(actor_id) === String(target_id)) {
+        return json({ error: 'You cannot change your own roles' }, { status: 400 });
+      }
 
       const { data: targetRow, error: targetErr } = await supa
         .from('user_profiles')
-        .select('id, email, full_name, permissions, general_role, purchasing_role, team_role, frc_team, role, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
+        .select('id, email, full_name, permissions, general_role, purchasing_role, team_role, frc_team, role, is_dev, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel')
         .eq('id', target_id)
         .single();
       if (targetErr) return json({ error: targetErr.message }, { status: 500 });
 
-      // Only an admin can change another admin's roles — leads with
-      // EDIT_PERMISSIONS otherwise have no ceiling on who they can edit.
+      // Dev roles can only be changed by another dev. Failing that, only an
+      // admin can change another admin's roles — leads with EDIT_PERMISSIONS
+      // otherwise have no ceiling on who they can edit.
+      if (targetRow.is_dev && !isActorDev) {
+        return json({ error: "Only a dev can change another dev's roles" }, { status: 403 });
+      }
       if (targetRow.role === 'admin' && !isActorAdmin) {
         return json({ error: "Only an admin can change another admin's roles" }, { status: 403 });
       }

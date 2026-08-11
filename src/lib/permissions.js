@@ -136,6 +136,14 @@ export function isManufacturingLead(user) {
   return user?.team_role === TEAM_ROLES.MANUFACTURING_LEAD;
 }
 
+// Devs are a tier above regular admins (currently the two account owners):
+// they can see/manage things no other admin can, and no one but another dev
+// can edit a dev's own roles or remove/ban them. Distinct from role==='admin'
+// so promoting more people to admin later doesn't implicitly grant this tier.
+export function isDev(user) {
+  return !!user?.is_dev;
+}
+
 // Temporary CAM review allowlist — only these leads may CAM review for now.
 // Replace with a role-based check when ready.
 export const CAM_REVIEW_LEADS = ['Liam', 'Caden', 'Arya', 'Arnav', 'David'];
