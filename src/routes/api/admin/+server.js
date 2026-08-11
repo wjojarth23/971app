@@ -203,7 +203,8 @@ export async function POST({ request }) {
       if (!isActorAdmin && !actorPerms.includes('EDIT_PERMISSIONS')) {
         return json({ error: 'Not authorized' }, { status: 403 });
       }
-      if (String(actor_id) === String(target_id)) {
+      // Devs are exempt: they may edit their own roles (and each other's).
+      if (!isActorDev && String(actor_id) === String(target_id)) {
         return json({ error: 'You cannot change your own roles' }, { status: 400 });
       }
 

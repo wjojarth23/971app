@@ -512,10 +512,21 @@
   // dev actor; admin targets (dev or not) require an admin actor; everyone
   // else is editable by anyone who can reach this page's role editor at all.
   function canEditRolesOf(target) {
+    // Devs are unrestricted: they can edit each other's roles and their own.
+    if (isDevUser) return true;
     if (target?.id && target.id === $currentUser?.id) return false;
-    if (target?.is_dev) return isDevUser;
+    if (target?.is_dev) return false;
     if (target?.role === 'admin') return isAdminUser;
     return true;
+  }
+
+  // Tooltip explaining why a disabled role <select> can't be used, so the
+  // restriction isn't silent. Returns null when editing is allowed or the
+  // control is merely mid-save (not a permission issue).
+  function roleEditDisabledReason(target) {
+    if (savingRoleIds.has(target?.id)) return null;
+    if (canEditRolesOf(target)) return null;
+    return 'You are not permitted to perform this action.';
   }
 
   // Dev-only audit: every user holding the Lead general role, for the
@@ -1536,6 +1547,7 @@
                     style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
                     value={user.frc_team || ''}
                     disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                    title={roleEditDisabledReason(user)}
                     aria-label={`FRC Team for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
                   >
@@ -1553,6 +1565,7 @@
                     style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
                     value={user.general_role || defaultGeneralRole}
                     disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                    title={roleEditDisabledReason(user)}
                     aria-label={`General role for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
                   >
@@ -1569,6 +1582,7 @@
                     style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
                     value={user.purchasing_role || defaultPurchasingRole}
                     disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                    title={roleEditDisabledReason(user)}
                     aria-label={`Purchasing role for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
                   >
@@ -1585,6 +1599,7 @@
                     style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
                     value={user.team_role || defaultTeamRole}
                     disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                    title={roleEditDisabledReason(user)}
                     aria-label={`Team role for ${user.full_name || user.email}`}
                     on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
                   >
@@ -1668,6 +1683,7 @@
                       style={roleThemeStyle(frcTeamThemes[user.frc_team || null])}
                       value={user.frc_team || ''}
                       disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      title={roleEditDisabledReason(user)}
                       aria-label={`FRC Team for ${user.full_name || user.email}`}
                       on:change={(e) => updateUserRoles(user, { frc_team: e.target.value || null })}
                     >
@@ -1683,6 +1699,7 @@
                       style={roleThemeStyle(generalRoleThemes[user.general_role || defaultGeneralRole])}
                       value={user.general_role || defaultGeneralRole}
                       disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      title={roleEditDisabledReason(user)}
                       aria-label={`General role for ${user.full_name || user.email}`}
                       on:change={(e) => updateUserRoles(user, { general_role: e.target.value })}
                     >
@@ -1697,6 +1714,7 @@
                       style={roleThemeStyle(purchasingRoleThemes[user.purchasing_role || defaultPurchasingRole])}
                       value={user.purchasing_role || defaultPurchasingRole}
                       disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      title={roleEditDisabledReason(user)}
                       aria-label={`Purchasing role for ${user.full_name || user.email}`}
                       on:change={(e) => updateUserRoles(user, { purchasing_role: e.target.value })}
                     >
@@ -1711,6 +1729,7 @@
                       style={roleThemeStyle(teamRoleThemes[user.team_role || defaultTeamRole])}
                       value={user.team_role || defaultTeamRole}
                       disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                      title={roleEditDisabledReason(user)}
                       aria-label={`Team role for ${user.full_name || user.email}`}
                       on:change={(e) => updateUserRoles(user, { team_role: e.target.value })}
                     >
