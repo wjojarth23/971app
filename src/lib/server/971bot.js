@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WebClient } from '@slack/web-api';
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
+import { canApprovePurchases } from '$lib/permissions.js';
 
 // Lazy initialization to avoid throwing at module import time (build-time).
 let _supabaseClient = null;
@@ -102,7 +103,7 @@ export async function listApproversFromDb() {
   const supa = getSupabase();
   try {
     console.log('Querying user_profiles for approvers...');
-    const { data, error } = await supa.from('user_profiles').select('id, email, full_name, permissions, purchasing_role');
+    const { data, error } = await supa.from('user_profiles').select('id, email, full_name, role, permissions, purchasing_role, team_role, frc_team');
 
     if (error) {
       console.error('Supabase query error:', error);
@@ -112,17 +113,14 @@ export async function listApproversFromDb() {
     const users = data || [];
     console.log(`Found ${users.length} total users in user_profiles`);
 
-    // Include users who have APPROVE_PURCHASES permission via:
-    // 1. Explicit permissions array, OR
-    // 2. purchasing_role = 'approver' or 'lead' (role-derived permissions)
-    const approvers = users.filter((u) => {
-      // Check explicit permissions array
-      const hasExplicitPerm = Array.isArray(u.permissions) && u.permissions.includes('APPROVE_PURCHASES');
-      // Check purchasing_role (approver and lead both grant APPROVE_PURCHASES)
-      const hasRolePerm = u.purchasing_role === 'approver' || u.purchasing_role === 'lead';
-      return hasExplicitPerm || hasRolePerm;
-    });
-    console.log(`Found ${approvers.length} approvers (explicit perm or purchasing_role):`, approvers.map(a => a.email));
+    // Same rule as everywhere else purchase approval is gated: admins,
+    // mentors, and anyone holding APPROVE_PURCHASES (purchasing
+    // approver/lead roles or the Purchasing Lead team role). Previously this
+    // re-implemented only the permissions-array/purchasing_role half of that
+    // rule, so admins with a sparse permissions array (or Purchasing Leads,
+    // or mentors) silently never got a Slack DM for pending approvals.
+    const approvers = users.filter((u) => canApprovePurchases(u));
+    console.log(`Found ${approvers.length} approvers:`, approvers.map(a => a.email));
 
     return approvers;
   } catch (e) {
