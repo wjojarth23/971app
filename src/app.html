@@ -2,7 +2,14 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<link rel="icon" sizes="256x256" href="/favicon.png" type="image/png">
+		<!-- Single fixed icon (black background + yellow helmet) — does not swap
+		     with the light/dark theme, unlike the in-app nav brand-mark. This is
+		     also what Chrome uses to generate the macOS app icon when the site is
+		     installed as an app ("Install 971 Hub..."). -->
+		<link rel="icon" sizes="512x512" href="/favicon.png" type="image/png">
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+		<link rel="manifest" href="/manifest.json">
+		<meta name="theme-color" content="#0a0a0a" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="build-marker" content="adminfix-2026-06-18" />
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
