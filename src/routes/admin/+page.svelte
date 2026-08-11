@@ -2200,6 +2200,8 @@
             <option value={30}>Last 30 days</option>
             <option value={90}>Last 90 days</option>
             <option value={365}>Last year</option>
+            <option value={730}>Last 2 years</option>
+            <option value={36500}>All time</option>
           </select>
         </div>
         <div class="form-group">
