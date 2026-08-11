@@ -454,7 +454,7 @@
   <div class="auth-container" style="min-height:60vh">
     <div class="auth-card">      <div class="auth-header">
         <div class="brand">
-          <Briefcase size={32} />
+          <span class="brand-mark lg" aria-hidden="true"></span>
           <h1>971 Hub</h1>
         </div>
         <p class="subtitle">Spartan Robotics</p>
