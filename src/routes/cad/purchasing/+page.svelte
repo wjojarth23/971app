@@ -1254,12 +1254,19 @@
                         loadParts();
                         return;
                       }
+                      if (val === 'rejected' && !canApprovePurchases(user)) {
+                        alert('You do not have permission to reject items.');
+                        loadParts();
+                        return;
+                      }
                       updatePartStatus(part, 'status', val);
                     }}
                   >
 
                     <option value="pending" data-color="#ffc107">{isPickupItem(part) ? 'Needs Approval' : 'Pending'}</option>
-                    <option value="rejected" data-color="#e74c3c">Rejected</option>
+                    {#if canApprovePurchases(user) || (part.status || '').toString().toLowerCase() === 'rejected'}
+                      <option value="rejected" data-color="#e74c3c">Rejected</option>
+                    {/if}
                     {#if canApprovePurchases(user) || getApprovedStatuses(part).includes((part.status || '').toString().toLowerCase())}
                       <option value="__approved__" data-color="#4caf50">Approved</option>
                     {/if}
