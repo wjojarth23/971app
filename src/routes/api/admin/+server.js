@@ -193,12 +193,6 @@ export async function POST({ request }) {
         .single();
       if (targetErr) return json({ error: targetErr.message }, { status: 500 });
 
-      // Only an admin can change another admin's roles — leads with
-      // EDIT_PERMISSIONS otherwise have no ceiling on who they can edit.
-      if (targetRow.role === 'admin' && !isActorAdmin) {
-        return json({ error: "Only an admin can change another admin's roles" }, { status: 403 });
-      }
-
       const existingPerms = normalizePermissions(targetRow.permissions);
       const prevRolePerms = getRoleDerivedPermissions({
         general_role: targetRow.general_role,

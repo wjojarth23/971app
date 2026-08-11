@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
   import { initAuth, userStore, signOut, authReady as authReadyStore, user as authUserStore } from '$lib/stores/auth.js';
-  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users, Layers, Receipt, Clock, GripVertical, X, Plus, LayoutGrid } from 'lucide-svelte';
+  import { LogIn, UserPlus, Mail, Lock, User, Shield, Briefcase, CheckCircle, AlertCircle, LogOut, Users, Layers, Receipt, Clock } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
   import { theme, setTheme } from '$lib/stores/theme.js';
@@ -27,114 +27,6 @@
   // At-a-glance dashboard stats
   $: pendingPurchases = purchases.filter(p => (p.status || 'pending') === 'pending').length;
   let listsLoaded = false;
-
-  // --- Home dashboard section customization (drag to reorder, delete, restore) ---
-  // Mirrors the header_tabs pattern in +layout.svelte: a nullable JSONB column
-  // (dashboard_sections) stores an ordered array of section keys. Null/empty
-  // means "no customization yet" — fall back to every section in its default
-  // order. Admin is opt-in per user (defaults to visible for admins, but can
-  // be dragged/removed like anything else) rather than pinned like the top
-  // nav's Admin tab, since admins always retain nav access regardless.
-  const ALL_DASHBOARD_SECTIONS = [
-    { key: 'stats', label: 'Stats Overview' },
-    { key: 'quick-actions', label: 'Quick Actions' },
-    { key: 'subsystems', label: 'Your Subsystems' },
-    { key: 'builds', label: 'Your Builds' },
-    { key: 'purchases', label: 'Your Purchase Requests' }
-  ];
-
-  function sectionLabel(key) {
-    if (key === 'admin') return 'Admin Panel';
-    return ALL_DASHBOARD_SECTIONS.find(d => d.key === key)?.label || key;
-  }
-
-  function sanitizeSectionKeys(raw) {
-    if (!Array.isArray(raw)) return null;
-    const seen = new Set();
-    const out = [];
-    for (const entry of raw) {
-      const key = typeof entry === 'string' ? entry : entry?.key;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(key);
-    }
-    return out;
-  }
-
-  function defaultSectionKeyList(canViewAdminPanel) {
-    const keys = ALL_DASHBOARD_SECTIONS.map(d => d.key);
-    if (canViewAdminPanel) keys.push('admin');
-    return keys;
-  }
-
-  let editMode = false;
-  let draggedSectionKey = null;
-  let dragOverSectionKey = null;
-
-  $: canViewAdmin = can('VIEW_ADMIN_PANEL');
-  $: customSectionKeys = sanitizeSectionKeys(user?.dashboard_sections);
-  $: rawVisibleKeys = (customSectionKeys && customSectionKeys.length ? customSectionKeys : defaultSectionKeyList(canViewAdmin))
-    .filter(k => k !== 'admin' || canViewAdmin)
-    .filter(k => k === 'admin' || ALL_DASHBOARD_SECTIONS.some(d => d.key === k));
-  $: visibleSections = rawVisibleKeys.map(k => ({ key: k, label: sectionLabel(k) }));
-  $: hiddenSections = [...ALL_DASHBOARD_SECTIONS.map(d => d.key), ...(canViewAdmin ? ['admin'] : [])]
-    .filter(k => !rawVisibleKeys.includes(k))
-    .map(k => ({ key: k, label: sectionLabel(k) }));
-
-  async function persistDashboardSections(keys) {
-    user = { ...user, dashboard_sections: keys };
-    try {
-      const { error } = await supabase.from('user_profiles').update({ dashboard_sections: keys }).eq('id', user.id);
-      if (error) throw error;
-    } catch (e) {
-      console.error('Failed to save dashboard layout:', e);
-    }
-  }
-
-  function handleSectionDragStart(event, key) {
-    draggedSectionKey = key;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', key);
-  }
-
-  function handleSectionDragOver(event, key) {
-    if (!draggedSectionKey) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    dragOverSectionKey = key;
-  }
-
-  function handleSectionDragLeave() {
-    dragOverSectionKey = null;
-  }
-
-  function handleSectionDragEnd() {
-    draggedSectionKey = null;
-    dragOverSectionKey = null;
-  }
-
-  async function handleSectionDrop(event, key) {
-    event.preventDefault();
-    dragOverSectionKey = null;
-    const fromKey = draggedSectionKey;
-    draggedSectionKey = null;
-    if (!fromKey || fromKey === key) return;
-    const keys = [...rawVisibleKeys];
-    const fromIdx = keys.indexOf(fromKey);
-    const toIdx = keys.indexOf(key);
-    if (fromIdx === -1 || toIdx === -1) return;
-    keys.splice(fromIdx, 1);
-    keys.splice(toIdx, 0, fromKey);
-    await persistDashboardSections(keys);
-  }
-
-  async function removeSection(key) {
-    await persistDashboardSections(rawVisibleKeys.filter(k => k !== key));
-  }
-
-  async function restoreSection(key) {
-    await persistDashboardSections([...rawVisibleKeys, key]);
-  }
   let authMode = 'login'; // 'login', 'register', or 'forgot'
   let formData = {
     email: '',
@@ -441,193 +333,119 @@
         </div>
       </div>
     {:else}
-      <div class="dashboard-toolbar">
-        <button type="button" class="btn btn-outline btn-sm layout-toggle" on:click={() => editMode = !editMode}>
-          {#if editMode}
-            <CheckCircle size={14} />
-            Done
-          {:else}
-            <LayoutGrid size={14} />
-            Customize Layout
-          {/if}
-        </button>
+      <!-- At-a-glance stats -->
+      <div class="stat-grid">
+        <a href="/cad" class="stat-card">
+          <div class="stat-icon"><Layers size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{subsystemsLoading ? '—' : subsystems.length}</span>
+            <span class="stat-label">Your Subsystems</span>
+          </div>
+        </a>
+        <a href="/cad/build" class="stat-card">
+          <div class="stat-icon"><Briefcase size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{buildsLoading ? '—' : builds.length}</span>
+            <span class="stat-label">Your Builds</span>
+          </div>
+        </a>
+        <a href="/cad/purchasing" class="stat-card">
+          <div class="stat-icon"><Receipt size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{purchasesLoading ? '—' : purchases.length}</span>
+            <span class="stat-label">Purchase Requests</span>
+          </div>
+        </a>
+        <a href="/cad/purchasing" class="stat-card" class:stat-card-alert={pendingPurchases > 0}>
+          <div class="stat-icon"><Clock size={20} /></div>
+          <div class="stat-body">
+            <span class="stat-value">{purchasesLoading ? '—' : pendingPurchases}</span>
+            <span class="stat-label">Pending Approval</span>
+          </div>
+        </a>
       </div>
 
-      {#if editMode && hiddenSections.length > 0}
-        <div class="hidden-sections-tray">
-          <span class="tray-label">Hidden:</span>
-          {#each hiddenSections as s (s.key)}
-            <button type="button" class="chip-btn" on:click={() => restoreSection(s.key)}>
-              <Plus size={12} />
-              {s.label}
-            </button>
-          {/each}
+      <div class="dashboard-actions">
+        <h3>Quick Actions</h3>
+        <div class="action-grid">
+          <a href="/cad" class="action-card">
+            <User size={24} />
+            <h4>CAD Design</h4>
+            <p>Work with CAD files and designs</p>
+          </a>
+          <a href="/cad/build" class="action-card">
+            <Briefcase size={24} />
+            <h4>Builds</h4>
+            <p>View builds you are involved with</p>
+          </a>
         </div>
-      {/if}
 
-      <div class="dashboard-sections">
-        {#each visibleSections as section (section.key)}
-          <div
-            class="dashboard-section"
-            class:editing={editMode}
-            class:dragging={draggedSectionKey === section.key}
-            class:drag-over={dragOverSectionKey === section.key}
-            role="group"
-            draggable={editMode}
-            on:dragstart={(e) => handleSectionDragStart(e, section.key)}
-            on:dragover={(e) => handleSectionDragOver(e, section.key)}
-            on:dragleave={handleSectionDragLeave}
-            on:drop={(e) => handleSectionDrop(e, section.key)}
-            on:dragend={handleSectionDragEnd}
-          >
-            {#if editMode}
-              <div class="section-editbar">
-                <span class="drag-handle" aria-hidden="true"><GripVertical size={16} /></span>
-                <span class="section-editbar-label">{section.label}</span>
-                <button type="button" class="section-remove" on:click={() => removeSection(section.key)} aria-label={`Remove ${section.label}`}>
-                  <X size={14} />
-                </button>
-              </div>
-            {/if}
+        <!-- User-specific lists: subsystems, builds, and purchases -->
+        <div class="user-lists">
+          <h4>Your Subsystems</h4>
+          {#if subsystemsLoading}
+            <div class="loading-spinner small"></div>
+          {:else if subsystems.length === 0}
+            <p class="muted">You are not a member of any subsystems yet.</p>
+          {:else}
+            <div class="card-grid">
+              {#each subsystems as s}
+                <a class="subsystem-card" href={`/cad/${s.id}`}>
+                  <h5>{s.name}</h5>
+                  <p class="muted">{s.description || 'No description'}</p>
+                </a>
+              {/each}
+            </div>
+          {/if}
 
-            {#if section.key === 'stats'}
-              <!-- At-a-glance stats -->
-              <div class="stat-grid">
-                <a href="/cad" class="stat-card">
-                  <div class="stat-icon"><Layers size={20} /></div>
-                  <div class="stat-body">
-                    <span class="stat-value">{subsystemsLoading ? '—' : subsystems.length}</span>
-                    <span class="stat-label">Your Subsystems</span>
-                  </div>
+          <h4>Your Builds</h4>
+          {#if buildsLoading}
+            <div class="loading-spinner small"></div>
+          {:else if builds.length === 0}
+            <p class="muted">No builds found for your subsystems.</p>
+          {:else}
+            <div class="card-grid">
+              {#each builds as b}
+                <a class="build-card" href={`/cad/build/${b.id}`}>
+                  <h5>{b.release_name || b.name || `Build ${b.id}`}</h5>
+                  <p class="muted">{b.subsystems?.name || 'Project'}</p>
                 </a>
-                <a href="/cad/build" class="stat-card">
-                  <div class="stat-icon"><Briefcase size={20} /></div>
-                  <div class="stat-body">
-                    <span class="stat-value">{buildsLoading ? '—' : builds.length}</span>
-                    <span class="stat-label">Your Builds</span>
-                  </div>
-                </a>
-                <a href="/cad/purchasing" class="stat-card">
-                  <div class="stat-icon"><Receipt size={20} /></div>
-                  <div class="stat-body">
-                    <span class="stat-value">{purchasesLoading ? '—' : purchases.length}</span>
-                    <span class="stat-label">Purchase Requests</span>
-                  </div>
-                </a>
-                <a href="/cad/purchasing" class="stat-card" class:stat-card-alert={pendingPurchases > 0}>
-                  <div class="stat-icon"><Clock size={20} /></div>
-                  <div class="stat-body">
-                    <span class="stat-value">{purchasesLoading ? '—' : pendingPurchases}</span>
-                    <span class="stat-label">Pending Approval</span>
-                  </div>
-                </a>
-              </div>
-            {:else if section.key === 'quick-actions'}
-              <div class="dashboard-actions">
-                <h3>Quick Actions</h3>
-                <div class="action-grid">
-                  <a href="/cad" class="action-card">
-                    <User size={24} />
-                    <h4>CAD Design</h4>
-                    <p>Work with CAD files and designs</p>
-                  </a>
-                  <a href="/cad/build" class="action-card">
-                    <Briefcase size={24} />
-                    <h4>Builds</h4>
-                    <p>View builds you are involved with</p>
-                  </a>
-                </div>
-              </div>
-            {:else if section.key === 'admin'}
-              <div class="dashboard-actions">
-                <h3>Admin</h3>
-                <div class="action-grid">
-                  <a href="/admin" class="action-card">
-                    <Shield size={24} />
-                    <h4>Admin Panel</h4>
-                    <p>Manage users, roles, and system settings</p>
-                  </a>
-                </div>
-              </div>
-            {:else if section.key === 'subsystems'}
-              <div class="user-lists">
-                <h4>Your Subsystems</h4>
-                {#if subsystemsLoading}
-                  <div class="loading-spinner small"></div>
-                {:else if subsystems.length === 0}
-                  <p class="muted">You are not a member of any subsystems yet.</p>
-                {:else}
-                  <div class="card-grid">
-                    {#each subsystems as s}
-                      <a class="subsystem-card" href={`/cad/${s.id}`}>
-                        <h5>{s.name}</h5>
-                        <p class="muted">{s.description || 'No description'}</p>
-                      </a>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {:else if section.key === 'builds'}
-              <div class="user-lists">
-                <h4>Your Builds</h4>
-                {#if buildsLoading}
-                  <div class="loading-spinner small"></div>
-                {:else if builds.length === 0}
-                  <p class="muted">No builds found for your subsystems.</p>
-                {:else}
-                  <div class="card-grid">
-                    {#each builds as b}
-                      <a class="build-card" href={`/cad/build/${b.id}`}>
-                        <h5>{b.release_name || b.name || `Build ${b.id}`}</h5>
-                        <p class="muted">{b.subsystems?.name || 'Project'}</p>
-                      </a>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {:else if section.key === 'purchases'}
-              <div class="user-lists">
-                <h4>Your Purchase Requests</h4>
-                {#if purchasesLoading}
-                  <div class="loading-spinner small"></div>
-                {:else if purchases.length === 0}
-                  <p class="muted">You haven't requested any purchases yet.</p>
-                {:else}
-                  <div class="table-container">
-                    <table class="table">
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Quantity</th>
-                          <th>Price</th>
-                          <th>Status</th>
-                          <th>Project</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {#each purchases as p}
-                          <tr>
-                            <td>{p.name}</td>
-                            <td>{p.quantity || 1}</td>
-                            <td>{p.price !== null && p.price !== undefined ? `$${p.price.toFixed(2)}` : '—'}</td>
-                            <td>{p.status || 'pending'}</td>
-                            <td>{p.project_id || '-'}</td>
-                          </tr>
-                        {/each}
-                      </tbody>
-                    </table>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/each}
+              {/each}
+            </div>
+          {/if}
 
-        {#if visibleSections.length === 0}
-          <div class="dashboard-section-empty">
-            <p class="muted">All dashboard sections are hidden. Use "Customize Layout" above to bring them back.</p>
-          </div>
-        {/if}
+          <h4>Your Purchase Requests</h4>
+          {#if purchasesLoading}
+            <div class="loading-spinner small"></div>
+          {:else if purchases.length === 0}
+            <p class="muted">You haven't requested any purchases yet.</p>
+          {:else}
+            <div class="table-container">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Quantity</th>
+                    <th>Price</th>
+                    <th>Status</th>
+                    <th>Project</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each purchases as p}
+                    <tr>
+                      <td>{p.name}</td>
+                      <td>{p.quantity || 1}</td>
+                      <td>{p.price !== null && p.price !== undefined ? `$${p.price.toFixed(2)}` : '—'}</td>
+                      <td>{p.status || 'pending'}</td>
+                      <td>{p.project_id || '-'}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
       </div>
     {/if}
   </div>
@@ -636,7 +454,7 @@
   <div class="auth-container" style="min-height:60vh">
     <div class="auth-card">      <div class="auth-header">
         <div class="brand">
-          <span class="brand-mark lg" aria-hidden="true"></span>
+          <Briefcase size={32} />
           <h1>971 Hub</h1>
         </div>
         <p class="subtitle">Spartan Robotics</p>
@@ -1065,6 +883,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: var(--gap-3);
+    margin-bottom: var(--space-6);
   }
 
   /* Instrument-readout cards: mono label over a big tabular number, flat hover */
@@ -1153,6 +972,10 @@
   .pending-notice p {
     margin: 0;
     line-height: 1.5;
+  }
+
+  .dashboard-actions {
+    margin-top: var(--space-7);
   }
 
   .dashboard-actions h3 {
@@ -1351,139 +1174,7 @@
     color: var(--text-muted);
     border-bottom: 2px solid var(--neutral-800);
     padding-bottom: var(--space-2);
-    margin: 0 0 var(--space-3);
-  }
-
-  /* ===== Home dashboard customization: toolbar, hidden tray, sections ===== */
-  .dashboard-toolbar {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: var(--space-4);
-  }
-
-  .layout-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--gap-2);
-  }
-
-  .hidden-sections-tray {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--gap-2);
-    background: var(--surface-1);
-    border: 1px dashed var(--border);
-    border-radius: var(--home-radius, var(--radius-lg));
-    padding: var(--space-3) var(--space-4);
-    margin-bottom: var(--space-5);
-  }
-
-  .tray-label {
-    font-family: var(--font-mono-stack);
-    font-size: 0.68rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-  }
-
-  .chip-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--gap-1);
-    background: var(--primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: var(--space-1) var(--space-3);
-    font-size: var(--font-xs);
-    font-weight: 500;
-    color: var(--secondary);
-    cursor: pointer;
-    transition: border-color 0.1s ease, background-color 0.1s ease;
-  }
-
-  .chip-btn:hover {
-    background: var(--surface-2);
-    border-color: var(--accent-strong);
-  }
-
-  .dashboard-sections {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-7);
-  }
-
-  .dashboard-section.editing {
-    border: 1px dashed var(--border);
-    border-radius: var(--home-radius, var(--radius-lg));
-    padding: var(--space-3);
-  }
-
-  .dashboard-section.editing[draggable="true"] {
-    cursor: grab;
-  }
-
-  .dashboard-section.dragging {
-    opacity: 0.4;
-  }
-
-  .dashboard-section.drag-over {
-    border-color: var(--accent);
-    background: var(--accent-subtle);
-  }
-
-  .section-editbar {
-    display: flex;
-    align-items: center;
-    gap: var(--gap-2);
-    margin-bottom: var(--space-3);
-  }
-
-  .drag-handle {
-    display: flex;
-    align-items: center;
-    color: var(--text-muted);
-  }
-
-  .section-editbar-label {
-    flex: 1;
-    font-family: var(--font-mono-stack);
-    font-size: 0.68rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-  }
-
-  .section-remove {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--primary);
-    color: var(--danger);
-    cursor: pointer;
-    transition: border-color 0.1s ease, background-color 0.1s ease;
-  }
-
-  .section-remove:hover {
-    background: rgba(220, 53, 69, 0.1);
-    border-color: var(--danger);
-  }
-
-  .dashboard-section-empty {
-    border: 1px dashed var(--border);
-    border-radius: var(--home-radius, var(--radius-lg));
-    background: var(--surface-1);
-    padding: var(--space-5);
-  }
-
-  .dashboard-section-empty p {
-    margin: 0;
+    margin: var(--space-6) 0 var(--space-3);
   }
 
   /* Empty states read as intentional placeholders, not stray text */

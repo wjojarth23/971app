@@ -19,7 +19,6 @@ function fallbackEventKey() {
 }
 
 function isCompetitionLead(profile) {
-  if (profile?.role === 'admin') return true;
   return String(profile?.team_role || '').trim().toLowerCase() === COMPETITION_LEAD.toLowerCase();
 }
 

@@ -3,7 +3,6 @@
   import { onMount, tick } from 'svelte';
   import { initAuth, user as authUserStore, userStore, authReady as authReadyStore, fetchUserProfile, signOut } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
-  import { supabase } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
@@ -406,83 +405,6 @@
   $: baseNavTabs = addAdminTabIfAllowed(effectiveTabs, canViewAdmin);
   $: navItems = isApproved ? buildNavItems(baseNavTabs) : [];
   $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || authUser?.email || 'Profile';
-
-  // Drag-to-reorder for the desktop nav's top-level tabs/folders. Home is
-  // rendered outside this list entirely, and Admin is appended by
-  // addAdminTabIfAllowed() rather than stored in header_tabs — so both are
-  // structurally excluded from the reorderable set without extra checks
-  // (Admin's item.key === 'admin' is still guarded below as a second layer,
-  // since a user could theoretically already carry an 'admin' entry).
-  let draggedTabKey = null;
-  let dragOverTabKey = null;
-
-  function tabItemKey(item) {
-    return item?.key || item?.label || '';
-  }
-
-  function isTabDraggable(item) {
-    return tabItemKey(item) !== 'admin';
-  }
-
-  function handleTabDragStart(event, item) {
-    if (!isTabDraggable(item)) return;
-    draggedTabKey = tabItemKey(item);
-    event.dataTransfer.effectAllowed = 'move';
-    // Firefox requires setData to be called for the drag to initiate.
-    event.dataTransfer.setData('text/plain', draggedTabKey);
-  }
-
-  function handleTabDragOver(event, item) {
-    if (!isTabDraggable(item) || !draggedTabKey) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    dragOverTabKey = tabItemKey(item);
-  }
-
-  function handleTabDragLeave() {
-    dragOverTabKey = null;
-  }
-
-  function handleTabDragEnd() {
-    draggedTabKey = null;
-    dragOverTabKey = null;
-  }
-
-  async function handleTabDrop(event, item) {
-    if (!isTabDraggable(item)) return;
-    event.preventDefault();
-    dragOverTabKey = null;
-    const fromKey = draggedTabKey;
-    draggedTabKey = null;
-    const toKey = tabItemKey(item);
-    if (!fromKey || fromKey === toKey) return;
-
-    // Reorder against the currently-effective list (custom or default) —
-    // dragging on an uncustomized nav materializes it into a real custom
-    // header_tabs from this point on, matching the profile settings page.
-    const tabs = (Array.isArray(effectiveTabs) ? effectiveTabs : fallbackTabs()).map((t) => ({ ...t }));
-    const fromIdx = tabs.findIndex((t) => tabItemKey(t) === fromKey);
-    const toIdx = tabs.findIndex((t) => tabItemKey(t) === toKey);
-    if (fromIdx === -1 || toIdx === -1) return;
-
-    const [moved] = tabs.splice(fromIdx, 1);
-    tabs.splice(toIdx, 0, moved);
-
-    // Optimistic local update — the reactive chain (customTabs -> effectiveTabs
-    // -> navItems) re-renders the nav immediately without a round trip.
-    profile = { ...profile, header_tabs: tabs };
-
-    try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({ header_tabs: tabs })
-        .eq('id', activeProfile.id);
-      if (error) throw error;
-    } catch (err) {
-      console.error('Failed to save reordered navigation', err);
-      toastActions.show('Failed to save your reordered navigation');
-    }
-  }
 </script>
 
 {#if authReady && isAuthenticated}
@@ -490,7 +412,7 @@
     <div class="nav-container">
       <!-- Brand -->
       <a href="/" class="brand" on:click={closeDesktopFolders}>
-        <span class="brand-mark" aria-hidden="true"></span>
+        <Briefcase size={24} />
         <span class="brand-name">971 Hub</span>
       </a>
 
@@ -508,21 +430,9 @@
         </a>
 
         {#if isApproved}
-          {#each navItems as item, idx (tabItemKey(item) || idx)}
+          {#each navItems as item, idx}
             {#if item.type === 'folder'}
-              <div
-                class="nav-dropdown"
-                class:open={openDesktopFolder === idx}
-                class:drag-over={dragOverTabKey === tabItemKey(item)}
-                class:dragging={draggedTabKey === tabItemKey(item)}
-                role="group"
-                draggable={isTabDraggable(item)}
-                on:dragstart={(e) => handleTabDragStart(e, item)}
-                on:dragover={(e) => handleTabDragOver(e, item)}
-                on:dragleave={handleTabDragLeave}
-                on:drop={(e) => handleTabDrop(e, item)}
-                on:dragend={handleTabDragEnd}
-              >
+              <div class="nav-dropdown" class:open={openDesktopFolder === idx}>
                 <button
                   type="button"
                   class="nav-item"
@@ -544,20 +454,7 @@
                 </div>
               </div>
             {:else}
-              <a
-                href={item.href}
-                class="nav-item"
-                class:active={isActive(item.href)}
-                class:drag-over={dragOverTabKey === tabItemKey(item)}
-                class:dragging={draggedTabKey === tabItemKey(item)}
-                draggable={isTabDraggable(item)}
-                on:click={closeDesktopFolders}
-                on:dragstart={(e) => handleTabDragStart(e, item)}
-                on:dragover={(e) => handleTabDragOver(e, item)}
-                on:dragleave={handleTabDragLeave}
-                on:drop={(e) => handleTabDrop(e, item)}
-                on:dragend={handleTabDragEnd}
-              >
+              <a href={item.href} class="nav-item" class:active={isActive(item.href)} on:click={closeDesktopFolders}>
                 <svelte:component this={item.icon} size={16} />
                 <span>{item.label}</span>
               </a>
@@ -784,23 +681,6 @@
   .nav-item:focus-visible {
     outline: 2px solid var(--accent-strong, var(--accent));
     outline-offset: 2px;
-  }
-
-  /* Drag-to-reorder: applies to both plain nav-item tabs and folder wrappers
-     (Home is rendered outside this list; Admin opts out via draggable=false
-     and never receives these classes as a drop target). */
-  .nav-item[draggable="true"],
-  .nav-dropdown[draggable="true"] > .nav-item {
-    cursor: grab;
-  }
-  .nav-item.dragging,
-  .nav-dropdown.dragging {
-    opacity: 0.4;
-  }
-  .nav-item.drag-over,
-  .nav-dropdown.drag-over {
-    border-color: var(--accent);
-    background: var(--accent-subtle);
   }
 
   /* ========== DESKTOP DROPDOWN ========== */

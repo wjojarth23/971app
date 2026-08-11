@@ -1096,7 +1096,7 @@
                 <th>Approved</th>
                 <th>Status</th>
                 <th>Shipping</th>
-                <th>Created</th>
+                <th>Delivery</th>
                 <th>Kit</th>
               {:else}
                 <th>Total</th>
@@ -1283,7 +1283,11 @@
                   {/if}
                 </td>
                 <td class="delivery">
-                  <span class="date-value">{formatPacificDate(part.created_at)}</span>
+                  {#if part.delivery_date}
+                    <span style="font-size:12px; color:var(--text-secondary);">{formatPacificDate(part.delivery_date)}</span>
+                  {:else}
+                    <span style="color: var(--text-secondary); font-size: 12px;">—</span>
+                  {/if}
                 </td>
                 <td class="kit">
                   <div class="kit-inline">
@@ -2027,8 +2031,6 @@
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }
   .kit-input { min-width: 140px; }
-
-  .date-value { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 
   .notes-badge {
     background: var(--red-soft);
