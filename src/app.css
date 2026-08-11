@@ -909,6 +909,27 @@ textarea:focus,
   color: var(--secondary);
 }
 
+/* Spartan helmet brand mark — two pre-colored transparent-background PNGs
+   swapped per theme (black for light themes, gold for dark mode), rather
+   than a single-color mask, since real dual-color source art exists. */
+.brand-mark {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  background-image: url('/spartan-helmet-light.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.brand-mark.lg {
+  width: 32px;
+  height: 32px;
+}
+[data-theme="modern-dark"] .brand-mark {
+  background-image: url('/spartan-helmet-dark.png');
+}
+
 .nav-links {
   display: flex;
   gap: var(--gap-4);
@@ -931,7 +952,12 @@ textarea:focus,
 
 /* Tables - global, reusable */
 .table-container {
-  overflow: hidden;
+  /* overflow-x: auto (not hidden) so wide tables scroll horizontally
+     instead of silently clipping their rightmost columns off-screen —
+     overflow-y stays auto too, which still clips content against the
+     container's rounded corners the same way `hidden` did. */
+  overflow-x: auto;
+  overflow-y: auto;
   width: 100%;
 }
 
