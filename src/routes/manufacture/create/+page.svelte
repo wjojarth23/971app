@@ -148,7 +148,7 @@
 
   async function handleSubmitGeneric() {
     const effectiveStock = stockAssignment === '__other__' ? customStock.trim() : stockAssignment;
-    if (!partName || !requesterName || !projectId || !workflow || !uploadedFile || !quantity || quantity < 1 || !effectiveStock) {
+    if (!partName || !requesterName || !workflow || !uploadedFile || !quantity || quantity < 1 || !effectiveStock) {
       alert('Please fill in all fields, select a stock, upload a file, and specify a valid quantity.');
       return;
     }
@@ -200,7 +200,7 @@
 
   async function handleSubmitRouter() {
     const effectiveStock = stockAssignment === '__other__' ? customStock.trim() : stockAssignment;
-    if (!partName || !requesterName || !projectId || !workflow || !quantity || quantity < 1 || !effectiveStock) {
+    if (!partName || !requesterName || !workflow || !quantity || quantity < 1 || !effectiveStock) {
       alert('Please fill in all fields and specify a valid quantity.');
       return;
     }
@@ -310,13 +310,12 @@
         </div>
 
         <div class="form-group">
-          <label for="projectId">Project ID</label>
-          <input 
+          <label for="projectId">Project ID <span class="optional-label">(optional)</span></label>
+          <input
             id="projectId"
-            type="text" 
-            bind:value={projectId} 
+            type="text"
+            bind:value={projectId}
             placeholder="Enter project ID"
-            required
           />
         </div>
 
@@ -464,7 +463,7 @@
         <button 
           type="submit" 
           class="submit-btn" 
-          disabled={isSubmitting || !partName || !requesterName || !projectId || !workflow || !hasRequiredFiles || !quantity || quantity < 1}
+          disabled={isSubmitting || !partName || !requesterName || !workflow || !hasRequiredFiles || !quantity || quantity < 1}
         >
           {#if isSubmitting}
             Submitting...
@@ -485,6 +484,7 @@
   .form-section { margin-bottom: 2rem; }
   .form-section h2 { margin-bottom: 1rem; font-size: 1.25rem; font-weight: 600; }
   .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+  .optional-label { font-weight: 400; color: var(--text-muted); }
   .form-group input, .form-group select { width: 100%; border: 1px solid var(--border); }
   .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
   .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
