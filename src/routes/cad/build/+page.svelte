@@ -5,10 +5,13 @@
   import { Settings, Package, Wrench, CheckCircle, Clock, ExternalLink, DollarSign } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { formatPacificDate } from '$lib/timezone.js';
+  import { getSeasonBucket, getCurrentSeasonBucket, getAllSeasonBuckets, passesSeasonFilter } from '$lib/frcSeason.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
 
   let user = null;
   let loading = true;
   let builds = [];
+  let filterSeason = getCurrentSeasonBucket()?.value || '';
   let budgets = []; // Budgets for build groups and individual builds
   let buildStats = {
     total: 0,
@@ -409,6 +412,8 @@
       kitCount: { complete: kitComplete, total: kitParts.length }
     };
   }
+
+  $: seasonOptions = getAllSeasonBuckets(builds);
 </script>
 
 <svelte:head>
@@ -471,6 +476,12 @@
       </div>
     </div>
 
+    <div class="card">
+      <div class="filters">
+        <SeasonFilter options={seasonOptions} bind:value={filterSeason} />
+      </div>
+    </div>
+
     <!-- Active Builds grouped by Project -->
     <div class="build-sections">
       <section class="section">
@@ -478,7 +489,7 @@
         {#if builds.length > 0}
           {#each Object.keys(groupedBuilds) as pid}
             {@const human = pid === '__NO_PROJECT__' ? 'Unassigned' : pid}
-            {@const projectBuilds = groupedBuilds[pid]}
+            {@const projectBuilds = (groupedBuilds[pid] || []).filter((b) => passesSeasonFilter(b.created_at, filterSeason))}
             {@const projectTotalCost = projectBuilds.reduce((s,b) => s + (b.totalPurchasingCost || 0), 0)}
             {@const projectPartsCount = projectBuilds.reduce((s,b) => s + (((b.parts||[]).length || 0) + ((b.purchasing||[]).length || 0) + ((b.kitting||[]).length || 0)), 0)}
             {@const groupBudget = getBudgetForBuildGroup(pid)}
@@ -584,7 +595,14 @@
                           <span>|</span>
                           <span>Qty x{Math.max(1, Math.round(Number(build.quantity || 1)))}</span>
                           <span>•</span>
-                          <span>Created {formatPacificDate(build.created_at)}</span>
+                          <span>
+                            Created {formatPacificDate(build.created_at)}
+                            {#if getSeasonBucket(build.created_at)}
+                              <span class="tag season-tag {getSeasonBucket(build.created_at).isOffseason ? 'tag-offseason' : 'tag-season'}">
+                                {getSeasonBucket(build.created_at).label}
+                              </span>
+                            {/if}
+                          </span>
                         </div>
                         <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
                           <div class="cost-badge">Cost: ${ (build.totalPurchasingCost || 0).toFixed(2) }</div>
