@@ -6,6 +6,8 @@
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
   import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
+  import { getSeasonBucket, getCurrentSeasonBucket, getAllSeasonBuckets, passesSeasonFilter } from '$lib/frcSeason.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
   import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users, Box } from 'lucide-svelte';
@@ -31,6 +33,7 @@
   let filterWorkflow = '';
   let filterStatus = '';
   let filterProject = '';
+  let filterSeason = getCurrentSeasonBucket()?.value || '';
   let show971 = true;
   let show9584 = true;
   let toastMessage = '';
@@ -200,6 +203,7 @@
   
   $: editStockOptions = editWorkflow ? (stockData[editWorkflow] || []).map(s => s.description) : [];
   $: projectIds = Array.from(new Set(parts.filter(p => !isPartFullyCompleted(p) && p.project_id).map(p => p.project_id))).sort();
+  $: seasonOptions = getAllSeasonBuckets(parts);
 
   onMount(async () => {
     // Hydrate from UUID and keep local var in sync
@@ -1481,8 +1485,9 @@
     const matchesProject = !filterProject || part.project_id === filterProject;
     const notCompleted = !isPartFullyCompleted(part);
     const matchesTeam = passesTeamFilter(part.frc_team, show971, show9584);
+    const matchesSeason = passesSeasonFilter(part.created_at, filterSeason);
 
-    return matchesSearch && matchesWorkflow && matchesStatus && matchesProject && notCompleted && matchesTeam;
+    return matchesSearch && matchesWorkflow && matchesStatus && matchesProject && notCompleted && matchesTeam && matchesSeason;
   });
 
   $: filteredPartKeys = filteredParts.map(getPartKey);
@@ -1600,7 +1605,7 @@
 </div>
 
 <div class="card">
-  <div class="filters" style="--filters-columns: 2fr 1fr 1fr 1fr;">
+  <div class="filters" style="--filters-columns: 2fr 1fr 1fr 1fr 1fr;">
     <div class="form-group">
       <label class="form-label">
         <Search size={16} />
@@ -1613,7 +1618,7 @@
         bind:value={searchTerm}
       />
     </div>
-    
+
     <div class="form-group">
       <label class="form-label">
         <Filter size={16} />
@@ -1626,7 +1631,7 @@
         {/each}
       </select>
     </div>
-    
+
     <div class="form-group">
       <label class="form-label">
         <Filter size={16} />
@@ -1639,7 +1644,7 @@
         {/each}
       </select>
     </div>
-    
+
     <div class="form-group">
       <label class="form-label">
         <Filter size={16} />
@@ -1652,6 +1657,8 @@
         {/each}
       </select>
     </div>
+
+    <SeasonFilter options={seasonOptions} bind:value={filterSeason} />
   </div>
   <div class="team-filter-row">
     <TeamFilter bind:show971 bind:show9584 />
@@ -1754,7 +1761,14 @@
           {/if}
           <div class="part-card-detail">
             <span class="detail-label">Created</span>
-            <span class="detail-value">{formatDate(part.created_at)}</span>
+            <span class="detail-value">
+              {formatDate(part.created_at)}
+              {#if getSeasonBucket(part.created_at)}
+                <span class="tag season-tag {getSeasonBucket(part.created_at).isOffseason ? 'tag-offseason' : 'tag-season'}">
+                  {getSeasonBucket(part.created_at).label}
+                </span>
+              {/if}
+            </span>
           </div>
           <div class="part-card-detail">
             <span class="detail-label">Due</span>
@@ -2073,7 +2087,14 @@
             <td class:hidden={assignMode} on:click|stopPropagation on:keydown|stopPropagation>
               <PartDueDate {part} on:update={() => loadParts()} />
             </td>
-            <td class:hidden={assignMode}>{formatDate(part.created_at)}</td>
+            <td class:hidden={assignMode}>
+              {formatDate(part.created_at)}
+              {#if getSeasonBucket(part.created_at)}
+                <span class="tag season-tag {getSeasonBucket(part.created_at).isOffseason ? 'tag-offseason' : 'tag-season'}">
+                  {getSeasonBucket(part.created_at).label}
+                </span>
+              {/if}
+            </td>
             <td class:hidden={assignMode}>
               <div class="row-actions">
               </div>

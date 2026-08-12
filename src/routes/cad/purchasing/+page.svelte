@@ -6,6 +6,8 @@
   import { calculateBudgetSpent } from '$lib/budget.js';
   import { isTeam9584, passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
+  import { getSeasonBucket, getCurrentSeasonBucket, getAllSeasonBuckets, passesSeasonFilter } from '$lib/frcSeason.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   import { ShoppingCart, Package, DollarSign, Truck, CheckCircle, Clock, AlertTriangle, Edit, MapPin, Download, Settings, X, Link as LinkIcon, Target, Pin } from 'lucide-svelte';
   import { toastActions } from '$lib/toast.js';
   import { formatPacificDate } from '$lib/timezone.js';
@@ -36,6 +38,7 @@
   let vendorFilter = '';
   let projectFilter = '';
   let statusFilter = '';
+  let seasonFilter = getCurrentSeasonBucket()?.value || '';
   let show971 = true;
   let show9584 = true;
 
@@ -44,6 +47,7 @@
     .map(v => v);
   $: projectOptions = Array.from(new Set(parts.map(p => (p.project_id || '').toString()).filter(v => v && v !== '')))
     .map(v => v);
+  $: seasonOptions = getAllSeasonBuckets(parts);
   $: filteredParts = parts.filter(p => {
     // Hide rejected items unless the current user is the rejector or the requester/purchaser.
     // Compare robustly by normalizing text and also allow purchaser UUID match when available.
@@ -70,13 +74,14 @@
       if (ps !== statusFilter.toString().toLowerCase()) return false;
     }
     if (!passesTeamFilter(p.frc_team, show971, show9584)) return false;
+    if (!passesSeasonFilter(p.created_at, seasonFilter)) return false;
     return true;
   });
 
   // Debug logging
   $: if (parts.length > 0) {
     console.log(`Filtering: ${parts.length} total parts -> ${filteredParts.length} filtered parts`);
-    console.log('Active filters:', { vendorFilter, projectFilter, statusFilter });
+    console.log('Active filters:', { vendorFilter, projectFilter, statusFilter, seasonFilter });
   }
   
   let showKittingModal = false;
@@ -1059,6 +1064,8 @@
             <option value="kitted">Kitted</option>
           </select>
         </div>
+
+        <SeasonFilter options={seasonOptions} bind:value={seasonFilter} />
       </div>
       <div class="team-filter-row">
         <TeamFilter bind:show971 bind:show9584 />
@@ -1291,6 +1298,11 @@
                 </td>
                 <td class="delivery">
                   <span class="date-value">{formatPacificDate(part.created_at)}</span>
+                  {#if getSeasonBucket(part.created_at)}
+                    <span class="tag season-tag {getSeasonBucket(part.created_at).isOffseason ? 'tag-offseason' : 'tag-season'}">
+                      {getSeasonBucket(part.created_at).label}
+                    </span>
+                  {/if}
                 </td>
                 <td class="kit">
                   <div class="kit-inline">

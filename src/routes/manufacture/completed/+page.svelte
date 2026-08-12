@@ -7,12 +7,15 @@
   import { passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import CadViewer from '$lib/components/CadViewer.svelte';
+  import { getSeasonBucket, getCurrentSeasonBucket, getAllSeasonBuckets, passesSeasonFilter } from '$lib/frcSeason.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
 
   let parts = [];
   let filteredParts = [];
   let loading = true;
   let searchTerm = '';
   let filterWorkflow = '';
+  let filterSeason = getCurrentSeasonBucket()?.value || '';
   let show971 = true;
   let show9584 = true;
 
@@ -83,8 +86,11 @@
       (p.project_id || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesWorkflow = !filterWorkflow || p.workflow === filterWorkflow;
     const matchesTeam = passesTeamFilter(p.frc_team, show971, show9584);
-    return matchesSearch && matchesWorkflow && matchesTeam;
+    const matchesSeason = passesSeasonFilter(p.created_at, filterSeason);
+    return matchesSearch && matchesWorkflow && matchesTeam && matchesSeason;
   });
+
+  $: seasonOptions = getAllSeasonBuckets(parts);
 </script>
 
 <svelte:head><title>Completed Parts</title></svelte:head>
@@ -109,7 +115,7 @@
 </div>
 
 <div class="card">
-  <div class="filters" style="--filters-columns: 2fr 1fr;">
+  <div class="filters" style="--filters-columns: 2fr 1fr 1fr;">
     <div class="form-group">
       <label class="form-label" for="completed-search">Search</label>
       <input id="completed-search" class="form-input" placeholder="Search by name, material, requester, or project ID..." bind:value={searchTerm} />
@@ -123,6 +129,7 @@
         {/each}
       </select>
     </div>
+    <SeasonFilter options={seasonOptions} bind:value={filterSeason} />
   </div>
   <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border);">
     <TeamFilter bind:show971 bind:show9584 />
@@ -157,7 +164,14 @@
             <td class="mono">{part.project_id}</td>
             <td>{part.quantity || 1}</td>
             <td>{part.kitting_bin ? part.kitting_bin : (part.delivered ? 'Delivered' : '-')}</td>
-            <td>{formatDate(part.updated_at || part.created_at)}</td>
+            <td>
+              {formatDate(part.updated_at || part.created_at)}
+              {#if getSeasonBucket(part.created_at)}
+                <span class="tag season-tag {getSeasonBucket(part.created_at).isOffseason ? 'tag-offseason' : 'tag-season'}">
+                  {getSeasonBucket(part.created_at).label}
+                </span>
+              {/if}
+            </td>
             <td>
               {#if canViewCad(part)}
                 <button type="button" class="view-cad-link" title="View 3D model" on:click={() => openCadViewer(part)}>
@@ -182,7 +196,14 @@
         <div class="mono">{part.project_id}</div>
         <div>Qty: {part.quantity || 1}</div>
         <div>{part.kitting_bin ? part.kitting_bin : (part.delivered ? 'Delivered' : '-')}</div>
-        <div>{formatDate(part.updated_at || part.created_at)}</div>
+        <div>
+          {formatDate(part.updated_at || part.created_at)}
+          {#if getSeasonBucket(part.created_at)}
+            <span class="tag season-tag {getSeasonBucket(part.created_at).isOffseason ? 'tag-offseason' : 'tag-season'}">
+              {getSeasonBucket(part.created_at).label}
+            </span>
+          {/if}
+        </div>
         {#if canViewCad(part)}
           <button type="button" class="view-cad-link" title="View 3D model" on:click={() => openCadViewer(part)}>
             <Box size={13} /> View CAD

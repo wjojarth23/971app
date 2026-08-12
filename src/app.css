@@ -1274,6 +1274,23 @@ textarea:focus,
   font-weight: 700;
 }
 
+.tag-season {
+  background: var(--purple-soft);
+  color: var(--purple-strong);
+  border-color: var(--purple-soft);
+}
+
+.tag-offseason {
+  background: var(--muted-bg);
+  color: var(--text-muted);
+  border-color: transparent;
+}
+
+.season-tag {
+  margin-left: var(--space-1);
+  white-space: nowrap;
+}
+
 .badge-row {
   display: flex;
   flex-wrap: wrap;
