@@ -285,7 +285,7 @@
   }
 
   // Numeric fields get coerced to Number(); toolSequence (routing multi-tool,
-  // see toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
+  // see implementations/toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
   // toolNumber, label} objects and must pass through untouched.
   function serializeParams(raw) {
     const params = {};
@@ -560,7 +560,7 @@
     </button>
   </div>
 </div>
-<p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Milling isn't implemented yet (see millimplementations.md).</p>
+<p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Milling isn't implemented yet (see implementations/millimplementations.md).</p>
 
 {#if !loading && materials.length === 0 && tools.length === 0 && machines.length === 0}
   <div class="card setup-warning">
@@ -863,7 +863,7 @@
             <div class="source-toggle" id="job-operation">
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'turning'} class:btn-secondary={newJobOperation !== 'turning'} on:click={() => (newJobOperation = 'turning')}>Turning</button>
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'routing'} class:btn-secondary={newJobOperation !== 'routing'} on:click={() => (newJobOperation = 'routing')}>Routing</button>
-              <button class="btn btn-sm btn-secondary" disabled title="Not implemented yet - see millimplementations.md">Milling</button>
+              <button class="btn btn-sm btn-secondary" disabled title="Not implemented yet - see implementations/millimplementations.md">Milling</button>
             </div>
           </div>
           <div class="form-group">

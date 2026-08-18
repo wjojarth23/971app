@@ -44,7 +44,7 @@ const VALID_GCODE_EXTENSIONS = ['ngc', 'tap'];
  * Turn a part/file name into a safe `<slug>.<ext>` filename. Extension
  * defaults to 'ngc' (this app's baseline) - pass 'tap' for a machine profile
  * that expects Mach3/Mach4-style output (currently router-only, see
- * toolchange-gcode-plan.md). gcode_format on the job row itself stays 'ngc'
+ * implementations/toolchange-gcode-plan.md). gcode_format on the job row itself stays 'ngc'
  * regardless - it's a content-format marker, not the download extension.
  */
 export function gcodeFileNameFor(name, extension = 'ngc') {

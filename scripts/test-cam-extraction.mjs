@@ -11,7 +11,7 @@
  *   node scripts/test-cam-extraction.mjs turning "/path/to/part.step"
  *   node scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth]
  *   node scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth] --tools=0.25,0.125
- *     (multi-tool router mode - see toolchange-gcode-plan.md - diameters
+ *     (multi-tool router mode - see implementations/toolchange-gcode-plan.md - diameters
  *     largest first; the real part's contours still decide which tool each
  *     one actually needs)
  *

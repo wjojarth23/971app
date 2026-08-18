@@ -9,7 +9,7 @@
  * coordinates are {a: Z, b: radius}.
  * Routing: X/Y are used directly. Segment coordinates are {a: X, b: Y}.
  *
- * Multi-tool routing (see toolchange-gcode-plan.md) emits a "(TOOL CHANGE:
+ * Multi-tool routing (see implementations/toolchange-gcode-plan.md) emits a "(TOOL CHANGE:
  * ...)" comment between tools - each segment gets tagged with `toolIndex`
  * (0 for the first/primary tool, incrementing at each change) by matching
  * that marker, so a multi-tool preview can be color-coded by tool instead

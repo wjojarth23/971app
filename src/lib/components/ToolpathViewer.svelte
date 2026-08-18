@@ -24,7 +24,7 @@
   $: rapidCount = segments.filter((s) => s.rapid).length;
   $: feedCount = segments.length - rapidCount;
 
-  // Multi-tool routing jobs (see toolchange-gcode-plan.md) tag each segment
+  // Multi-tool routing jobs (see implementations/toolchange-gcode-plan.md) tag each segment
   // with which tool cut it - color by tool when more than one is actually
   // present, otherwise fall back to the plain single-color rendering below
   // (unchanged for every turning job and every single-tool routing job).

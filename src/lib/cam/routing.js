@@ -27,7 +27,7 @@
  * robust polygon-boolean geometry this file doesn't have. What it does do:
  * let a job use a strong/fast primary bit for everything that fits it, and
  * automatically fall back to a smaller detail bit only for the features
- * that need one, in a single program. See toolchange-gcode-plan.md.
+ * that need one, in a single program. See implementations/toolchange-gcode-plan.md.
  *
  * Every tool change assumes NO automatic tool-length compensation (no
  * confirmed tool setter on the router this targets) - each change is a

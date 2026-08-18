@@ -35,11 +35,28 @@
  * an arbitrary modeling convention.
  */
 
+// occt-import-js is Emscripten-compiled WASM; its default loader finds its
+// .wasm binary via fs.readFileSync() relative to __dirname, which breaks
+// once a bundler (Vercel's serverless build) relocates the code away from
+// its original node_modules layout - __dirname no longer points anywhere
+// near the real file. CadViewer.svelte (browser-side) already works around
+// this with a Vite `?url` import; this is the server-side equivalent -
+// resolve the real path via Node's own module resolution (bundler-proof,
+// unlike a guessed relative path) and hand the bytes over directly via
+// `wasmBinary`, skipping the loader's own file-finding logic entirely.
+// See implementations/vercel-cam-generate-timeout-fix.md.
 let occtPromise = null;
 async function getOcct() {
   if (!occtPromise) {
-    const occtimportjsFactory = (await import('occt-import-js')).default;
-    occtPromise = occtimportjsFactory();
+    const [{ default: occtimportjsFactory }, { createRequire }, { readFileSync }] = await Promise.all([
+      import('occt-import-js'),
+      import('node:module'),
+      import('node:fs')
+    ]);
+    const require = createRequire(import.meta.url);
+    const wasmPath = require.resolve('occt-import-js/dist/occt-import-js.wasm');
+    const wasmBinary = readFileSync(wasmPath);
+    occtPromise = occtimportjsFactory({ wasmBinary });
   }
   return occtPromise;
 }

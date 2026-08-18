@@ -99,7 +99,7 @@ export async function POST({ request }) {
     if (job.operation_type === 'milling') {
       await supabase.from('cam_jobs').update({
         status: 'rejected',
-        errors: ['Milling is not implemented yet - see millimplementations.md']
+        errors: ['Milling is not implemented yet - see implementations/millimplementations.md']
       }).eq('id', jobId);
       return json({ success: false, error: 'Milling is not implemented yet' }, { status: 400 });
     }
