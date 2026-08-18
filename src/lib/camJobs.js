@@ -204,6 +204,38 @@ export async function queueCamJobForPart(part, options = {}) {
 }
 
 /**
+ * Queue + generate CAM jobs for several parts at once, all sharing the same
+ * material/tool/machine/params (e.g. "run this same router setup across a
+ * batch of brackets") - one queueCamJobForPart call per part, run
+ * SEQUENTIALLY rather than in parallel. Sequential is deliberate: each call
+ * already blocks on a full /api/cam-generate round trip (STEP download +
+ * WASM parser load + geometry extraction), and firing a dozen of those at
+ * once would pile up concurrent cold WASM inits against the same serverless
+ * function for no real benefit, since generation itself is already
+ * sub-second once warm - a queue of one-at-a-time requests finishes in
+ * about the same wall-clock time as short-lived parallel bursts would, with
+ * a much smaller chance of tripping a rate limit or timeout.
+ *
+ * @param {Array<Object>} parts - part rows (see queueCamJobForPart)
+ * @param {Object} options - same shape as queueCamJobForPart's options,
+ *   applied to every part, plus `onPartStart(part, index, total)` and
+ *   `onPartDone(part, index, total, result)` called around each one.
+ * @returns {Promise<Array<{part, success, job, error}>>} one result per part, same order as input
+ */
+export async function queueCamJobsForParts(parts, options = {}) {
+  const results = [];
+  const total = parts.length;
+  for (let i = 0; i < total; i += 1) {
+    const part = parts[i];
+    if (options.onPartStart) options.onPartStart(part, i, total);
+    const result = await queueCamJobForPart(part, options);
+    results.push({ part, success: result.success, job: result.job, error: result.error });
+    if (options.onPartDone) options.onPartDone(part, i, total, result);
+  }
+  return results;
+}
+
+/**
  * Upload a fresh STEP file and queue + generate a CAM job from it (no
  * existing part) - used by the /autocam page's manual "New Job" flow.
  * @param {File} profileFile - the .step/.stp file

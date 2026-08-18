@@ -70,8 +70,8 @@
           <input id="cf-feed-finish" class="form-input" type="number" step="0.001" bind:value={params.feedFinish} />
         </div>
         <div class="form-group">
-          <label class="form-label" for="cf-surface-speed">Surface speed (m/min)</label>
-          <input id="cf-surface-speed" class="form-input" type="number" bind:value={params.surfaceSpeed} title="Constant surface speed (G96)" />
+          <label class="form-label" for="cf-surface-speed">Surface speed (SFM)</label>
+          <input id="cf-surface-speed" class="form-input" type="number" bind:value={params.surfaceSpeed} title="Constant surface speed (G96) - surface feet per minute, Haas TL-1 convention in G20/inch mode" />
         </div>
         <div class="form-group">
           <label class="form-label" for="cf-max-rpm">Max RPM</label>

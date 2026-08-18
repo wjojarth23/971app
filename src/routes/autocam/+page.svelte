@@ -10,11 +10,13 @@
   import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   import CamParamFields from '$lib/components/CamParamFields.svelte';
   import RoutingToolSequence from '$lib/components/RoutingToolSequence.svelte';
+  import TurningFinishTool from '$lib/components/TurningFinishTool.svelte';
   import CadViewer from '$lib/components/CadViewer.svelte';
   import ToolpathViewer from '$lib/components/ToolpathViewer.svelte';
   import { toastActions } from '$lib/toast.js';
   import {
     queueCamJobForPart,
+    queueCamJobsForParts,
     queueCamJobFromUpload,
     retryCamJob,
     cancelStuckCamJob,
@@ -91,7 +93,7 @@
   ];
 
   function emptyTurningParams() {
-    return { stockDiameter: '', stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004, surfaceSpeed: 150, maxRpm: 2500, setupMode: 'single', flipAt: '' };
+    return { stockDiameter: '', stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004, surfaceSpeed: 150, maxRpm: 2500, setupMode: 'single', flipAt: '', finishTool: null };
   }
   function emptyRoutingParams() {
     return { toolDiameter: 0.25, stepDown: 0.1, targetDepth: '', tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000, toolSequence: [] };
@@ -106,6 +108,9 @@
   let eligibleParts = [];
   let partsLoading = false;
   let selectedPartId = '';
+  let batchMode = false;
+  let selectedPartIds = []; // batchMode only - queue one job per checked part, same material/tool/machine/params
+  let batchProgress = null; // { index, total, partName } while a batch is running
   let selectedMaterialId = '';
   let selectedToolId = '';
   let selectedMachineId = '';
@@ -146,11 +151,12 @@
   let newToolName = '';
   let newToolDiameter = '';
   let newToolNoseRadius = '';
+  let newToolNumber = '';
 
   // Machine profile editor
   let showMachineModal = false;
   let editingMachineId = null;
-  let machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', params: emptyRoutingParams() };
+  let machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', controller: 'linuxcnc', drive_folder_id: '', params: emptyRoutingParams() };
   let savingMachine = false;
 
   $: canManageProfiles = canManageCamProfiles(user);
@@ -246,6 +252,9 @@
     newJobSource = 'upload';
     newJobFile = null;
     selectedPartId = '';
+    batchMode = false;
+    selectedPartIds = [];
+    batchProgress = null;
     selectedMaterialId = '';
     selectedToolId = '';
     selectedMachineId = '';
@@ -291,14 +300,19 @@
 
   // Numeric fields get coerced to Number(); toolSequence (routing multi-tool,
   // see implementations/toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
-  // toolNumber, label} objects and must pass through untouched.
-  const NON_NUMERIC_PARAM_KEYS = new Set(['toolSequence', 'setupMode']);
+  // toolNumber, label} objects and finishTool (turning multi-tool) is one
+  // {toolId, toolNumber, label, noseRadius} object - both must pass through untouched.
+  const NON_NUMERIC_PARAM_KEYS = new Set(['toolSequence', 'setupMode', 'finishTool']);
 
   function serializeParams(raw) {
     const params = {};
     for (const [key, value] of Object.entries(raw)) {
       if (key === 'toolSequence') {
         if (Array.isArray(value) && value.length > 0) params.toolSequence = value;
+        continue;
+      }
+      if (key === 'finishTool') {
+        if (value && typeof value === 'object') params.finishTool = value;
         continue;
       }
       if (NON_NUMERIC_PARAM_KEYS.has(key)) {
@@ -313,15 +327,46 @@
   async function submitNewJob() {
     submitting = true;
     try {
-      const options = {
-        name: newJobName.trim() || null,
+      const baseOptions = {
         operationType: newJobOperation,
         materialId: selectedMaterialId || null,
         toolId: selectedToolId || null,
         machineId: selectedMachineId || null,
         params: buildParams(),
         userId: user?.id || null,
-        gcodeExtension: machines.find((m) => m.id === selectedMachineId)?.gcode_extension,
+        gcodeExtension: machines.find((m) => m.id === selectedMachineId)?.gcode_extension
+      };
+
+      if (newJobSource === 'part' && batchMode) {
+        const parts = eligibleParts.filter((p) => selectedPartIds.includes(p.id));
+        if (parts.length === 0) { toastActions.show('Choose at least one part'); return; }
+
+        // Deliberately keeps the modal open, showing progress, until the
+        // whole sequential batch finishes - see queueCamJobsForParts for why
+        // these run one at a time instead of in parallel.
+        batchProgress = { index: 0, total: parts.length, partName: parts[0].name };
+        const results = await queueCamJobsForParts(parts, {
+          ...baseOptions,
+          onPartStart: (part, i, total) => { batchProgress = { index: i, total, partName: part.name }; },
+          onProgress: patchJobInList,
+          onQueued: () => loadJobs() // live-refresh the list as each part lands, same as the single-job path
+        });
+        batchProgress = null;
+
+        const succeeded = results.filter((r) => r.success).length;
+        toastActions.show(
+          succeeded === results.length
+            ? `${succeeded} CAM job${succeeded === 1 ? '' : 's'} generated`
+            : `${succeeded}/${results.length} jobs generated - check the jobs list for failures`
+        );
+        closeNewJobModal();
+        await loadJobs();
+        return;
+      }
+
+      const options = {
+        ...baseOptions,
+        name: newJobName.trim() || null,
         // As soon as the job is queued (not once generation finishes) - move
         // out of the New Job form and let the jobs list show progress instead.
         onQueued: async () => {
@@ -521,12 +566,14 @@
     const { error } = await supabase.from('cam_tools').insert({
       name: newToolName.trim(),
       diameter: newToolDiameter ? Number(newToolDiameter) : null,
-      nose_radius: newToolNoseRadius ? Number(newToolNoseRadius) : null
+      nose_radius: newToolNoseRadius ? Number(newToolNoseRadius) : null,
+      tool_number: newToolNumber ? Number(newToolNumber) : null
     });
     if (error) { toastActions.show('Failed to add tool'); return; }
     newToolName = '';
     newToolDiameter = '';
     newToolNoseRadius = '';
+    newToolNumber = '';
     await loadReferenceData();
   }
 
@@ -545,6 +592,8 @@
         default_material_id: machine.default_material_id || '',
         default_tool_id: machine.default_tool_id || '',
         gcode_extension: machine.gcode_extension || 'ngc',
+        controller: machine.controller || 'linuxcnc',
+        drive_folder_id: machine.drive_folder_id || '',
         params: {
           ...(machine.operation_type === 'turning' ? emptyTurningParams() : emptyRoutingParams()),
           ...(machine.default_params || {})
@@ -552,7 +601,7 @@
       };
     } else {
       editingMachineId = null;
-      machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', params: emptyRoutingParams() };
+      machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', controller: 'linuxcnc', drive_folder_id: '', params: emptyRoutingParams() };
     }
     showMachineModal = true;
   }
@@ -578,6 +627,8 @@
         default_material_id: machineForm.default_material_id || null,
         default_tool_id: machineForm.default_tool_id || null,
         gcode_extension: machineForm.gcode_extension || 'ngc',
+        controller: machineForm.operation_type === 'routing' ? (machineForm.controller || 'linuxcnc') : 'linuxcnc',
+        drive_folder_id: machineForm.drive_folder_id?.trim() || null,
         default_params: serializeParams(machineForm.params)
       };
       const { error } = editingMachineId
@@ -712,7 +763,7 @@
             <h3>Tools</h3>
             {#each tools as t}
               <div class="profile-row" class:disabled={!t.enabled}>
-                <span>{t.name}{t.diameter ? ` (${t.diameter}" dia)` : ''}{t.nose_radius ? ` R${t.nose_radius}` : ''}</span>
+                <span>{t.name}{t.diameter ? ` (${t.diameter}" dia)` : ''}{t.nose_radius ? ` R${t.nose_radius}` : ''}{t.tool_number ? ` - T${t.tool_number}` : ''}</span>
                 <button class="btn btn-ghost btn-sm" on:click={() => toggleEnabled('cam_tools', t)}>{t.enabled ? 'Disable' : 'Enable'}</button>
               </div>
             {/each}
@@ -720,6 +771,7 @@
               <input class="form-input" placeholder="Tool name" bind:value={newToolName} />
               <input class="form-input" placeholder="Diameter (in)" type="number" step="0.0625" bind:value={newToolDiameter} />
               <input class="form-input" placeholder="Nose radius (in, lathe only)" type="number" step="0.001" bind:value={newToolNoseRadius} />
+              <input class="form-input" placeholder="Tool # (T-word)" type="number" step="1" min="1" bind:value={newToolNumber} title="Tool number for the T-word in tool-change G-code (e.g. 2 for T0202)" />
               <button class="btn btn-sm btn-nowrap" on:click={addTool}>Add</button>
             </div>
           </div>
@@ -842,7 +894,7 @@
             <td>
               <div class="name-line">
                 {#if job.source_type === 'part'}<Package size={14} />{:else}<Upload size={14} />{/if}
-                <strong>{jobDisplayName(job)}</strong>
+                <strong title={jobDisplayName(job)}>{jobDisplayName(job)}</strong>
               </div>
               {#if job.source_type === 'part' && job.part_id}
                 <a class="job-part-link" href="/manufacture?part={job.part_id}" on:click|stopPropagation>
@@ -925,10 +977,12 @@
         <button type="button" class="modal-close-button" aria-label="Close" on:click={closeNewJobModal}><X size={18} /></button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label class="form-label" for="job-name">Job Name <span class="text-muted">(optional)</span></label>
-          <input id="job-name" class="form-input" placeholder="e.g. Gearbox side plate" bind:value={newJobName} />
-        </div>
+        {#if !(newJobSource === 'part' && batchMode)}
+          <div class="form-group">
+            <label class="form-label" for="job-name">Job Name <span class="text-muted">(optional)</span></label>
+            <input id="job-name" class="form-input" placeholder="e.g. Gearbox side plate" bind:value={newJobName} />
+          </div>
+        {/if}
 
         <div class="form-row two-col">
           <div class="form-group">
@@ -949,6 +1003,16 @@
         </div>
 
         {#if newJobSource === 'part'}
+          <div class="form-group">
+            <label class="form-label" for="job-batch-toggle">Parts</label>
+            <div class="source-toggle" id="job-batch-toggle">
+              <button class="btn btn-sm" class:btn-primary={!batchMode} class:btn-secondary={batchMode} on:click={() => { batchMode = false; selectedPartIds = []; }}>Single Part</button>
+              <button class="btn btn-sm" class:btn-primary={batchMode} class:btn-secondary={!batchMode} on:click={() => { batchMode = true; selectedPartId = ''; }}>Batch (Multiple Parts)</button>
+            </div>
+            {#if batchMode}
+              <p class="cam-form-hint">Queues one job per checked part, all sharing the material/tool/machine/settings below - run one at a time so generation doesn't pile up.</p>
+            {/if}
+          </div>
           <div class="part-picker-filters">
             <div class="filters">
               <div class="form-group">
@@ -979,6 +1043,13 @@
               <TeamFilter bind:show971={partShow971} bind:show9584={partShow9584} />
             </div>
           </div>
+          {#if batchMode && filteredEligibleParts.length > 0}
+            <div class="batch-select-all">
+              <button type="button" class="btn btn-ghost btn-sm" on:click={() => (selectedPartIds = filteredEligibleParts.map((p) => p.id))}>Select All ({filteredEligibleParts.length})</button>
+              <button type="button" class="btn btn-ghost btn-sm" on:click={() => (selectedPartIds = [])} disabled={selectedPartIds.length === 0}>Clear</button>
+              <span class="text-muted">{selectedPartIds.length} selected</span>
+            </div>
+          {/if}
           <div class="part-picker">
             {#if partsLoading}
               <p class="text-muted">Loading parts…</p>
@@ -987,7 +1058,13 @@
             {:else}
               {#each filteredEligibleParts as p (p.id)}
                 <label class="part-picker-row">
-                  <input type="radio" name="part-pick" value={p.id} bind:group={selectedPartId} />
+                  {#if batchMode}
+                    <input type="checkbox" value={p.id} checked={selectedPartIds.includes(p.id)} on:change={(e) => {
+                      selectedPartIds = e.target.checked ? [...selectedPartIds, p.id] : selectedPartIds.filter((id) => id !== p.id);
+                    }} />
+                  {:else}
+                    <input type="radio" name="part-pick" value={p.id} bind:group={selectedPartId} />
+                  {/if}
                   <span class="part-picker-name">{p.name}</span>
                   {#if p.project_id}<span class="part-picker-tag mono">{p.project_id}</span>{/if}
                   <span class="part-picker-tag">{PART_STATUSES.find((s) => s.value === p.status)?.label || p.status || 'Pending'}</span>
@@ -1017,6 +1094,7 @@
 
         {#if newJobOperation === 'turning'}
           <CamParamFields operation="turning" bind:params={turningParams} mode="job" />
+          <TurningFinishTool {tools} bind:finishTool={turningParams.finishTool} />
         {:else}
           <CamParamFields operation="routing" bind:params={routingParams} mode="job" />
           <RoutingToolSequence {tools} bind:sequence={routingParams.toolSequence} />
@@ -1053,10 +1131,28 @@
           </div>
         </div>
 
-        <button class="btn btn-primary" on:click={submitNewJob} disabled={submitting}>
-          {submitting ? 'Queuing…' : 'Generate G-code'}
+        <button
+          class="btn btn-primary"
+          on:click={submitNewJob}
+          disabled={submitting || (newJobSource === 'part' && batchMode && selectedPartIds.length === 0)}
+        >
+          {#if batchProgress}
+            Generating {batchProgress.index + 1}/{batchProgress.total}: {batchProgress.partName}…
+          {:else if submitting}
+            Queuing…
+          {:else if newJobSource === 'part' && batchMode}
+            Queue {selectedPartIds.length} Job{selectedPartIds.length === 1 ? '' : 's'}
+          {:else}
+            Generate G-code
+          {/if}
         </button>
-        <p class="cam-form-hint">Closes automatically once queued - track progress in the jobs list below.</p>
+        <p class="cam-form-hint">
+          {#if newJobSource === 'part' && batchMode}
+            Runs one part at a time - stays open until the whole batch finishes.
+          {:else}
+            Closes automatically once queued - track progress in the jobs list below.
+          {/if}
+        </p>
       </div>
     </div>
   </div>
@@ -1107,6 +1203,7 @@
 
         {#if editingJob.operation_type === 'turning'}
           <CamParamFields operation="turning" bind:params={editParams} mode="job" />
+          <TurningFinishTool {tools} bind:finishTool={editParams.finishTool} />
         {:else}
           <CamParamFields operation="routing" bind:params={editParams} mode="job" />
           <RoutingToolSequence {tools} bind:sequence={editParams.toolSequence} />
@@ -1284,12 +1381,32 @@
                 <option value="tap">.tap (Mach3/Mach4)</option>
               </select>
             </div>
+            <div class="form-group">
+              <label class="form-label" for="mp-controller">Controller</label>
+              <select id="mp-controller" class="form-select" bind:value={machineForm.controller}>
+                <option value="linuxcnc">LinuxCNC</option>
+                <option value="wincnc">WinCNC (ShopSabre)</option>
+              </select>
+              <p class="cam-form-hint">WinCNC uses a genuinely different G-code dialect (comments, units, tool-change pause) - see routing.js. Pick wrong and the file may not run on the real machine.</p>
+            </div>
           {/if}
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="mp-drive-folder">Google Drive Auto-Trigger Folder ID <span class="text-muted">(optional)</span></label>
+          <input id="mp-drive-folder" class="form-input" placeholder="e.g. 1a2B3cD4eFGhijKLmnoPQRstuVWxyz" bind:value={machineForm.drive_folder_id} />
+          <p class="cam-form-hint">
+            A STEP file dropped in this Drive folder auto-queues a job on this machine, using the defaults above.
+            {#if machineForm.operation_type === 'turning'}Turning jobs land as a draft (stock diameter needs a human) - see implementations/drive-watcher-cron-plan.md.{/if}
+            Requires GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY to be configured server-side and the folder shared with that service account - not yet set up for this shop.
+          </p>
         </div>
 
         <CamParamFields operation={machineForm.operation_type} bind:params={machineForm.params} mode="profile" />
         {#if machineForm.operation_type === 'routing'}
           <RoutingToolSequence {tools} bind:sequence={machineForm.params.toolSequence} />
+        {:else if machineForm.operation_type === 'turning'}
+          <TurningFinishTool {tools} bind:finishTool={machineForm.params.finishTool} />
         {/if}
 
         <button class="btn btn-primary" on:click={saveMachine} disabled={savingMachine}>
@@ -1412,6 +1529,13 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    max-width: 320px;
+  }
+  .name-line strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .job-part-link {
@@ -1663,9 +1787,10 @@
   .part-picker-row:last-child { border-bottom: none; }
 
   /* Global .modal input styling (width:100%, fixed height/border/background)
-     otherwise stretches these bare radio inputs into full-width boxes and
-     wrecks the row layout - reset back to a normal small radio control. */
-  .part-picker-row input[type='radio'] {
+     otherwise stretches these bare radio/checkbox inputs into full-width
+     boxes and wrecks the row layout - reset back to a normal small control. */
+  .part-picker-row input[type='radio'],
+  .part-picker-row input[type='checkbox'] {
     flex: 0 0 auto;
     width: 16px;
     height: 16px;
@@ -1674,6 +1799,13 @@
     margin: 0;
     border: none;
     background: none;
+  }
+
+  .batch-select-all {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
   }
 
   .part-picker-name {

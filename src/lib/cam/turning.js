@@ -1,8 +1,18 @@
 /**
  * Turning G-code generator - lathe roughing + finishing passes from a 2D
- * XZ profile. Ported and hardened from a reference algorithm sketch, targeting
- * Haas-style (Fanuc-dialect) lathe G-code: diameter-mode X, G96/G97 constant
- * surface speed, G95 feed-per-rev, G54 work offset, T-word tool change.
+ * XZ profile. Targets a real Haas TL-1 (Fanuc-dialect lathe control):
+ * diameter-mode X, G96/G97 constant surface speed, G95 feed-per-rev, G54
+ * work offset, T0101-style T-word tool change - all standard Haas lathe
+ * conventions, confirmed against Haas's own lathe programming
+ * documentation, not just a generic Fanuc guess.
+ *
+ * UNITS MATTER FOR G96: this generator always runs in G20 (inch) mode -
+ * there is no UI path that ever sets units='mm' for a turning job. On a
+ * real Haas lathe, the G96 S-word's units follow whichever of G20/G21 is
+ * active: in G20 (this generator's only mode in practice), S is SURFACE
+ * FEET PER MINUTE (SFM), not m/min. surfaceSpeed below and the "Surface
+ * speed" field in CamParamFields.svelte are SFM for that reason - do not
+ * treat the default (150) as metric.
  *
  * NOT verified against real hardware or a simulator. Every generated file
  * carries a header warning to that effect - see HEADER_WARNING below.
@@ -19,10 +29,18 @@
  * that explicit moves are safer to get right without hardware to test
  * against.
  *
- * KNOWN LIMITATION: the finishing pass applies a simple constant offset for
- * tool nose radius (when cam_tools.nose_radius is set), not true vector
- * compensation across corners/arcs. Fine for straight tapers; double-check
- * tight radii and chamfers before cutting.
+ * NOSE RADIUS COMPENSATION: when cam_tools.nose_radius is set, the finishing
+ * pass is offset outward (away from the true part profile, along each
+ * segment's local normal) by that radius, so the insert's rounded tip stays
+ * tangent to the programmed surface - see offsetTurningProfile below. This
+ * is a hand-computed offset path (G01 moves), not G41/G42 cutter
+ * compensation - deliberately: G41 vs G42 handedness depends on tool
+ * orientation/machine setup in a way that can't be verified from here, and
+ * getting it backwards would gouge the part. The hand-computed path uses a
+ * mitered join at corners (same technique as routing.js's offsetPolygon),
+ * which is safely conservative - a sharp convex corner may keep a hair of
+ * extra material - rather than dangerous. Verify tight radii/chamfers in a
+ * simulator before cutting.
  *
  * SETUP MODES (params.setupMode, default 'single' - completely unchanged
  * behavior from before this option existed):
@@ -54,6 +72,76 @@ function fmt(n, decimals = 4) {
   return Number(n).toFixed(decimals);
 }
 
+// Line-line intersection of two infinite lines in the Z-X plane, each
+// defined by a point + direction [dz, dx]. Mirrors routing.js's
+// intersectLines (kept local/duplicated rather than shared - different
+// point shape, {z,x} vs {x,y} - not worth a cross-file abstraction for one
+// tiny function).
+function intersectLinesZX(p1, d1, p2, d2) {
+  const denom = d1[0] * d2[1] - d1[1] * d2[0];
+  if (Math.abs(denom) < 1e-9) return null; // parallel
+  const t = ((p2.z - p1.z) * d2[1] - (p2.x - p1.x) * d2[0]) / denom;
+  return { z: p1.z + d1[0] * t, x: p1.x + d1[1] * t };
+}
+
+/**
+ * Offsets an open Z-X turning profile outward by `distance` (a tool nose
+ * radius) - the open-polyline analog of routing.js's offsetPolygon (same
+ * edge-normal + mitered-join approach, same MAX_MITER spike clamp), adapted
+ * for a path with two free ends instead of a closed loop.
+ *
+ * For a segment with normalized tangent (dz,dx) (walking face-to-chuck along
+ * the profile, in that segment's direction of travel), the outward normal -
+ * away from the solid part, the direction the tool's rounded tip needs to
+ * sit at to stay tangent to the true surface - is (dx,-dz). Verified against
+ * a pure-OD segment (dz=-1,dx=0 -> N=(0,1): +X, away from the axis - grows
+ * the radius, correct) and a pure-facing segment (dz=0,dx=1 -> N=(1,0): +Z,
+ * away from the chuck - correct).
+ *
+ * Interior points take the mitered intersection of their two adjacent
+ * offset edges (falling back to the midpoint if the spike would exceed
+ * MAX_MITER, exactly as offsetPolygon does); the two path endpoints just
+ * take their single adjacent edge's offset, applied to that endpoint itself
+ * (not the edge's other end), since there's no second edge to miter
+ * against. Radius is clamped at 0 - a negative programmed radius would be
+ * physically nonsensical (crossing the spindle centerline).
+ */
+export function offsetTurningProfile(profile, distance) {
+  if (!distance) return profile;
+  const n = profile.length;
+  if (n < 2) return profile;
+
+  const edges = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    const a = profile[i], b = profile[i + 1];
+    const len = Math.hypot(b.z - a.z, b.x - a.x) || 1;
+    const dz = (b.z - a.z) / len, dx = (b.x - a.x) / len;
+    const nz = dx, nx = -dz; // outward normal, see doc comment above
+    edges.push({ nz, nx, dir: [dz, dx], a: { z: a.z + nz * distance, x: a.x + nx * distance } });
+  }
+
+  const MAX_MITER = Math.abs(distance) * 8;
+  const offset = [];
+  for (let i = 0; i < n; i += 1) {
+    const prev = i > 0 ? edges[i - 1] : null;
+    const cur = i < n - 1 ? edges[i] : null;
+    let candidate;
+    if (prev && cur) {
+      const hit = intersectLinesZX(prev.a, prev.dir, cur.a, cur.dir);
+      const fallback = { z: (prev.a.z + cur.a.z) / 2, x: (prev.a.x + cur.a.x) / 2 };
+      candidate = hit || fallback;
+      const dFromOriginal = Math.hypot(candidate.z - profile[i].z, candidate.x - profile[i].x);
+      if (dFromOriginal > MAX_MITER) candidate = fallback;
+    } else if (cur) {
+      candidate = cur.a; // first point: offset of this segment's own start
+    } else {
+      candidate = { z: profile[i].z + prev.nz * distance, x: profile[i].x + prev.nx * distance }; // last point: offset of this segment's own end
+    }
+    offset.push({ z: candidate.z, x: Math.max(0, candidate.x) });
+  }
+  return offset;
+}
+
 /**
  * Appends roughing passes + a finishing pass for one already Z-normalized
  * profile (Z=0 at its own face, increasingly negative toward its own far
@@ -61,9 +149,18 @@ function fmt(n, decimals = 4) {
  * out unchanged from the single-setup path that already existed, so
  * 'single' mode's output is untouched by anything below, and 'flip' mode
  * can call it twice (once per chucking) without duplicating the logic.
- * Returns the pass count for stats.
+ *
+ * MULTI-TOOL: pass `finishTool` ({ toolNumber, label, noseRadius }) to cut
+ * roughing with the tool already loaded (the outer T-word emitted by the
+ * caller before this function runs, understood as "the rough tool" once
+ * finishTool is set) and finishing with a separate insert - a real M00
+ * program pause between them, same no-tool-setter/re-touch-off-Z0 assumption
+ * routing.js's tool changes make. Omit finishTool (default) for the
+ * original single-tool behavior, completely unchanged.
+ *
+ * Returns { passCount, toolChanged }.
  */
-function appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius }, finalLine = '(back to start clearance)') {
+function appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm }, finalLine = '(back to start clearance)') {
   const safeDiameter = stockDiameter + 0.1;
   const startZ = profile[0].z + 0.1; // 0.1" of clearance in front of this setup's face
   lines.push(`G00 X${fmt(safeDiameter)} Z${fmt(startZ)} (rapid to start clearance)`);
@@ -88,21 +185,43 @@ function appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowa
     lines.push(`G00 Z${fmt(startZ)} (back to start clearance)`);
   }
 
+  let toolChanged = false;
+  if (finishTool) {
+    toolChanged = true;
+    lines.push(`G00 X${fmt(safeDiameter)} (retract clear of stock before tool change)`);
+    lines.push(`G00 Z${fmt(startZ)} (back to start clearance)`);
+    lines.push('M05 (spindle off for tool change)');
+    lines.push(
+      `M00 (TOOL CHANGE: load ${finishTool.label || 'finish tool'}${finishTool.toolNumber ? ` - T${finishTool.toolNumber}` : ''}, ` +
+      'then RE-TOUCH OFF Z0 before resuming - no automatic tool length compensation assumed)'
+    );
+    if (finishTool.toolNumber) lines.push(`T0${finishTool.toolNumber}0${finishTool.toolNumber} (finish tool - verify tool/offset number)`);
+    lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
+    lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle back on)`);
+    lines.push('G95 (feed per revolution)');
+  }
+
+  const effectiveNoseRadius = finishTool && finishTool.noseRadius !== undefined ? finishTool.noseRadius : noseRadius;
+
   lines.push('(--- FINISHING PASS ---)');
-  if (noseRadius) {
-    lines.push(`(NOTE: tool nose radius ${fmt(noseRadius, 3)}" is on file for this tool but NOT applied -)`);
-    lines.push('(true nose-radius compensation needs per-segment vector offsets across arcs/)');
-    lines.push('(corners, which this generator does not do yet. Verify chamfers/radii by hand.)');
+  let finishProfile = profile;
+  if (effectiveNoseRadius) {
+    finishProfile = offsetTurningProfile(profile, effectiveNoseRadius);
+    lines.push(`(Tool nose radius ${fmt(effectiveNoseRadius, 3)}" IS compensated below - path offset outward from)`);
+    lines.push('(the true part profile so the rounded insert tip stays tangent to it. Corners use a)');
+    lines.push('(mitered join (see offsetTurningProfile in turning.js) - safely conservative, may leave)');
+    lines.push('(a hair of extra material at a sharp convex corner. Verify tight radii/chamfers in a)');
+    lines.push('(simulator before cutting.)');
   }
   lines.push(`G00 X0.0 Z${fmt(startZ)}`);
-  for (const pt of profile) {
+  for (const pt of finishProfile) {
     lines.push(`G01 X${fmt(pt.x * 2)} Z${fmt(pt.z)} F${fmt(feedFinish, 5)}`);
   }
 
   lines.push(`G00 X${fmt(safeDiameter)} (retract clear of stock)`);
   lines.push(`G00 Z${fmt(startZ)} ${finalLine}`);
 
-  return passCount;
+  return { passCount, toolChanged };
 }
 
 // Linear-interpolated radius at an arbitrary Z along an ordered profile -
@@ -126,13 +245,23 @@ function radiusAtZ(profile, z) {
  * @param {Array<{z:number, x:number}>} profile - ordered face-to-chuck points, x = radius
  * @param {Object} params
  *   stockDiameter, stepDown, finishAllowance, feedRough, feedFinish (required, inches/rev)
- *   surfaceSpeed (m/min, default 150), maxRpm (default 2500)
+ *   surfaceSpeed (SFM - surface feet per minute, Haas convention for G96 in G20/inch mode, default 150), maxRpm (default 2500)
  *   noseRadius (inches, optional), toolNumber (default 1), programNumber (default 1000)
  *   units: 'in' | 'mm' (default 'in')
  *   setupMode: 'single' | 'tailstock' | 'flip' (default 'single')
  *   flipAt (required if setupMode='flip') - inches from the face where the
  *     part gets re-chucked; minGripLength (default 0.25") - safety floor,
  *     refuses to generate a flip plan that re-grips less material than this
+ *   finishTool ({ toolNumber, label, noseRadius }, optional) - MULTI-TOOL:
+ *     when set, roughing cuts with `toolNumber` (the rough insert) and the
+ *     program pauses for a real tool change (M00, re-touch-off Z0 assumed)
+ *     before finishing with this separate tool. finishTool.noseRadius (if
+ *     given) is what actually gets nose-radius-compensated on the finishing
+ *     pass - the top-level `noseRadius` is ignored once finishTool is set,
+ *     since that param described the single tool's nose radius in the
+ *     single-tool case. Applies inside each setup independently, so 'flip'
+ *     mode with a finishTool does the rough->change->finish sequence twice
+ *     (once per physical chucking) - see appendSetupBody.
  */
 export function generateTurningGcode(profile, params = {}) {
   if (!Array.isArray(profile) || profile.length < 2) {
@@ -150,7 +279,8 @@ export function generateTurningGcode(profile, params = {}) {
     toolNumber = 1,
     programNumber = 1000,
     units = 'in',
-    setupMode = 'single'
+    setupMode = 'single',
+    finishTool = null
   } = params;
 
   if (!stockDiameter || stockDiameter <= 0) throw new Error('stockDiameter is required and must be > 0');
@@ -174,7 +304,7 @@ export function generateTurningGcode(profile, params = {}) {
   profile = profile.map((p) => ({ x: p.x, z: zOrigin - p.z }));
 
   if (setupMode === 'flip') {
-    return generateFlipTurningGcode(profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, flipAt: params.flipAt, minGripLength: params.minGripLength ?? 0.25 });
+    return generateFlipTurningGcode(profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, finishTool, flipAt: params.flipAt, minGripLength: params.minGripLength ?? 0.25 });
   }
 
   const lines = [...HEADER_WARNING, ''];
@@ -183,9 +313,9 @@ export function generateTurningGcode(profile, params = {}) {
   lines.push(units === 'mm' ? 'G21 (metric)' : 'G20 (inch)');
   lines.push('G90 (absolute)');
   lines.push('G54 (work offset - verify before running)');
-  lines.push(`T0${toolNumber}0${toolNumber} (tool change - verify tool/offset number)`);
+  lines.push(`T0${toolNumber}0${toolNumber} (tool change - ${finishTool ? 'rough tool - ' : ''}verify tool/offset number)`);
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
-  lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, spindle on)`);
+  lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle on)`);
   lines.push('G95 (feed per revolution)');
 
   if (setupMode === 'tailstock') {
@@ -196,7 +326,11 @@ export function generateTurningGcode(profile, params = {}) {
     lines.push('(support the far end BEFORE starting the cut below.)');
   }
 
-  const passCount = appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius }, 'M05 (back to start clearance, spindle off)');
+  const { passCount, toolChanged } = appendSetupBody(
+    lines, profile,
+    { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm },
+    'M05 (back to start clearance, spindle off)'
+  );
 
   lines.push('M09 (coolant off)');
   lines.push('M30 (program end)');
@@ -204,7 +338,7 @@ export function generateTurningGcode(profile, params = {}) {
 
   return {
     gcode: lines.join('\n'),
-    stats: { roughingPasses: passCount, profilePoints: profile.length, maxRadius: maxProfileRadius, setupMode }
+    stats: { roughingPasses: passCount, profilePoints: profile.length, maxRadius: maxProfileRadius, setupMode, toolChanges: toolChanged ? 1 : 0 }
   };
 }
 
@@ -225,7 +359,7 @@ export function generateTurningGcode(profile, params = {}) {
  * original face) - see generateTurningGcode above.
  */
 function generateFlipTurningGcode(profile, params) {
-  const { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, flipAt, minGripLength } = params;
+  const { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, finishTool, flipAt, minGripLength } = params;
 
   if (!flipAt || flipAt <= 0) {
     throw new Error('flipAt (inches from the face, where the part gets re-chucked) is required for setupMode "flip"');
@@ -267,13 +401,13 @@ function generateFlipTurningGcode(profile, params) {
   lines.push(units === 'mm' ? 'G21 (metric)' : 'G20 (inch)');
   lines.push('G90 (absolute)');
   lines.push('G54 (work offset - verify before running)');
-  lines.push(`T0${toolNumber}0${toolNumber} (tool change - verify tool/offset number)`);
+  lines.push(`T0${toolNumber}0${toolNumber} (tool change - ${finishTool ? 'rough tool - ' : ''}verify tool/offset number)`);
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
-  lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, spindle on)`);
+  lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle on)`);
   lines.push('G95 (feed per revolution)');
 
-  const bodyParams = { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius };
-  const pass1 = appendSetupBody(lines, setup1Profile, bodyParams);
+  const bodyParams = { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm };
+  const { passCount: pass1, toolChanged: toolChanged1 } = appendSetupBody(lines, setup1Profile, bodyParams);
 
   lines.push('M05 (spindle off)');
   lines.push('M09 (coolant off)');
@@ -286,12 +420,12 @@ function generateFlipTurningGcode(profile, params) {
   lines.push('(5. Only then press cycle start to resume.)');
   lines.push('M00 (program pause - do not resume until steps 1-4 above are complete)');
   lines.push('G54 (work offset - re-verify after re-chuck)');
-  lines.push(`T0${toolNumber}0${toolNumber} (tool change - verify tool/offset number)`);
+  lines.push(`T0${toolNumber}0${toolNumber} (tool change - ${finishTool ? 'rough tool - ' : ''}verify tool/offset number)`);
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
-  lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, spindle back on)`);
+  lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle back on)`);
   lines.push('G95 (feed per revolution)');
 
-  const pass2 = appendSetupBody(lines, setup2Profile, bodyParams, 'M05 (back to start clearance, spindle off)');
+  const { passCount: pass2, toolChanged: toolChanged2 } = appendSetupBody(lines, setup2Profile, bodyParams, 'M05 (back to start clearance, spindle off)');
 
   lines.push('M09 (coolant off)');
   lines.push('M30 (program end)');
@@ -307,7 +441,8 @@ function generateFlipTurningGcode(profile, params) {
       setupMode: 'flip',
       flipAt,
       setup1Length: flipAt,
-      setup2Length: remainingLength
+      setup2Length: remainingLength,
+      toolChanges: (toolChanged1 ? 1 : 0) + (toolChanged2 ? 1 : 0)
     }
   };
 }

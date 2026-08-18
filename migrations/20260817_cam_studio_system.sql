@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS public.cam_machines (
   default_tool_id uuid,
   default_params jsonb NOT NULL DEFAULT '{}'::jsonb, -- same shape as cam_jobs.params, see src/lib/cam/*.js
   gcode_extension text NOT NULL DEFAULT 'ngc', -- 'ngc' | 'tap' - output file extension for this machine (Mach3/Mach4 controls expect .tap)
+  controller text NOT NULL DEFAULT 'linuxcnc', -- 'linuxcnc' | 'wincnc' (routing only - turning always targets the Haas TL-1's Fanuc-dialect control) - see src/lib/cam/routing.js file header for the real dialect differences this switches between
   enabled boolean NOT NULL DEFAULT true,
   created_by uuid,
   created_at timestamp with time zone DEFAULT now(),
@@ -96,6 +97,7 @@ ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS default_material_id uui
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS default_tool_id uuid;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS default_params jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS gcode_extension text NOT NULL DEFAULT 'ngc';
+ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS controller text NOT NULL DEFAULT 'linuxcnc';
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS created_by uuid;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
@@ -108,6 +110,9 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_gcode_extension_check CHECK (gcode_extension = ANY (ARRAY['ngc'::text, 'tap'::text]));
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_controller_check CHECK (controller = ANY (ARRAY['linuxcnc'::text, 'wincnc'::text]));
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_default_material_id_fkey FOREIGN KEY (default_material_id) REFERENCES public.cam_materials(id) ON DELETE SET NULL;
@@ -277,20 +282,97 @@ DROP TRIGGER IF EXISTS cam_jobs_updated_at ON public.cam_jobs;
 CREATE TRIGGER cam_jobs_updated_at BEFORE UPDATE ON public.cam_jobs FOR EACH ROW EXECUTE FUNCTION public.update_cam_studio_updated_at();
 
 -- ============================================================================
--- ACTIVITY LOG INTEGRATION - INTENTIONALLY DEFERRED
+-- ACTIVITY LOG INTEGRATION
 -- ============================================================================
 -- The Admin Activity Log (src/routes/admin/ActivityLogTab.svelte) reads from
--- a generic `activity_log` table populated by a trigger that is NOT checked
--- into this repo (not in schema.sql or any migrations/*.sql file - it only
--- exists live in Supabase). Attaching these tables to it requires knowing
--- that trigger function's real name/definition first, to avoid guessing and
--- risking a broken or duplicate logger on a table shared by the whole app.
+-- a generic `activity_log` table, populated by one shared trigger function,
+-- public.log_activity() (SECURITY DEFINER, live in Supabase - not checked
+-- into this repo, same as the rest of the app's tables already using it:
+-- parts, builds, orders, purchasing, vendors, kitting, etc). It logs
+-- table_name/operation/row_id/actor plus old/new row jsonb, matching the
+-- app-wide zz_activity_log naming convention exactly - confirmed by reading
+-- a live example trigger (on public.parts) rather than guessing.
+DROP TRIGGER IF EXISTS zz_activity_log ON public.cam_jobs;
+CREATE TRIGGER zz_activity_log AFTER INSERT OR UPDATE OR DELETE ON public.cam_jobs
+  FOR EACH ROW EXECUTE FUNCTION public.log_activity();
+
+DROP TRIGGER IF EXISTS zz_activity_log ON public.cam_materials;
+CREATE TRIGGER zz_activity_log AFTER INSERT OR UPDATE OR DELETE ON public.cam_materials
+  FOR EACH ROW EXECUTE FUNCTION public.log_activity();
+
+DROP TRIGGER IF EXISTS zz_activity_log ON public.cam_tools;
+CREATE TRIGGER zz_activity_log AFTER INSERT OR UPDATE OR DELETE ON public.cam_tools
+  FOR EACH ROW EXECUTE FUNCTION public.log_activity();
+
+DROP TRIGGER IF EXISTS zz_activity_log ON public.cam_machines;
+CREATE TRIGGER zz_activity_log AFTER INSERT OR UPDATE OR DELETE ON public.cam_machines
+  FOR EACH ROW EXECUTE FUNCTION public.log_activity();
+
+-- ============================================================================
+-- DRIVE WATCHER (scaffolding - see implementations/drive-watcher-cron-plan.md)
+-- ============================================================================
+-- Auto-triggers a CAM job when a STEP file lands in a Google Drive folder
+-- mapped to a machine profile. Schema/endpoint/UI (src/lib/server/drive_watcher.js,
+-- src/routes/api/drive-watcher/+server.js) are built and safe to ship with
+-- zero configuration - the sweep is a deliberate no-op until a real Google
+-- service-account key (GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY env var) and at
+-- least one cam_machines.drive_folder_id are set. No pg_cron schedule is
+-- created by this file - see the comment at the bottom of this section for
+-- why, and the exact SQL to run once real credentials exist.
+
+ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS drive_folder_id text; -- Google Drive folder ID this machine auto-triggers from; null = auto-trigger disabled for this machine
+
+CREATE TABLE IF NOT EXISTS public.drive_watcher_state (
+  folder_id text NOT NULL,
+  page_token text, -- Drive Changes API resumable cursor; null = never swept yet, next sweep calls changes.getStartPageToken
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT drive_watcher_state_pkey PRIMARY KEY (folder_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.drive_watcher_files (
+  drive_file_id text NOT NULL,
+  cam_job_id uuid,
+  processed_at timestamp with time zone DEFAULT now(),
+  status text NOT NULL DEFAULT 'queued', -- 'queued' | 'failed' - idempotency/audit trail, a file is never queued twice
+  error text,
+  CONSTRAINT drive_watcher_files_pkey PRIMARY KEY (drive_file_id)
+);
+ALTER TABLE public.drive_watcher_files ADD COLUMN IF NOT EXISTS cam_job_id uuid;
+ALTER TABLE public.drive_watcher_files ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'queued';
+ALTER TABLE public.drive_watcher_files ADD COLUMN IF NOT EXISTS error text;
+DO $$ BEGIN
+  ALTER TABLE public.drive_watcher_files ADD CONSTRAINT drive_watcher_files_cam_job_id_fkey FOREIGN KEY (cam_job_id) REFERENCES public.cam_jobs(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+
+ALTER TABLE public.drive_watcher_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.drive_watcher_files ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "drive_watcher_state_select" ON public.drive_watcher_state;
+CREATE POLICY "drive_watcher_state_select" ON public.drive_watcher_state FOR SELECT TO authenticated USING (public.approved_user());
+DROP POLICY IF EXISTS "drive_watcher_state_service_all" ON public.drive_watcher_state;
+CREATE POLICY "drive_watcher_state_service_all" ON public.drive_watcher_state TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "drive_watcher_files_select" ON public.drive_watcher_files;
+CREATE POLICY "drive_watcher_files_select" ON public.drive_watcher_files FOR SELECT TO authenticated USING (public.approved_user());
+DROP POLICY IF EXISTS "drive_watcher_files_service_all" ON public.drive_watcher_files;
+CREATE POLICY "drive_watcher_files_service_all" ON public.drive_watcher_files TO service_role USING (true) WITH CHECK (true);
+
+-- Deliberately NOT applied here (needs real Vault secrets this environment
+-- doesn't have). The final activation step, once Google credentials exist:
 --
--- TODO once the trigger function name/definition is known, add here:
---   DROP TRIGGER IF EXISTS cam_jobs_activity_log ON public.cam_jobs;
---   CREATE TRIGGER cam_jobs_activity_log AFTER INSERT OR UPDATE OR DELETE
---     ON public.cam_jobs FOR EACH ROW EXECUTE FUNCTION public.<real_function_name>();
---   (repeat for cam_materials / cam_tools / cam_machines)
+--   1. Store secrets in Supabase Vault: drive_watcher_app_url (this app's
+--      base URL), drive_watcher_cron_token (matches DRIVE_WATCHER_CRON_TOKEN
+--      or CRON_SECRET in the app's own env vars - see cron_auth.js, which
+--      the new endpoint reuses as-is).
+--   2. CREATE a Postgres function public.invoke_drive_watcher_cron(),
+--      near-identical to invoke_planner_notification_cron() - reads the two
+--      secrets above from Vault, pg_net.http_post()'s to
+--      {app_url}/api/drive-watcher with an Authorization: Bearer
+--      {cron_token} header.
+--   3. SELECT cron.schedule('drive-watcher-sweep', '*/5 * * * *',
+--      'SELECT public.invoke_drive_watcher_cron();'); -- every 5 min is a
+--      starting guess, not a measured choice - see the plan doc's open
+--      question #2 (how fast a dropped file actually needs to be picked up).
 
 -- ============================================================================
 -- SEED DATA (idempotent - ON CONFLICT (name) needs the UNIQUE constraints above)
@@ -305,17 +387,28 @@ ON CONFLICT (name) DO NOTHING;
 -- Machine profiles. Defaults are reasonable starting points (documented as
 -- such in the generators themselves) - edit them from the AutoCAM "Manage
 -- Profiles" panel once real values for these machines are known.
-INSERT INTO public.cam_machines (name, description, operation_type, default_params) VALUES
-  ('971 Lathe', 'Haas TL-1', 'turning', '{
+-- 971 Lathe = Haas TL-1 (Fanuc-dialect - turning.js's only target, no
+-- controller switch needed). UNC Router = LinuxCNC. New Router = a real
+-- ShopSabre Pro 408, which runs WinCNC - a genuinely different G-code
+-- dialect (see routing.js file header) - hence controller='wincnc' and
+-- gcode_extension='tap' (WinCNC's own conventional output extension).
+INSERT INTO public.cam_machines (name, description, operation_type, controller, gcode_extension, default_params) VALUES
+  ('971 Lathe', 'Haas TL-1', 'turning', 'linuxcnc', 'ngc', '{
     "stepDown": 0.05, "finishAllowance": 0.02, "feedRough": 0.008,
     "feedFinish": 0.004, "surfaceSpeed": 150, "maxRpm": 2500
   }'::jsonb),
-  ('UNC Router', 'Router #1', 'routing', '{
+  ('UNC Router', 'LinuxCNC router', 'routing', 'linuxcnc', 'ngc', '{
     "toolDiameter": 0.25, "stepDown": 0.1, "tabWidth": 0.25, "tabHeight": 0.06,
     "tabSpacing": 6, "feedRate": 40, "plungeRate": 15, "spindleSpeed": 16000
   }'::jsonb),
-  ('New Router', 'Router #2', 'routing', '{
+  ('New Router', 'ShopSabre Pro 408 (WinCNC control)', 'routing', 'wincnc', 'tap', '{
     "toolDiameter": 0.25, "stepDown": 0.1, "tabWidth": 0.25, "tabHeight": 0.06,
     "tabSpacing": 6, "feedRate": 40, "plungeRate": 15, "spindleSpeed": 16000
   }'::jsonb)
 ON CONFLICT (name) DO NOTHING;
+
+-- The rows above may already have existed (ON CONFLICT DO NOTHING) with an
+-- older, wrong controller/extension from before this machine identification
+-- was confirmed - fix them in place too, idempotently.
+UPDATE public.cam_machines SET controller = 'wincnc', gcode_extension = 'tap', description = 'ShopSabre Pro 408 (WinCNC control)' WHERE name = 'New Router';
+UPDATE public.cam_machines SET description = 'LinuxCNC router' WHERE name = 'UNC Router' AND (description IS NULL OR description = 'Router #1');

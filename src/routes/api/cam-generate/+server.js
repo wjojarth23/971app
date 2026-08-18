@@ -107,7 +107,7 @@ export async function POST({ request, url }) {
   try {
     const { data: job, error: loadError } = await supabase
       .from('cam_jobs')
-      .select('*, cam_tools(nose_radius, diameter)')
+      .select('*, cam_tools(nose_radius, diameter), cam_machines(controller)')
       .eq('id', jobId)
       .single();
 
@@ -154,6 +154,11 @@ export async function POST({ request, url }) {
     const params = { ...(job.params || {}) };
     if (job.cam_tools?.nose_radius && params.noseRadius === undefined) params.noseRadius = job.cam_tools.nose_radius;
     if (job.cam_tools?.diameter && params.toolDiameter === undefined) params.toolDiameter = job.cam_tools.diameter;
+    // Routing dialect (LinuxCNC vs WinCNC) is a property of the physical
+    // machine, not a per-job choice - always follows the linked Machine
+    // Profile, same as gcode_extension. Turning has no dialect switch (it
+    // always targets the Haas TL-1's Fanuc-dialect control - see turning.js).
+    if (job.cam_machines?.controller && params.controller === undefined) params.controller = job.cam_machines.controller;
 
     let result;
     if (job.operation_type === 'turning') {

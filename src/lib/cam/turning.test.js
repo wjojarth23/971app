@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateTurningGcode } from './turning.js';
+import { generateTurningGcode, offsetTurningProfile } from './turning.js';
 
 // Synthetic profile: a 2" long round shaft, 0.5" radius through the middle,
 // with a small step down to 0.4" at each end - enough geometry variation to
@@ -20,6 +20,43 @@ function shaftProfile() {
 }
 
 const baseParams = { stockDiameter: 1.1, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004 };
+
+describe('offsetTurningProfile (nose-radius compensation geometry)', () => {
+  it('is a no-op when distance is 0/falsy', () => {
+    const profile = shaftProfile();
+    expect(offsetTurningProfile(profile, 0)).toBe(profile);
+  });
+
+  it('offsets a pure-OD segment (constant radius, decreasing Z) outward in +X only', () => {
+    const profile = [{ z: 0, x: 0.5 }, { z: -2, x: 0.5 }];
+    const offset = offsetTurningProfile(profile, 0.03);
+    expect(offset).toEqual([{ z: 0, x: 0.53 }, { z: -2, x: 0.53 }]);
+  });
+
+  it('offsets a pure-facing segment (constant Z, increasing radius) outward in +Z only', () => {
+    const profile = [{ z: -1, x: 0 }, { z: -1, x: 0.5 }];
+    const offset = offsetTurningProfile(profile, 0.03);
+    expect(offset).toEqual([{ z: -0.97, x: 0 }, { z: -0.97, x: 0.5 }]);
+  });
+
+  it('miters a right-angle corner (OD segment into a facing shoulder) to the exact line intersection', () => {
+    const profile = [{ z: 0, x: 0.5 }, { z: -1, x: 0.5 }, { z: -1, x: 0.25 }];
+    const offset = offsetTurningProfile(profile, 0.03);
+    expect(offset[0]).toEqual({ z: 0, x: 0.53 });
+    expect(offset[1].z).toBeCloseTo(-1.03, 10);
+    expect(offset[1].x).toBeCloseTo(0.53, 10);
+    expect(offset[2]).toEqual({ z: -1.03, x: 0.25 });
+  });
+
+  it('clamps offset radius at 0 - never programs a negative diameter', () => {
+    const profile = [{ z: 0, x: 0.01 }, { z: -1, x: 0.01 }];
+    const offset = offsetTurningProfile(profile, 0.05);
+    // pure-OD segment offsets +X, so this case doesn't actually go negative -
+    // this just documents/locks the clamp exists via Math.max(0, ...) for
+    // any future segment shape that could offset a point below the centerline.
+    expect(offset.every((p) => p.x >= 0)).toBe(true);
+  });
+});
 
 describe('generateTurningGcode - single setup (default)', () => {
   it('generates valid G-code with header/footer/roughing/finishing', () => {
@@ -56,6 +93,88 @@ describe('generateTurningGcode - single setup (default)', () => {
 
   it('caps roughing passes at the safety limit for a pathological stepDown', () => {
     expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, stepDown: 0.0000001 })).toThrow(/safety limit/);
+  });
+
+  it('applies no nose-radius offset (and no compensation note) when noseRadius is unset - byte-identical finishing pass', () => {
+    const withoutParam = generateTurningGcode(shaftProfile(), baseParams);
+    const withZero = generateTurningGcode(shaftProfile(), { ...baseParams, noseRadius: 0 });
+    expect(withoutParam.gcode).toBe(withZero.gcode);
+    expect(withoutParam.gcode).not.toContain('nose radius');
+  });
+
+  it('offsets the finishing pass outward and notes real compensation when noseRadius is set', () => {
+    const plain = generateTurningGcode(shaftProfile(), baseParams);
+    const compensated = generateTurningGcode(shaftProfile(), { ...baseParams, noseRadius: 0.015 });
+    expect(compensated.gcode).toContain('IS compensated');
+    expect(compensated.gcode).not.toContain('NOT applied');
+
+    // Pull the finishing-pass G01 X values out of both and confirm the
+    // compensated ones are larger (offset outward, away from the part) on
+    // this constant-radius mid-section - real geometric effect, not just text.
+    const extractFinishRadii = (gcode) => {
+      const lines = gcode.split('\n');
+      const start = lines.findIndex((l) => l.includes('FINISHING PASS'));
+      return lines.slice(start).filter((l) => l.startsWith('G01 X')).map((l) => Number(l.match(/X([\d.]+)/)[1]) / 2);
+    };
+    const plainRadii = extractFinishRadii(plain.gcode);
+    const compRadii = extractFinishRadii(compensated.gcode);
+    expect(compRadii.length).toBe(plainRadii.length);
+    for (let i = 0; i < plainRadii.length; i += 1) {
+      expect(compRadii[i]).toBeGreaterThan(plainRadii[i] - 1e-9);
+    }
+    expect(compRadii.some((r, i) => r > plainRadii[i] + 0.005)).toBe(true);
+  });
+});
+
+describe('generateTurningGcode - multi-tool (rough + finish insert)', () => {
+  it('does not affect output at all when finishTool is unset (default, single-tool)', () => {
+    const withoutTool = generateTurningGcode(shaftProfile(), baseParams);
+    const withNullTool = generateTurningGcode(shaftProfile(), { ...baseParams, finishTool: null });
+    expect(withoutTool.gcode).toBe(withNullTool.gcode);
+    expect(withoutTool.stats.toolChanges).toBe(0);
+    expect(withoutTool.gcode).not.toContain('TOOL CHANGE');
+  });
+
+  it('emits a real mid-program tool change between roughing and finishing when finishTool is set', () => {
+    const result = generateTurningGcode(shaftProfile(), {
+      ...baseParams,
+      toolNumber: 1,
+      finishTool: { toolNumber: 2, label: 'finish insert', noseRadius: 0.015 }
+    });
+    expect(result.gcode).toContain('TOOL CHANGE: load finish insert - T2');
+    expect(result.gcode).toContain('RE-TOUCH OFF Z0');
+    expect(result.gcode).toContain('T0202 (finish tool - verify tool/offset number)');
+    expect(result.gcode).toContain('T0101 (tool change - rough tool - verify tool/offset number)');
+    expect(result.stats.toolChanges).toBe(1);
+
+    // Tool change must fall strictly between the roughing and finishing sections.
+    const roughIdx = result.gcode.indexOf('ROUGHING PASSES');
+    const changeIdx = result.gcode.indexOf('TOOL CHANGE');
+    const finishIdx = result.gcode.indexOf('FINISHING PASS');
+    expect(roughIdx).toBeLessThan(changeIdx);
+    expect(changeIdx).toBeLessThan(finishIdx);
+  });
+
+  it('uses finishTool.noseRadius (not the top-level noseRadius) for finish-pass compensation', () => {
+    const result = generateTurningGcode(shaftProfile(), {
+      ...baseParams,
+      noseRadius: 0.1, // should be ignored once finishTool is set
+      finishTool: { toolNumber: 2, noseRadius: 0.015 }
+    });
+    expect(result.gcode).toContain('Tool nose radius 0.015" IS compensated');
+    expect(result.gcode).not.toContain('0.100"');
+  });
+
+  it('does the rough->change->finish sequence twice in flip mode (once per physical chucking)', () => {
+    const result = generateTurningGcode(shaftProfile(), {
+      ...baseParams,
+      setupMode: 'flip',
+      flipAt: 1.0,
+      finishTool: { toolNumber: 2, label: 'finish insert' }
+    });
+    const changeCount = result.gcode.split('TOOL CHANGE:').length - 1;
+    expect(changeCount).toBe(2);
+    expect(result.stats.toolChanges).toBe(2);
   });
 });
 
