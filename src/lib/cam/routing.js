@@ -15,6 +15,25 @@
  * self-intersect without being cleaned up. Inspect the toolpath (or run it
  * through a simulator) before cutting anything with sharp internal corners
  * smaller than the tool diameter.
+ *
+ * MULTI-TOOL SUPPORT: pass params.toolSequence (ordered array of tool specs,
+ * primary/largest tool first) to cut different contours with different
+ * tools - each contour is assigned to the *first* tool in the sequence that
+ * geometrically fits it (reusing the same throat-distance check offsetPolygon
+ * already does), falling through to smaller tools only where the primary
+ * tool physically can't reach (e.g. a hole narrower than its diameter).
+ * This is deliberately NOT true rest-machining (recutting the leftover
+ * material a larger tool couldn't clear on the same contour) - that needs
+ * robust polygon-boolean geometry this file doesn't have. What it does do:
+ * let a job use a strong/fast primary bit for everything that fits it, and
+ * automatically fall back to a smaller detail bit only for the features
+ * that need one, in a single program. See toolchange-gcode-plan.md.
+ *
+ * Every tool change assumes NO automatic tool-length compensation (no
+ * confirmed tool setter on the router this targets) - each change is a
+ * genuine program pause (M00) instructing the operator to load the new bit
+ * and RE-TOUCH OFF Z0 before resuming. If this router does get a tool
+ * setter later, that assumption (and the block below) needs revisiting.
  */
 
 import { HEADER_WARNING } from './turning.js';
@@ -62,7 +81,8 @@ function pointToSegmentDistance(p, a, b) {
 // Smallest distance from the polygon's centroid to any of its edges - a
 // practical proxy for the tightest constriction in the shape. Used to catch
 // "tool physically can't fit in this feature" before silently emitting a
-// collapsed/garbage toolpath (e.g. a hole smaller than the tool diameter).
+// collapsed/garbage toolpath (e.g. a hole smaller than the tool diameter),
+// and (for multi-tool jobs) to decide whether a contour needs a smaller tool.
 function minThroatDistance(pts) {
   let cx = 0, cy = 0;
   for (const p of pts) { cx += p.x; cy += p.y; }
@@ -125,75 +145,6 @@ export function offsetPolygon(points, distance) {
   return offset;
 }
 
-/**
- * @param {Array<{points: Array<{x,y}>, isHole: boolean}>} contours
- * @param {Object} params
- *   toolDiameter (required, inches), stepDown (default 0.1), targetDepth (required)
- *   tabWidth (default 0.25), tabHeight (default 0.06), tabSpacing (default 6, inches; 0 = no tabs)
- *   feedRate (in/min, default 40), plungeRate (in/min, default 15), spindleSpeed (rpm, default 16000)
- *   safeZ (default 0.25), units: 'in' | 'mm' (default 'in')
- */
-export function generateRoutingGcode(contours, params = {}) {
-  if (!Array.isArray(contours) || contours.length === 0) {
-    throw new Error('Routing needs at least one closed contour');
-  }
-  const {
-    toolDiameter,
-    stepDown = 0.1,
-    targetDepth,
-    tabWidth = 0.25,
-    tabHeight = 0.06,
-    tabSpacing = 6,
-    feedRate = 40,
-    plungeRate = 15,
-    spindleSpeed = 16000,
-    safeZ = 0.25,
-    units = 'in'
-  } = params;
-
-  if (!toolDiameter || toolDiameter <= 0) throw new Error('toolDiameter is required and must be > 0');
-  if (!targetDepth || targetDepth <= 0) throw new Error('targetDepth is required and must be > 0');
-  const toolRadius = toolDiameter / 2;
-
-  const lines = [...HEADER_WARNING, ''];
-  lines.push(units === 'mm' ? 'G21 (metric)' : 'G20 (inch)');
-  lines.push('G90 (absolute)');
-  lines.push('G17 (XY plane)');
-  lines.push('G94 (feed per minute)');
-  lines.push('G54 (work offset - verify before running)');
-  lines.push(`S${spindleSpeed} M03 (spindle on)`);
-  lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
-
-  let totalTabZones = 0;
-
-  for (const contour of contours) {
-    const path = offsetPolygon(contour.points, contour.isHole ? -toolRadius : toolRadius);
-    const perimeter = pathLength(path);
-    const tabZones = tabSpacing > 0 ? buildTabZones(perimeter, tabWidth, tabSpacing) : [];
-    totalTabZones += tabZones.length;
-
-    lines.push(`(--- ${contour.isHole ? 'HOLE' : 'OUTER'} CONTOUR, perimeter ~${fmt(perimeter, 2)}" ---)`);
-    lines.push(`G00 X${fmt(path[0].x)} Y${fmt(path[0].y)} (rapid to start)`);
-
-    let depth = 0;
-    while (depth < targetDepth) {
-      depth = Math.min(depth + stepDown, targetDepth);
-      lines.push(`(-- pass at Z-${fmt(depth)} --)`);
-      lines.push(`G01 Z${fmt(-depth)} F${fmt(plungeRate)} (plunge)`);
-      emitContourPass(lines, path, depth, targetDepth, tabZones, tabHeight, feedRate);
-    }
-    lines.push(`G00 Z${fmt(safeZ)} (retract)`);
-  }
-
-  lines.push('M05 (spindle off)');
-  lines.push('M30 (program end)');
-
-  return {
-    gcode: lines.join('\n'),
-    stats: { contours: contours.length, tabZones: totalTabZones, targetDepth }
-  };
-}
-
 function pathLength(path) {
   let len = 0;
   for (let i = 0; i < path.length - 1; i += 1) len += Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
@@ -230,4 +181,156 @@ function emitContourPass(lines, path, passDepth, targetDepth, tabZones, tabHeigh
     lines.push(`G01 X${fmt(b.x)} Y${fmt(b.y)} Z${fmt(-cutDepth)} F${fmt(feedRate)}`);
     dist += segLen;
   }
+}
+
+// Cuts one contour (all step-down passes + tabs) with one tool's params.
+// Shared by both the single-tool and multi-tool code paths.
+function cutContour(lines, contour, toolRadius, toolParams, safeZ) {
+  const { stepDown, targetDepth, tabWidth, tabHeight, tabSpacing, feedRate, plungeRate } = toolParams;
+  const path = offsetPolygon(contour.points, contour.isHole ? -toolRadius : toolRadius);
+  const perimeter = pathLength(path);
+  const tabZones = tabSpacing > 0 ? buildTabZones(perimeter, tabWidth, tabSpacing) : [];
+
+  lines.push(`(--- ${contour.isHole ? 'HOLE' : 'OUTER'} CONTOUR, perimeter ~${fmt(perimeter, 2)}" ---)`);
+  lines.push(`G00 X${fmt(path[0].x)} Y${fmt(path[0].y)} (rapid to start)`);
+
+  let depth = 0;
+  while (depth < targetDepth) {
+    depth = Math.min(depth + stepDown, targetDepth);
+    lines.push(`(-- pass at Z-${fmt(depth)} --)`);
+    lines.push(`G01 Z${fmt(-depth)} F${fmt(plungeRate)} (plunge)`);
+    emitContourPass(lines, path, depth, targetDepth, tabZones, tabHeight, feedRate);
+  }
+  lines.push(`G00 Z${fmt(safeZ)} (retract)`);
+  return { perimeter, tabZoneCount: tabZones.length };
+}
+
+const TOOL_STEP_DEFAULTS = { stepDown: 0.1, tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000 };
+
+/**
+ * For each contour, finds the first (in given order) tool whose radius
+ * actually fits - i.e. offsetPolygon doesn't throw the "too small" error.
+ * Sequence should be ordered primary/largest tool first, detail/smallest
+ * tools after, so a contour only falls through to a smaller tool when the
+ * bigger one genuinely can't reach it (e.g. a hole narrower than its bit).
+ * Throws if no tool in the sequence fits a given contour.
+ */
+function assignContoursToTools(contours, toolSequence) {
+  const assignments = []; // [{ contour, toolIndex }]
+  for (const contour of contours) {
+    let assigned = -1;
+    for (let i = 0; i < toolSequence.length; i += 1) {
+      const radius = toolSequence[i].toolDiameter / 2;
+      if (!contour.isHole) { assigned = i; break; } // outer contour always fits the first tool that reaches it geometrically; only holes can be "too small"
+      try {
+        offsetPolygon(contour.points, -radius);
+        assigned = i;
+        break;
+      } catch {
+        continue; // this tool doesn't fit - try the next (smaller) one
+      }
+    }
+    if (assigned === -1) {
+      const diameters = toolSequence.map((t) => `${t.toolDiameter}"`).join(', ');
+      throw new Error(`No tool in the sequence (${diameters}) fits one of this part's holes - add a smaller tool or drop that hole`);
+    }
+    assignments.push({ contour, toolIndex: assigned });
+  }
+  return assignments;
+}
+
+/**
+ * @param {Array<{points: Array<{x,y}>, isHole: boolean}>} contours
+ * @param {Object} params
+ *   Single-tool mode (unchanged, backward compatible):
+ *     toolDiameter (required, inches), stepDown (default 0.1), targetDepth (required)
+ *     tabWidth (default 0.25), tabHeight (default 0.06), tabSpacing (default 6, inches; 0 = no tabs)
+ *     feedRate (in/min, default 40), plungeRate (in/min, default 15), spindleSpeed (rpm, default 16000)
+ *   Multi-tool mode: params.toolSequence = [{ toolDiameter, toolNumber, label,
+ *     stepDown, tabWidth, tabHeight, tabSpacing, feedRate, plungeRate, spindleSpeed }, ...],
+ *     primary/largest tool first. targetDepth still comes from the top-level
+ *     params (shared - it's the material thickness, not a per-tool choice).
+ *   Both modes: targetDepth (required), safeZ (default 0.25), units: 'in' | 'mm' (default 'in')
+ */
+export function generateRoutingGcode(contours, params = {}) {
+  if (!Array.isArray(contours) || contours.length === 0) {
+    throw new Error('Routing needs at least one closed contour');
+  }
+  const { targetDepth, safeZ = 0.25, units = 'in' } = params;
+  if (!targetDepth || targetDepth <= 0) throw new Error('targetDepth is required and must be > 0');
+
+  const lines = [...HEADER_WARNING, ''];
+  lines.push(units === 'mm' ? 'G21 (metric)' : 'G20 (inch)');
+  lines.push('G90 (absolute)');
+  lines.push('G17 (XY plane)');
+  lines.push('G94 (feed per minute)');
+  lines.push('G54 (work offset - verify before running)');
+
+  const hasSequence = Array.isArray(params.toolSequence) && params.toolSequence.length > 0;
+
+  if (!hasSequence) {
+    // Single-tool path, unchanged from before multi-tool support existed.
+    const { toolDiameter, stepDown = 0.1, tabWidth = 0.25, tabHeight = 0.06, tabSpacing = 6, feedRate = 40, plungeRate = 15, spindleSpeed = 16000 } = params;
+    if (!toolDiameter || toolDiameter <= 0) throw new Error('toolDiameter is required and must be > 0');
+    lines.push(`S${spindleSpeed} M03 (spindle on)`);
+    lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
+
+    let totalTabZones = 0;
+    for (const contour of contours) {
+      const { tabZoneCount } = cutContour(lines, contour, toolDiameter / 2, { stepDown, targetDepth, tabWidth, tabHeight, tabSpacing, feedRate, plungeRate }, safeZ);
+      totalTabZones += tabZoneCount;
+    }
+    lines.push('M05 (spindle off)');
+    lines.push('M30 (program end)');
+    return { gcode: lines.join('\n'), stats: { contours: contours.length, tabZones: totalTabZones, targetDepth, toolChanges: 0 } };
+  }
+
+  // Multi-tool path.
+  const toolSequence = params.toolSequence.map((t) => ({ ...TOOL_STEP_DEFAULTS, ...t }));
+  for (const t of toolSequence) {
+    if (!t.toolDiameter || t.toolDiameter <= 0) throw new Error('Every tool in the sequence needs a toolDiameter > 0');
+  }
+  const assignments = assignContoursToTools(contours, toolSequence);
+
+  lines.push('(--- TOOL PLAN - stage these before starting ---)');
+  toolSequence.forEach((t, i) => {
+    const count = assignments.filter((a) => a.toolIndex === i).length;
+    lines.push(`(  ${i + 1}. ${t.label || `${fmt(t.toolDiameter, 3)}" tool`}${t.toolNumber ? ` (T${t.toolNumber})` : ''} - ${count} contour${count === 1 ? '' : 's'} )`);
+  });
+
+  let totalTabZones = 0;
+  let toolChanges = 0;
+  let firstUsedTool = true;
+  for (let toolIndex = 0; toolIndex < toolSequence.length; toolIndex += 1) {
+    const contoursForTool = assignments.filter((a) => a.toolIndex === toolIndex).map((a) => a.contour);
+    if (contoursForTool.length === 0) continue; // nothing needs this tool on this part - skip it, no pointless tool change
+
+    const tool = toolSequence[toolIndex];
+    if (firstUsedTool) {
+      lines.push(`(--- TOOL 1: ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` (T${tool.toolNumber})` : ''} - load before starting ---)`);
+      lines.push(`S${tool.spindleSpeed} M03 (spindle on)`);
+      lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
+      firstUsedTool = false;
+    } else {
+      toolChanges += 1;
+      lines.push(`G00 Z${fmt(safeZ)} (retract clear before tool change)`);
+      lines.push('M05 (spindle off)');
+      lines.push(`M00 (TOOL CHANGE: load ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` - T${tool.toolNumber}` : ''}, then RE-TOUCH OFF Z0 before resuming - no automatic tool length compensation assumed)`);
+      lines.push(`S${tool.spindleSpeed} M03 (spindle back on)`);
+      lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
+    }
+
+    for (const contour of contoursForTool) {
+      const { tabZoneCount } = cutContour(lines, contour, tool.toolDiameter / 2, { ...tool, targetDepth: tool.targetDepth || targetDepth }, safeZ);
+      totalTabZones += tabZoneCount;
+    }
+  }
+
+  lines.push('M05 (spindle off)');
+  lines.push('M30 (program end)');
+
+  return {
+    gcode: lines.join('\n'),
+    stats: { contours: contours.length, tabZones: totalTabZones, targetDepth, toolChanges, toolsUsed: [...new Set(assignments.map((a) => a.toolIndex))].length }
+  };
 }

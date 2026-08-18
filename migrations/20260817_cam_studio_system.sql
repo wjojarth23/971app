@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.cam_tools (
   diameter numeric, -- inches
   flutes integer,
   nose_radius numeric, -- inches; lathe insert nose radius, used for a simplified finishing-pass offset
+  tool_number integer, -- fixed slot/number this tool corresponds to on the machine, referenced in tool-change G-code blocks
   notes text,
   enabled boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone DEFAULT now(),
@@ -59,6 +60,7 @@ ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS tool_type text;
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS diameter numeric;
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS flutes integer;
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS nose_radius numeric;
+ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS tool_number integer;
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS notes text;
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true;
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
@@ -80,6 +82,7 @@ CREATE TABLE IF NOT EXISTS public.cam_machines (
   default_material_id uuid,
   default_tool_id uuid,
   default_params jsonb NOT NULL DEFAULT '{}'::jsonb, -- same shape as cam_jobs.params, see src/lib/cam/*.js
+  gcode_extension text NOT NULL DEFAULT 'ngc', -- 'ngc' | 'tap' - output file extension for this machine (Mach3/Mach4 controls expect .tap)
   enabled boolean NOT NULL DEFAULT true,
   created_by uuid,
   created_at timestamp with time zone DEFAULT now(),
@@ -92,6 +95,7 @@ ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS post_processor text;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS default_material_id uuid;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS default_tool_id uuid;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS default_params jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS gcode_extension text NOT NULL DEFAULT 'ngc';
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS created_by uuid;
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
@@ -101,6 +105,9 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_operation_type_check CHECK (operation_type = ANY (ARRAY['turning'::text, 'routing'::text, 'milling'::text]));
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_gcode_extension_check CHECK (gcode_extension = ANY (ARRAY['ngc'::text, 'tap'::text]));
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_default_material_id_fkey FOREIGN KEY (default_material_id) REFERENCES public.cam_materials(id) ON DELETE SET NULL;

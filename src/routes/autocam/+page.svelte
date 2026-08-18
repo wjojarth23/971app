@@ -9,6 +9,7 @@
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   import CamParamFields from '$lib/components/CamParamFields.svelte';
+  import RoutingToolSequence from '$lib/components/RoutingToolSequence.svelte';
   import CadViewer from '$lib/components/CadViewer.svelte';
   import ToolpathViewer from '$lib/components/ToolpathViewer.svelte';
   import { toastActions } from '$lib/toast.js';
@@ -91,7 +92,7 @@
     return { stockDiameter: '', stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004, surfaceSpeed: 150, maxRpm: 2500 };
   }
   function emptyRoutingParams() {
-    return { toolDiameter: 0.25, stepDown: 0.1, targetDepth: '', tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000 };
+    return { toolDiameter: 0.25, stepDown: 0.1, targetDepth: '', tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000, toolSequence: [] };
   }
 
   let showNewJobModal = false;
@@ -107,8 +108,6 @@
   let selectedToolId = '';
   let selectedMachineId = '';
   let submitting = false;
-  let generationProgress = 0; // 0-100, live-updated while submitting
-  let generationMessage = '';
   let retryingJobId = null;
   let cancellingJobId = null;
 
@@ -122,8 +121,6 @@
   let editRenaming = false;
   let editSubmitting = false;
   let editDeleting = false;
-  let editProgress = 0;
-  let editProgressMessage = '';
   let showJobCadModal = false;
   let showJobToolpathModal = false;
 
@@ -148,7 +145,7 @@
   // Machine profile editor
   let showMachineModal = false;
   let editingMachineId = null;
-  let machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', params: emptyRoutingParams() };
+  let machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', params: emptyRoutingParams() };
   let savingMachine = false;
 
   $: canManageProfiles = canManageCamProfiles(user);
@@ -179,6 +176,17 @@
     })();
     return unsub;
   });
+
+  // Live-patches one job's changing fields (status/progress/gcode/etc) into
+  // the jobs list in place, preserving the joined display fields (part/
+  // material/tool/machine/requester names) that a bare progress-poll row
+  // doesn't carry - used so a job's row animates live while generating,
+  // without needing a full loadJobs() round-trip on every poll tick.
+  function patchJobInList(update) {
+    jobs = jobs.map((j) => (j.id === update.id
+      ? { ...j, status: update.status, progress: update.progress, progress_message: update.progress_message, gcode: update.gcode, errors: update.errors, stats: update.stats, gcode_file_name: update.gcode_file_name }
+      : j));
+  }
 
   async function loadJobs() {
     const { data, error } = await supabase
@@ -273,8 +281,19 @@
 
   function buildParams() {
     const raw = newJobOperation === 'turning' ? turningParams : routingParams;
+    return serializeParams(raw);
+  }
+
+  // Numeric fields get coerced to Number(); toolSequence (routing multi-tool,
+  // see toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
+  // toolNumber, label} objects and must pass through untouched.
+  function serializeParams(raw) {
     const params = {};
     for (const [key, value] of Object.entries(raw)) {
+      if (key === 'toolSequence') {
+        if (Array.isArray(value) && value.length > 0) params.toolSequence = value;
+        continue;
+      }
       if (value !== '' && value !== null && value !== undefined) params[key] = Number(value);
     }
     return params;
@@ -282,8 +301,6 @@
 
   async function submitNewJob() {
     submitting = true;
-    generationProgress = 0;
-    generationMessage = 'Queuing job...';
     try {
       const options = {
         name: newJobName.trim() || null,
@@ -293,10 +310,14 @@
         machineId: selectedMachineId || null,
         params: buildParams(),
         userId: user?.id || null,
-        onProgress: (job) => {
-          generationProgress = job.progress ?? generationProgress;
-          generationMessage = job.progress_message || generationMessage;
-        }
+        gcodeExtension: machines.find((m) => m.id === selectedMachineId)?.gcode_extension,
+        // As soon as the job is queued (not once generation finishes) - move
+        // out of the New Job form and let the jobs list show progress instead.
+        onQueued: async () => {
+          closeNewJobModal();
+          await loadJobs();
+        },
+        onProgress: patchJobInList
       };
 
       let result;
@@ -310,19 +331,16 @@
       }
 
       toastActions.show(result.success ? 'CAM generated' : (result.error || 'AutoCAM generation failed'));
-      if (result.job) closeNewJobModal();
-      await loadJobs();
+      await loadJobs(); // final refresh - picks up joined material/tool/machine/requester names the live patch above doesn't carry
     } finally {
       submitting = false;
-      generationProgress = 0;
-      generationMessage = '';
     }
   }
 
   async function handleRetryJob(job) {
     retryingJobId = job.id;
     try {
-      const result = await retryCamJob(job, { userId: user?.id || null });
+      const result = await retryCamJob(job, { userId: user?.id || null, onProgress: patchJobInList });
       toastActions.show(result.success ? 'CAM generated' : (result.error || 'AutoCAM generation failed'));
       await loadJobs();
     } finally {
@@ -395,27 +413,26 @@
   async function saveJobAndRegenerate() {
     if (!editingJob) return;
     editSubmitting = true;
-    editProgress = 0;
-    editProgressMessage = 'Queuing...';
     try {
       const result = await updateCamJobAndRegenerate(editingJob, {
         name: editJobName.trim() || null,
         materialId: editMaterialId,
         toolId: editToolId,
         machineId: editMachineId,
-        params: editParams,
-        onProgress: (job) => {
-          editProgress = job.progress ?? editProgress;
-          editProgressMessage = job.progress_message || editProgressMessage;
-        }
+        params: serializeParams(editParams),
+        gcodeExtension: machines.find((m) => m.id === editMachineId)?.gcode_extension,
+        // As soon as it's queued (not once generation finishes) - move out of
+        // the edit form and let the jobs list show progress instead.
+        onQueued: async () => {
+          closeJobDetailModal();
+          await loadJobs();
+        },
+        onProgress: patchJobInList
       });
       toastActions.show(result.success ? 'CAM regenerated' : (result.error || 'AutoCAM generation failed'));
       await loadJobs();
-      if (result.job) editingJob = result.job;
     } finally {
       editSubmitting = false;
-      editProgress = 0;
-      editProgressMessage = '';
     }
   }
 
@@ -479,6 +496,7 @@
         operation_type: machine.operation_type,
         default_material_id: machine.default_material_id || '',
         default_tool_id: machine.default_tool_id || '',
+        gcode_extension: machine.gcode_extension || 'ngc',
         params: {
           ...(machine.operation_type === 'turning' ? emptyTurningParams() : emptyRoutingParams()),
           ...(machine.default_params || {})
@@ -486,7 +504,7 @@
       };
     } else {
       editingMachineId = null;
-      machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', params: emptyRoutingParams() };
+      machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', params: emptyRoutingParams() };
     }
     showMachineModal = true;
   }
@@ -505,17 +523,14 @@
     if (!machineForm.name.trim()) { toastActions.show('Machine profile needs a name'); return; }
     savingMachine = true;
     try {
-      const params = {};
-      for (const [key, value] of Object.entries(machineForm.params)) {
-        if (value !== '' && value !== null && value !== undefined) params[key] = Number(value);
-      }
       const row = {
         name: machineForm.name.trim(),
         description: machineForm.description.trim() || null,
         operation_type: machineForm.operation_type,
         default_material_id: machineForm.default_material_id || null,
         default_tool_id: machineForm.default_tool_id || null,
-        default_params: params
+        gcode_extension: machineForm.gcode_extension || 'ngc',
+        default_params: serializeParams(machineForm.params)
       };
       const { error } = editingMachineId
         ? await supabase.from('cam_machines').update(row).eq('id', editingMachineId)
@@ -931,6 +946,7 @@
           <CamParamFields operation="turning" bind:params={turningParams} mode="job" />
         {:else}
           <CamParamFields operation="routing" bind:params={routingParams} mode="job" />
+          <RoutingToolSequence {tools} bind:sequence={routingParams.toolSequence} />
         {/if}
 
         <div class="form-row">
@@ -965,14 +981,9 @@
         </div>
 
         <button class="btn btn-primary" on:click={submitNewJob} disabled={submitting}>
-          {submitting ? 'Generating…' : 'Generate G-code'}
+          {submitting ? 'Queuing…' : 'Generate G-code'}
         </button>
-        {#if submitting}
-          <div class="generation-progress">
-            <div class="generation-progress-bar"><div class="generation-progress-fill" style="width: {generationProgress}%"></div></div>
-            <span class="generation-progress-label">{generationProgress}% - {generationMessage}</span>
-          </div>
-        {/if}
+        <p class="cam-form-hint">Closes automatically once queued - track progress in the jobs list below.</p>
       </div>
     </div>
   </div>
@@ -1020,6 +1031,7 @@
           <CamParamFields operation="turning" bind:params={editParams} mode="job" />
         {:else}
           <CamParamFields operation="routing" bind:params={editParams} mode="job" />
+          <RoutingToolSequence {tools} bind:sequence={editParams.toolSequence} />
         {/if}
 
         <div class="form-row">
@@ -1057,15 +1069,9 @@
             {editDeleting ? 'Deleting…' : 'Delete Job'}
           </button>
           <button class="btn btn-primary" on:click={saveJobAndRegenerate} disabled={editSubmitting || !editingJob.step_file_name} title={!editingJob.step_file_name ? 'No stored STEP file to regenerate from' : ''}>
-            {editSubmitting ? 'Regenerating…' : 'Save & Regenerate'}
+            {editSubmitting ? 'Queuing…' : 'Save & Regenerate'}
           </button>
         </div>
-        {#if editSubmitting}
-          <div class="generation-progress">
-            <div class="generation-progress-bar"><div class="generation-progress-fill" style="width: {editProgress}%"></div></div>
-            <span class="generation-progress-label">{editProgress}% - {editProgressMessage}</span>
-          </div>
-        {/if}
       </div>
     </div>
   </div>
@@ -1146,9 +1152,21 @@
               {/each}
             </select>
           </div>
+          {#if machineForm.operation_type === 'routing'}
+            <div class="form-group">
+              <label class="form-label" for="mp-gcode-ext">Output File Type</label>
+              <select id="mp-gcode-ext" class="form-select" bind:value={machineForm.gcode_extension}>
+                <option value="ngc">.ngc (default)</option>
+                <option value="tap">.tap (Mach3/Mach4)</option>
+              </select>
+            </div>
+          {/if}
         </div>
 
         <CamParamFields operation={machineForm.operation_type} bind:params={machineForm.params} mode="profile" />
+        {#if machineForm.operation_type === 'routing'}
+          <RoutingToolSequence {tools} bind:sequence={machineForm.params.toolSequence} />
+        {/if}
 
         <button class="btn btn-primary" on:click={saveMachine} disabled={savingMachine}>
           {savingMachine ? 'Saving…' : 'Save Machine Profile'}
@@ -1330,27 +1348,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
-  }
-
-  .generation-progress {
-    margin-top: 0.6rem;
-  }
-  .generation-progress-bar {
-    height: 6px;
-    border-radius: 3px;
-    background: var(--surface-2, var(--background));
-    overflow: hidden;
-  }
-  .generation-progress-fill {
-    height: 100%;
-    background: var(--accent-strong, #1d4ed8);
-    transition: width 0.3s ease;
-  }
-  .generation-progress-label {
-    display: block;
-    margin-top: 0.3rem;
-    font-size: var(--font-xs, 0.75rem);
-    color: var(--text-muted);
   }
 
   .job-row-progress {

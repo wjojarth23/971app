@@ -38,14 +38,23 @@ export function jobDisplayName(job) {
   return job?.step_file_name?.split('/').pop() || 'Untitled job';
 }
 
-/** Turn a part/file name into a safe `<slug>.ngc` filename. */
-export function gcodeFileNameFor(name) {
+const VALID_GCODE_EXTENSIONS = ['ngc', 'tap'];
+
+/**
+ * Turn a part/file name into a safe `<slug>.<ext>` filename. Extension
+ * defaults to 'ngc' (this app's baseline) - pass 'tap' for a machine profile
+ * that expects Mach3/Mach4-style output (currently router-only, see
+ * toolchange-gcode-plan.md). gcode_format on the job row itself stays 'ngc'
+ * regardless - it's a content-format marker, not the download extension.
+ */
+export function gcodeFileNameFor(name, extension = 'ngc') {
   const slug = String(name || 'part')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'part';
-  return `${slug}.ngc`;
+  const ext = VALID_GCODE_EXTENSIONS.includes(extension) ? extension : 'ngc';
+  return `${slug}.${ext}`;
 }
 
 // router/lathe workflow -> the operation_type generation dispatches on.
@@ -132,7 +141,7 @@ async function triggerGenerationAndRefetch(jobId, onProgress) {
  * the STEP for a part that doesn't have one yet (e.g. a legacy lathe part
  * created before STEP was required for that workflow).
  * @param {Object} part - part row (needs id, name, workflow, file_name/file_url for its STEP)
- * @param {Object} options - { operationType, materialId, toolId, machineId, params, userId, name, profileFile, onProgress }
+ * @param {Object} options - { operationType, materialId, toolId, machineId, params, userId, name, profileFile, onProgress, onQueued, gcodeExtension }
  */
 export async function queueCamJobForPart(part, options = {}) {
   if (!part?.id) return { success: false, error: 'Missing part' };
@@ -161,7 +170,7 @@ export async function queueCamJobForPart(part, options = {}) {
       tool_id: options.toolId || null,
       machine_id: options.machineId || null,
       params: options.params || {},
-      gcode_file_name: gcodeFileNameFor(part.name),
+      gcode_file_name: gcodeFileNameFor(part.name, options.gcodeExtension),
       gcode_format: CAM_GCODE_FORMAT,
       status: 'queued',
       requested_by: options.userId || null
@@ -170,6 +179,7 @@ export async function queueCamJobForPart(part, options = {}) {
     .single();
 
   if (error) return { success: false, error: error.message };
+  if (options.onQueued) options.onQueued(data);
   const finalJob = await triggerGenerationAndRefetch(data.id, options.onProgress);
   return { success: finalJob?.status === 'completed', job: finalJob || data, error: finalJob?.errors?.[0] };
 }
@@ -178,7 +188,7 @@ export async function queueCamJobForPart(part, options = {}) {
  * Upload a fresh STEP file and queue + generate a CAM job from it (no
  * existing part) - used by the /autocam page's manual "New Job" flow.
  * @param {File} profileFile - the .step/.stp file
- * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName, onProgress }
+ * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName, onProgress, onQueued, gcodeExtension }
  */
 export async function queueCamJobFromUpload(profileFile, options = {}) {
   if (!options.operationType) return { success: false, error: 'operationType is required (turning or routing)' };
@@ -198,7 +208,7 @@ export async function queueCamJobFromUpload(profileFile, options = {}) {
       tool_id: options.toolId || null,
       machine_id: options.machineId || null,
       params: options.params || {},
-      gcode_file_name: gcodeFileNameFor(baseName),
+      gcode_file_name: gcodeFileNameFor(baseName, options.gcodeExtension),
       gcode_format: CAM_GCODE_FORMAT,
       status: 'queued',
       requested_by: options.userId || null
@@ -207,6 +217,7 @@ export async function queueCamJobFromUpload(profileFile, options = {}) {
     .single();
 
   if (error) return { success: false, error: error.message };
+  if (options.onQueued) options.onQueued(data);
   const finalJob = await triggerGenerationAndRefetch(data.id, options.onProgress);
   return { success: finalJob?.status === 'completed', job: finalJob || data, error: finalJob?.errors?.[0] };
 }
@@ -220,29 +231,18 @@ export async function queueCamJobFromUpload(profileFile, options = {}) {
 export async function retryCamJob(job, options = {}) {
   if (!job?.step_file_name) return { success: false, error: 'No stored CAM profile to retry from' };
 
-  const { data, error } = await supabase
+  // Regenerates the SAME row in place (same id, same position in the jobs
+  // list) rather than inserting a new one - a retry is "try this job again",
+  // not a new job, and duplicate rows for every failed attempt made the
+  // jobs list confusing to read.
+  const { error } = await supabase
     .from('cam_jobs')
-    .insert({
-      name: job.name || null,
-      source_type: job.source_type,
-      part_id: job.part_id || null,
-      operation_type: job.operation_type,
-      step_file_name: job.step_file_name,
-      material_id: job.material_id || null,
-      tool_id: job.tool_id || null,
-      machine_id: job.machine_id || null,
-      params: job.params || {},
-      gcode_file_name: job.gcode_file_name || null,
-      gcode_format: CAM_GCODE_FORMAT,
-      status: 'queued',
-      requested_by: options.userId || job.requested_by || null
-    })
-    .select()
-    .single();
-
+    .update({ status: 'queued', gcode: null, stats: null, errors: null, progress: 0, progress_message: null })
+    .eq('id', job.id);
   if (error) return { success: false, error: error.message };
-  const finalJob = await triggerGenerationAndRefetch(data.id, options.onProgress);
-  return { success: finalJob?.status === 'completed', job: finalJob || data, error: finalJob?.errors?.[0] };
+
+  const finalJob = await triggerGenerationAndRefetch(job.id, options.onProgress);
+  return { success: finalJob?.status === 'completed', job: finalJob, error: finalJob?.errors?.[0] };
 }
 
 /** Rename a job in place - no regeneration, just the display name. */
@@ -263,7 +263,7 @@ export async function deleteCamJob(jobId) {
  * Updates the same row (unlike retryCamJob, which inserts a new one to
  * preserve history) since this is an explicit edit of this specific job.
  * @param {Object} job - the job row being edited (needs id, step_file_name)
- * @param {Object} updates - { name, materialId, toolId, machineId, params, onProgress }
+ * @param {Object} updates - { name, materialId, toolId, machineId, params, onProgress, gcodeExtension }
  */
 export async function updateCamJobAndRegenerate(job, updates = {}) {
   if (!job?.id) return { success: false, error: 'Missing job' };
@@ -277,6 +277,7 @@ export async function updateCamJobAndRegenerate(job, updates = {}) {
       tool_id: updates.toolId || null,
       machine_id: updates.machineId || null,
       params: updates.params || {},
+      gcode_file_name: updates.gcodeExtension ? gcodeFileNameFor(jobDisplayName(job), updates.gcodeExtension) : job.gcode_file_name,
       status: 'queued',
       gcode: null,
       stats: null,
@@ -287,6 +288,7 @@ export async function updateCamJobAndRegenerate(job, updates = {}) {
     .eq('id', job.id);
 
   if (error) return { success: false, error: error.message };
+  if (updates.onQueued) updates.onQueued(job.id);
   const finalJob = await triggerGenerationAndRefetch(job.id, updates.onProgress);
   return { success: finalJob?.status === 'completed', job: finalJob, error: finalJob?.errors?.[0] };
 }
