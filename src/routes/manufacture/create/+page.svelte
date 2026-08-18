@@ -5,7 +5,8 @@
   import { onMount } from 'svelte';
   import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
   import { validateStepFile } from '$lib/step_validation.js';
-  
+  import { queueCamJobForPart, WORKFLOW_OPERATION_TYPE } from '$lib/camJobs.js';
+
   let partName = '';
   let requesterName = '';
   let projectId = '';
@@ -15,8 +16,29 @@
   let customStock = '';
   let uploadedFile = null;
   let uploadedStepFile = null;
+  let camJobName = ''; // optional AutoCAM job name for router/lathe
   let isSubmitting = false;
   let user = null;
+
+  $: supportsAutocam = !!WORKFLOW_OPERATION_TYPE[workflow];
+
+  // Fire-and-forget: queues + generates the CAM job right after the part is
+  // created, straight from the STEP file that was just uploaded (required
+  // for router and lathe now) - no separate CAM-specific upload needed.
+  // Errors here don't block part creation - the user can retry from the
+  // manufacture list.
+  async function triggerAutocamFromStep(newPartId, stepFileName) {
+    if (!supportsAutocam || !stepFileName) return;
+    try {
+      const result = await queueCamJobForPart(
+        { id: newPartId, name: partName, workflow, file_name: stepFileName },
+        { userId: user?.id || null, name: camJobName.trim() || null }
+      );
+      if (!result.success) console.error('AutoCAM generation failed:', result.error);
+    } catch (e) {
+      console.error('AutoCAM trigger failed:', e);
+    }
+  }
 
   onMount(() => {
     const unsubscribe = userStore.subscribe((value) => {
@@ -29,8 +51,13 @@
     return () => unsubscribe();
   });
 
-  // For non-router: need one file. For router: need STEP
-  $: hasRequiredFiles = workflow === 'router' ? !!uploadedStepFile : !!uploadedFile;
+  // Router: needs STEP. Lathe: needs both the PDF print AND a STEP (for AutoCAM).
+  // Everything else: needs the one workflow-appropriate file.
+  $: hasRequiredFiles = workflow === 'router'
+    ? !!uploadedStepFile
+    : workflow === 'lathe'
+      ? !!uploadedFile && !!uploadedStepFile
+      : !!uploadedFile;
 
   const workflows = [
     { id: 'laser-cut', name: 'Laser Cut', fileType: 'svg', icon: Zap, color: 'workflow-laser' },
@@ -133,7 +160,7 @@
       uploadedStepFile = file;
     }
   }
-  // Handle drag-and-drop for STEP and DXF zones
+  // Handle drag-and-drop for STEP upload zones
   async function handleDropStep(event) {
     event.preventDefault();
     event.currentTarget.classList.remove('active');
@@ -163,7 +190,7 @@
         .upload(fileName, uploadedFile, { cacheControl: '3600', upsert: false });
       if (uploadError) throw uploadError;
 
-  const { error: insertError } = await supabase
+  const { data: insertedPart, error: insertError } = await supabase
         .from('parts')
         .insert([{
           name: partName,
@@ -176,7 +203,9 @@
           file_url: fileName,
           status: 'pending',
           frc_team: user?.frc_team || null
-        }]);
+        }])
+        .select('id')
+        .single();
       if (insertError) throw insertError;
 
       // Reset
@@ -188,6 +217,7 @@
   stockAssignment = '';
   customStock = '';
       uploadedFile = null;
+      camJobName = '';
 
       goto('/manufacture');
     } catch (error) {
@@ -227,7 +257,7 @@
       if (stepErr) throw stepErr;
 
       const fileMeta = { step_file: stepName, step_valid: true };
-  const { error: insertError } = await supabase
+  const { data: insertedPart, error: insertError } = await supabase
         .from('parts')
         .insert([{
           name: partName,
@@ -240,8 +270,12 @@
           file_url: JSON.stringify(fileMeta),
           status: 'pending',
           frc_team: user?.frc_team || null
-        }]);
+        }])
+        .select('id')
+        .single();
       if (insertError) throw insertError;
+
+      await triggerAutocamFromStep(insertedPart.id, stepName);
 
       // Reset
       partName = '';
@@ -253,6 +287,90 @@
   customStock = '';
       uploadedStepFile = null;
       uploadedFile = null;
+      camJobName = '';
+
+      goto('/manufacture');
+    } catch (error) {
+      console.error('Submission error:', error);
+      alert(`Error submitting part: ${error.message}`);
+    } finally {
+      isSubmitting = false;
+    }
+  }
+
+  async function handleSubmitLathe() {
+    const effectiveStock = stockAssignment === '__other__' ? customStock.trim() : stockAssignment;
+    if (!partName || !requesterName || !workflow || !quantity || quantity < 1 || !effectiveStock) {
+      alert('Please fill in all fields and specify a valid quantity.');
+      return;
+    }
+    if (!uploadedFile) {
+      alert('Lathe parts require a PDF print.');
+      return;
+    }
+    if (!uploadedStepFile) {
+      alert('Lathe parts require a STEP file so AutoCAM can generate turning G-code.');
+      return;
+    }
+    const stepCheck = await validateStepFile(uploadedStepFile);
+    if (!stepCheck.valid) {
+      alert(`This STEP file is not valid:\n\n${stepCheck.reason}`);
+      return;
+    }
+
+    isSubmitting = true;
+    try {
+      const base = `${Date.now()}_${sanitizeName(partName)}`;
+      const pdfExt = uploadedFile.name.split('.').pop();
+      const pdfName = `${base}.${pdfExt}`;
+      const { error: pdfErr } = await supabase.storage
+        .from('manufacturing-files')
+        .upload(pdfName, uploadedFile, { cacheControl: '3600', upsert: false });
+      if (pdfErr) throw pdfErr;
+
+      const stepExt = uploadedStepFile.name.split('.').pop();
+      const stepName = `${base}_cad.${stepExt}`;
+      const { error: stepErr } = await supabase.storage
+        .from('manufacturing-files')
+        .upload(stepName, uploadedStepFile, { cacheControl: '3600', upsert: false });
+      if (stepErr) throw stepErr;
+
+      // file_name stays the PDF (unchanged meaning - the print/reference
+      // download); the STEP lives in file_url's JSON, same convention router
+      // already uses, so getStepFileName()/canViewCad() pick it up for both
+      // the 3D viewer and AutoCAM.
+      const fileMeta = { step_file: stepName, step_valid: true, pdf_file: pdfName };
+      const { data: insertedPart, error: insertError } = await supabase
+        .from('parts')
+        .insert([{
+          name: partName,
+          requester: requesterName,
+          project_id: projectId,
+          workflow: workflow,
+          quantity: quantity,
+          stock_assignment: effectiveStock,
+          file_name: pdfName,
+          file_url: JSON.stringify(fileMeta),
+          status: 'pending',
+          frc_team: user?.frc_team || null
+        }])
+        .select('id')
+        .single();
+      if (insertError) throw insertError;
+
+      await triggerAutocamFromStep(insertedPart.id, stepName);
+
+      // Reset
+      partName = '';
+      requesterName = '';
+      projectId = '';
+      workflow = '';
+      quantity = 1;
+      stockAssignment = '';
+      customStock = '';
+      uploadedFile = null;
+      uploadedStepFile = null;
+      camJobName = '';
 
       goto('/manufacture');
     } catch (error) {
@@ -266,6 +384,9 @@
   async function handleSubmit() {
     if (workflow === 'router') {
       return await handleSubmitRouter();
+    }
+    if (workflow === 'lathe') {
+      return await handleSubmitLathe();
     }
     return await handleSubmitGeneric();
   }
@@ -343,12 +464,12 @@
                 type="radio" 
                 bind:group={workflow} 
                 value={workflowOption.id}
-                on:change={() => { stockAssignment = ''; customStock = ''; uploadedFile = null; uploadedStepFile = null; }}
+                on:change={() => { stockAssignment = ''; customStock = ''; uploadedFile = null; uploadedStepFile = null; camJobName = ''; }}
               />
               <div class="workflow-content">
                 <svelte:component this={workflowOption.icon} size={24} />
                 <span class="workflow-name">{workflowOption.name}</span>
-                <span class="workflow-file-type">.{workflowOption.fileType}</span>
+                <span class="workflow-file-type">{workflowOption.id === 'lathe' ? 'pdf + step' : `.${workflowOption.fileType}`}</span>
               </div>
             </label>
           {/each}
@@ -419,9 +540,10 @@
                 {/if}
               </div>
             </div>
-          {:else}
+          {:else if workflow === 'lathe'}
+            <p class="cam-hint">Lathe parts need both a PDF print (for the shop) and a STEP file (so AutoCAM can generate turning G-code).</p>
             <div class="upload-container">
-              <div 
+              <div
                 class="file-drop-zone {uploadedFile ? 'has-file' : ''}"
                 role="button"
                 tabindex="0"
@@ -431,14 +553,81 @@
                 on:click={() => document.getElementById('file-input').click()}
                 on:keydown={(e) => e.key === 'Enter' && document.getElementById('file-input').click()}
               >
-                <input 
+                <input
                   id="file-input"
-                  type="file" 
+                  type="file"
+                  accept=".pdf"
+                  on:change={handleFileUpload}
+                  style="display: none;"
+                />
+                {#if uploadedFile}
+                  <div class="uploaded-file">
+                    <FileText size={48} />
+                    <span class="file-name">{uploadedFile.name}</span>
+                    <span class="file-size">{(uploadedFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                {:else}
+                  <div class="upload-prompt">
+                    <Upload size={48} />
+                    <span class="upload-text">Drop PDF print here or click to browse</span>
+                    <span class="upload-subtext">Required</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+            <div class="upload-container">
+              <div
+                class="file-drop-zone {uploadedStepFile ? 'has-file' : ''}"
+                role="button"
+                tabindex="0"
+                on:dragover={handleDragOver}
+                on:dragleave={handleDragLeave}
+                on:drop={handleDropStep}
+                on:click={() => document.getElementById('step-input').click()}
+                on:keydown={(e) => e.key === 'Enter' && document.getElementById('step-input').click()}
+              >
+                <input
+                  id="step-input"
+                  type="file"
+                  accept=".step,.stp"
+                  on:change={handleStepUpload}
+                  style="display: none;"
+                />
+                {#if uploadedStepFile}
+                  <div class="uploaded-file">
+                    <FileText size={48} />
+                    <span class="file-name">{uploadedStepFile.name}</span>
+                    <span class="file-size">{(uploadedStepFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                {:else}
+                  <div class="upload-prompt">
+                    <Upload size={48} />
+                    <span class="upload-text">Drop STEP (.step/.stp) here or click to browse</span>
+                    <span class="upload-subtext">Required - modeled with the spindle axis along Z, centered at X=0, Y=0</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <div class="upload-container">
+              <div
+                class="file-drop-zone {uploadedFile ? 'has-file' : ''}"
+                role="button"
+                tabindex="0"
+                on:dragover={handleDragOver}
+                on:dragleave={handleDragLeave}
+                on:drop={handleDrop}
+                on:click={() => document.getElementById('file-input').click()}
+                on:keydown={(e) => e.key === 'Enter' && document.getElementById('file-input').click()}
+              >
+                <input
+                  id="file-input"
+                  type="file"
                   accept=".{requiredFileType}"
                   on:change={handleFileUpload}
                   style="display: none;"
                 />
-                
+
                 {#if uploadedFile}
                   <div class="uploaded-file">
                     <FileText size={48} />
@@ -455,6 +644,21 @@
               </div>
             </div>
           {/if}
+        </div>
+      {/if}
+
+      <!-- AutoCAM job name (optional, router/lathe only - STEP is already required above) -->
+      {#if supportsAutocam}
+        <div class="form-section">
+          <h2>AutoCAM</h2>
+          <p class="cam-hint">
+            AutoCAM will generate {workflow === 'lathe' ? 'turning' : 'routing'} G-code automatically from the STEP
+            file above right after you submit - nothing else to attach.
+          </p>
+          <div class="form-group">
+            <label for="camJobName">CAM Job Name <span class="optional-label">(optional, defaults to part name)</span></label>
+            <input id="camJobName" type="text" bind:value={camJobName} placeholder={partName || 'Job name'} />
+          </div>
         </div>
       {/if}
 
@@ -502,6 +706,7 @@
   .upload-prompt, .uploaded-file { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
   .upload-text { font-weight: 500; }
   .upload-subtext { font-size: 0.875rem; color: var(--neutral-500); }
+  .cam-hint { font-size: 0.875rem; color: var(--neutral-500); margin-bottom: 1rem; }
   .file-name { font-weight: 600; color: var(--success); }
   .file-size { font-size: 0.875rem; color: var(--neutral-500); }
   .form-actions { margin-top: 2rem; text-align: center; }

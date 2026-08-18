@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -230,6 +230,7 @@
     if (compact.startsWith('task')) return 'tasks';
     if (compact === 'scoutingadmin' || compact === 'scoutadmin') return 'scouting-admin';
     if (compact === 'cotsstocking') return 'cots-stocking';
+    if (compact.startsWith('autocam')) return 'autocam';
     return compact;
   }
 
@@ -247,6 +248,7 @@
     pitscout: '/pitscout',
     'scouting-admin': '/scouting-admin',
     'cots-stocking': '/cots-stocking',
+    autocam: '/autocam',
     home: '/',
     profile: '/profile',
     admin: '/admin'
@@ -266,6 +268,7 @@
     pitscout: Camera,
     'scouting-admin': Briefcase,
     'cots-stocking': Package,
+    autocam: Cpu,
     home: Home,
     profile: User,
     admin: Briefcase
@@ -285,6 +288,7 @@
     pitscout: 'Pit Scouting',
     'scouting-admin': 'Scouting Admin',
     'cots-stocking': 'COTS Stocking',
+    autocam: 'AutoCAM',
     admin: 'Admin'
   };
 

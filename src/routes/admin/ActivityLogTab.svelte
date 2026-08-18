@@ -31,7 +31,11 @@
     subsystem_members: 'Subsystem member',
     rosters: 'Roster',
     roster_keys: 'Roster key',
-    roster_entries: 'Roster entry'
+    roster_entries: 'Roster entry',
+    cam_jobs: 'AutoCAM Job',
+    cam_materials: 'AutoCAM Material',
+    cam_tools: 'AutoCAM Tool',
+    cam_machines: 'AutoCAM Machine'
   };
 
   function tableLabel(t) { return TABLE_LABELS[t] || t; }

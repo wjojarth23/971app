@@ -1,6 +1,6 @@
 <script>
   import { browser } from '$app/environment';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { page } from '$app/stores';
   import { userStore, loadUserFromUUID, upsertProfileIfMissing, setUserUUID } from '$lib/stores/user.js';
@@ -10,7 +10,7 @@
   import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   import { goto } from '$app/navigation';
   import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
-  import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users, Box } from 'lucide-svelte';
+  import { Search, Filter, Clock, Truck, Package, Download, Zap, Wrench, FileText, Upload, ExternalLink, Pencil, Trash2, X, Users, Box, Route } from 'lucide-svelte';
   import ROUTER_FLOW from '$lib/router_flow.json';
   import { getDisplayStatus, BUTTONS, getBadgeClass, getWorkflowStatuses } from '$lib/statuses.js';
   import { summarizeRouterStages, isFullyKitted, buildRouterProgressUpdate } from '$lib/router_progress.js';
@@ -20,6 +20,17 @@
   import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
   import PartDueDate from '$lib/components/PartDueDate.svelte';
   import PartNotes from '$lib/components/PartNotes.svelte';
+  import ToolpathViewer from '$lib/components/ToolpathViewer.svelte';
+  import {
+    queueCamJobForPart,
+    retryCamJob,
+    getPartStepFileName,
+    loadLatestCamJobsForParts,
+    downloadGcodeBlob,
+    camJobStatusLabel,
+    isCamJobActive,
+    WORKFLOW_OPERATION_TYPE
+  } from '$lib/camJobs.js';
 
   const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
   const QUICK_PRINT_STOCK_OPTIONS = stockData['3d-print'] || [];
@@ -38,6 +49,8 @@
   let show9584 = true;
   let toastMessage = '';
   let showToast = false;
+  let camJobsByPart = {};
+  let queuingCamJobForPartId = null;
   let subsystemOptions = [];
   let showQuickPrintModal = false;
   let quickPrintPartName = '';
@@ -234,7 +247,20 @@
     ]);
 
     loading = false;
+
+    // Deep link from AutoCAM ("view linked part") - /manufacture?part={id}
+    if (highlightedPartId) {
+      await tick();
+      const el = document.getElementById(`part-${highlightedPartId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        showToastMessage('That part is hidden by your current filters');
+      }
+    }
   });
+
+  $: highlightedPartId = $page.url.searchParams.get('part');
 
   function sanitizeName(value) {
     return (value || 'part').replace(/[^a-zA-Z0-9]/g, '_');
@@ -420,12 +446,128 @@
       for (const p of parts) {
         if (p.kitting_bin) selectedBinMap[p.id] = p.kitting_bin;
       }
+      loadCamJobsForParts();
     } catch (error) {
       console.error('Error loading parts:', error);
       alert('Error loading parts. Please try again.');
     } finally {
       loading = false;
     }
+  }
+
+  // AutoCAM: latest job status per part, keyed by part id. Loaded separately
+  // (not blocking) so a slow cam_jobs query never delays the parts list.
+  async function loadCamJobsForParts() {
+    const jobsMap = await loadLatestCamJobsForParts(parts.map((p) => p.id));
+    const byPart = {};
+    for (const [partId, job] of jobsMap.entries()) byPart[partId] = job;
+    camJobsByPart = byPart;
+  }
+
+  // Every router/lathe part requires a STEP file at creation now, so most of
+  // the time AutoCAM can just run straight off it - no modal, no upload.
+  async function generateAutocam(part) {
+    queuingCamJobForPartId = part.id;
+    try {
+      const result = await queueCamJobForPart(part, { userId: user?.id || null, name: part.name });
+      camJobsByPart = { ...camJobsByPart, [part.id]: result.job };
+      showToastMessage(result.success ? 'CAM generated' : (result.error || 'AutoCAM generation failed'));
+    } finally {
+      queuingCamJobForPartId = null;
+    }
+  }
+
+  // "Attach STEP" modal - only needed for the retrofit case: a lathe part
+  // created before STEP was required for that workflow, so it has no STEP
+  // file yet for AutoCAM (or the 3D viewer) to use.
+  let showCamProfileModal = false;
+  let camProfileModalPart = null;
+  let camProfileFile = null;
+  let camProfileJobName = '';
+
+  function openCamProfileModal(part) {
+    camProfileModalPart = part;
+    camProfileFile = null;
+    camProfileJobName = part.name || '';
+    showCamProfileModal = true;
+  }
+
+  function closeCamProfileModal() {
+    showCamProfileModal = false;
+    camProfileModalPart = null;
+    camProfileFile = null;
+    camProfileJobName = '';
+  }
+
+  async function submitCamProfile() {
+    if (!camProfileModalPart || !camProfileFile) return;
+    const part = camProfileModalPart;
+    queuingCamJobForPartId = part.id;
+    try {
+      // Upload the STEP and attach it to the PART itself (not just the CAM
+      // job) so canViewCad()/getStepFileName() pick it up too - same JSON
+      // meta convention router already uses, merged with whatever's there.
+      const stepName = `${Date.now()}_${(part.name || 'part').replace(/[^a-zA-Z0-9]/g, '_')}_cad.${(camProfileFile.name.split('.').pop() || 'step')}`;
+      const { error: uploadError } = await supabase.storage
+        .from('manufacturing-files')
+        .upload(stepName, camProfileFile, { cacheControl: '3600', upsert: false });
+      if (uploadError) {
+        showToastMessage(uploadError.message || 'Failed to upload STEP file');
+        return;
+      }
+      let existingMeta = {};
+      try { existingMeta = JSON.parse(part.file_url || '{}') || {}; } catch { existingMeta = {}; }
+      const newFileUrl = JSON.stringify({ ...existingMeta, step_file: stepName, step_valid: true });
+      const { error: partUpdateError } = await supabase.from('parts').update({ file_url: newFileUrl }).eq('id', part.id);
+      if (partUpdateError) {
+        showToastMessage(partUpdateError.message || 'Failed to attach STEP to part');
+        return;
+      }
+
+      const result = await queueCamJobForPart({ ...part, file_url: newFileUrl }, { userId: user?.id || null, name: camProfileJobName.trim() || null });
+      camJobsByPart = { ...camJobsByPart, [part.id]: result.job };
+      showToastMessage(result.success ? 'CAM generated' : (result.error || 'AutoCAM generation failed'));
+      closeCamProfileModal();
+      await loadParts(); // refresh so canViewCad() picks up the newly-attached STEP
+    } finally {
+      queuingCamJobForPartId = null;
+    }
+  }
+
+  async function retryAutocam(part) {
+    const job = camJobsByPart[part.id];
+    if (!job) return;
+    queuingCamJobForPartId = part.id;
+    try {
+      const result = await retryCamJob(job, { userId: user?.id || null });
+      camJobsByPart = { ...camJobsByPart, [part.id]: result.job };
+      showToastMessage(result.success ? 'CAM generated' : (result.error || 'AutoCAM generation failed'));
+    } finally {
+      queuingCamJobForPartId = null;
+    }
+  }
+
+  // Single dispatcher for "Install CAD" (STEP download) regardless of where
+  // the part's file actually lives - mirrors the branching already used for
+  // the per-workflow download buttons above.
+  function installCadStepFile(part) {
+    if (part.source_type === 'onshape_api') {
+      if (part.workflow === 'router') return downloadStepFromOnshape(part);
+      return downloadFile(part, part.status);
+    }
+    return downloadFromStorage(part.file_name, part.id);
+  }
+
+  let showToolpathModal = false;
+  let toolpathModalJob = null;
+  function openToolpathModal(job) {
+    if (!job?.gcode) return;
+    toolpathModalJob = job;
+    showToolpathModal = true;
+  }
+  function closeToolpathModal() {
+    showToolpathModal = false;
+    toolpathModalJob = null;
   }
 
   async function sendNotification(type, payload = {}) {
@@ -1701,8 +1843,10 @@
   <!-- Mobile Card View -->
   <div class="mobile-parts-list">
     {#each filteredParts as part (part.id)}
-      <div 
+      <div
+        id="part-{part.id}"
         class="part-card"
+        class:deep-link-highlight={highlightedPartId === String(part.id)}
         on:click={(e) => onRowClick(e, part)}
         on:keydown={(e) => onRowKeyDown(e, part)}
         role="button"
@@ -1792,36 +1936,73 @@
               <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openSubsystemDocument(part)}>
                 <ExternalLink size={14} /> View
               </button>
-              {:else if part.workflow === 'router'}
-                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadStepFromOnshape(part)}>
-                  <Download size={14} /> STEP
-                </button>
-                {#if canViewCad(part)}
-                  <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openCadViewer(part)} title="View 3D model">
-                    <Box size={14} /> View
-                  </button>
-                {/if}
-              {:else}
-              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFile(part, part.status)}>
-                <Download size={14} /> File
+            {:else if !canViewCad(part)}
+              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => (part.workflow === 'router' ? downloadStepFromOnshape(part) : downloadFile(part, part.status))}>
+                <Download size={14} /> {part.workflow === 'router' ? 'STEP' : 'File'}
               </button>
-              {#if canViewCad(part)}
-                <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openCadViewer(part)} title="View 3D model">
-                  <Box size={14} /> View
-                </button>
-              {/if}
             {/if}
-          {:else if part.file_name}
+          {:else if part.file_name && !canViewCad(part)}
             <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
               <Download size={14} /> File
             </button>
-            {#if canViewCad(part)}
-              <button class="btn btn-secondary btn-sm" on:click|stopPropagation={() => openCadViewer(part)} title="View 3D model">
-                <Box size={14} /> View
-              </button>
-            {/if}
           {/if}
-          
+
+          <!-- CAD / AutoCAM action grid -->
+          {#if canViewCad(part)}
+            {@const camJob = camJobsByPart[part.id]}
+            {@const camCapable = !!WORKFLOW_OPERATION_TYPE[part.workflow]}
+            <div class="cad-action-grid" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+              <button class="btn btn-secondary btn-sm" on:click={() => openCadViewer(part)} title="View 3D model">
+                <Box size={14} /> View CAD
+              </button>
+              {#if camCapable}
+                <button class="btn btn-secondary btn-sm" disabled={camJob?.status !== 'completed'} on:click={() => openToolpathModal(camJob)} title={camJob?.status === 'completed' ? 'Preview the generated toolpath' : 'Generate G-code first'}>
+                  <Route size={14} /> View Toolpath
+                </button>
+              {/if}
+              <button class="btn btn-secondary btn-sm" on:click={() => installCadStepFile(part)} title="Download STEP file">
+                <Download size={14} /> Install CAD
+              </button>
+              {#if camCapable}
+                {#if isCamJobActive(camJob)}
+                  <span class="btn btn-secondary btn-sm autocam-running" title="AutoCAM is processing this part">
+                    <span class="autocam-spinner"></span> {camJobStatusLabel(camJob.status)}
+                  </span>
+                {:else if camJob?.status === 'completed'}
+                  <button class="btn btn-secondary btn-sm" on:click={() => downloadGcodeBlob(camJob)} title="Download G-code">
+                    <Download size={14} /> Install NGC
+                  </button>
+                {:else if camJob?.status === 'failed'}
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    disabled={queuingCamJobForPartId === part.id}
+                    title={`AutoCAM failed: ${camJob.errors?.[0] || 'unknown error'} - click to retry`}
+                    on:click={() => retryAutocam(part)}
+                  >
+                    <Zap size={14} /> Retry AutoCAM
+                  </button>
+                {:else}
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    disabled={queuingCamJobForPartId === part.id}
+                    title="Generate G-code from this part's STEP file"
+                    on:click={() => generateAutocam(part)}
+                  >
+                    <Zap size={14} /> Generate G-code
+                  </button>
+                {/if}
+              {/if}
+            </div>
+          {:else if WORKFLOW_OPERATION_TYPE[part.workflow]}
+            <button
+              class="btn btn-secondary btn-sm"
+              on:click|stopPropagation={() => openCamProfileModal(part)}
+              title="This part was created before STEP was required for its workflow - attach one to unlock the 3D viewer and AutoCAM"
+            >
+              <Upload size={14} /> Attach STEP
+            </button>
+          {/if}
+
           <!-- Status action buttons -->
           {#if part.status === 'pending'}
             {#if part.workflow === 'router'}
@@ -1899,7 +2080,9 @@
       <tbody>
         {#each filteredParts as part (part.id)}
           <tr
+            id="part-{part.id}"
             class="parts-row"
+            class:deep-link-highlight={highlightedPartId === String(part.id)}
             on:click={(e) => onRowClick(e, part)}
             on:keydown={(e) => onRowKeyDown(e, part)}
             on:dragover={handleDragOver}
@@ -1971,7 +2154,7 @@
                       <ExternalLink size={14} />
                       PDF
                     </button>
-                  {:else if part.workflow === 'router'}
+                  {:else if !canViewCad(part)}
                     <button
                       type="button"
                       class="tag tag-source tag-action"
@@ -1982,47 +2165,12 @@
                       <Download size={14} />
                       STEP
                     </button>
-                    {#if canViewCad(part)}
-                      <button
-                        type="button"
-                        class="view-cad-link"
-                        aria-label="View 3D model"
-                        title="View 3D model"
-                        on:click|stopPropagation={() => openCadViewer(part)}
-                      >
-                        <Box size={13} />
-                        View CAD
-                      </button>
-                    {/if}
-                  {:else}
-                    <button
-                      type="button"
-                      class="tag tag-source tag-action"
-                      aria-label={`Download ${part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')} file`}
-                      title="Download file"
-                      on:click|stopPropagation={() => downloadFile(part, part.status)}
-                    >
-                      <Download size={14} />
-                      {part.workflow === '3d-print' ? 'STEP' : (part.file_format === 'stl' ? 'STL' : 'STEP')}
-                    </button>
-                    {#if canViewCad(part)}
-                      <button
-                        type="button"
-                        class="view-cad-link"
-                        aria-label="View 3D model"
-                        title="View 3D model"
-                        on:click|stopPropagation={() => openCadViewer(part)}
-                      >
-                        <Box size={13} />
-                        View CAD
-                      </button>
-                    {/if}
                   {/if}
                 </div>
               {:else if part.workflow === 'router'}
                 {#await Promise.resolve((() => { try { return JSON.parse(part.file_url || '{}') } catch { return {} } })()) then meta}
                   <div class="source-cell multi-files">
-                    {#if meta.step_file}
+                    {#if meta.step_file && !canViewCad(part)}
                       <button
                         type="button"
                         class="tag tag-source tag-action"
@@ -2040,40 +2188,16 @@
                         <Download size={16} />
                       </button>
                     {/if}
-                    {#if canViewCad(part)}
-                      <button
-                        type="button"
-                        class="view-cad-link"
-                        aria-label="View 3D model"
-                        title="View 3D model"
-                        on:click|stopPropagation={() => openCadViewer(part)}
-                      >
-                        <Box size={13} />
-                        View CAD
-                      </button>
-                    {/if}
                   </div>
                 {/await}
-              {:else if part.file_name}
+              {:else if part.file_name && !canViewCad(part)}
                 <div class="source-cell">
                   <span class="file-label">{part.file_name}</span>
                   <button class="btn btn-secondary btn-icon" aria-label="Download" title="Download" on:click|stopPropagation={() => downloadFromStorage(part.file_name, part.id)}>
                     <Download size={16} />
                   </button>
-                  {#if canViewCad(part)}
-                    <button
-                      type="button"
-                      class="view-cad-link"
-                      aria-label="View 3D model"
-                      title="View 3D model"
-                      on:click|stopPropagation={() => openCadViewer(part)}
-                    >
-                      <Box size={13} />
-                      View CAD
-                    </button>
-                  {/if}
                 </div>
-              {:else}
+              {:else if !canViewCad(part)}
                 <span class="text-muted">-</span>
               {/if}
             </td>
@@ -2097,6 +2221,60 @@
             </td>
             <td class:hidden={assignMode}>
               <div class="row-actions">
+                {#if canViewCad(part)}
+                  {@const camJob = camJobsByPart[part.id]}
+                  {@const camCapable = !!WORKFLOW_OPERATION_TYPE[part.workflow]}
+                  <div class="cad-action-grid" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
+                    <button class="btn btn-secondary btn-sm" on:click={() => openCadViewer(part)} title="View 3D model">
+                      <Box size={14} /> View CAD
+                    </button>
+                    {#if camCapable}
+                      <button class="btn btn-secondary btn-sm" disabled={camJob?.status !== 'completed'} on:click={() => openToolpathModal(camJob)} title={camJob?.status === 'completed' ? 'Preview the generated toolpath' : 'Generate G-code first'}>
+                        <Route size={14} /> View Toolpath
+                      </button>
+                    {/if}
+                    <button class="btn btn-secondary btn-sm" on:click={() => installCadStepFile(part)} title="Download STEP file">
+                      <Download size={14} /> Install CAD
+                    </button>
+                    {#if camCapable}
+                      {#if isCamJobActive(camJob)}
+                        <span class="btn btn-secondary btn-sm autocam-running" title="AutoCAM is processing this part">
+                          <span class="autocam-spinner"></span> {camJobStatusLabel(camJob.status)}
+                        </span>
+                      {:else if camJob?.status === 'completed'}
+                        <button class="btn btn-secondary btn-sm" on:click={() => downloadGcodeBlob(camJob)} title="Download G-code">
+                          <Download size={14} /> Install NGC
+                        </button>
+                      {:else if camJob?.status === 'failed'}
+                        <button
+                          class="btn btn-secondary btn-sm"
+                          disabled={queuingCamJobForPartId === part.id}
+                          title={`AutoCAM failed: ${camJob.errors?.[0] || 'unknown error'} - click to retry`}
+                          on:click={() => retryAutocam(part)}
+                        >
+                          <Zap size={14} /> Retry AutoCAM
+                        </button>
+                      {:else}
+                        <button
+                          class="btn btn-secondary btn-sm"
+                          disabled={queuingCamJobForPartId === part.id}
+                          title="Generate G-code from this part's STEP file"
+                          on:click={() => generateAutocam(part)}
+                        >
+                          <Zap size={14} /> Generate G-code
+                        </button>
+                      {/if}
+                    {/if}
+                  </div>
+                {:else if WORKFLOW_OPERATION_TYPE[part.workflow]}
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    on:click={() => openCamProfileModal(part)}
+                    title="This part was created before STEP was required for its workflow - attach one to unlock the 3D viewer and AutoCAM"
+                  >
+                    <Upload size={14} /> Attach STEP
+                  </button>
+                {/if}
               </div>
               {#if part.status === 'pending'}
                 {#if part.workflow === 'router'}
@@ -2475,13 +2653,94 @@
     <div class="modal cad-modal" role="dialog" aria-modal="true">
       <div class="modal-header">
         <h3>{cadViewerPart.name || '3D Model'}</h3>
-        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeCadViewer}>
-          <X size={18} />
-        </button>
+        <div class="cad-modal-header-actions">
+          {#if getStepFileName(cadViewerPart)}
+            <button type="button" class="cad-download-btn" aria-label="Download STEP file" title="Download STEP file" on:click={() => downloadFromStorage(getStepFileName(cadViewerPart), cadViewerPart.id)}>
+              <Download size={18} />
+            </button>
+          {/if}
+          {#if camJobsByPart[cadViewerPart.id]?.status === 'completed'}
+            <button type="button" class="cad-download-btn" aria-label="Install CAM (download G-code)" title="Install CAM (download G-code)" on:click={() => downloadGcodeBlob(camJobsByPart[cadViewerPart.id])}>
+              <Zap size={18} />
+            </button>
+          {/if}
+          <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeCadViewer}>
+            <X size={18} />
+          </button>
+        </div>
       </div>
       <div class="modal-body">
         <CadViewer part={cadViewerPart} stepFileName={getStepFileName(cadViewerPart)} />
         <p class="cad-modal-hint">Drag to rotate · scroll to zoom · right-drag to pan</p>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showCamProfileModal && camProfileModalPart}
+  <div
+    class="modal-backdrop"
+    on:click|self={closeCamProfileModal}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeCamProfileModal(); } }}
+  >
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Attach STEP File - {camProfileModalPart.name}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeCamProfileModal}>
+          <X size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="cad-modal-hint">
+          This part was created before a STEP file was required for its workflow. Attach one now to unlock the 3D
+          viewer and let AutoCAM generate {camProfileModalPart.workflow === 'lathe' ? 'turning' : 'routing'} G-code
+          immediately.
+          {#if camProfileModalPart.workflow === 'lathe'}
+            Model it with the spindle axis along the STEP file's Z axis, centered at X=0, Y=0.
+          {/if}
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="cam-job-name">Job Name</label>
+          <input id="cam-job-name" class="form-input" bind:value={camProfileJobName} />
+        </div>
+        <input
+          type="file"
+          class="form-input"
+          accept=".step,.stp"
+          on:change={(e) => { camProfileFile = e.target.files?.[0] || null; }}
+        />
+        <button
+          class="btn btn-primary"
+          style="margin-top: 1rem;"
+          disabled={!camProfileFile || queuingCamJobForPartId === camProfileModalPart.id}
+          on:click={submitCamProfile}
+        >
+          {queuingCamJobForPartId === camProfileModalPart.id ? 'Generating…' : 'Generate G-code'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showToolpathModal && toolpathModalJob}
+  <div
+    class="modal-backdrop"
+    on:click|self={closeToolpathModal}
+    role="button"
+    tabindex="0"
+    on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeToolpathModal(); } }}
+  >
+    <div class="modal toolpath-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Toolpath Preview</h3>
+        <button type="button" class="modal-close-button" aria-label="Close dialog" on:click={closeToolpathModal}>
+          <X size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <ToolpathViewer gcode={toolpathModalJob.gcode} operationType={toolpathModalJob.operation_type} />
       </div>
     </div>
   </div>
@@ -2501,6 +2760,63 @@
   .btn:hover { box-shadow: none; }
   .table tr { background: var(--surface-1); }
   .table tbody tr:hover { background: var(--surface-1); }
+
+  .autocam-running {
+    background: var(--purple-soft);
+    color: var(--purple-strong);
+    border-color: var(--purple-soft);
+    cursor: default;
+  }
+
+  .autocam-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid color-mix(in srgb, var(--purple-strong) 30%, transparent);
+    border-top-color: var(--purple-strong);
+    border-radius: 50%;
+    animation: autocam-spin 0.7s linear infinite;
+  }
+
+  @keyframes autocam-spin { to { transform: rotate(360deg); } }
+
+  .cad-action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
+  }
+  .cad-action-grid .btn {
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.2;
+    font-size: var(--font-xs, 0.75rem);
+    padding: 0.35rem 0.5rem;
+  }
+
+  .toolpath-modal { width: min(700px, 95vw); max-width: 95vw; }
+
+  .deep-link-highlight {
+    animation: deep-link-flash 2.5s ease-out 1;
+  }
+  @keyframes deep-link-flash {
+    0%, 15% { box-shadow: 0 0 0 2px var(--purple-strong); background: var(--purple-soft); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  .cad-modal-header-actions { display: inline-flex; align-items: center; gap: 0.25rem; }
+  .cad-download-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 0.25rem;
+    border-radius: var(--radius-sm, 4px);
+    color: var(--accent-strong, #1d4ed8);
+    cursor: pointer;
+  }
+  .cad-download-btn:hover { background: var(--surface-2, #f3f4f6); }
 
   .manufacture-page-container {
     max-width: 1400px;

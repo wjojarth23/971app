@@ -169,6 +169,17 @@ export function canDeleteParts(user) {
   return isManufacturingLead(user);
 }
 
+// Who can create/edit AutoCAM machine profiles, materials, and tools: admins,
+// Manufacturing Leads, and anyone holding a general "Lead" or "Subsystem Lead"
+// role. Machine profiles aren't scoped to a single subsystem, so this uses
+// the general_role tier rather than a specific subsystem's lead_user_id.
+export function canManageCamProfiles(user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (isManufacturingLead(user)) return true;
+  return user.general_role === GENERAL_ROLES.LEAD || user.general_role === GENERAL_ROLES.SUBSYSTEM_LEAD;
+}
+
 // Who can create orders — bundle requested items into an order and enter the
 // total cost after shipping. Restricted to admins, Purchasing Leads, and
 // mentors (frc_team = 'Mentor'). Everyone else can only *request* items via

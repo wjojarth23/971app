@@ -11,6 +11,7 @@
     "teamview": true,
     "pitscout": true,
     "scouting-admin": true,
-    "cots-stocking": true
+    "cots-stocking": true,
+    "autocam": true
   }
 }
