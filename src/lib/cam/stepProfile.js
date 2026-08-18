@@ -37,33 +37,46 @@
 
 // occt-import-js is Emscripten-compiled WASM; its default loader finds its
 // .wasm binary via fs.readFileSync() relative to __dirname, which breaks
-// once a bundler (Vercel's serverless build) relocates the code away from
-// its original node_modules layout - __dirname no longer points anywhere
-// near the real file. CadViewer.svelte (browser-side) already works around
-// this with a Vite `?url` import; this is the server-side equivalent -
-// resolve the real path via Node's own module resolution (bundler-proof,
-// unlike a guessed relative path) and hand the bytes over directly via
-// `wasmBinary`, skipping the loader's own file-finding logic entirely.
-// See implementations/vercel-cam-generate-timeout-fix.md.
+// once a bundler relocates the code away from its original node_modules
+// layout - __dirname no longer points anywhere near the real file. A
+// require.resolve()-based fix (tried first, see git history) still failed
+// in production: Vercel's build-time file tracer doesn't detect that
+// runtime-resolved dependency and never includes the .wasm binary in the
+// deployed function bundle at all ("Cannot find module ...occt-import-js.wasm",
+// confirmed directly from a real Vercel function error). That fallback still
+// works fine locally (plain Node, or `vite dev`), so it stays as the default
+// for scripts/test-cam-extraction.mjs and local dev - but the server route
+// (src/routes/api/cam-generate/+server.js) now fetches the same WASM binary
+// CadViewer.svelte already serves successfully client-side (a real Vite
+// build asset with a real URL, not a traced filesystem dependency) and
+// passes the bytes in directly via `wasmBinaryOverride`, sidestepping the
+// tracer issue entirely. See implementations/vercel-cam-generate-timeout-fix.md.
 let occtPromise = null;
-async function getOcct() {
+async function getOcct(wasmBinaryOverride) {
   if (!occtPromise) {
-    const [{ default: occtimportjsFactory }, { createRequire }, { readFileSync }] = await Promise.all([
-      import('occt-import-js'),
-      import('node:module'),
-      import('node:fs')
-    ]);
-    const require = createRequire(import.meta.url);
-    const wasmPath = require.resolve('occt-import-js/dist/occt-import-js.wasm');
-    const wasmBinary = readFileSync(wasmPath);
-    occtPromise = occtimportjsFactory({ wasmBinary });
+    const { default: occtimportjsFactory } = await import('occt-import-js');
+    if (wasmBinaryOverride) {
+      occtPromise = occtimportjsFactory({ wasmBinary: wasmBinaryOverride });
+    } else {
+      const [{ createRequire }, { readFileSync }] = await Promise.all([import('node:module'), import('node:fs')]);
+      const require = createRequire(import.meta.url);
+      const wasmPath = require.resolve('occt-import-js/dist/occt-import-js.wasm');
+      const wasmBinary = readFileSync(wasmPath);
+      occtPromise = occtimportjsFactory({ wasmBinary });
+    }
   }
   return occtPromise;
 }
 
-/** Reads a STEP file buffer into occt-import-js's mesh result, in inches. */
-export async function readStepMeshes(stepBuffer) {
-  const occt = await getOcct();
+/**
+ * Reads a STEP file buffer into occt-import-js's mesh result, in inches.
+ * @param {Uint8Array} stepBuffer
+ * @param {Uint8Array|Buffer} [wasmBinary] - pre-fetched WASM bytes, for
+ *   callers (the Vercel-deployed server route) where the default
+ *   filesystem-based loader can't find its binary - see getOcct() above.
+ */
+export async function readStepMeshes(stepBuffer, wasmBinary) {
+  const occt = await getOcct(wasmBinary);
   const result = occt.ReadStepFile(stepBuffer, { linearUnit: 'inch' });
   if (!result.success || !result.meshes?.length) {
     throw new Error('Could not read solid geometry from this STEP file');

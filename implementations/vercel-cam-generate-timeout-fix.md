@@ -67,6 +67,21 @@ This is the only place in the codebase that calls `/api/cam-generate` (confirmed
 
 The migration still hasn't been re-run since `tool_number` (`cam_tools`) and `gcode_extension` (`cam_machines`) were added - confirmed still missing via direct query. Will start producing "column does not exist" failures the moment anyone uses a linked tool/machine or the multi-tool routing feature. Needs the same `migrations/20260817_cam_studio_system.sql` re-run as before - still safe to re-run regardless of current state.
 
+## Update: the auth fix surfaced the next real bug, also now fixed
+
+Once the Authorization header fix above went out, the request finally got far enough on Vercel to hit the exact WASM-loading problem predicted earlier in this doc - confirmed directly this time, not inferred:
+```
+Cannot find module 'occt-import-js/dist/occt-import-js.wasm'
+Require stack: - /var/task/.svelte-kit/output/server/entries/endpoints/api/cam-generate/_server.js
+```
+The `require.resolve()`-based fix tried first (see git history) still failed in production: Vercel's build-time file tracer (`@vercel/nft`) doesn't detect a WASM binary only referenced via a *runtime* `require.resolve()` call as a dependency, so it never gets included in the deployed function's bundle at all - `require.resolve` then fails at runtime because the file genuinely isn't there. That fallback still works fine locally (plain Node, or `vite dev`, where nothing is traced/bundled the same way), so it stays as the default for `scripts/test-cam-extraction.mjs` and local dev.
+
+**Real fix**: `src/routes/api/cam-generate/+server.js` now imports the WASM binary the same way `CadViewer.svelte` already does successfully client-side - `import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url'`, a real Vite-built static asset with a real URL, not a traced filesystem dependency - then fetches it over HTTP at request time (`fetch(new URL(occtWasmUrl, url.origin))`, cached in memory after the first successful fetch per warm function instance) and passes the resulting bytes into `stepProfile.js`'s `readStepMeshes(stepBuffer, wasmBinary)` as an explicit override. `stepProfile.js` uses the override when given one, and only falls back to the filesystem-based approach when called without one (i.e. from the CLI script or anywhere else that doesn't have a request `url` to resolve against).
+
+Verified locally: a real end-to-end run (real STEP upload, real job row, real HTTP call to the actual endpoint) through this new fetch-based path completed in ~2s, and both `scripts/test-cam-extraction.mjs` cases (which exercise the fallback path) still pass unchanged.
+
+**Still needed**: confirm on the actual Vercel deployment - this is now the third fix in this chain (auth header, then this), and the only way to know it's actually resolved is a real job completing through the live `/autocam` UI.
+
 ## Also still open (unrelated, from earlier tonight)
 
 Whether the lathe's turning generator needs to support flip-turning / multi-setup programs for long parts (see conversation - waiting on whether the Haas TL-1 has a tailstock, or genuinely needs a re-chuck-and-re-zero pause). Not started - needs that answer first.

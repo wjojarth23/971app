@@ -4,6 +4,13 @@ import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/publi
 import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '$lib/cam/stepProfile.js';
 import { generateTurningGcode } from '$lib/cam/turning.js';
 import { generateRoutingGcode } from '$lib/cam/routing.js';
+// Vite-built asset URL for occt-import-js's WASM binary - the same one
+// CadViewer.svelte already fetches successfully client-side. Fetching it
+// over HTTP (below) instead of reading it off disk sidesteps Vercel's
+// build-time file tracer entirely, which doesn't see the WASM binary as a
+// dependency when it's only referenced via a runtime require.resolve() -
+// see stepProfile.js and implementations/vercel-cam-generate-timeout-fix.md.
+import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 
 // Vercel serverless functions default to a short execution limit (as low as
 // 10s on some plans) - this route does a STEP file download, WASM parser
@@ -18,6 +25,20 @@ function getClientFromRequest(request) {
   return createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: auth } }
   });
+}
+
+let wasmBinaryPromise = null;
+function getWasmBinary(origin) {
+  if (!wasmBinaryPromise) {
+    wasmBinaryPromise = fetch(new URL(occtWasmUrl, origin))
+      .then((res) => {
+        if (!res.ok) throw new Error(`Could not fetch occt-import-js WASM binary (HTTP ${res.status})`);
+        return res.arrayBuffer();
+      })
+      .then((buf) => new Uint8Array(buf))
+      .catch((e) => { wasmBinaryPromise = null; throw e; }); // don't cache a failure - let the next request retry
+  }
+  return wasmBinaryPromise;
 }
 
 class CancelledError extends Error {}
@@ -70,7 +91,7 @@ async function markFailed(supabase, jobId, message) {
 // Everything from the job load onward is inside one try/catch so a job can
 // never get stuck at "queued"/"processing" - any failure, anywhere, gets
 // written back as a specific `failed` status + error message.
-export async function POST({ request }) {
+export async function POST({ request, url }) {
   let body;
   try {
     body = await request.json();
@@ -126,7 +147,8 @@ export async function POST({ request }) {
 
     await setProgress(supabase, jobId, 20, 'Loading STEP geometry parser...');
     const stepBuffer = new Uint8Array(await fileBlob.arrayBuffer());
-    const meshes = await readStepMeshes(stepBuffer);
+    const wasmBinary = await getWasmBinary(url.origin);
+    const meshes = await readStepMeshes(stepBuffer, wasmBinary);
 
     await setProgress(supabase, jobId, 55, 'Extracting toolpath geometry...');
     const params = { ...(job.params || {}) };
