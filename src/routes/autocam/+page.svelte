@@ -503,6 +503,11 @@
     return 'status-running';
   }
 
+  const MACHINE_TYPE_LABEL = { turning: 'Lathe', routing: 'Router', milling: 'Mill' };
+  function machineTypeLabel(operationType) {
+    return MACHINE_TYPE_LABEL[operationType] || operationType || '—';
+  }
+
   async function addMaterial() {
     if (!newMaterialName.trim()) return;
     const { error } = await supabase.from('cam_materials').insert({ name: newMaterialName.trim() });
@@ -823,6 +828,7 @@
           <th>Material</th>
           <th>Tool</th>
           <th>Machine</th>
+          <th>Machine Type</th>
           <th>Status</th>
           <th>Created</th>
           <th>Created By</th>
@@ -850,6 +856,9 @@
             <td>{job.cam_materials?.name || '—'}</td>
             <td>{job.cam_tools?.name || '—'}</td>
             <td>{job.cam_machines?.name || '—'}</td>
+            <td>
+              <span class="tag {job.operation_type === 'turning' ? 'tag-season' : 'tag-971'}">{machineTypeLabel(job.operation_type)}</span>
+            </td>
             <td>
               <span class="status-badge {jobStatusClass(job)}">{camJobStatusLabel(job.status)}</span>
               {#if isCamJobActive(job)}
