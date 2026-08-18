@@ -30,7 +30,7 @@
     partHasStepFile,
     CAM_GCODE_FORMAT
   } from '$lib/camJobs.js';
-  import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2, Search, Filter, Box, Route } from 'lucide-svelte';
+  import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2, Search, Filter, Box, Route, ExternalLink, Copy } from 'lucide-svelte';
 
   let user = null;
   let loading = true;
@@ -125,6 +125,8 @@
   let editDeleting = false;
   let showJobCadModal = false;
   let showJobToolpathModal = false;
+  let showNcviewerModal = false;
+  let ncviewerCopyOk = null; // null = not attempted yet, true/false = result
 
   // Part-picker filters - mirrors the filter bar on /manufacture so parts are
   // easy to find the same way they are there.
@@ -390,6 +392,37 @@
     editingJob = job;
     showJobToolpathModal = true;
   }
+  // Embeds ncviewer.com directly in the app (iframe) instead of a plain
+  // external-tab link. ncviewer.com has no documented way to load a file by
+  // URL (checked directly, twice), but it does accept pasted G-code text in
+  // its editor pane - copying to the clipboard on open gets a real user to
+  // "paste and it's loaded" in one step instead of download-then-drag.
+  // Whether the iframe itself is even allowed to render depends on
+  // ncviewer.com's own X-Frame-Options/CSP headers, which aren't something
+  // this app controls or can detect - the modal always shows a plain "open
+  // in a new tab" fallback link for that case.
+  async function openNcviewer(job) {
+    editingJob = job;
+    ncviewerCopyOk = null;
+    try {
+      await navigator.clipboard.writeText(job.gcode || '');
+      ncviewerCopyOk = true;
+    } catch {
+      ncviewerCopyOk = false;
+    }
+    showNcviewerModal = true;
+  }
+  async function recopyNcviewerGcode() {
+    if (!editingJob?.gcode) return;
+    try {
+      await navigator.clipboard.writeText(editingJob.gcode);
+      ncviewerCopyOk = true;
+      toastActions.show('G-code copied');
+    } catch {
+      ncviewerCopyOk = false;
+      toastActions.show('Could not copy - your browser may be blocking clipboard access');
+    }
+  }
   async function handleInstallCad(job) {
     const result = await downloadStepFile(job.step_file_name);
     if (!result.success) toastActions.show(result.error || 'Could not download STEP file');
@@ -400,6 +433,7 @@
     editingJob = null;
     showJobCadModal = false;
     showJobToolpathModal = false;
+    showNcviewerModal = false;
   }
 
   async function saveJobName() {
@@ -846,6 +880,7 @@
                     <button class="btn btn-secondary btn-sm" title={job.gcode_file_name || 'output.ngc'} on:click={() => downloadGcodeBlob(job)}>
                       <Download size={14} /> Install NGC
                     </button>
+                    <button class="btn btn-icon" data-tooltip="Open ncviewer.com" aria-label="Open ncviewer.com with the G-code copied to your clipboard" on:click={() => openNcviewer(job)}><ExternalLink size={15} /></button>
                   </span>
                 {/if}
               </div>
@@ -1054,6 +1089,11 @@
           <button class="btn btn-secondary btn-sm" on:click={() => (showJobToolpathModal = true)} disabled={editingJob.status !== 'completed' || !editingJob.gcode} title={editingJob.status !== 'completed' ? 'Only available once the job has completed' : ''}>
             <Route size={14} /> View {editingJob.operation_type === 'turning' ? 'Turning' : 'Routing'} Toolpath
           </button>
+          {#if editingJob.status === 'completed' && editingJob.gcode}
+            <button class="btn btn-secondary btn-sm" on:click={() => openNcviewer(editingJob)}>
+              <ExternalLink size={14} /> Open ncviewer.com
+            </button>
+          {/if}
         </div>
 
         {#if editingJob.operation_type === 'turning'}
@@ -1130,6 +1170,39 @@
       </div>
       <div class="modal-body">
         <ToolpathViewer gcode={editingJob.gcode} operationType={editingJob.operation_type} />
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showNcviewerModal && editingJob}
+  <div class="modal-backdrop" on:click|self={() => (showNcviewerModal = false)} role="button" tabindex="0" on:keydown={(e) => { if (e.key === 'Escape') (showNcviewerModal = false); }}>
+    <div class="modal ncviewer-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>ncviewer.com - {jobDisplayName(editingJob)}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showNcviewerModal = false)}><X size={18} /></button>
+      </div>
+      <div class="modal-body ncviewer-modal-body">
+        <div class="ncviewer-banner">
+          {#if ncviewerCopyOk === true}
+            <span><Copy size={14} /> G-code copied to your clipboard - paste it into ncviewer's editor below.</span>
+          {:else if ncviewerCopyOk === false}
+            <span><AlertTriangle size={14} /> Couldn't auto-copy (your browser may be blocking clipboard access).</span>
+            <button class="btn btn-secondary btn-sm" on:click={recopyNcviewerGcode}><Copy size={14} /> Copy G-code</button>
+          {/if}
+          <a class="btn btn-secondary btn-sm ncviewer-fallback-link" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={14} /> Open in a new tab instead
+          </a>
+        </div>
+        <p class="cam-form-hint">
+          If the embedded view below doesn't load, ncviewer.com's own server is blocking embedding (not something this app controls) - use "Open in a new tab" above, the clipboard copy still works the same way.
+        </p>
+        <iframe
+          src="https://ncviewer.com"
+          title="ncviewer.com G-code viewer"
+          class="ncviewer-iframe"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+        ></iframe>
       </div>
     </div>
   </div>
@@ -1382,6 +1455,33 @@
 
   .cad-modal { width: min(900px, 95vw); max-width: 95vw; }
   .toolpath-modal { width: min(700px, 95vw); max-width: 95vw; }
+  .ncviewer-modal { width: min(1100px, 96vw); max-width: 96vw; height: min(85vh, 900px); }
+  .ncviewer-modal-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .ncviewer-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface-2, var(--background));
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--font-sm, 0.9rem);
+  }
+  .ncviewer-banner span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .ncviewer-fallback-link { margin-left: auto; }
+  .ncviewer-iframe {
+    flex: 1;
+    min-height: 400px;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 4px);
+    margin-top: 0.75rem;
+  }
 
   .modal-footer-actions {
     display: flex;
