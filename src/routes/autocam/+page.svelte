@@ -1546,7 +1546,13 @@
 
   /* Small hover tooltip for icon-only buttons - the native title attribute
      has an inconsistent, sluggish browser delay, easy to miss on a row of
-     plain icons with no visible label at all. */
+     plain icons with no visible label at all.
+     Anchored to the button's RIGHT edge (not centered) and growing leftward:
+     every one of these buttons lives in the Output column at the right edge
+     of a wide table, so a centered tooltip on the rightmost button(s) would
+     overflow past the edge of the screen. Right-anchoring means the tooltip
+     only ever grows toward the center of the table, where there's always
+     room, regardless of which button in the row it's on. */
   [data-tooltip] {
     position: relative;
   }
@@ -1555,8 +1561,9 @@
     content: attr(data-tooltip);
     position: absolute;
     bottom: calc(100% + 6px);
-    left: 50%;
-    transform: translateX(-50%);
+    right: 0;
+    left: auto;
+    max-width: min(240px, 90vw);
     background: var(--text, #1a1a1a);
     color: var(--background, #fff);
     padding: 0.25rem 0.55rem;
@@ -1566,14 +1573,16 @@
     pointer-events: none;
     z-index: 20;
   }
-  /* Small arrow pointing from the tooltip down to the button. */
+  /* Small arrow pointing from the tooltip down to the button - offset to
+     sit near the button (the tooltip's right edge), not centered on the
+     now off-center tooltip bubble. */
   [data-tooltip]:hover::before,
   [data-tooltip]:focus-visible::before {
     content: '';
     position: absolute;
     bottom: calc(100% + 1px);
-    left: 50%;
-    transform: translateX(-50%);
+    right: 6px;
+    left: auto;
     border: 5px solid transparent;
     border-top-color: var(--text, #1a1a1a);
     z-index: 20;
