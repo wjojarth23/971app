@@ -98,7 +98,14 @@ export async function POST({ request }) {
       return json({ success: false, error: 'No STEP file attached to this job' }, { status: 400 });
     }
 
-    await supabase.from('cam_jobs').update({ status: 'processing', progress: 5, progress_message: 'Downloading STEP file...' }).eq('id', jobId);
+    const { data: claimData, error: claimError } = await supabase
+      .from('cam_jobs')
+      .update({ status: 'processing', progress: 5, progress_message: 'Downloading STEP file...' })
+      .eq('id', jobId)
+      .eq('status', 'queued') // compare-and-swap: only one caller can ever win the claim
+      .select('id');
+    if (claimError) throw new Error(`Could not claim job for processing: ${claimError.message}`);
+    if (!claimData?.length) throw new CancelledError('Job was already claimed or cancelled before processing started');
 
     const { data: fileBlob, error: downloadError } = await supabase.storage
       .from('manufacturing-files')
