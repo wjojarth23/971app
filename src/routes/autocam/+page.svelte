@@ -25,6 +25,7 @@
     camJobStatusLabel,
     jobDisplayName,
     downloadGcodeBlob,
+    downloadStepFile,
     partHasStepFile,
     CAM_GCODE_FORMAT
   } from '$lib/camJobs.js';
@@ -350,6 +351,21 @@
       ...(job.params || {})
     };
     showJobDetailModal = true;
+  }
+
+  // Row-level "View CAD" / "View Toolpath" - open the same preview modals
+  // used inside Edit Job, without opening the full edit form.
+  function openCadPreview(job) {
+    editingJob = job;
+    showJobCadModal = true;
+  }
+  function openToolpathPreview(job) {
+    editingJob = job;
+    showJobToolpathModal = true;
+  }
+  async function handleInstallCad(job) {
+    const result = await downloadStepFile(job.step_file_name);
+    if (!result.success) toastActions.show(result.error || 'Could not download STEP file');
   }
 
   function closeJobDetailModal() {
@@ -770,12 +786,26 @@
               {/if}
             </td>
             <td>{job.requester?.full_name || job.requester?.email || '—'}</td>
-            <td on:click|stopPropagation>
-              {#if job.status === 'completed' && job.gcode}
-                <button class="btn btn-secondary btn-sm" on:click={() => downloadGcodeBlob(job)}>
-                  <Download size={14} /> {job.gcode_file_name || 'output.ngc'}
-                </button>
-              {:else if job.status === 'failed' && job.errors?.length}
+            <td on:click|stopPropagation class="output-cell">
+              <div class="output-actions">
+                {#if job.step_file_name}
+                  <button class="btn btn-secondary btn-sm" title="View 3D CAD" on:click={() => openCadPreview(job)}>
+                    <Box size={14} /> View CAD
+                  </button>
+                  <button class="btn btn-secondary btn-sm" title="Download the source STEP file" on:click={() => handleInstallCad(job)}>
+                    <Download size={14} /> Install CAD
+                  </button>
+                {/if}
+                {#if job.status === 'completed' && job.gcode}
+                  <button class="btn btn-secondary btn-sm" title="View toolpath simulation" on:click={() => openToolpathPreview(job)}>
+                    <Route size={14} /> View Toolpath
+                  </button>
+                  <button class="btn btn-secondary btn-sm" title={job.gcode_file_name || 'output.ngc'} on:click={() => downloadGcodeBlob(job)}>
+                    <Download size={14} /> Install NGC
+                  </button>
+                {/if}
+              </div>
+              {#if job.status === 'failed' && job.errors?.length}
                 <div class="job-output-failed">
                   <span class="job-error" title={job.errors.join('; ')}><AlertTriangle size={14} /> {job.errors[0]}</span>
                   {#if job.step_file_name}
@@ -788,7 +818,7 @@
                 <button class="btn btn-secondary btn-sm" on:click={() => handleCancelStuckJob(job)} disabled={cancellingJobId === job.id} title="Stuck? Mark this job as failed so you can retry.">
                   {cancellingJobId === job.id ? 'Cancelling…' : 'Cancel'}
                 </button>
-              {:else}
+              {:else if !job.step_file_name}
                 <span class="text-muted">—</span>
               {/if}
             </td>
@@ -1292,6 +1322,14 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+    margin-top: 0.4rem;
+  }
+
+  .output-cell { min-width: 260px; }
+  .output-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
   }
 
   .generation-progress {

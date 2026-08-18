@@ -334,6 +334,20 @@ export function downloadGcodeBlob(job) {
   URL.revokeObjectURL(url);
 }
 
+/** "Install CAD" - download a job's source STEP file straight from storage. */
+export async function downloadStepFile(stepFileName) {
+  if (!stepFileName) return { success: false, error: 'No STEP file attached to this job' };
+  let { data, error } = await supabase.storage.from('manufacturing-files').createSignedUrl(stepFileName, 60);
+  if (error) {
+    const retry = await supabase.storage.from('manufacturing-files').createSignedUrl(decodeURIComponent(stepFileName), 60);
+    data = retry.data;
+    error = retry.error;
+  }
+  if (error || !data?.signedUrl) return { success: false, error: error?.message || 'Could not locate the STEP file in storage' };
+  window.open(data.signedUrl, '_blank');
+  return { success: true };
+}
+
 /**
  * Load the most recent cam_jobs row for each of the given part IDs.
  * Returns a Map keyed by part_id -> job row.
