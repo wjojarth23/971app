@@ -7,11 +7,17 @@
  * NOT verified against real hardware or a simulator. Every generated file
  * carries a header warning to that effect - see HEADER_WARNING below.
  *
- * Roughing strategy: explicit step-down passes with a per-pass Z depth found
- * by intersecting the profile (linear interpolation between profile points),
- * rather than a canned G71 cycle. This trades a few extra lines of G-code for
- * portability - canned-cycle syntax varies enough between controls that
- * explicit moves are safer to get right without hardware to test against.
+ * Roughing strategy: explicit step-down passes, each one tracing the entire
+ * profile shape clamped to that pass's radius (an offset copy of the finish
+ * profile, progressively closer to size), rather than a canned G71 cycle or
+ * a single per-pass Z target. Tracing the whole profile every pass is what
+ * makes this correct for any profile shape - an earlier version computed a
+ * single Z depth per pass by intersecting the profile, which only produced
+ * a correct cut for a profile that happened to be a simple monotonic taper
+ * starting exactly at Z=0; real STEP-derived profiles aren't guaranteed to
+ * look like that. Canned-cycle syntax also varies enough between controls
+ * that explicit moves are safer to get right without hardware to test
+ * against.
  *
  * KNOWN LIMITATION: the finishing pass applies a simple constant offset for
  * tool nose radius (when cam_tools.nose_radius is set), not true vector
@@ -65,6 +71,18 @@ export function generateTurningGcode(profile, params = {}) {
     throw new Error(`Stock radius (${stockDiameter / 2}) is smaller than the profile's max radius (${maxProfileRadius}) - stock too small`);
   }
 
+  // Everything below assumes lathe convention: Z=0 at the face (where the
+  // tool starts, at a bit of clearance) and increasingly negative Z toward
+  // the chuck. The profile as extracted from the STEP file is in the file's
+  // own native coordinates instead (whatever origin the CAD model happened
+  // to use), which are not guaranteed to start anywhere near 0 - shift so
+  // the profile's first point (whichever end that is) sits at Z=0. Which
+  // physical end that actually is (vs. which end goes in the chuck) can't be
+  // determined from geometry alone - verify against the real part before
+  // cutting.
+  const zOrigin = profile[0].z;
+  profile = profile.map((p) => ({ x: p.x, z: zOrigin - p.z }));
+
   const lines = [...HEADER_WARNING, ''];
   lines.push('%');
   lines.push(`O${programNumber} (AUTOCAM TURNING)`);
@@ -75,40 +93,35 @@ export function generateTurningGcode(profile, params = {}) {
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
   lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, spindle on)`);
   lines.push('G95 (feed per revolution)');
-  lines.push(`G00 X${fmt(stockDiameter + 0.1)} Z0.1 (rapid to start clearance)`);
-
-  const zAtRadius = (radius) => {
-    for (let i = 0; i < profile.length - 1; i += 1) {
-      const p1 = profile[i];
-      const p2 = profile[i + 1];
-      const lo = Math.min(p1.x, p2.x);
-      const hi = Math.max(p1.x, p2.x);
-      if (radius >= lo && radius <= hi) {
-        if (p2.x === p1.x) return Math.max(p1.z, p2.z);
-        const t = (radius - p1.x) / (p2.x - p1.x);
-        return p1.z + t * (p2.z - p1.z);
-      }
-    }
-    // Radius is outside the profile's radius range entirely (e.g. beyond the
-    // largest step) - treat as "no material there", clear to the furthest Z.
-    return Math.min(...profile.map((p) => p.z));
-  };
+  const safeDiameter = stockDiameter + 0.1;
+  const startZ = profile[0].z + 0.1; // 0.1" of clearance in front of the face
+  lines.push(`G00 X${fmt(safeDiameter)} Z${fmt(startZ)} (rapid to start clearance)`);
 
   const minTargetRadius = Math.min(...profile.map((p) => p.x)) + finishAllowance;
   let currentRadius = stockDiameter / 2;
   let passCount = 0;
 
+  // Each pass traces the *entire* profile shape, clamped so radius never
+  // exceeds this pass's currentRadius - i.e. an offset copy of the finish
+  // profile, progressively closer to size. This correctly sweeps the full
+  // length of the part at every depth (unlike cutting to one single Z
+  // target, which only works for a profile that happens to be a simple
+  // monotonic taper starting exactly at the face) and handles any profile
+  // shape, not just a single taper.
   lines.push('(--- ROUGHING PASSES ---)');
   while (currentRadius > minTargetRadius) {
     currentRadius = Math.max(currentRadius - stepDown, minTargetRadius);
-    const dia = currentRadius * 2;
-    const zTarget = zAtRadius(currentRadius + finishAllowance);
-    lines.push(`G00 X${fmt(dia)} Z0.1`);
-    lines.push(`G01 Z${fmt(zTarget)} F${fmt(feedRough, 5)}`);
-    lines.push(`G01 X${fmt(dia + 0.05)} Z${fmt(zTarget + 0.05)} (chip-clear retract)`);
-    lines.push('G00 Z0.1');
     passCount += 1;
     if (passCount > 2000) throw new Error('Roughing pass count exceeded safety limit (2000) - check stepDown/profile');
+
+    lines.push(`(-- roughing pass ${passCount}, radius ${fmt(currentRadius)}" --)`);
+    lines.push(`G00 X${fmt(currentRadius * 2)} Z${fmt(startZ)}`);
+    for (const pt of profile) {
+      const cutRadius = Math.min(pt.x, currentRadius);
+      lines.push(`G01 X${fmt(cutRadius * 2)} Z${fmt(pt.z)} F${fmt(feedRough, 5)}`);
+    }
+    lines.push(`G00 X${fmt(safeDiameter)} (retract clear of stock)`);
+    lines.push(`G00 Z${fmt(startZ)} (back to start clearance)`);
   }
 
   lines.push('(--- FINISHING PASS ---)');
@@ -117,12 +130,13 @@ export function generateTurningGcode(profile, params = {}) {
     lines.push('(true nose-radius compensation needs per-segment vector offsets across arcs/)');
     lines.push('(corners, which this generator does not do yet. Verify chamfers/radii by hand.)');
   }
-  lines.push('G00 X0.0 Z0.1');
+  lines.push(`G00 X0.0 Z${fmt(startZ)}`);
   for (const pt of profile) {
     lines.push(`G01 X${fmt(pt.x * 2)} Z${fmt(pt.z)} F${fmt(feedFinish, 5)}`);
   }
 
-  lines.push(`G00 X${fmt(stockDiameter + 0.5)} Z2.0 M05 (retract, spindle off)`);
+  lines.push(`G00 X${fmt(safeDiameter)} (retract clear of stock)`);
+  lines.push(`G00 Z${fmt(startZ)} M05 (back to start clearance, spindle off)`);
   lines.push('M09 (coolant off)');
   lines.push('M30 (program end)');
   lines.push('%');
