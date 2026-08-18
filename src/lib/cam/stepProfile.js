@@ -158,12 +158,22 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
   // Sanity check: a real turned part's max radius should be meaningfully
   // smaller than half its length (it's a shaft, not a disc) - if not, the
   // "long axis" heuristic likely picked the wrong axis for this geometry.
+  //
+  // Threshold is length/2, not length: since `length` is defined as the
+  // single largest bounding-box axis span and `maxRadius` is computed from
+  // the other two (necessarily smaller-or-equal) axes via hypot of their
+  // half-spans, maxRadius is mathematically bounded at length/sqrt(2) =~
+  // 0.707*length whenever the axis choice is even plausible - `maxRadius >
+  // length` can never actually be true, which made an earlier version of
+  // this check unreachable dead code despite its own comment already
+  // describing a length/2 threshold. Found via a synthetic test that could
+  // not be made to fail no matter what geometry it was given.
   const maxRadius = Math.max(...profile.map((p) => p.x));
   const length = lengthMax - lengthMin;
-  if (maxRadius > length) {
+  if (maxRadius > length / 2) {
     throw new Error(
       `This doesn't look like a turned part: detected length ${length.toFixed(3)}" along the "${lengthAxis}" axis ` +
-      `but max radius ${maxRadius.toFixed(3)}" - wider than it is long. Check the STEP file is a single lathe part, not an assembly or a non-axisymmetric shape.`
+      `but max radius ${maxRadius.toFixed(3)}" - too wide relative to its length for a shaft. Check the STEP file is a single lathe part, not an assembly or a non-axisymmetric shape.`
     );
   }
 

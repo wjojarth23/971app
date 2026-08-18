@@ -59,7 +59,9 @@
   let jobFilterMachine = '';
   let jobFilterCreatedBy = '';
   let jobFilterSeason = '';
+  let showMoreFilters = false;
   $: jobSeasonOptions = getAllSeasonBuckets(jobs);
+  $: moreFiltersActive = !!(jobFilterMaterial || jobFilterTool || jobFilterMachine || jobFilterCreatedBy || jobFilterSeason);
   $: jobCreators = [...new Map(jobs.filter((j) => j.requester).map((j) => [j.requester.id, j.requester])).values()]
     .sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || ''));
   $: filteredJobs = jobs.filter((j) => {
@@ -137,6 +139,7 @@
   let routingParams = emptyRoutingParams();
 
   let showProfilesPanel = false;
+  let showToolsModal = false;
   let newMaterialName = '';
   let newToolName = '';
   let newToolDiameter = '';
@@ -561,6 +564,9 @@
         <Settings size={16} /> {showProfilesPanel ? 'Hide' : 'Manage'} Profiles
       </button>
     {/if}
+    <button class="btn btn-secondary" on:click={() => (showToolsModal = true)}>
+      <Wrench size={16} /> Manage Tools
+    </button>
     <button class="btn btn-primary" on:click={openNewJobModal}>
       <Upload size={16} /> New Job
     </button>
@@ -638,37 +644,46 @@
       </button>
     </div>
   </div>
+{/if}
 
-  <div class="card">
-    <h2>Materials &amp; Tools</h2>
-    <div class="profiles-grid">
-      <div class="profile-col">
-        <h3>Materials</h3>
-        {#each materials as m}
-          <div class="profile-row" class:disabled={!m.enabled}>
-            <span>{m.name}</span>
-            <button class="btn btn-ghost btn-sm" on:click={() => toggleEnabled('cam_materials', m)}>{m.enabled ? 'Disable' : 'Enable'}</button>
-          </div>
-        {/each}
-        <div class="input-group">
-          <input class="form-input" placeholder="New material name" bind:value={newMaterialName} />
-          <button class="btn btn-sm btn-nowrap" on:click={addMaterial}>Add</button>
-        </div>
+{#if showToolsModal}
+  <div class="modal-backdrop" on:click|self={() => (showToolsModal = false)} role="button" tabindex="0" on:keydown={(e) => { if (e.key === 'Escape') (showToolsModal = false); }}>
+    <div class="modal tools-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Materials &amp; Tools</h3>
+        <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showToolsModal = false)}><X size={18} /></button>
       </div>
-
-      <div class="profile-col">
-        <h3>Tools</h3>
-        {#each tools as t}
-          <div class="profile-row" class:disabled={!t.enabled}>
-            <span>{t.name}{t.diameter ? ` (${t.diameter}" dia)` : ''}{t.nose_radius ? ` R${t.nose_radius}` : ''}</span>
-            <button class="btn btn-ghost btn-sm" on:click={() => toggleEnabled('cam_tools', t)}>{t.enabled ? 'Disable' : 'Enable'}</button>
+      <div class="modal-body">
+        <div class="profiles-grid">
+          <div class="profile-col">
+            <h3>Materials</h3>
+            {#each materials as m}
+              <div class="profile-row" class:disabled={!m.enabled}>
+                <span>{m.name}</span>
+                <button class="btn btn-ghost btn-sm" on:click={() => toggleEnabled('cam_materials', m)}>{m.enabled ? 'Disable' : 'Enable'}</button>
+              </div>
+            {/each}
+            <div class="input-group">
+              <input class="form-input" placeholder="New material name" bind:value={newMaterialName} />
+              <button class="btn btn-sm btn-nowrap" on:click={addMaterial}>Add</button>
+            </div>
           </div>
-        {/each}
-        <div class="input-group">
-          <input class="form-input" placeholder="Tool name" bind:value={newToolName} />
-          <input class="form-input" placeholder="Diameter (in)" type="number" step="0.0625" bind:value={newToolDiameter} />
-          <input class="form-input" placeholder="Nose radius (in, lathe only)" type="number" step="0.001" bind:value={newToolNoseRadius} />
-          <button class="btn btn-sm btn-nowrap" on:click={addTool}>Add</button>
+
+          <div class="profile-col">
+            <h3>Tools</h3>
+            {#each tools as t}
+              <div class="profile-row" class:disabled={!t.enabled}>
+                <span>{t.name}{t.diameter ? ` (${t.diameter}" dia)` : ''}{t.nose_radius ? ` R${t.nose_radius}` : ''}</span>
+                <button class="btn btn-ghost btn-sm" on:click={() => toggleEnabled('cam_tools', t)}>{t.enabled ? 'Disable' : 'Enable'}</button>
+              </div>
+            {/each}
+            <div class="input-group">
+              <input class="form-input" placeholder="Tool name" bind:value={newToolName} />
+              <input class="form-input" placeholder="Diameter (in)" type="number" step="0.0625" bind:value={newToolDiameter} />
+              <input class="form-input" placeholder="Nose radius (in, lathe only)" type="number" step="0.001" bind:value={newToolNoseRadius} />
+              <button class="btn btn-sm btn-nowrap" on:click={addTool}>Add</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -677,7 +692,7 @@
 
 {#if !loading && jobs.length > 0}
   <div class="card">
-    <div class="filters" style="--filters-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr;">
+    <div class="filters" style="--filters-columns: 2fr 1fr 1fr;">
       <div class="form-group">
         <label class="form-label"><Search size={16} /> Search</label>
         <input type="text" class="form-input" placeholder="Search by job or part name..." bind:value={jobSearchTerm} />
@@ -700,44 +715,54 @@
           {/each}
         </select>
       </div>
-      <div class="form-group">
-        <label class="form-label"><Filter size={16} /> Material</label>
-        <select class="form-select" bind:value={jobFilterMaterial}>
-          <option value="">All Materials</option>
-          {#each materials as m}
-            <option value={m.id}>{m.name}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label"><Filter size={16} /> Tool</label>
-        <select class="form-select" bind:value={jobFilterTool}>
-          <option value="">All Tools</option>
-          {#each tools as t}
-            <option value={t.id}>{t.name}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label"><Filter size={16} /> Machine</label>
-        <select class="form-select" bind:value={jobFilterMachine}>
-          <option value="">All Machines</option>
-          {#each machines as mc}
-            <option value={mc.id}>{mc.name}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label"><Filter size={16} /> Created By</label>
-        <select class="form-select" bind:value={jobFilterCreatedBy}>
-          <option value="">Everyone</option>
-          {#each jobCreators as c}
-            <option value={c.id}>{c.full_name || c.email}</option>
-          {/each}
-        </select>
-      </div>
-      <SeasonFilter options={jobSeasonOptions} bind:value={jobFilterSeason} />
     </div>
+
+    <button type="button" class="more-filters-toggle" on:click={() => (showMoreFilters = !showMoreFilters)}>
+      {showMoreFilters ? '− Fewer filters' : '+ More filters'}
+      {#if moreFiltersActive && !showMoreFilters}<span class="more-filters-dot" title="A hidden filter is active"></span>{/if}
+    </button>
+
+    {#if showMoreFilters}
+      <div class="filters" style="--filters-columns: 1fr 1fr 1fr 1fr;">
+        <div class="form-group">
+          <label class="form-label"><Filter size={16} /> Material</label>
+          <select class="form-select" bind:value={jobFilterMaterial}>
+            <option value="">All Materials</option>
+            {#each materials as m}
+              <option value={m.id}>{m.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label"><Filter size={16} /> Tool</label>
+          <select class="form-select" bind:value={jobFilterTool}>
+            <option value="">All Tools</option>
+            {#each tools as t}
+              <option value={t.id}>{t.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label"><Filter size={16} /> Machine</label>
+          <select class="form-select" bind:value={jobFilterMachine}>
+            <option value="">All Machines</option>
+            {#each machines as mc}
+              <option value={mc.id}>{mc.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label"><Filter size={16} /> Created By</label>
+          <select class="form-select" bind:value={jobFilterCreatedBy}>
+            <option value="">Everyone</option>
+            {#each jobCreators as c}
+              <option value={c.id}>{c.full_name || c.email}</option>
+            {/each}
+          </select>
+        </div>
+        <SeasonFilter options={jobSeasonOptions} bind:value={jobFilterSeason} />
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -810,23 +835,19 @@
             <td on:click|stopPropagation class="output-cell">
               <div class="output-actions">
                 {#if job.step_file_name}
-                  <button class="btn btn-secondary btn-sm" title="View 3D CAD" on:click={() => openCadPreview(job)}>
-                    <Box size={14} /> View CAD
-                  </button>
-                  <button class="btn btn-secondary btn-sm" title="Download the source STEP file" on:click={() => handleInstallCad(job)}>
-                    <Download size={14} /> Install CAD
-                  </button>
+                  <span class="output-action-group">
+                    <button class="btn btn-icon" data-tooltip="View CAD" aria-label="View CAD" on:click={() => openCadPreview(job)}><Box size={15} /></button>
+                    <button class="btn btn-icon" data-tooltip="Install STEP" aria-label="Install STEP file" on:click={() => handleInstallCad(job)}><Download size={15} /></button>
+                  </span>
                 {/if}
                 {#if job.status === 'completed' && job.gcode}
-                  <button class="btn btn-secondary btn-sm" title="View toolpath simulation" on:click={() => openToolpathPreview(job)}>
-                    <Route size={14} /> View Toolpath
-                  </button>
-                  <button class="btn btn-secondary btn-sm" title={job.gcode_file_name || 'output.ngc'} on:click={() => downloadGcodeBlob(job)}>
-                    <Download size={14} /> Install NGC
-                  </button>
-                  <a class="btn btn-secondary btn-sm" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer" title="ncviewer.com has no way to auto-load a file by link - download the NGC above, then drag it in">
-                    <ExternalLink size={14} /> Open ncviewer.com
-                  </a>
+                  <span class="output-action-group">
+                    <button class="btn btn-icon" data-tooltip="View Toolpath" aria-label="View toolpath simulation" on:click={() => openToolpathPreview(job)}><Route size={15} /></button>
+                    <button class="btn btn-secondary btn-sm" title={job.gcode_file_name || 'output.ngc'} on:click={() => downloadGcodeBlob(job)}>
+                      <Download size={14} /> Install NGC
+                    </button>
+                    <a class="btn btn-icon" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer" data-tooltip="Open ncviewer.com" aria-label="Open ncviewer.com - download the NGC first, then drag it in"><ExternalLink size={15} /></a>
+                  </span>
                 {/if}
               </div>
               {#if job.status === 'failed' && job.errors?.length}
@@ -1287,9 +1308,16 @@
 
   .input-group {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 0.75rem;
   }
+  .input-group .form-input {
+    min-width: 90px;
+    flex: 1 1 90px;
+  }
+
+  .tools-modal { width: min(800px, 95vw); max-width: 95vw; }
 
   .name-line {
     display: flex;
@@ -1337,6 +1365,27 @@
     margin: -0.5rem 0 1rem;
   }
 
+  .more-filters-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: none;
+    border: none;
+    padding: 0.4rem 0;
+    margin-top: 0.25rem;
+    color: var(--accent-strong, #1d4ed8);
+    font-size: var(--font-sm, 0.9rem);
+    cursor: pointer;
+  }
+  .more-filters-toggle:hover { text-decoration: underline; }
+  .more-filters-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-strong, #1d4ed8);
+    display: inline-block;
+  }
+
   .cad-modal { width: min(900px, 95vw); max-width: 95vw; }
   .toolpath-modal { width: min(700px, 95vw); max-width: 95vw; }
 
@@ -1357,11 +1406,52 @@
     margin-top: 0.4rem;
   }
 
-  .output-cell { min-width: 260px; }
+  .output-cell { min-width: 160px; }
   .output-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .output-action-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  /* Small hover tooltip for icon-only buttons - the native title attribute
+     has an inconsistent, sluggish browser delay, easy to miss on a row of
+     plain icons with no visible label at all. */
+  [data-tooltip] {
+    position: relative;
+  }
+  [data-tooltip]:hover::after,
+  [data-tooltip]:focus-visible::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text, #1a1a1a);
+    color: var(--background, #fff);
+    padding: 0.25rem 0.55rem;
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--font-xs, 0.75rem);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 20;
+  }
+  /* Small arrow pointing from the tooltip down to the button. */
+  [data-tooltip]:hover::before,
+  [data-tooltip]:focus-visible::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 1px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--text, #1a1a1a);
+    z-index: 20;
   }
 
   .job-row-progress {
