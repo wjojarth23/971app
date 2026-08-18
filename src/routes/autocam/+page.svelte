@@ -842,11 +842,11 @@
 
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Operation</label>
+            <span class="form-label">Operation</span>
             <p class="cam-form-hint">{editingJob.operation_type} (fixed - create a new job to change this)</p>
           </div>
           <div class="form-group">
-            <label class="form-label" for="edit-job-status">Status</label>
+            <span class="form-label">Status</span>
             <p class="cam-form-hint"><span class="status-badge {jobStatusClass(editingJob)}">{camJobStatusLabel(editingJob.status)}</span></p>
           </div>
         </div>

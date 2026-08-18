@@ -1,3 +1,4 @@
+import './lib/server/dnsFallback.js'; // must run before anything else does a network request - see file for why
 import * as Sentry from '@sentry/sveltekit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { env } from '$env/dynamic/public';

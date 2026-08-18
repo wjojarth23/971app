@@ -22,6 +22,19 @@ async function setProgress(supabase, jobId, progress, progress_message) {
   }
 }
 
+class CancelledError extends Error {}
+
+// Cheap early-exit check, called between stages: if something else (the
+// "Cancel" button on a stuck job, or a delete) has already moved this job
+// out of "processing", stop doing work immediately instead of continuing to
+// grind on a job nobody's waiting on anymore, and — critically — instead of
+// eventually overwriting that cancelled/deleted state with a stale
+// "completed" a few hundred ms later.
+async function checkCancelled(supabase, jobId) {
+  const { data } = await supabase.from('cam_jobs').select('status').eq('id', jobId).single();
+  if (data && data.status !== 'processing') throw new CancelledError(`Job was ${data.status} (cancelled) before generation finished`);
+}
+
 // Best-effort terminal-failure write - also never allowed to throw. This is
 // the single most important guarantee in this file: no matter what breaks
 // above (a thrown exception, a bad STEP file, a Supabase hiccup), the job
@@ -94,10 +107,12 @@ export async function POST({ request }) {
       throw new Error(downloadError?.message || 'Could not download the STEP file from storage');
     }
 
+    await checkCancelled(supabase, jobId);
     await setProgress(supabase, jobId, 20, 'Loading STEP geometry parser...');
     const stepBuffer = new Uint8Array(await fileBlob.arrayBuffer());
     const meshes = await readStepMeshes(stepBuffer);
 
+    await checkCancelled(supabase, jobId);
     await setProgress(supabase, jobId, 55, 'Extracting toolpath geometry...');
     const params = { ...(job.params || {}) };
     if (job.cam_tools?.nose_radius && params.noseRadius === undefined) params.noseRadius = job.cam_tools.nose_radius;
@@ -106,17 +121,22 @@ export async function POST({ request }) {
     let result;
     if (job.operation_type === 'turning') {
       const profile = extractTurningProfileFromMeshes(meshes);
+      await checkCancelled(supabase, jobId);
       await setProgress(supabase, jobId, 80, 'Generating turning G-code...');
       result = generateTurningGcode(profile, params);
     } else {
       const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
       if (params.targetDepth === undefined && thickness) params.targetDepth = thickness;
+      await checkCancelled(supabase, jobId);
       await setProgress(supabase, jobId, 80, 'Generating routing G-code...');
       result = generateRoutingGcode(contours, params);
     }
 
     await setProgress(supabase, jobId, 95, 'Saving...');
-    const { error: updateError } = await supabase
+    // Conditioned on status still being 'processing' (compare-and-swap) so a
+    // cancel that lands in the split second between the last check above and
+    // this write can never get silently clobbered back to "completed".
+    const { data: updateData, error: updateError } = await supabase
       .from('cam_jobs')
       .update({
         status: 'completed',
@@ -127,11 +147,20 @@ export async function POST({ request }) {
         progress: 100,
         progress_message: 'Done'
       })
-      .eq('id', jobId);
+      .eq('id', jobId)
+      .eq('status', 'processing')
+      .select('id');
     if (updateError) throw new Error(updateError.message);
+    if (!updateData?.length) throw new CancelledError('Job was cancelled just before it finished');
 
     return json({ success: true, jobId, stats: result.stats });
   } catch (e) {
+    if (e instanceof CancelledError) {
+      // The job's status already reflects whatever cancelled it (set by the
+      // "Cancel" button, a delete, etc.) - don't overwrite that with a
+      // generic failure message.
+      return json({ success: false, error: e.message, cancelled: true }, { status: 409 });
+    }
     const message = e?.message || String(e) || 'CAM generation failed';
     await markFailed(supabase, jobId, message);
     return json({ success: false, error: message }, { status: 500 });
