@@ -104,13 +104,28 @@ async function triggerGenerationAndRefetch(jobId, onProgress) {
   let fetchError = null;
   let fetchSettled = false;
 
+  // The endpoint builds its own Supabase client from whatever Authorization
+  // header this request carries (src/routes/api/cam-generate/+server.js) -
+  // without the current session's access token attached here, that client
+  // has no real identity, cam_jobs' RLS policies (all scoped to
+  // "authenticated") deny every query, and the endpoint returns a fast 404
+  // "no rows" that this function was never checking for anyway (it only
+  // watches the database row, not this response) - so the job just sits at
+  // "queued" forever until the timeout below gives up. Real bug, not a
+  // hypothetical: this is what was actually causing every failure tonight.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token;
+
   // Fired but deliberately not awaited directly - the server writes progress
   // and the final status straight to the job row as it goes, so polling that
   // row is what actually drives this function, not this promise. Awaiting it
   // directly would risk hanging forever if the request itself never settles.
   fetch('/api/cam-generate', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {})
+    },
     body: JSON.stringify({ jobId })
   })
     .catch((e) => { fetchError = e; console.error('CAM generation request failed', e); })
