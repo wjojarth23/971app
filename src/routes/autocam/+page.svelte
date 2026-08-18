@@ -9,6 +9,8 @@
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   import CamParamFields from '$lib/components/CamParamFields.svelte';
+  import CadViewer from '$lib/components/CadViewer.svelte';
+  import ToolpathViewer from '$lib/components/ToolpathViewer.svelte';
   import { toastActions } from '$lib/toast.js';
   import {
     queueCamJobForPart,
@@ -26,7 +28,7 @@
     partHasStepFile,
     CAM_GCODE_FORMAT
   } from '$lib/camJobs.js';
-  import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2 } from 'lucide-svelte';
+  import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2, Search, Filter, Box, Route } from 'lucide-svelte';
 
   let user = null;
   let loading = true;
@@ -34,6 +36,42 @@
   let materials = [];
   let tools = [];
   let machines = [];
+
+  // Jobs list filters - mirrors the filter bar on /manufacture (search,
+  // status, project-like dropdowns, season) adapted to what a CAM job
+  // actually has: operation/material/tool/machine/creator instead of
+  // workflow/project.
+  const JOB_STATUSES = [
+    { value: 'queued', label: 'Queued' },
+    { value: 'claimed', label: 'Claimed' },
+    { value: 'processing', label: 'Processing' },
+    { value: 'completed', label: 'Completed' },
+    { value: 'failed', label: 'Failed' },
+    { value: 'rejected', label: 'Rejected' }
+  ];
+  let jobSearchTerm = '';
+  let jobFilterOperation = '';
+  let jobFilterStatus = '';
+  let jobFilterMaterial = '';
+  let jobFilterTool = '';
+  let jobFilterMachine = '';
+  let jobFilterCreatedBy = '';
+  let jobFilterSeason = '';
+  $: jobSeasonOptions = getAllSeasonBuckets(jobs);
+  $: jobCreators = [...new Map(jobs.filter((j) => j.requester).map((j) => [j.requester.id, j.requester])).values()]
+    .sort((a, b) => (a.full_name || a.email || '').localeCompare(b.full_name || b.email || ''));
+  $: filteredJobs = jobs.filter((j) => {
+    const name = jobDisplayName(j).toLowerCase();
+    const matchesSearch = !jobSearchTerm || name.includes(jobSearchTerm.toLowerCase()) || (j.parts?.name || '').toLowerCase().includes(jobSearchTerm.toLowerCase());
+    const matchesOperation = !jobFilterOperation || j.operation_type === jobFilterOperation;
+    const matchesStatus = !jobFilterStatus || j.status === jobFilterStatus;
+    const matchesMaterial = !jobFilterMaterial || j.material_id === jobFilterMaterial;
+    const matchesTool = !jobFilterTool || j.tool_id === jobFilterTool;
+    const matchesMachine = !jobFilterMachine || j.machine_id === jobFilterMachine;
+    const matchesCreatedBy = !jobFilterCreatedBy || j.requested_by === jobFilterCreatedBy;
+    const matchesSeason = passesSeasonFilter(j.created_at, jobFilterSeason);
+    return matchesSearch && matchesOperation && matchesStatus && matchesMaterial && matchesTool && matchesMachine && matchesCreatedBy && matchesSeason;
+  });
 
   // Same status set shown on /manufacture's filter bar (combined across all workflows).
   const PART_STATUSES = [
@@ -85,6 +123,8 @@
   let editDeleting = false;
   let editProgress = 0;
   let editProgressMessage = '';
+  let showJobCadModal = false;
+  let showJobToolpathModal = false;
 
   // Part-picker filters - mirrors the filter bar on /manufacture so parts are
   // easy to find the same way they are there.
@@ -145,7 +185,18 @@
       .select('*, parts(name, project_id), cam_materials(name), cam_tools(name), cam_machines(name)')
       .order('created_at', { ascending: false })
       .limit(200);
-    if (!error) jobs = data || [];
+    if (error) return;
+
+    // requested_by is a FK to auth.users, not public.user_profiles, so
+    // PostgREST can't embed a join for it directly - resolve display names
+    // with a separate batch lookup instead.
+    const requesterIds = [...new Set((data || []).map((j) => j.requested_by).filter(Boolean))];
+    let requesterById = new Map();
+    if (requesterIds.length) {
+      const { data: profiles } = await supabase.from('user_profiles').select('id, full_name, email').in('id', requesterIds);
+      requesterById = new Map((profiles || []).map((p) => [p.id, p]));
+    }
+    jobs = (data || []).map((j) => ({ ...j, requester: j.requested_by ? requesterById.get(j.requested_by) || null : null }));
   }
 
   async function loadReferenceData() {
@@ -304,6 +355,8 @@
   function closeJobDetailModal() {
     showJobDetailModal = false;
     editingJob = null;
+    showJobCadModal = false;
+    showJobToolpathModal = false;
   }
 
   async function saveJobName() {
@@ -585,6 +638,72 @@
   </div>
 {/if}
 
+{#if !loading && jobs.length > 0}
+  <div class="card">
+    <div class="filters" style="--filters-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr;">
+      <div class="form-group">
+        <label class="form-label"><Search size={16} /> Search</label>
+        <input type="text" class="form-input" placeholder="Search by job or part name..." bind:value={jobSearchTerm} />
+      </div>
+      <div class="form-group">
+        <label class="form-label"><Filter size={16} /> Operation</label>
+        <select class="form-select" bind:value={jobFilterOperation}>
+          <option value="">All Operations</option>
+          <option value="turning">Turning</option>
+          <option value="routing">Routing</option>
+          <option value="milling">Milling</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label"><Filter size={16} /> Status</label>
+        <select class="form-select" bind:value={jobFilterStatus}>
+          <option value="">All Statuses</option>
+          {#each JOB_STATUSES as s}
+            <option value={s.value}>{s.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label"><Filter size={16} /> Material</label>
+        <select class="form-select" bind:value={jobFilterMaterial}>
+          <option value="">All Materials</option>
+          {#each materials as m}
+            <option value={m.id}>{m.name}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label"><Filter size={16} /> Tool</label>
+        <select class="form-select" bind:value={jobFilterTool}>
+          <option value="">All Tools</option>
+          {#each tools as t}
+            <option value={t.id}>{t.name}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label"><Filter size={16} /> Machine</label>
+        <select class="form-select" bind:value={jobFilterMachine}>
+          <option value="">All Machines</option>
+          {#each machines as mc}
+            <option value={mc.id}>{mc.name}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label"><Filter size={16} /> Created By</label>
+        <select class="form-select" bind:value={jobFilterCreatedBy}>
+          <option value="">Everyone</option>
+          {#each jobCreators as c}
+            <option value={c.id}>{c.full_name || c.email}</option>
+          {/each}
+        </select>
+      </div>
+      <SeasonFilter options={jobSeasonOptions} bind:value={jobFilterSeason} />
+    </div>
+  </div>
+{/if}
+
 {#if loading}
   <div class="card"><p>Loading...</p></div>
 {:else if jobs.length === 0}
@@ -592,6 +711,11 @@
     <Cpu size={48} />
     <h3>No AutoCAM jobs yet</h3>
     <p>Click "New Job" to generate your first G-code file.</p>
+  </div>
+{:else if filteredJobs.length === 0}
+  <div class="card empty-state">
+    <Filter size={48} />
+    <h3>No jobs match these filters</h3>
   </div>
 {:else}
   <div class="table-container">
@@ -605,11 +729,12 @@
           <th>Machine</th>
           <th>Status</th>
           <th>Created</th>
+          <th>Created By</th>
           <th>Output</th>
         </tr>
       </thead>
       <tbody>
-        {#each jobs as job (job.id)}
+        {#each filteredJobs as job (job.id)}
           {@const bucket = getSeasonBucket(job.created_at)}
           <tr class="job-row" on:click={() => openJobDetail(job)} tabindex="0" role="button" on:keydown={(e) => { if (e.key === 'Enter') openJobDetail(job); }}>
             <td>
@@ -644,6 +769,7 @@
                 <span class="tag season-tag {bucket.isOffseason ? 'tag-offseason' : 'tag-season'}">{bucket.label}</span>
               {/if}
             </td>
+            <td>{job.requester?.full_name || job.requester?.email || '—'}</td>
             <td on:click|stopPropagation>
               {#if job.status === 'completed' && job.gcode}
                 <button class="btn btn-secondary btn-sm" on:click={() => downloadGcodeBlob(job)}>
@@ -851,6 +977,15 @@
           </div>
         </div>
 
+        <div class="view-buttons-row">
+          <button class="btn btn-secondary btn-sm" on:click={() => (showJobCadModal = true)} disabled={!editingJob.step_file_name}>
+            <Box size={14} /> View CAD
+          </button>
+          <button class="btn btn-secondary btn-sm" on:click={() => (showJobToolpathModal = true)} disabled={editingJob.status !== 'completed' || !editingJob.gcode} title={editingJob.status !== 'completed' ? 'Only available once the job has completed' : ''}>
+            <Route size={14} /> View {editingJob.operation_type === 'turning' ? 'Turning' : 'Routing'} Toolpath
+          </button>
+        </div>
+
         {#if editingJob.operation_type === 'turning'}
           <CamParamFields operation="turning" bind:params={editParams} mode="job" />
         {:else}
@@ -901,6 +1036,35 @@
             <span class="generation-progress-label">{editProgress}% - {editProgressMessage}</span>
           </div>
         {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showJobCadModal && editingJob}
+  <div class="modal-backdrop" on:click|self={() => (showJobCadModal = false)} role="button" tabindex="0" on:keydown={(e) => { if (e.key === 'Escape') (showJobCadModal = false); }}>
+    <div class="modal cad-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>CAD Preview - {jobDisplayName(editingJob)}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showJobCadModal = false)}><X size={18} /></button>
+      </div>
+      <div class="modal-body">
+        <CadViewer part={null} stepFileName={editingJob.step_file_name} />
+        <p class="cam-form-hint">Drag to rotate · scroll to zoom · right-drag to pan</p>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showJobToolpathModal && editingJob}
+  <div class="modal-backdrop" on:click|self={() => (showJobToolpathModal = false)} role="button" tabindex="0" on:keydown={(e) => { if (e.key === 'Escape') (showJobToolpathModal = false); }}>
+    <div class="modal toolpath-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>{editingJob.operation_type === 'turning' ? 'Turning' : 'Routing'} Toolpath - {jobDisplayName(editingJob)}</h3>
+        <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showJobToolpathModal = false)}><X size={18} /></button>
+      </div>
+      <div class="modal-body">
+        <ToolpathViewer gcode={editingJob.gcode} operationType={editingJob.operation_type} />
       </div>
     </div>
   </div>
@@ -1104,6 +1268,15 @@
     outline: 2px solid var(--accent-strong, #1d4ed8);
     outline-offset: -2px;
   }
+
+  .view-buttons-row {
+    display: flex;
+    gap: 0.5rem;
+    margin: -0.5rem 0 1rem;
+  }
+
+  .cad-modal { width: min(900px, 95vw); max-width: 95vw; }
+  .toolpath-modal { width: min(700px, 95vw); max-width: 95vw; }
 
   .modal-footer-actions {
     display: flex;
