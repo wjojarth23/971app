@@ -1183,17 +1183,30 @@
         <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showNcviewerModal = false)}><X size={18} /></button>
       </div>
       <div class="modal-body ncviewer-modal-body">
-        <div class="ncviewer-banner">
-          {#if ncviewerCopyOk === true}
-            <span><Copy size={14} /> G-code copied to your clipboard - paste it into ncviewer's editor below.</span>
-          {:else if ncviewerCopyOk === false}
-            <span><AlertTriangle size={14} /> Couldn't auto-copy (your browser may be blocking clipboard access).</span>
+        {#if ncviewerCopyOk === true}
+          <div class="ncviewer-banner ncviewer-banner-success">
+            <Copy size={20} />
+            <div>
+              <strong>G-code copied to your clipboard.</strong>
+              <p>Click into the editor pane below, then paste (Cmd/Ctrl+V) to load it.</p>
+            </div>
+            <a class="btn btn-secondary btn-sm ncviewer-fallback-link" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer">
+              <ExternalLink size={14} /> Open in a new tab instead
+            </a>
+          </div>
+        {:else if ncviewerCopyOk === false}
+          <div class="ncviewer-banner ncviewer-banner-warning">
+            <AlertTriangle size={20} />
+            <div>
+              <strong>Couldn't auto-copy the G-code.</strong>
+              <p>Your browser may be blocking clipboard access - click "Copy G-code" below, then paste it into the editor pane.</p>
+            </div>
             <button class="btn btn-secondary btn-sm" on:click={recopyNcviewerGcode}><Copy size={14} /> Copy G-code</button>
-          {/if}
-          <a class="btn btn-secondary btn-sm ncviewer-fallback-link" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer">
-            <ExternalLink size={14} /> Open in a new tab instead
-          </a>
-        </div>
+            <a class="btn btn-secondary btn-sm ncviewer-fallback-link" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer">
+              <ExternalLink size={14} /> Open in a new tab instead
+            </a>
+          </div>
+        {/if}
         <p class="cam-form-hint">
           If the embedded view below doesn't load, ncviewer.com's own server is blocking embedding (not something this app controls) - use "Open in a new tab" above, the clipboard copy still works the same way.
         </p>
@@ -1455,7 +1468,7 @@
 
   .cad-modal { width: min(900px, 95vw); max-width: 95vw; }
   .toolpath-modal { width: min(700px, 95vw); max-width: 95vw; }
-  .ncviewer-modal { width: min(1100px, 96vw); max-width: 96vw; height: min(85vh, 900px); }
+  .ncviewer-modal { width: min(1500px, 98vw); max-width: 98vw; height: min(94vh, 1100px); }
   .ncviewer-modal-body {
     display: flex;
     flex-direction: column;
@@ -1464,19 +1477,28 @@
   }
   .ncviewer-banner {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--surface-2, var(--background));
+    padding: 0.65rem 0.85rem;
     border-radius: var(--radius-sm, 4px);
-    font-size: var(--font-sm, 0.9rem);
+    border: 1px solid;
   }
-  .ncviewer-banner span { display: inline-flex; align-items: center; gap: 0.4rem; }
-  .ncviewer-fallback-link { margin-left: auto; }
+  .ncviewer-banner strong { font-size: 1.05rem; }
+  .ncviewer-banner p { margin: 0.25rem 0 0; font-size: var(--font-sm, 0.9rem); }
+  .ncviewer-banner-success {
+    background: var(--green-soft, #dcfce7);
+    color: var(--green-strong, #15803d);
+    border-color: var(--green-base, #22c55e);
+  }
+  .ncviewer-banner-warning {
+    background: var(--yellow-soft, #fef9c3);
+    color: var(--yellow-strong, #854d0e);
+    border-color: var(--yellow-base, #ca8a04);
+  }
+  .ncviewer-fallback-link { margin-left: auto; flex-shrink: 0; }
   .ncviewer-iframe {
     flex: 1;
-    min-height: 400px;
+    min-height: 500px;
     width: 100%;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm, 4px);
