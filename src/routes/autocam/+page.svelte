@@ -30,7 +30,7 @@
     partHasStepFile,
     CAM_GCODE_FORMAT
   } from '$lib/camJobs.js';
-  import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2, Search, Filter, Box, Route } from 'lucide-svelte';
+  import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2, Search, Filter, Box, Route, ExternalLink } from 'lucide-svelte';
 
   let user = null;
   let loading = true;
@@ -824,6 +824,9 @@
                   <button class="btn btn-secondary btn-sm" title={job.gcode_file_name || 'output.ngc'} on:click={() => downloadGcodeBlob(job)}>
                     <Download size={14} /> Install NGC
                   </button>
+                  <a class="btn btn-secondary btn-sm" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer" title="ncviewer.com has no way to auto-load a file by link - download the NGC above, then drag it in">
+                    <ExternalLink size={14} /> Open ncviewer.com
+                  </a>
                 {/if}
               </div>
               {#if job.status === 'failed' && job.errors?.length}
@@ -1031,6 +1034,11 @@
           <button class="btn btn-secondary btn-sm" on:click={() => (showJobToolpathModal = true)} disabled={editingJob.status !== 'completed' || !editingJob.gcode} title={editingJob.status !== 'completed' ? 'Only available once the job has completed' : ''}>
             <Route size={14} /> View {editingJob.operation_type === 'turning' ? 'Turning' : 'Routing'} Toolpath
           </button>
+          {#if editingJob.status === 'completed' && editingJob.gcode}
+            <a class="btn btn-secondary btn-sm" href="https://ncviewer.com" target="_blank" rel="noopener noreferrer" title="ncviewer.com has no way to auto-load a file by link - download the NGC, then drag it in">
+              <ExternalLink size={14} /> Open ncviewer.com
+            </a>
+          {/if}
         </div>
 
         {#if editingJob.operation_type === 'turning'}
