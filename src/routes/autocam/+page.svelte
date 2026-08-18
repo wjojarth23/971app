@@ -89,7 +89,7 @@
   ];
 
   function emptyTurningParams() {
-    return { stockDiameter: '', stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004, surfaceSpeed: 150, maxRpm: 2500 };
+    return { stockDiameter: '', stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004, surfaceSpeed: 150, maxRpm: 2500, setupMode: 'single', flipAt: '' };
   }
   function emptyRoutingParams() {
     return { toolDiameter: 0.25, stepDown: 0.1, targetDepth: '', tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000, toolSequence: [] };
@@ -287,11 +287,17 @@
   // Numeric fields get coerced to Number(); toolSequence (routing multi-tool,
   // see implementations/toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
   // toolNumber, label} objects and must pass through untouched.
+  const NON_NUMERIC_PARAM_KEYS = new Set(['toolSequence', 'setupMode']);
+
   function serializeParams(raw) {
     const params = {};
     for (const [key, value] of Object.entries(raw)) {
       if (key === 'toolSequence') {
         if (Array.isArray(value) && value.length > 0) params.toolSequence = value;
+        continue;
+      }
+      if (NON_NUMERIC_PARAM_KEYS.has(key)) {
+        if (value !== '' && value !== null && value !== undefined) params[key] = value;
         continue;
       }
       if (value !== '' && value !== null && value !== undefined) params[key] = Number(value);

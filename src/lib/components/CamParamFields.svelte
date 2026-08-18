@@ -17,6 +17,23 @@
 </script>
 
 {#if operation === 'turning'}
+  <div class="form-group">
+    <label class="form-label" for="cf-setup-mode">Setup</label>
+    <select id="cf-setup-mode" class="form-select" bind:value={params.setupMode}>
+      <option value="single">Single setup - cantilevered from the chuck</option>
+      <option value="tailstock">Tailstock-supported - single setup, far end braced by a live center</option>
+      <option value="flip">Flip-turning - two setups, manual re-chuck partway through</option>
+    </select>
+    <p class="text-muted">Long/thin parts can't just cantilever safely out of the chuck - pick tailstock support if the machine has one, or flip-turning if it needs a real re-chuck.</p>
+  </div>
+  {#if mode === 'job' && params.setupMode === 'flip'}
+    <div class="form-group">
+      <label class="form-label" for="cf-flip-at">Flip point (in from the face)</label>
+      <input id="cf-flip-at" class="form-input" type="number" step="0.1" bind:value={params.flipAt} placeholder="Required for flip-turning" />
+      <p class="text-muted">Setup 1 cuts this much from the face; setup 2 (after a manual re-chuck) cuts the rest.</p>
+    </div>
+  {/if}
+
   <div class="form-row">
     {#if mode === 'job'}
       <div class="form-group">
