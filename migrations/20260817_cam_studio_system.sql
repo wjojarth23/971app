@@ -40,7 +40,7 @@ ALTER TABLE public.cam_materials ADD COLUMN IF NOT EXISTS created_at timestamp w
 ALTER TABLE public.cam_materials ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
 DO $$ BEGIN
   ALTER TABLE public.cam_materials ADD CONSTRAINT cam_materials_name_key UNIQUE (name);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS public.cam_tools (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -65,7 +65,7 @@ ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS created_at timestamp with 
 ALTER TABLE public.cam_tools ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
 DO $$ BEGIN
   ALTER TABLE public.cam_tools ADD CONSTRAINT cam_tools_name_key UNIQUE (name);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 
 -- Machine profiles: a named, reusable bundle of default settings for a
 -- specific physical machine, so parameters don't have to be re-entered for
@@ -98,19 +98,19 @@ ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS created_at timestamp wi
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_name_key UNIQUE (name);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_operation_type_check CHECK (operation_type = ANY (ARRAY['turning'::text, 'routing'::text, 'milling'::text]));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_default_material_id_fkey FOREIGN KEY (default_material_id) REFERENCES public.cam_materials(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_default_tool_id_fkey FOREIGN KEY (default_tool_id) REFERENCES public.cam_tools(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_machines ADD CONSTRAINT cam_machines_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 
 -- ============================================================================
 -- CAM JOBS: the queue
@@ -173,28 +173,28 @@ ALTER TABLE public.cam_jobs DROP COLUMN IF EXISTS profile_file_name;
 
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_source_type_check CHECK (source_type = ANY (ARRAY['upload'::text, 'part'::text]));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_operation_type_check CHECK (operation_type = ANY (ARRAY['turning'::text, 'routing'::text, 'milling'::text]));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_status_check CHECK (status = ANY (ARRAY['queued'::text, 'claimed'::text, 'processing'::text, 'completed'::text, 'failed'::text, 'rejected'::text]));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_material_id_fkey FOREIGN KEY (material_id) REFERENCES public.cam_materials(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_tool_id_fkey FOREIGN KEY (tool_id) REFERENCES public.cam_tools(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES public.cam_machines(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE public.cam_jobs ADD CONSTRAINT cam_jobs_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES auth.users(id) ON DELETE SET NULL;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_cam_jobs_status ON public.cam_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_cam_jobs_part_id ON public.cam_jobs(part_id);
