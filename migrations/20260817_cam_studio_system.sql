@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS public.cam_jobs (
   errors text[],
   warnings text[],
   stats jsonb,
+  progress integer NOT NULL DEFAULT 0, -- 0-100, written incrementally during generation so the UI can show real progress instead of an indefinite spinner
+  progress_message text, -- short human-readable stage label, e.g. "Extracting toolpath geometry..."
   requested_by uuid,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
@@ -160,6 +162,8 @@ ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS gcode_format text NOT NULL 
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS errors text[];
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS warnings text[];
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS stats jsonb;
+ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS progress integer NOT NULL DEFAULT 0;
+ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS progress_message text;
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS requested_by uuid;
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();

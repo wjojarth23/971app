@@ -65,22 +65,63 @@ async function uploadStepFile(file) {
   return error ? { error: error.message } : { path: storagePath };
 }
 
-// Calls the server-side generator immediately after a job is queued - there
-// is no external Runner for turning/routing, generation is synchronous math
-// that finishes in well under a second. Returns the job row after generation
-// (status will be 'completed' or 'failed' by the time this resolves).
-async function triggerGenerationAndRefetch(jobId) {
-  try {
-    await fetch('/api/cam-generate', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jobId })
-    });
-  } catch (e) {
-    console.error('CAM generation request failed', e);
+const TERMINAL_STATUSES = ['completed', 'failed', 'rejected'];
+const PROGRESS_POLL_MS = 400;
+const PROGRESS_TIMEOUT_MS = 30000;
+
+/**
+ * Calls the server-side generator immediately after a job is queued - there
+ * is no external Runner for turning/routing, generation is synchronous math
+ * that finishes in well under a second for realistic files. While that
+ * request is in flight, polls the job row for `progress`/`progress_message`
+ * so the UI can show real incremental progress instead of an indefinite
+ * spinner, via the optional `onProgress(job)` callback.
+ *
+ * Also enforces a client-side timeout: if the job is still non-terminal
+ * after PROGRESS_TIMEOUT_MS (the server should never take remotely this
+ * long for turning/routing), it's surfaced as a failure here even if the
+ * server-side row never got updated - e.g. because the server process
+ * itself couldn't reach the database. Without this, a stuck server-side
+ * write would otherwise leave the job showing "Generating CAM" forever.
+ *
+ * Returns the job row after generation (status will be 'completed' or
+ * 'failed' by the time this resolves).
+ */
+async function triggerGenerationAndRefetch(jobId, onProgress) {
+  let fetchError = null;
+  let fetchSettled = false;
+
+  // Fired but deliberately not awaited directly - the server writes progress
+  // and the final status straight to the job row as it goes, so polling that
+  // row is what actually drives this function, not this promise. Awaiting it
+  // directly would risk hanging forever if the request itself never settles.
+  fetch('/api/cam-generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId })
+  })
+    .catch((e) => { fetchError = e; console.error('CAM generation request failed', e); })
+    .finally(() => { fetchSettled = true; });
+
+  const pollStart = Date.now();
+  while (true) {
+    await new Promise((r) => setTimeout(r, PROGRESS_POLL_MS));
+    const { data } = await supabase.from('cam_jobs').select('*').eq('id', jobId).single();
+    if (data && onProgress) onProgress(data);
+    if (data && TERMINAL_STATUSES.includes(data.status)) return data;
+    // A network-level failure (not just a slow server) - no point waiting out the full timeout.
+    if (fetchSettled && fetchError) break;
+    if (Date.now() - pollStart > PROGRESS_TIMEOUT_MS) break;
   }
-  const { data } = await supabase.from('cam_jobs').select('*').eq('id', jobId).single();
-  return data;
+
+  // Still not terminal - the server never finished writing a result. Surface
+  // a clear, specific failure here instead of leaving the job (and the UI)
+  // spinning on "Generating CAM" forever with no explanation.
+  const message = fetchError
+    ? `Could not reach the generation server: ${fetchError.message}`
+    : 'Generation did not complete in time - the server may have crashed or lost its database connection mid-request. Check the terminal running "npm run dev" for a stack trace.';
+  await supabase.from('cam_jobs').update({ status: 'failed', errors: [message], progress_message: message }).eq('id', jobId);
+  return { id: jobId, status: 'failed', errors: [message] };
 }
 
 /**
@@ -91,7 +132,7 @@ async function triggerGenerationAndRefetch(jobId) {
  * the STEP for a part that doesn't have one yet (e.g. a legacy lathe part
  * created before STEP was required for that workflow).
  * @param {Object} part - part row (needs id, name, workflow, file_name/file_url for its STEP)
- * @param {Object} options - { operationType, materialId, toolId, machineId, params, userId, name, profileFile }
+ * @param {Object} options - { operationType, materialId, toolId, machineId, params, userId, name, profileFile, onProgress }
  */
 export async function queueCamJobForPart(part, options = {}) {
   if (!part?.id) return { success: false, error: 'Missing part' };
@@ -129,7 +170,7 @@ export async function queueCamJobForPart(part, options = {}) {
     .single();
 
   if (error) return { success: false, error: error.message };
-  const finalJob = await triggerGenerationAndRefetch(data.id);
+  const finalJob = await triggerGenerationAndRefetch(data.id, options.onProgress);
   return { success: finalJob?.status === 'completed', job: finalJob || data, error: finalJob?.errors?.[0] };
 }
 
@@ -137,7 +178,7 @@ export async function queueCamJobForPart(part, options = {}) {
  * Upload a fresh STEP file and queue + generate a CAM job from it (no
  * existing part) - used by the /autocam page's manual "New Job" flow.
  * @param {File} profileFile - the .step/.stp file
- * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName }
+ * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName, onProgress }
  */
 export async function queueCamJobFromUpload(profileFile, options = {}) {
   if (!options.operationType) return { success: false, error: 'operationType is required (turning or routing)' };
@@ -166,7 +207,7 @@ export async function queueCamJobFromUpload(profileFile, options = {}) {
     .single();
 
   if (error) return { success: false, error: error.message };
-  const finalJob = await triggerGenerationAndRefetch(data.id);
+  const finalJob = await triggerGenerationAndRefetch(data.id, options.onProgress);
   return { success: finalJob?.status === 'completed', job: finalJob || data, error: finalJob?.errors?.[0] };
 }
 
@@ -174,7 +215,7 @@ export async function queueCamJobFromUpload(profileFile, options = {}) {
  * Re-queue + regenerate from a failed (or completed) job's already-uploaded
  * STEP file - no re-upload needed, the file is still in storage.
  * @param {Object} job - a cam_jobs row (needs step_file_name, operation_type)
- * @param {Object} options - { userId } - other fields (material/tool/machine/params) carry over from the job
+ * @param {Object} options - { userId, onProgress } - other fields (material/tool/machine/params) carry over from the job
  */
 export async function retryCamJob(job, options = {}) {
   if (!job?.step_file_name) return { success: false, error: 'No stored CAM profile to retry from' };
@@ -200,8 +241,69 @@ export async function retryCamJob(job, options = {}) {
     .single();
 
   if (error) return { success: false, error: error.message };
-  const finalJob = await triggerGenerationAndRefetch(data.id);
+  const finalJob = await triggerGenerationAndRefetch(data.id, options.onProgress);
   return { success: finalJob?.status === 'completed', job: finalJob || data, error: finalJob?.errors?.[0] };
+}
+
+/** Rename a job in place - no regeneration, just the display name. */
+export async function renameCamJob(jobId, name) {
+  const { error } = await supabase.from('cam_jobs').update({ name: name || null }).eq('id', jobId);
+  return error ? { success: false, error: error.message } : { success: true };
+}
+
+/** Permanently delete a job row. Does not delete the underlying STEP file from storage, since it may still be referenced elsewhere. */
+export async function deleteCamJob(jobId) {
+  const { error } = await supabase.from('cam_jobs').delete().eq('id', jobId);
+  return error ? { success: false, error: error.message } : { success: true };
+}
+
+/**
+ * Edit an existing job's material/tool/machine/params in place and
+ * regenerate from its already-uploaded STEP file - no re-upload needed.
+ * Updates the same row (unlike retryCamJob, which inserts a new one to
+ * preserve history) since this is an explicit edit of this specific job.
+ * @param {Object} job - the job row being edited (needs id, step_file_name)
+ * @param {Object} updates - { name, materialId, toolId, machineId, params, onProgress }
+ */
+export async function updateCamJobAndRegenerate(job, updates = {}) {
+  if (!job?.id) return { success: false, error: 'Missing job' };
+  if (!job.step_file_name) return { success: false, error: 'No stored CAM profile to regenerate from' };
+
+  const { error } = await supabase
+    .from('cam_jobs')
+    .update({
+      name: updates.name ?? job.name ?? null,
+      material_id: updates.materialId || null,
+      tool_id: updates.toolId || null,
+      machine_id: updates.machineId || null,
+      params: updates.params || {},
+      status: 'queued',
+      gcode: null,
+      stats: null,
+      errors: null,
+      progress: 0,
+      progress_message: null
+    })
+    .eq('id', job.id);
+
+  if (error) return { success: false, error: error.message };
+  const finalJob = await triggerGenerationAndRefetch(job.id, updates.onProgress);
+  return { success: finalJob?.status === 'completed', job: finalJob, error: finalJob?.errors?.[0] };
+}
+
+/**
+ * Manually mark a non-terminal job (queued/claimed/processing) as failed -
+ * an escape hatch for jobs that got stuck before the client-side timeout in
+ * triggerGenerationAndRefetch existed, or any other way a job's tab/session
+ * got closed mid-generation. Safe no-op-ish on an already-terminal job.
+ */
+export async function cancelStuckCamJob(jobId) {
+  const message = 'Cancelled by user (job was stuck)';
+  const { error } = await supabase
+    .from('cam_jobs')
+    .update({ status: 'failed', errors: [message], progress_message: message })
+    .eq('id', jobId);
+  return error ? { success: false, error: error.message } : { success: true };
 }
 
 /**

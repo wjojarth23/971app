@@ -13,6 +13,12 @@
   import {
     queueCamJobForPart,
     queueCamJobFromUpload,
+    retryCamJob,
+    cancelStuckCamJob,
+    renameCamJob,
+    deleteCamJob,
+    updateCamJobAndRegenerate,
+    isCamJobActive,
     WORKFLOW_OPERATION_TYPE,
     camJobStatusLabel,
     jobDisplayName,
@@ -62,6 +68,23 @@
   let selectedToolId = '';
   let selectedMachineId = '';
   let submitting = false;
+  let generationProgress = 0; // 0-100, live-updated while submitting
+  let generationMessage = '';
+  let retryingJobId = null;
+  let cancellingJobId = null;
+
+  let showJobDetailModal = false;
+  let editingJob = null;
+  let editJobName = '';
+  let editMaterialId = '';
+  let editToolId = '';
+  let editMachineId = '';
+  let editParams = {};
+  let editRenaming = false;
+  let editSubmitting = false;
+  let editDeleting = false;
+  let editProgress = 0;
+  let editProgressMessage = '';
 
   // Part-picker filters - mirrors the filter bar on /manufacture so parts are
   // easy to find the same way they are there.
@@ -207,6 +230,8 @@
 
   async function submitNewJob() {
     submitting = true;
+    generationProgress = 0;
+    generationMessage = 'Queuing job...';
     try {
       const options = {
         name: newJobName.trim() || null,
@@ -215,7 +240,11 @@
         toolId: selectedToolId || null,
         machineId: selectedMachineId || null,
         params: buildParams(),
-        userId: user?.id || null
+        userId: user?.id || null,
+        onProgress: (job) => {
+          generationProgress = job.progress ?? generationProgress;
+          generationMessage = job.progress_message || generationMessage;
+        }
       };
 
       let result;
@@ -233,6 +262,109 @@
       await loadJobs();
     } finally {
       submitting = false;
+      generationProgress = 0;
+      generationMessage = '';
+    }
+  }
+
+  async function handleRetryJob(job) {
+    retryingJobId = job.id;
+    try {
+      const result = await retryCamJob(job, { userId: user?.id || null });
+      toastActions.show(result.success ? 'CAM generated' : (result.error || 'AutoCAM generation failed'));
+      await loadJobs();
+    } finally {
+      retryingJobId = null;
+    }
+  }
+
+  async function handleCancelStuckJob(job) {
+    cancellingJobId = job.id;
+    try {
+      await cancelStuckCamJob(job.id);
+      await loadJobs();
+    } finally {
+      cancellingJobId = null;
+    }
+  }
+
+  function openJobDetail(job) {
+    editingJob = job;
+    editJobName = job.name || '';
+    editMaterialId = job.material_id || '';
+    editToolId = job.tool_id || '';
+    editMachineId = job.machine_id || '';
+    editParams = {
+      ...(job.operation_type === 'turning' ? emptyTurningParams() : emptyRoutingParams()),
+      ...(job.params || {})
+    };
+    showJobDetailModal = true;
+  }
+
+  function closeJobDetailModal() {
+    showJobDetailModal = false;
+    editingJob = null;
+  }
+
+  async function saveJobName() {
+    if (!editingJob) return;
+    editRenaming = true;
+    try {
+      const result = await renameCamJob(editingJob.id, editJobName.trim());
+      if (result.success) {
+        toastActions.show('Renamed');
+        await loadJobs();
+        editingJob = jobs.find((j) => j.id === editingJob.id) || editingJob;
+      } else {
+        toastActions.show(result.error || 'Rename failed');
+      }
+    } finally {
+      editRenaming = false;
+    }
+  }
+
+  async function saveJobAndRegenerate() {
+    if (!editingJob) return;
+    editSubmitting = true;
+    editProgress = 0;
+    editProgressMessage = 'Queuing...';
+    try {
+      const result = await updateCamJobAndRegenerate(editingJob, {
+        name: editJobName.trim() || null,
+        materialId: editMaterialId,
+        toolId: editToolId,
+        machineId: editMachineId,
+        params: editParams,
+        onProgress: (job) => {
+          editProgress = job.progress ?? editProgress;
+          editProgressMessage = job.progress_message || editProgressMessage;
+        }
+      });
+      toastActions.show(result.success ? 'CAM regenerated' : (result.error || 'AutoCAM generation failed'));
+      await loadJobs();
+      if (result.job) editingJob = result.job;
+    } finally {
+      editSubmitting = false;
+      editProgress = 0;
+      editProgressMessage = '';
+    }
+  }
+
+  async function deleteEditingJob() {
+    if (!editingJob) return;
+    if (!confirm(`Delete job "${jobDisplayName(editingJob)}"? This cannot be undone.`)) return;
+    editDeleting = true;
+    try {
+      const result = await deleteCamJob(editingJob.id);
+      if (result.success) {
+        toastActions.show('Job deleted');
+        closeJobDetailModal();
+        await loadJobs();
+      } else {
+        toastActions.show(result.error || 'Delete failed');
+      }
+    } finally {
+      editDeleting = false;
     }
   }
 
@@ -479,14 +611,14 @@
       <tbody>
         {#each jobs as job (job.id)}
           {@const bucket = getSeasonBucket(job.created_at)}
-          <tr>
+          <tr class="job-row" on:click={() => openJobDetail(job)} tabindex="0" role="button" on:keydown={(e) => { if (e.key === 'Enter') openJobDetail(job); }}>
             <td>
               <div class="name-line">
                 {#if job.source_type === 'part'}<Package size={14} />{:else}<Upload size={14} />{/if}
                 <strong>{jobDisplayName(job)}</strong>
               </div>
               {#if job.source_type === 'part' && job.part_id}
-                <a class="job-part-link" href="/manufacture?part={job.part_id}">
+                <a class="job-part-link" href="/manufacture?part={job.part_id}" on:click|stopPropagation>
                   <LinkIcon size={12} /> {job.parts?.name || `Part #${job.part_id}`}
                 </a>
               {/if}
@@ -497,20 +629,39 @@
             <td>{job.cam_materials?.name || '—'}</td>
             <td>{job.cam_tools?.name || '—'}</td>
             <td>{job.cam_machines?.name || '—'}</td>
-            <td><span class="status-badge {jobStatusClass(job)}">{camJobStatusLabel(job.status)}</span></td>
+            <td>
+              <span class="status-badge {jobStatusClass(job)}">{camJobStatusLabel(job.status)}</span>
+              {#if isCamJobActive(job)}
+                <div class="job-row-progress">
+                  <div class="job-row-progress-bar"><div class="job-row-progress-fill" style="width: {job.progress || 0}%"></div></div>
+                  {#if job.progress_message}<span class="job-row-progress-label">{job.progress_message}</span>{/if}
+                </div>
+              {/if}
+            </td>
             <td>
               {formatPacificDateTimeWithZone(job.created_at)}
               {#if bucket}
                 <span class="tag season-tag {bucket.isOffseason ? 'tag-offseason' : 'tag-season'}">{bucket.label}</span>
               {/if}
             </td>
-            <td>
+            <td on:click|stopPropagation>
               {#if job.status === 'completed' && job.gcode}
                 <button class="btn btn-secondary btn-sm" on:click={() => downloadGcodeBlob(job)}>
                   <Download size={14} /> {job.gcode_file_name || 'output.ngc'}
                 </button>
               {:else if job.status === 'failed' && job.errors?.length}
-                <span class="job-error" title={job.errors.join('; ')}><AlertTriangle size={14} /> {job.errors[0]}</span>
+                <div class="job-output-failed">
+                  <span class="job-error" title={job.errors.join('; ')}><AlertTriangle size={14} /> {job.errors[0]}</span>
+                  {#if job.step_file_name}
+                    <button class="btn btn-secondary btn-sm" on:click={() => handleRetryJob(job)} disabled={retryingJobId === job.id}>
+                      {retryingJobId === job.id ? 'Retrying…' : 'Retry'}
+                    </button>
+                  {/if}
+                </div>
+              {:else if isCamJobActive(job)}
+                <button class="btn btn-secondary btn-sm" on:click={() => handleCancelStuckJob(job)} disabled={cancellingJobId === job.id} title="Stuck? Mark this job as failed so you can retry.">
+                  {cancellingJobId === job.id ? 'Cancelling…' : 'Cancel'}
+                </button>
               {:else}
                 <span class="text-muted">—</span>
               {/if}
@@ -660,6 +811,96 @@
         <button class="btn btn-primary" on:click={submitNewJob} disabled={submitting}>
           {submitting ? 'Generating…' : 'Generate G-code'}
         </button>
+        {#if submitting}
+          <div class="generation-progress">
+            <div class="generation-progress-bar"><div class="generation-progress-fill" style="width: {generationProgress}%"></div></div>
+            <span class="generation-progress-label">{generationProgress}% - {generationMessage}</span>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showJobDetailModal && editingJob}
+  <div class="modal-backdrop" on:click|self={closeJobDetailModal} role="button" tabindex="0" on:keydown={(e) => { if (e.key === 'Escape') closeJobDetailModal(); }}>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Edit Job</h3>
+        <button type="button" class="modal-close-button" aria-label="Close" on:click={closeJobDetailModal}><X size={18} /></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="edit-job-name">Job Name</label>
+          <div class="input-group">
+            <input id="edit-job-name" class="form-input" placeholder="e.g. Gearbox side plate" bind:value={editJobName} />
+            <button class="btn btn-secondary btn-sm btn-nowrap" on:click={saveJobName} disabled={editRenaming || editJobName.trim() === (editingJob.name || '')}>
+              {editRenaming ? 'Saving…' : 'Save Name'}
+            </button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Operation</label>
+            <p class="cam-form-hint">{editingJob.operation_type} (fixed - create a new job to change this)</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="edit-job-status">Status</label>
+            <p class="cam-form-hint"><span class="status-badge {jobStatusClass(editingJob)}">{camJobStatusLabel(editingJob.status)}</span></p>
+          </div>
+        </div>
+
+        {#if editingJob.operation_type === 'turning'}
+          <CamParamFields operation="turning" bind:params={editParams} mode="job" />
+        {:else}
+          <CamParamFields operation="routing" bind:params={editParams} mode="job" />
+        {/if}
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="edit-job-material">Material</label>
+            <select id="edit-job-material" class="form-select" bind:value={editMaterialId}>
+              <option value="">Unspecified</option>
+              {#each materials.filter((m) => m.enabled) as m}
+                <option value={m.id}>{m.name}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="edit-job-tool">Tool</label>
+            <select id="edit-job-tool" class="form-select" bind:value={editToolId}>
+              <option value="">Unspecified</option>
+              {#each tools.filter((t) => t.enabled) as t}
+                <option value={t.id}>{t.name}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="edit-job-machine">Machine Profile</label>
+            <select id="edit-job-machine" class="form-select" bind:value={editMachineId}>
+              <option value="">Unspecified</option>
+              {#each machines.filter((mc) => mc.enabled && mc.operation_type === editingJob.operation_type) as mc}
+                <option value={mc.id}>{mc.name}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="modal-footer-actions">
+          <button class="btn btn-danger" on:click={deleteEditingJob} disabled={editDeleting}>
+            {editDeleting ? 'Deleting…' : 'Delete Job'}
+          </button>
+          <button class="btn btn-primary" on:click={saveJobAndRegenerate} disabled={editSubmitting || !editingJob.step_file_name} title={!editingJob.step_file_name ? 'No stored STEP file to regenerate from' : ''}>
+            {editSubmitting ? 'Regenerating…' : 'Save & Regenerate'}
+          </button>
+        </div>
+        {#if editSubmitting}
+          <div class="generation-progress">
+            <div class="generation-progress-bar"><div class="generation-progress-fill" style="width: {editProgress}%"></div></div>
+            <span class="generation-progress-label">{editProgress}% - {editProgressMessage}</span>
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -851,6 +1092,76 @@
     gap: 0.3rem;
     color: var(--red-strong);
     font-size: var(--font-xs, 0.75rem);
+  }
+
+  .job-row {
+    cursor: pointer;
+  }
+  .job-row:hover {
+    background: var(--surface-2, var(--background));
+  }
+  .job-row:focus-visible {
+    outline: 2px solid var(--accent-strong, #1d4ed8);
+    outline-offset: -2px;
+  }
+
+  .modal-footer-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border, #e5e5e5);
+  }
+
+  .job-output-failed {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .generation-progress {
+    margin-top: 0.6rem;
+  }
+  .generation-progress-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-2, var(--background));
+    overflow: hidden;
+  }
+  .generation-progress-fill {
+    height: 100%;
+    background: var(--accent-strong, #1d4ed8);
+    transition: width 0.3s ease;
+  }
+  .generation-progress-label {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: var(--font-xs, 0.75rem);
+    color: var(--text-muted);
+  }
+
+  .job-row-progress {
+    margin-top: 0.3rem;
+    min-width: 120px;
+  }
+  .job-row-progress-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-2, var(--background));
+    overflow: hidden;
+  }
+  .job-row-progress-fill {
+    height: 100%;
+    background: var(--purple-strong, #7c3aed);
+    transition: width 0.3s ease;
+  }
+  .job-row-progress-label {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: var(--font-xs, 0.7rem);
+    color: var(--text-muted);
   }
 
   .empty-state {
