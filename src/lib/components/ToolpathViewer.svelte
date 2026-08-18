@@ -23,13 +23,28 @@
   $: axisLabels = operationType === 'turning' ? { a: 'Z (length)', b: 'X (radius)' } : { a: 'X', b: 'Y' };
   $: rapidCount = segments.filter((s) => s.rapid).length;
   $: feedCount = segments.length - rapidCount;
+
+  // Multi-tool routing jobs (see toolchange-gcode-plan.md) tag each segment
+  // with which tool cut it - color by tool when more than one is actually
+  // present, otherwise fall back to the plain single-color rendering below
+  // (unchanged for every turning job and every single-tool routing job).
+  const TOOL_COLORS = ['#1d4ed8', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2'];
+  $: toolIndices = [...new Set(segments.map((s) => s.toolIndex ?? 0))].sort((a, b) => a - b);
+  $: isMultiTool = toolIndices.length > 1;
+  function toolColor(i) { return TOOL_COLORS[i % TOOL_COLORS.length]; }
 </script>
 
 {#if segments.length === 0}
   <p class="text-muted">No toolpath to preview yet.</p>
 {:else}
   <div class="toolpath-legend">
-    <span class="legend-item"><span class="legend-swatch feed"></span> Cutting move ({feedCount})</span>
+    {#if isMultiTool}
+      {#each toolIndices as i (i)}
+        <span class="legend-item"><span class="legend-swatch feed" style="background: {toolColor(i)}"></span> Tool {i + 1}</span>
+      {/each}
+    {:else}
+      <span class="legend-item"><span class="legend-swatch feed"></span> Cutting move ({feedCount})</span>
+    {/if}
     <span class="legend-item"><span class="legend-swatch rapid"></span> Rapid move ({rapidCount})</span>
   </div>
   <svg viewBox="0 0 {WIDTH} {HEIGHT}" class="toolpath-svg" role="img" aria-label="Toolpath preview">
@@ -40,6 +55,7 @@
         x2={sx(seg.to.a)} y2={sy(seg.to.b)}
         class="toolpath-line"
         class:rapid={seg.rapid}
+        style={isMultiTool && !seg.rapid ? `stroke: ${toolColor(seg.toolIndex ?? 0)}` : ''}
       />
     {/each}
   </svg>

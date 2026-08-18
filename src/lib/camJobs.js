@@ -76,7 +76,11 @@ async function uploadStepFile(file) {
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'rejected'];
 const PROGRESS_POLL_MS = 400;
-const PROGRESS_TIMEOUT_MS = 30000;
+// Must stay comfortably above the server's own maxDuration (60s, see
+// src/routes/api/cam-generate/+server.js) - if this were shorter, the
+// client could give up and report a false failure while the server is
+// still legitimately working within its own time budget.
+const PROGRESS_TIMEOUT_MS = 75000;
 
 /**
  * Calls the server-side generator immediately after a job is queued - there
@@ -128,7 +132,7 @@ async function triggerGenerationAndRefetch(jobId, onProgress) {
   // spinning on "Generating CAM" forever with no explanation.
   const message = fetchError
     ? `Could not reach the generation server: ${fetchError.message}`
-    : 'Generation did not complete in time - the server may have crashed or lost its database connection mid-request. Check the terminal running "npm run dev" for a stack trace.';
+    : `Generation did not finish within ${PROGRESS_TIMEOUT_MS / 1000}s - the server may have hit its execution time limit, crashed, or lost its database connection mid-request. On Vercel, check the deployment's function logs for /api/cam-generate; locally, check the terminal running "npm run dev".`;
   await supabase.from('cam_jobs').update({ status: 'failed', errors: [message], progress_message: message }).eq('id', jobId);
   return { id: jobId, status: 'failed', errors: [message] };
 }

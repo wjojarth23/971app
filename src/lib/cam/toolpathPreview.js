@@ -8,14 +8,25 @@
  * Turning: G-code X is diameter - converted back to radius here. Segment
  * coordinates are {a: Z, b: radius}.
  * Routing: X/Y are used directly. Segment coordinates are {a: X, b: Y}.
+ *
+ * Multi-tool routing (see toolchange-gcode-plan.md) emits a "(TOOL CHANGE:
+ * ...)" comment between tools - each segment gets tagged with `toolIndex`
+ * (0 for the first/primary tool, incrementing at each change) by matching
+ * that marker, so a multi-tool preview can be color-coded by tool instead
+ * of looking like one undifferentiated path. Single-tool programs (the
+ * common case, and all turning programs today) just get toolIndex 0
+ * throughout.
  */
 export function parseGcodeToolpath(gcode, operationType) {
   const lines = (gcode || '').split('\n');
   const segments = [];
   let cur = { x: null, y: null, z: null };
   let motion = null; // 'rapid' | 'feed'
+  let toolIndex = 0;
 
   for (const rawLine of lines) {
+    if (/\(TOOL CHANGE:/i.test(rawLine)) toolIndex += 1;
+
     const line = rawLine.replace(/\(.*?\)/g, '').trim(); // strip (comments)
     if (!line || line.startsWith('%') || line.startsWith('O')) continue;
 
@@ -40,7 +51,7 @@ export function parseGcodeToolpath(gcode, operationType) {
     const from = toPoint(cur, operationType);
     const to = toPoint(next, operationType);
     if (from && to && (from.a !== to.a || from.b !== to.b)) {
-      segments.push({ from, to, rapid: motion === 'rapid' });
+      segments.push({ from, to, rapid: motion === 'rapid', toolIndex });
     }
     cur = next;
   }

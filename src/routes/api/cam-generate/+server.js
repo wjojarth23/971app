@@ -5,6 +5,14 @@ import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContours
 import { generateTurningGcode } from '$lib/cam/turning.js';
 import { generateRoutingGcode } from '$lib/cam/routing.js';
 
+// Vercel serverless functions default to a short execution limit (as low as
+// 10s on some plans) - this route does a STEP file download, WASM parser
+// load (occt-import-js, slow on a cold start), geometry extraction, and
+// several Supabase round trips, which can plausibly exceed that default.
+// Raises the ceiling on Vercel; harmless everywhere else (adapter-auto only
+// applies Vercel-specific route config when actually deploying to Vercel).
+export const config = { maxDuration: 60 };
+
 function getClientFromRequest(request) {
   const auth = request?.headers?.get('authorization') || '';
   return createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
@@ -12,27 +20,29 @@ function getClientFromRequest(request) {
   });
 }
 
-// Best-effort progress write - never allowed to throw, since a network blip
-// on a progress update must not take down the generation request itself.
-async function setProgress(supabase, jobId, progress, progress_message) {
-  try {
-    await supabase.from('cam_jobs').update({ progress, progress_message }).eq('id', jobId);
-  } catch (e) {
-    console.error('CAM progress update failed (non-fatal)', e);
-  }
-}
-
 class CancelledError extends Error {}
 
-// Cheap early-exit check, called between stages: if something else (the
-// "Cancel" button on a stuck job, or a delete) has already moved this job
-// out of "processing", stop doing work immediately instead of continuing to
-// grind on a job nobody's waiting on anymore, and — critically — instead of
-// eventually overwriting that cancelled/deleted state with a stale
-// "completed" a few hundred ms later.
-async function checkCancelled(supabase, jobId) {
-  const { data } = await supabase.from('cam_jobs').select('status').eq('id', jobId).single();
-  if (data && data.status !== 'processing') throw new CancelledError(`Job was ${data.status} (cancelled) before generation finished`);
+// Combines the progress write AND the cancellation check into one round
+// trip (conditioned on status still being 'processing' - if 0 rows match,
+// something else, like the "Cancel" button, already moved this job out of
+// "processing", so bail immediately instead of continuing to grind on a job
+// nobody's waiting on). This used to be two separate calls (a select to
+// check, an update to write) - serverless functions (Vercel) have a real
+// execution time budget, and every extra network round trip to Supabase
+// eats into it, so cutting this in half matters more here than it would on
+// a long-running local Node process.
+async function setProgress(supabase, jobId, progress, progress_message) {
+  const { data, error } = await supabase
+    .from('cam_jobs')
+    .update({ progress, progress_message })
+    .eq('id', jobId)
+    .eq('status', 'processing')
+    .select('id');
+  if (error) {
+    console.error('CAM progress update failed (non-fatal)', error);
+    return; // best-effort - a network blip on a progress update must not take down generation
+  }
+  if (!data?.length) throw new CancelledError('Job was cancelled before generation finished');
 }
 
 // Best-effort terminal-failure write - also never allowed to throw. This is
@@ -114,12 +124,10 @@ export async function POST({ request }) {
       throw new Error(downloadError?.message || 'Could not download the STEP file from storage');
     }
 
-    await checkCancelled(supabase, jobId);
     await setProgress(supabase, jobId, 20, 'Loading STEP geometry parser...');
     const stepBuffer = new Uint8Array(await fileBlob.arrayBuffer());
     const meshes = await readStepMeshes(stepBuffer);
 
-    await checkCancelled(supabase, jobId);
     await setProgress(supabase, jobId, 55, 'Extracting toolpath geometry...');
     const params = { ...(job.params || {}) };
     if (job.cam_tools?.nose_radius && params.noseRadius === undefined) params.noseRadius = job.cam_tools.nose_radius;
@@ -128,21 +136,20 @@ export async function POST({ request }) {
     let result;
     if (job.operation_type === 'turning') {
       const profile = extractTurningProfileFromMeshes(meshes);
-      await checkCancelled(supabase, jobId);
       await setProgress(supabase, jobId, 80, 'Generating turning G-code...');
       result = generateTurningGcode(profile, params);
     } else {
       const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
       if (params.targetDepth === undefined && thickness) params.targetDepth = thickness;
-      await checkCancelled(supabase, jobId);
       await setProgress(supabase, jobId, 80, 'Generating routing G-code...');
       result = generateRoutingGcode(contours, params);
     }
 
-    await setProgress(supabase, jobId, 95, 'Saving...');
     // Conditioned on status still being 'processing' (compare-and-swap) so a
     // cancel that lands in the split second between the last check above and
-    // this write can never get silently clobbered back to "completed".
+    // this write can never get silently clobbered back to "completed". No
+    // separate 95%-progress write first - it's this same write, one round
+    // trip instead of two.
     const { data: updateData, error: updateError } = await supabase
       .from('cam_jobs')
       .update({

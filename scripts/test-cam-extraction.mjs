@@ -10,6 +10,10 @@
  * Usage:
  *   node scripts/test-cam-extraction.mjs turning "/path/to/part.step"
  *   node scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth]
+ *   node scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth] --tools=0.25,0.125
+ *     (multi-tool router mode - see toolchange-gcode-plan.md - diameters
+ *     largest first; the real part's contours still decide which tool each
+ *     one actually needs)
  *
  * Exit code 0 = extraction + G-code generation succeeded, 1 = failed.
  */
@@ -18,10 +22,12 @@ import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContours
 import { generateTurningGcode } from '../src/lib/cam/turning.js';
 import { generateRoutingGcode } from '../src/lib/cam/routing.js';
 
-const [, , operation, filePath, extra] = process.argv;
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--tools='));
+const toolsArg = process.argv.find((a) => a.startsWith('--tools='));
+const [operation, filePath, extra] = args;
 
 function usageAndExit() {
-  console.error('Usage: node scripts/test-cam-extraction.mjs <turning|routing> <path-to-step-file> [routing:targetDepth]');
+  console.error('Usage: node scripts/test-cam-extraction.mjs <turning|routing> <path-to-step-file> [routing:targetDepth] [--tools=0.25,0.125]');
   process.exit(1);
 }
 
@@ -77,7 +83,13 @@ try {
     console.log(`Extracted ${contours.length} contour(s), thickness ${thickness?.toFixed(4)}"`);
     for (const c of contours) console.log(`  ${c.isHole ? 'hole' : 'outer'}: ${c.points.length} points`);
     const targetDepth = extra ? Number(extra) : thickness;
-    result = generateRoutingGcode(contours, { toolDiameter: 0.25, stepDown: 0.1, targetDepth });
+    if (toolsArg) {
+      const toolSequence = toolsArg.replace('--tools=', '').split(',').map((d, i) => ({ toolDiameter: Number(d), toolNumber: i + 1, label: `${d}" tool` }));
+      console.log(`Multi-tool mode: ${toolSequence.map((t) => t.label).join(' -> ')}`);
+      result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth, toolSequence });
+    } else {
+      result = generateRoutingGcode(contours, { toolDiameter: 0.25, stepDown: 0.1, targetDepth });
+    }
   }
 
   console.log(`\n✅ SUCCESS - ${result.gcode.split('\n').length} lines of G-code, stats:`, result.stats);
