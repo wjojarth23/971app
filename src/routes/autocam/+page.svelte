@@ -346,6 +346,21 @@
 </div>
 <p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Milling isn't implemented yet (see millimplementations.md).</p>
 
+{#if !loading && materials.length === 0 && tools.length === 0 && machines.length === 0}
+  <div class="card setup-warning">
+    <AlertTriangle size={20} />
+    <div>
+      <strong>No materials, tools, or machine profiles found.</strong>
+      <p>
+        This usually means <code>migrations/20260817_cam_studio_system.sql</code> hasn't been run against the
+        database yet (or was run before Machine Profiles existed). Re-running that file is safe even if it partially
+        ran before - every statement in it checks for existing tables/columns/policies first. Material and Tool are
+        optional either way, but Machine Profiles won't show up until this runs.
+      </p>
+    </div>
+  </div>
+{/if}
+
 {#if !loading}
   <div class="stats-grid">
     <div class="stat-card">
@@ -713,6 +728,22 @@
     color: var(--text-muted);
     margin: -0.5rem 0 1rem;
     font-size: var(--font-sm, 0.9rem);
+  }
+
+  .setup-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    background: var(--yellow-soft, #fef9c3);
+    color: var(--yellow-strong, #854d0e);
+    border: 1px solid var(--yellow-base, #ca8a04);
+  }
+  .setup-warning p { margin: 0.35rem 0 0; font-size: var(--font-sm, 0.9rem); }
+  .setup-warning code {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.85em;
   }
 
   .stats-grid {
