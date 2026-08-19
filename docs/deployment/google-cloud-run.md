@@ -11,38 +11,45 @@ Artifact Registry repo both named `spartanshub`, domain `spartanshub.spartanrobo
 
 Done and verified live:
 - Artifact Registry repo `spartanshub` created in `us-west1`.
-- `cloudbuild.yaml` builds, pushes, and deploys successfully end-to-end via
-  `gcloud builds submit` (two real bugs found and fixed this way: `$SHORT_SHA` is
-  unset on manual submits — switched to `$BUILD_ID` — and
-  `gcr.io/google-cloud-sdk/slim` isn't a real image — switched to
-  `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`).
-- **`https://spartanshub.spartanrobotics.org/` is live**, serving the real app from
-  this pipeline, replacing the `gcr.io/cloudrun/placeholder` revision that was there
-  before. Domain mapping and DNS were already set up (confirmed working).
-- A Cloud Build GitHub trigger already exists (`rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi`,
-  connected to `frc971/spartanshub`), created outside this migration's own work —
-  likely via the Cloud Run Console's "set up continuous deployment" wizard. Its branch
-  pattern is currently `^migrate/gcp-cloud-run$`, not `^main$`.
+- `cloudbuild.yaml` builds, pushes, and deploys successfully end-to-end (two real bugs
+  found and fixed by actually running it: `$SHORT_SHA` is unset on manual submits —
+  switched to `$BUILD_ID` — and `gcr.io/google-cloud-sdk/slim` isn't a real image —
+  switched to `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`).
+- The pre-existing Cloud Build GitHub trigger (`rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi`,
+  connected to `frc971/spartanshub` — created outside this migration's own work,
+  likely via the Cloud Run Console's "set up continuous deployment" wizard) **fired on
+  a real push and passed** (`gh pr checks 1` → `pass`), building and deploying with
+  real config. Its branch pattern is currently `^migrate/gcp-cloud-run$` — still needs
+  moving to `^main$` once this branch merges:
+  `gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"`.
+- **`https://spartanshub.spartanrobotics.org/` is live** with real `PUBLIC_*` config
+  (real Supabase project, real Onshape base URL), replacing both the original
+  `gcr.io/cloudrun/placeholder` revision and the earlier placeholder-config smoke test.
+  Domain mapping and DNS were already set up.
+- 7 Secret Manager secrets created and wired to the Cloud Run runtime service account
+  (`819718873862-compute@developer.gserviceaccount.com`) via `roles/secretmanager.secretAccessor`,
+  scoped per-secret: `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `SLACK_BOT_TOKEN`,
+  `SLACK_SIGNING_SECRET`, `TBA_API_KEY`, `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY`.
+  The Onshape pair is deliberately pulled into the *build* step via Cloud Build's
+  `availableSecrets`/`secretEnv` (not a plain `cloudbuild.yaml` substitution) so the
+  raw values never sit in git history — see the comment block in `cloudbuild.yaml`.
 
-**Not done yet — real blocker before this is actually production-ready:**
-- The live deploy is running on **placeholder** `PUBLIC_SUPABASE_URL` /
-  `PUBLIC_SUPABASE_ANON_KEY` and other `PUBLIC_*` values (fake Supabase project) — auth
-  and data will not work until real values are set.
-- The existing GitHub trigger has **no `_PUBLIC_*` substitutions configured**. Since
-  `cloudbuild.yaml` doesn't define defaults for those 12 substitutions either, the
-  trigger will fail immediately the next time it fires — Cloud Build requires every
-  referenced substitution to resolve via either a default or an override, and right
-  now neither exists for these.
-- No Secret Manager secrets created yet (API is enabled, but `SUPABASE_SERVICE_KEY`
-  etc. haven't been created — see **Secrets** below).
-- Trigger branch pattern needs to move from `migrate/gcp-cloud-run` to `^main$` once
-  this branch is merged (`gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"`).
-
-**To finish this**: get real `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, and the
-rest of the `PUBLIC_*` values, add them as defaults in `cloudbuild.yaml`'s
-`substitutions:` block (they're non-secret by definition — safe to commit), redeploy,
-then the existing trigger will just work on the next push once its branch pattern is
-updated.
+**Still open:**
+- `GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY`, `CRON_SECRET`, `CRON_TOKEN`,
+  `CRON_NOTIFICATION_TOKEN` — no values supplied yet, so Drive watcher and cron
+  notification endpoints won't work until these are created in Secret Manager and
+  added to `cloudbuild.yaml`'s `--set-secrets` line.
+- `PUBLIC_SENTRY_DSN`, `PUBLIC_AUTOCAM_API_URL`, `PUBLIC_ROUTES`, `PUBLIC_TBA_API_KEY`,
+  and the Drive/Slack-channel runtime env vars (`DRIVE_API`, `DRIVE_UPLOAD_API`,
+  `DRIVE_SCOPE`, `DRIVE_PRACTICE_CATEGORY`, `SLACK_ALERT_CHANNEL_ID`) — still empty
+  placeholders in `cloudbuild.yaml`.
+- **Known pre-existing issue, not introduced by this migration**:
+  `PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle today (on Vercel too —
+  `src/lib/onshape.js` is imported by three client-side `.svelte` pages). Worth a
+  follow-up to proxy Onshape calls server-side and rotate both Onshape keys.
+- Trigger branch pattern still needs to move to `^main$` (see above).
+- Recommended: turn on GitHub branch protection requiring this Cloud Build check to
+  pass before merge.
 
 ## Why the Dockerfile needs so many `--build-arg`s
 
