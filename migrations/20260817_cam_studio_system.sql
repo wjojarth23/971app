@@ -130,6 +130,7 @@ EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS public.cam_jobs (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   name text,
+  notes text,
   source_type text NOT NULL DEFAULT 'upload',
   part_id bigint,
   step_file_name text,
@@ -157,6 +158,7 @@ CREATE TABLE IF NOT EXISTS public.cam_jobs (
 -- Every column added explicitly too, in case an earlier revision of this
 -- table already exists without some of them.
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS name text; -- user-given job name; falls back to the part/file name in the UI when blank
+ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS notes text; -- free-text operator notes (e.g. "verify stock height before running", "customer wants 2 of these") - purely informational, never read by generation logic
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS source_type text NOT NULL DEFAULT 'upload';
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS part_id bigint;
 ALTER TABLE public.cam_jobs ADD COLUMN IF NOT EXISTS step_file_name text; -- storage path of the STEP file - both the 3D viewer AND CAM generation read this
