@@ -1,0 +1,26 @@
+# Explicit allowlist-by-exclusion for `gcloud builds submit` source uploads.
+# Written out explicitly (not relying on gcloud's .gitignore fallback) so
+# there's no ambiguity about what leaves this machine to a GCS build bucket.
+
+.git
+.gcloudignore
+node_modules
+.svelte-kit
+build
+.DS_Store
+Thumbs.db
+
+# Env / secrets — never uploaded as build source
+.env
+.env.*
+!.env.example
+!.env.test
+secrets.txt
+.mcp.json
+
+/autocam
+/backup
+/docs/migrations
+/PenguinCAM
+/supabase
+/logs

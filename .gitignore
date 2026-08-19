@@ -34,3 +34,6 @@ vite.config.ts.timestamp-*
 
 # Local Claude Code config
 .claude/
+
+# Local secrets file
+secrets.txt
