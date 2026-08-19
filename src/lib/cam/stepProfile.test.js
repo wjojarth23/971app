@@ -3,10 +3,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from './stepProfile.js';
+import { generateTurningGcode } from './turning.js';
+import { generateRoutingGcode } from './routing.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HEX_SHAFT = path.join(__dirname, '__fixtures__', 'hex-shaft.step');
 const FLAT_PLATE = path.join(__dirname, '__fixtures__', 'flat-plate.step');
+// Real, more complex CAD files pulled from REV Robotics' public STEP library
+// to stress-test the pipeline past simple shapes - each of these caught a
+// real bug on first pass (see the describe blocks below).
+const VORTEX_SHAFT = path.join(__dirname, '__fixtures__', 'vortex-shaft.step'); // REV-21-2807
+const HEX_ADAPTER = path.join(__dirname, '__fixtures__', 'hex-adapter.step'); // REV-41-1620
+const MAXSPLINE_BRACKET = path.join(__dirname, '__fixtures__', 'maxspline-bracket.step'); // REV-21-2360
+const MULTIBODY_BRACKET = path.join(__dirname, '__fixtures__', 'multibody-bracket.step'); // REV-21-2046
+const MOUNTING_BRACKET_FLAT = path.join(__dirname, '__fixtures__', 'mounting-bracket-flat.step'); // REV-41-1624
+const MOUNTING_BRACKET_BENT = path.join(__dirname, '__fixtures__', 'mounting-bracket-bent.step'); // REV-41-1623
 
 // Real STEP files, committed as fixtures - these previously caught a real
 // bug (both extractors silently assumed the STEP file's Z axis was the
@@ -118,6 +129,47 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-shaft.step)', () 
   });
 });
 
+describe('extractTurningProfileFromMeshes (real STEP file: vortex-shaft.step - a stepped motor shaft with a cross-drilled retention-pin hole)', () => {
+  let meshes;
+  beforeAll(async () => {
+    meshes = await readStepMeshes(fs.readFileSync(VORTEX_SHAFT));
+  });
+
+  it('produces a profile with no near-zero-radius dropouts mid-shaft (the real file behind the synthetic regression test above)', () => {
+    const profile = extractTurningProfileFromMeshes(meshes);
+    const maxRadius = Math.max(...profile.map((p) => p.x));
+    // Any interior point (not the very first/last, which taper to the
+    // part's actual ends) dropping below ~40% of the max radius would be
+    // the bug reappearing - the pin hole's own near-zero-radius vertices
+    // winning a bucket's "max radius" over the real OD.
+    for (let i = 2; i < profile.length - 2; i += 1) {
+      expect(profile[i].x).toBeGreaterThan(maxRadius * 0.4);
+    }
+  });
+
+  it('generates G-code end to end', () => {
+    const profile = extractTurningProfileFromMeshes(meshes);
+    const maxRadius = Math.max(...profile.map((p) => p.x));
+    const result = generateTurningGcode(profile, {
+      stockDiameter: maxRadius * 2 * 1.05, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
+    });
+    expect(result.gcode).toContain('M30');
+    expect(result.stats).toBeDefined();
+  });
+});
+
+describe('extractTurningProfileFromMeshes (real STEP file: hex-adapter.step - a stepped round-to-hex adapter with a bore)', () => {
+  it('generates G-code end to end', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(HEX_ADAPTER));
+    const profile = extractTurningProfileFromMeshes(meshes);
+    const maxRadius = Math.max(...profile.map((p) => p.x));
+    const result = generateTurningGcode(profile, {
+      stockDiameter: maxRadius * 2 * 1.05, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
+    });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
 describe('extractRoutingContoursFromMeshes (real STEP file: flat-plate.step)', () => {
   let meshes;
   beforeAll(async () => {
@@ -169,6 +221,47 @@ describe('extractRoutingContoursFromMeshes (real STEP file: flat-plate.step)', (
     };
     const { thickness } = extractRoutingContoursFromMeshes([plateMesh, fastenerMesh]);
     expect(thickness).toBeCloseTo(2, 5);
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP file: multibody-bracket.step - the real file behind the multi-mesh thickness test above: a bracket bundled with 2 small fastener bodies)', () => {
+  it('reads a sane thickness for the bracket itself, not contaminated by the fastener bodies', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(MULTIBODY_BRACKET));
+    expect(meshes.length).toBeGreaterThan(1); // confirms this really is a multi-body file
+    const { thickness } = extractRoutingContoursFromMeshes(meshes);
+    expect(thickness).toBeCloseTo(0.25, 1);
+  });
+
+  it('generates G-code end to end with a multi-tool sequence sized for its smallest holes', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(MULTIBODY_BRACKET));
+    const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
+    const toolSequence = [0.1875, 0.125, 0.0625].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP file: maxspline-bracket.step - includes a real 175-point internal spline bore, the file behind the minThroatDistance message fix in routing.test.js)', () => {
+  it('generates G-code end to end with a multi-tool sequence sized for the spline bore', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(MAXSPLINE_BRACKET));
+    const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
+    const toolSequence = [0.1875, 0.125, 0.0625].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP files: mounting-bracket-flat.step / mounting-bracket-bent.step - genuinely complex multi-hole brackets)', () => {
+  it.each([
+    ['mounting-bracket-flat.step', MOUNTING_BRACKET_FLAT],
+    ['mounting-bracket-bent.step', MOUNTING_BRACKET_BENT]
+  ])('%s generates G-code end to end with a multi-tool sequence', async (_name, filePath) => {
+    const meshes = await readStepMeshes(fs.readFileSync(filePath));
+    const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
+    expect(contours.length).toBeGreaterThan(5); // genuinely multi-feature, not a plain plate
+    const toolSequence = [0.1875, 0.125, 0.0625].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
+    expect(result.gcode).toContain('M30');
   });
 });
 
