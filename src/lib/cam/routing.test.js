@@ -133,6 +133,33 @@ describe('offsetPolygon', () => {
       expect(throat).toBeLessThan(1.1);
     });
   });
+
+  describe('sharp-corner detection (real-world advice: a round tool can never reach a mathematically sharp interior point, however small - the fix belongs in the CAD as a fillet, not in tool selection)', () => {
+    it('recommends a fillet for a genuinely sharp-tipped shape (star/spline teeth, ~15° tip angle)', () => {
+      const star = starHole(0, 0, 1, 0.5, 24);
+      expect(() => offsetPolygon(star, -0.2)).toThrow(/sharp internal corner.*fillet/);
+    });
+
+    it('does NOT recommend a fillet for a plain square/rectangle (90° corners - the ordinary "too small" case)', () => {
+      const tinyHole = square(0, 0, 0.1);
+      expect(() => offsetPolygon(tinyHole, -0.125)).toThrow(/too small for this tool/);
+      expect(() => offsetPolygon(tinyHole, -0.125)).not.toThrow(/fillet/);
+    });
+
+    it('does NOT recommend a fillet for a smoothly-curved (finely-tessellated) narrow shape - fine tessellation of a real curve reads as many near-180° vertex angles, not one sharp point (matches a real "MAXSpline" bore\'s smoothly rounded teeth, which need a smaller tool, not a fillet - there is nothing to fillet)', () => {
+      // A narrow ellipse-like oval approximated with many points - genuinely
+      // too small for an oversized offset, but every vertex angle is close
+      // to 180° since it's a fine polygon approximation of a smooth curve.
+      const n = 64;
+      const oval = [];
+      for (let i = 0; i < n; i += 1) {
+        const a = (i / n) * 2 * Math.PI;
+        oval.push({ x: 0.3 * Math.cos(a), y: 0.05 * Math.sin(a) });
+      }
+      expect(() => offsetPolygon(oval, -0.1)).toThrow(/too small for this tool/);
+      expect(() => offsetPolygon(oval, -0.1)).not.toThrow(/fillet/);
+    });
+  });
 });
 
 describe('generateRoutingGcode - single-tool (default)', () => {

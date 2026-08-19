@@ -144,6 +144,13 @@ function signedArea(points) {
 // offset specifically at that one vertex. Caught via fitCircle's tests on
 // a synthetic circle, not a hypothetical.
 const CLOSE_POINT_EPSILON = 1e-9;
+// Below this, a convex vertex (a "point" of void poking into material) is
+// considered sharp enough that fillet advice belongs in the error message -
+// see sharpestConvexAngleDegrees. Calibrated against real shapes: a plain
+// square/rectangle corner (90°, never a problem) vs a 24-tooth spline/gear
+// hole's tooth tips (~15°, a real "too small for this tool" case) - 60°
+// sits with wide margin below the former and above the latter.
+const SHARP_CORNER_ANGLE_DEGREES = 60;
 function ensureCCW(points) {
   const first = points[0], last = points[points.length - 1];
   const alreadyClosed = Math.abs(first.x - last.x) < CLOSE_POINT_EPSILON && Math.abs(first.y - last.y) < CLOSE_POINT_EPSILON;
@@ -184,6 +191,29 @@ function rayHitDistance(origin, dir, a, b) {
   return null;
 }
 
+// Smallest interior angle among the polygon's CONVEX vertices only (a
+// "point" of the enclosed void poking into the surrounding material - the
+// tip of a dart/star/spline-tooth shape, or a V cut into a pocket wall).
+// Reflex (concave) vertices are skipped: those are corners where the void
+// itself is roomy and the MATERIAL comes to a point instead, which a round
+// tool navigates around freely, not into - not the "can a tool ever reach
+// this" problem this function is checking for. Standard signed turn-angle
+// per vertex: positive (left) turn = convex for a CCW polygon.
+function sharpestConvexAngleDegrees(pts) {
+  const n = pts.length;
+  let sharpest = Infinity;
+  for (let i = 0; i < n; i += 1) {
+    const prev = pts[(i - 1 + n) % n], cur = pts[i], next = pts[(i + 1) % n];
+    const d1x = cur.x - prev.x, d1y = cur.y - prev.y;
+    const d2x = next.x - cur.x, d2y = next.y - cur.y;
+    const turn = Math.atan2(cross2(d1x, d1y, d2x, d2y), d1x * d2x + d1y * d2y);
+    if (turn <= 0) continue; // reflex/straight - not a convex "point"
+    const interiorDegrees = (Math.PI - turn) * (180 / Math.PI);
+    if (interiorDegrees < sharpest) sharpest = interiorDegrees;
+  }
+  return sharpest;
+}
+
 // For each edge midpoint, casts a ray straight across the polygon's own
 // enclosed area (the (-dy,dx) direction - the same direction a negative/
 // inward offset moves points in offsetPolygon below, i.e. "into the void
@@ -218,7 +248,17 @@ function minThroatDistance(pts) {
   // wall. Excluding a small local window of edges around the origin (scaled
   // to point density) filters that out while still finding genuinely
   // distant/opposite constrictions.
-  const window = Math.max(2, Math.round(n / 20));
+  //
+  // Capped at floor(n/2)-1: for a coarse polygon (a plain rectangle, n=4,
+  // is the simplest real case: every hole/pocket contour is at LEAST this
+  // shape) the uncapped window can reach or exceed the largest index
+  // distance any two edges can have at all - excluding every possible pair,
+  // including genuinely opposite ones (the two long sides of a rectangle).
+  // With nothing left to compare, `min` stayed Infinity and fell back to a
+  // bogus "0.0000" reading - a real regression found testing a plain
+  // 4-point rectangular slot, the simplest possible hole shape, right after
+  // this ray-cast version was written for a complex 175-point case.
+  const window = Math.min(Math.max(2, Math.round(n / 20)), Math.floor(n / 2) - 1);
   let min = Infinity;
   for (let i = 0; i < n; i += 1) {
     const a = pts[i], b = pts[(i + 1) % n];
@@ -311,9 +351,25 @@ export function offsetPolygon(points, distance) {
     const originalArea = Math.abs(signedArea(ccw));
     if (reversed || offsetArea <= 0 || offsetArea < originalArea * 0.001) {
       const throat = minThroatDistance(pts);
+      // A sharp convex vertex (a "point" of void poking into material - a
+      // dart/star tooth tip, a V-notch) is a DIFFERENT problem than a
+      // uniformly small feature: no tool, however small, can ever perfectly
+      // reach a mathematically sharp interior point - a round cutter always
+      // leaves at least its own radius of material there. Swapping to a
+      // smaller tool only shrinks how much gets left behind, it never fixes
+      // this the way it fixes a genuinely-too-small hole. Detected directly
+      // from geometry (the sharpest convex interior angle in the contour,
+      // not inferred from whether this specific offset attempt happened to
+      // fail) so the advice is right regardless of which tool was tried.
+      const sharpestAngle = sharpestConvexAngleDegrees(pts);
+      const advice = sharpestAngle < SHARP_CORNER_ANGLE_DEGREES
+        ? `this contour has a sharp internal corner (~${sharpestAngle.toFixed(0)}°) - a round tool can never fully reach a ` +
+          `mathematically sharp interior point no matter how small it is; add a fillet there in your CAD (radius >= the ` +
+          `tool radius) and regenerate`
+        : 'use a smaller tool or drop this hole/pocket';
       throw new Error(
         `Feature is too small for this tool: tool radius ${Math.abs(distance).toFixed(4)}" collapses this contour ` +
-        `(roughly ~${throat.toFixed(4)}" at its tightest point) - use a smaller tool or drop this hole/pocket`
+        `(roughly ~${throat.toFixed(4)}" at its tightest point) - ${advice}`
       );
     }
   }

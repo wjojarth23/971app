@@ -21,6 +21,7 @@
     retryCamJob,
     cancelStuckCamJob,
     renameCamJob,
+    updateCamJobNotes,
     deleteCamJob,
     updateCamJobAndRegenerate,
     isCamJobActive,
@@ -101,6 +102,7 @@
 
   let showNewJobModal = false;
   let newJobName = '';
+  let newJobNotes = '';
   let newJobOperation = 'routing'; // 'turning' | 'routing' - milling has no generator yet
   let newJobSource = 'upload';
   let newJobFile = null;
@@ -121,11 +123,13 @@
   let showJobDetailModal = false;
   let editingJob = null;
   let editJobName = '';
+  let editJobNotes = '';
   let editMaterialId = '';
   let editToolId = '';
   let editMachineId = '';
   let editParams = {};
   let editRenaming = false;
+  let editSavingNotes = false;
   let editSubmitting = false;
   let editDeleting = false;
   let showJobCadModal = false;
@@ -248,6 +252,7 @@
   // profile's defaults - the "use this profile" shortcut on each profile card.
   function openNewJobModal(machine = null) {
     newJobName = '';
+    newJobNotes = '';
     newJobOperation = machine?.operation_type || 'routing';
     newJobSource = 'upload';
     newJobFile = null;
@@ -334,6 +339,7 @@
         machineId: selectedMachineId || null,
         params: buildParams(),
         userId: user?.id || null,
+        notes: newJobNotes.trim() || null,
         gcodeExtension: machines.find((m) => m.id === selectedMachineId)?.gcode_extension
       };
 
@@ -417,6 +423,7 @@
   function openJobDetail(job) {
     editingJob = job;
     editJobName = job.name || '';
+    editJobNotes = job.notes || '';
     editMaterialId = job.material_id || '';
     editToolId = job.tool_id || '';
     editMachineId = job.machine_id || '';
@@ -498,12 +505,30 @@
     }
   }
 
+  async function saveJobNotes() {
+    if (!editingJob) return;
+    editSavingNotes = true;
+    try {
+      const result = await updateCamJobNotes(editingJob.id, editJobNotes.trim());
+      if (result.success) {
+        toastActions.show('Notes saved');
+        await loadJobs();
+        editingJob = jobs.find((j) => j.id === editingJob.id) || editingJob;
+      } else {
+        toastActions.show(result.error || 'Could not save notes');
+      }
+    } finally {
+      editSavingNotes = false;
+    }
+  }
+
   async function saveJobAndRegenerate() {
     if (!editingJob) return;
     editSubmitting = true;
     try {
       const result = await updateCamJobAndRegenerate(editingJob, {
         name: editJobName.trim() || null,
+        notes: editJobNotes.trim() || null,
         materialId: editMaterialId,
         toolId: editToolId,
         machineId: editMachineId,
@@ -984,6 +1009,10 @@
             <label class="form-label" for="job-name">Job Name <span class="text-muted">(optional)</span></label>
             <input id="job-name" class="form-input" placeholder="e.g. Gearbox side plate" bind:value={newJobName} />
           </div>
+          <div class="form-group">
+            <label class="form-label" for="job-notes">Notes <span class="text-muted">(optional)</span></label>
+            <textarea id="job-notes" class="form-input" rows="2" placeholder="e.g. verify stock height before running, customer wants 2 of these" bind:value={newJobNotes}></textarea>
+          </div>
         {/if}
 
         <div class="form-row two-col">
@@ -1174,6 +1203,16 @@
             <input id="edit-job-name" class="form-input" placeholder="e.g. Gearbox side plate" bind:value={editJobName} />
             <button class="btn btn-secondary btn-sm btn-nowrap" on:click={saveJobName} disabled={editRenaming || editJobName.trim() === (editingJob.name || '')}>
               {editRenaming ? 'Saving…' : 'Save Name'}
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="edit-job-notes">Notes</label>
+          <div class="input-group">
+            <textarea id="edit-job-notes" class="form-input" rows="2" placeholder="e.g. verify stock height before running, customer wants 2 of these" bind:value={editJobNotes}></textarea>
+            <button class="btn btn-secondary btn-sm btn-nowrap" on:click={saveJobNotes} disabled={editSavingNotes || editJobNotes.trim() === (editingJob.notes || '')}>
+              {editSavingNotes ? 'Saving…' : 'Save Notes'}
             </button>
           </div>
         </div>

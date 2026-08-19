@@ -160,7 +160,7 @@ async function triggerGenerationAndRefetch(jobId, onProgress) {
  * the STEP for a part that doesn't have one yet (e.g. a legacy lathe part
  * created before STEP was required for that workflow).
  * @param {Object} part - part row (needs id, name, workflow, file_name/file_url for its STEP)
- * @param {Object} options - { operationType, materialId, toolId, machineId, params, userId, name, profileFile, onProgress, onQueued, gcodeExtension }
+ * @param {Object} options - { operationType, materialId, toolId, machineId, params, userId, name, notes, profileFile, onProgress, onQueued, gcodeExtension }
  */
 export async function queueCamJobForPart(part, options = {}) {
   if (!part?.id) return { success: false, error: 'Missing part' };
@@ -181,6 +181,7 @@ export async function queueCamJobForPart(part, options = {}) {
     .from('cam_jobs')
     .insert({
       name: options.name || null,
+      notes: options.notes || null,
       source_type: 'part',
       part_id: part.id,
       operation_type: operationType,
@@ -239,7 +240,7 @@ export async function queueCamJobsForParts(parts, options = {}) {
  * Upload a fresh STEP file and queue + generate a CAM job from it (no
  * existing part) - used by the /autocam page's manual "New Job" flow.
  * @param {File} profileFile - the .step/.stp file
- * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName, onProgress, onQueued, gcodeExtension }
+ * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName, notes, onProgress, onQueued, gcodeExtension }
  */
 export async function queueCamJobFromUpload(profileFile, options = {}) {
   if (!options.operationType) return { success: false, error: 'operationType is required (turning or routing)' };
@@ -252,6 +253,7 @@ export async function queueCamJobFromUpload(profileFile, options = {}) {
     .from('cam_jobs')
     .insert({
       name: options.name || null,
+      notes: options.notes || null,
       source_type: 'upload',
       operation_type: options.operationType,
       step_file_name: upload.path,
@@ -302,6 +304,12 @@ export async function renameCamJob(jobId, name) {
   return error ? { success: false, error: error.message } : { success: true };
 }
 
+/** Update a job's free-text notes in place - no regeneration, purely informational. */
+export async function updateCamJobNotes(jobId, notes) {
+  const { error } = await supabase.from('cam_jobs').update({ notes: notes || null }).eq('id', jobId);
+  return error ? { success: false, error: error.message } : { success: true };
+}
+
 /** Permanently delete a job row. Does not delete the underlying STEP file from storage, since it may still be referenced elsewhere. */
 export async function deleteCamJob(jobId) {
   const { error } = await supabase.from('cam_jobs').delete().eq('id', jobId);
@@ -314,7 +322,7 @@ export async function deleteCamJob(jobId) {
  * Updates the same row (unlike retryCamJob, which inserts a new one to
  * preserve history) since this is an explicit edit of this specific job.
  * @param {Object} job - the job row being edited (needs id, step_file_name)
- * @param {Object} updates - { name, materialId, toolId, machineId, params, onProgress, gcodeExtension }
+ * @param {Object} updates - { name, notes, materialId, toolId, machineId, params, onProgress, gcodeExtension }
  */
 export async function updateCamJobAndRegenerate(job, updates = {}) {
   if (!job?.id) return { success: false, error: 'Missing job' };
@@ -324,6 +332,7 @@ export async function updateCamJobAndRegenerate(job, updates = {}) {
     .from('cam_jobs')
     .update({
       name: updates.name ?? job.name ?? null,
+      notes: updates.notes ?? job.notes ?? null,
       material_id: updates.materialId || null,
       tool_id: updates.toolId || null,
       machine_id: updates.machineId || null,
