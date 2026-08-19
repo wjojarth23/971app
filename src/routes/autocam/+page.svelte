@@ -156,7 +156,7 @@
   // Machine profile editor
   let showMachineModal = false;
   let editingMachineId = null;
-  let machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', controller: 'linuxcnc', drive_folder_id: '', params: emptyRoutingParams() };
+  let machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', controller: 'linuxcnc', drive_folder_id: '', drive_output_folder_id: '', params: emptyRoutingParams() };
   let savingMachine = false;
 
   $: canManageProfiles = canManageCamProfiles(user);
@@ -594,6 +594,7 @@
         gcode_extension: machine.gcode_extension || 'ngc',
         controller: machine.controller || 'linuxcnc',
         drive_folder_id: machine.drive_folder_id || '',
+        drive_output_folder_id: machine.drive_output_folder_id || '',
         params: {
           ...(machine.operation_type === 'turning' ? emptyTurningParams() : emptyRoutingParams()),
           ...(machine.default_params || {})
@@ -601,7 +602,7 @@
       };
     } else {
       editingMachineId = null;
-      machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', controller: 'linuxcnc', drive_folder_id: '', params: emptyRoutingParams() };
+      machineForm = { name: '', description: '', operation_type: 'routing', default_material_id: '', default_tool_id: '', gcode_extension: 'ngc', controller: 'linuxcnc', drive_folder_id: '', drive_output_folder_id: '', params: emptyRoutingParams() };
     }
     showMachineModal = true;
   }
@@ -629,6 +630,7 @@
         gcode_extension: machineForm.gcode_extension || 'ngc',
         controller: machineForm.operation_type === 'routing' ? (machineForm.controller || 'linuxcnc') : 'linuxcnc',
         drive_folder_id: machineForm.drive_folder_id?.trim() || null,
+        drive_output_folder_id: machineForm.drive_output_folder_id?.trim() || null,
         default_params: serializeParams(machineForm.params)
       };
       const { error } = editingMachineId
@@ -1392,15 +1394,24 @@
           {/if}
         </div>
 
-        <div class="form-group">
-          <label class="form-label" for="mp-drive-folder">Google Drive Auto-Trigger Folder ID <span class="text-muted">(optional)</span></label>
-          <input id="mp-drive-folder" class="form-input" placeholder="e.g. 1a2B3cD4eFGhijKLmnoPQRstuVWxyz" bind:value={machineForm.drive_folder_id} />
-          <p class="cam-form-hint">
-            A STEP file dropped in this Drive folder auto-queues a job on this machine, using the defaults above.
-            {#if machineForm.operation_type === 'turning'}Turning jobs land as a draft (stock diameter needs a human) - see implementations/drive-watcher-cron-plan.md.{/if}
-            Requires GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY to be configured server-side and the folder shared with that service account - not yet set up for this shop.
-          </p>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="mp-drive-folder">Drive Auto-Trigger Folder ID (input) <span class="text-muted">(optional)</span></label>
+            <input id="mp-drive-folder" class="form-input" placeholder="e.g. 1a2B3cD4eFGhijKLmnoPQRstuVWxyz" bind:value={machineForm.drive_folder_id} />
+            <p class="cam-form-hint">
+              A STEP file dropped here auto-queues a job on this machine, using the defaults above.
+              {#if machineForm.operation_type === 'turning'}Turning jobs land as a draft (stock diameter needs a human).{/if}
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="mp-drive-output-folder">Drive Delivery Folder ID (output) <span class="text-muted">(optional)</span></label>
+            <input id="mp-drive-output-folder" class="form-input" placeholder="e.g. 9zY8xW7vUtSrqPonMLkjihGF" bind:value={machineForm.drive_output_folder_id} />
+            <p class="cam-form-hint">
+              Any completed job's G-code on this machine gets written here - pair with a Drive desktop sync client on the machine's control PC for zero-download delivery. Deliberately a separate folder from the one above. See implementations/direct-machine-file-transfer-plan.md.
+            </p>
+          </div>
         </div>
+        <p class="cam-form-hint">Both require GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY configured server-side and the folder shared with that service account - not yet set up for this shop.</p>
 
         <CamParamFields operation={machineForm.operation_type} bind:params={machineForm.params} mode="profile" />
         {#if machineForm.operation_type === 'routing'}

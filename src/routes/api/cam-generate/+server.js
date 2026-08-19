@@ -4,6 +4,7 @@ import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/publi
 import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '$lib/cam/stepProfile.js';
 import { generateTurningGcode } from '$lib/cam/turning.js';
 import { generateRoutingGcode } from '$lib/cam/routing.js';
+import { deliverJobToDrive } from '$lib/server/drive_watcher.js';
 // Vite-built asset URL for occt-import-js's WASM binary - the same one
 // CadViewer.svelte already fetches successfully client-side. Fetching it
 // over HTTP (below) instead of reading it off disk sidesteps Vercel's
@@ -107,7 +108,7 @@ export async function POST({ request, url }) {
   try {
     const { data: job, error: loadError } = await supabase
       .from('cam_jobs')
-      .select('*, cam_tools(nose_radius, diameter), cam_machines(controller)')
+      .select('*, cam_tools(nose_radius, diameter), cam_machines(name, controller, drive_output_folder_id)')
       .eq('id', jobId)
       .single();
 
@@ -193,6 +194,14 @@ export async function POST({ request, url }) {
       .select('id');
     if (updateError) throw new Error(updateError.message);
     if (!updateData?.length) throw new CancelledError('Job was cancelled just before it finished');
+
+    // Best-effort - never throws, never affects the already-successful
+    // 'completed' status or this response. See deliverJobToDrive's own doc
+    // comment and implementations/direct-machine-file-transfer-plan.md.
+    await deliverJobToDrive(
+      { id: jobId, gcode: result.gcode, gcode_file_name: job.gcode_file_name || 'output.ngc' },
+      job.cam_machines
+    );
 
     return json({ success: true, jobId, stats: result.stats });
   } catch (e) {

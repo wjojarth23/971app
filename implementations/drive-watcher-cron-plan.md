@@ -1,5 +1,7 @@
 # AutoCAM auto-trigger from Google Drive — implementation plan (not built)
 
+**Superseded by `drive-watcher-implementation.md`** - this is now built (both the input watcher this plan describes, and an output-delivery direction this plan didn't originally cover). Kept as-is for the original design reasoning/tradeoffs; see the other doc for the as-built architecture, setup steps, and what's still genuinely pending (the cron trigger for the input side).
+
 ## Goal
 
 Right now every AutoCAM job starts with a human opening `/autocam`, choosing an operation, uploading a STEP file, and picking parameters. This plan covers watching a Google Drive folder and automatically creating + generating a job the moment a CAD file lands in it, with no human click needed to kick it off.

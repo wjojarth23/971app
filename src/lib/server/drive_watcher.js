@@ -1,16 +1,22 @@
 /**
- * Google Drive auto-trigger sweep for AutoCAM - see
- * implementations/drive-watcher-cron-plan.md for the full design.
+ * Google Drive integration for AutoCAM, both directions - see
+ * implementations/drive-watcher-cron-plan.md (input: STEP file in a folder
+ * auto-triggers a job) and implementations/direct-machine-file-transfer-plan.md
+ * (output: a completed job's G-code gets written to a separate Drive folder,
+ * so a Drive desktop sync client on the machine's control PC picks it up
+ * with no manual download - see runDriveWatcherSweep for input,
+ * deliverJobToDrive for output).
  *
  * STATUS: built, wired up, and safe to ship with zero configuration - but
  * genuinely untested against a real Google Drive folder, because this
- * environment has no Google credentials. runDriveWatcherSweep() below is a
- * deliberate no-op ({ ok: true, skipped: true, reason: 'not_configured' })
- * until GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY is set AND at least one
- * cam_machines row has a drive_folder_id. The first real sweep against a
- * real folder should be treated as unverified - watch it closely, same as
- * every G-code file this app produces gets a "run it in a simulator first"
- * warning.
+ * environment has no Google credentials. Both entry points below are
+ * deliberate no-ops ({ ok: true, skipped: true, reason: 'not_configured' } /
+ * { delivered: false, reason: 'not_configured' }) until
+ * GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY is set AND the relevant
+ * cam_machines.drive_folder_id / drive_output_folder_id is set for a given
+ * machine. The first real sweep/delivery against a real folder should be
+ * treated as unverified - watch it closely, same as every G-code file this
+ * app produces gets a "run it in a simulator first" warning.
  *
  * No googleapis npm dependency - this repo has had no npm install access at
  * points in its history (see the DXF/Clipper decisions in turning.js /
@@ -19,9 +25,11 @@
  * crypto (RS256 JWT signing) - same zero-dependency approach already used
  * elsewhere in this CAM system.
  *
- * Scope: drive.readonly only - this only ever reads/downloads files, never
- * writes to Drive. Per the plan's security notes, the service account
- * should only ever be shared with the specific folders being watched.
+ * Scope: drive.readonly (input folders) + drive.file (output folders only -
+ * access to a folder the service account can already reach because it was
+ * explicitly shared with it, not blanket write access to the account's whole
+ * Drive). Per the plan's security notes, the service account should only
+ * ever be shared with the specific folders being watched/delivered to.
  */
 
 import crypto from 'node:crypto';
@@ -29,9 +37,10 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/private';
 import { gcodeFileNameFor } from '$lib/camJobs.js';
 
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3/files';
 const MAX_FILES_PER_SWEEP_PER_MACHINE = 10;
 const STEP_NAME_RE = /\.(step|stp)$/i;
 
@@ -43,8 +52,10 @@ function base64url(buf) {
 // access token (standard Google OAuth2 "JWT Bearer" flow - RFC 7523). Not
 // cached across invocations - this runs in a serverless function with no
 // guaranteed warm state between sweeps, and a token exchange is cheap
-// (one extra request every ~5 minutes at most).
-async function getServiceAccountAccessToken(serviceAccountJson) {
+// (one extra request every ~5 minutes at most). Exported so cam-generate's
+// completion path can get its own token for deliverJobToDrive without
+// duplicating the JWT-signing logic.
+export async function getServiceAccountAccessToken(serviceAccountJson) {
   let key;
   try {
     key = JSON.parse(serviceAccountJson);
@@ -114,6 +125,32 @@ async function listChangesSince(accessToken, pageToken) {
 async function downloadFile(accessToken, fileId) {
   const res = await driveFetch(accessToken, `/files/${fileId}?alt=media`);
   return new Uint8Array(await res.arrayBuffer());
+}
+
+// Multipart upload (metadata + content in one request) - the standard Drive
+// API v3 way to create a file with content in one call. Hand-rolled (see
+// file header) rather than using a client library; G-code is plain text so
+// no base64/binary encoding is needed for the content part.
+async function uploadFileToDriveFolder(accessToken, folderId, filename, content, mimeType = 'text/plain') {
+  const boundary = `971hub-${crypto.randomUUID()}`;
+  const metadata = JSON.stringify({ name: filename, parents: [folderId] });
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${metadata}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: ${mimeType}\r\n\r\n` +
+    `${content}\r\n` +
+    `--${boundary}--`;
+
+  const res = await fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  const responseBody = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Drive upload failed (${res.status}): ${responseBody.error?.message || res.statusText}`);
+  return responseBody; // { id, name, ... }
 }
 
 // Cheap sanity check, not a real parse - real validation happens inside
@@ -278,4 +315,39 @@ export async function runDriveWatcherSweep({ appOrigin } = {}) {
   }
 
   return { ok: true, skipped: false, results };
+}
+
+/**
+ * OUTPUT side: after a job completes, if its machine has a
+ * drive_output_folder_id configured, upload the finished G-code there so a
+ * Drive desktop sync client on the machine's control PC picks it up with no
+ * manual download - see implementations/direct-machine-file-transfer-plan.md.
+ * Applies to ANY completed job on that machine, not just Drive-triggered
+ * ones - delivery is a property of the machine, not of how the job started.
+ *
+ * Never throws - called as a best-effort step after a job is already marked
+ * 'completed' (see /api/cam-generate/+server.js); a Drive delivery failure
+ * must not affect the job's status or the response to whoever triggered
+ * generation. Safe with zero configuration (returns a clear skip reason).
+ *
+ * @param {Object} job - a cam_jobs row with gcode/gcode_file_name populated
+ * @param {Object} machine - the linked cam_machines row (needs drive_output_folder_id)
+ */
+export async function deliverJobToDrive(job, machine) {
+  if (!machine?.drive_output_folder_id) return { delivered: false, reason: 'not_configured' };
+  const serviceAccountJson = env.GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY;
+  if (!serviceAccountJson) return { delivered: false, reason: 'not_configured' };
+  if (!job?.gcode) return { delivered: false, reason: 'no_gcode' };
+
+  try {
+    const accessToken = await getServiceAccountAccessToken(serviceAccountJson);
+    const filename = job.gcode_file_name || 'output.ngc';
+    await uploadFileToDriveFolder(accessToken, machine.drive_output_folder_id, filename, job.gcode, 'text/plain');
+    return { delivered: true };
+  } catch (e) {
+    const message = e?.message || String(e);
+    console.error(`Drive watcher: delivery failed for job ${job.id} (machine "${machine.name}")`, message);
+    await notifyFailure(`Could not deliver "${job.gcode_file_name || job.id}" to Drive for machine "${machine.name}": ${message}`);
+    return { delivered: false, reason: 'error', error: message };
+  }
 }
