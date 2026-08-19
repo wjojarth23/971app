@@ -60,6 +60,31 @@
  * through a simulator) before cutting anything with sharp internal corners
  * smaller than the tool diameter.
  *
+ * ENTRY SAFETY - no straight plunges into solid material: every pass ramps
+ * into depth instead of dropping straight down at a fixed point before
+ * cutting - see cutContour/emitContourPass. A vertical plunge with a
+ * milling cutter (not a drill) at full stepdown depth, with no ramp/helix
+ * and no pre-drilled clearance hole, is a well-known way to break a small
+ * tool or load it heavily - real risk for interior cuts (holes/pockets),
+ * which have no open edge to enter from in fresh air the way an outer
+ * profile sometimes does.
+ *
+ * TRUE ARCS FOR CIRCULAR FEATURES: a hole or boss traced from a STEP file's
+ * triangulated mesh comes out of stepProfile.js as a many-sided polygon
+ * approximating a circle, not an actual circle - see fitCircle. When a
+ * contour's offset toolpath fits a circle within CIRCLE_FIT_TOLERANCE, this
+ * generator cuts it with real G02/G03 helical entry + circular
+ * interpolation (emitHelicalCircularContour) instead of walking the
+ * polygon with hundreds of short G01 segments - fixes faceted surface
+ * finish and needless file size, and doubles as the entry-safety fix for
+ * that contour (a helical ramp is the standard way to plunge a circular
+ * feature). Non-circular contours still get the polygon-following G01 path,
+ * just with a linear Z-ramp over the first part of each pass instead of a
+ * vertical plunge before it. Tabs (see below) only ever apply to a
+ * non-circular OR tab-free outer contour - a circular outer contour that
+ * also wants tabs falls back to the polygon path, since interrupting a
+ * helical arc cut to leave tab webs isn't implemented.
+ *
  * MULTI-TOOL SUPPORT: pass params.toolSequence (ordered array of tool specs,
  * primary/largest tool first) to cut different contours with different
  * tools - each contour is assigned to the *first* tool in the sequence that
@@ -96,10 +121,22 @@ function signedArea(points) {
 }
 
 // Ensures a closed polygon (last point == first) winds counter-clockwise.
+// Epsilon, not exact equality, for "is this already closed" - a contour
+// whose first/last point was derived from trig (sin/cos of a full turn) or
+// any other floating-point computation is extremely unlikely to be
+// bit-identical even when it's geometrically the same point (e.g.
+// Math.sin(2*Math.PI) is ~1.2e-16, not exactly 0). Exact equality here used
+// to let a near-but-not-exactly-closed contour slip through as "not
+// closed", appending a fresh duplicate point and creating a genuine
+// near-zero-length phantom edge at the seam - normalize()'s zero-length
+// fallback then produced a garbage edge normal there, corrupting the
+// offset specifically at that one vertex. Caught via fitCircle's tests on
+// a synthetic circle, not a hypothetical.
+const CLOSE_POINT_EPSILON = 1e-9;
 function ensureCCW(points) {
-  const pts = points[0].x === points[points.length - 1].x && points[0].y === points[points.length - 1].y
-    ? points
-    : points.concat([points[0]]);
+  const first = points[0], last = points[points.length - 1];
+  const alreadyClosed = Math.abs(first.x - last.x) < CLOSE_POINT_EPSILON && Math.abs(first.y - last.y) < CLOSE_POINT_EPSILON;
+  const pts = alreadyClosed ? points : points.concat([points[0]]);
   return signedArea(pts) < 0 ? pts.slice().reverse() : pts;
 }
 
@@ -123,11 +160,19 @@ function pointToSegmentDistance(p, a, b) {
   return Math.hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
 }
 
-// Smallest distance from the polygon's centroid to any of its edges - a
-// practical proxy for the tightest constriction in the shape. Used to catch
-// "tool physically can't fit in this feature" before silently emitting a
-// collapsed/garbage toolpath (e.g. a hole smaller than the tool diameter),
-// and (for multi-tool jobs) to decide whether a contour needs a smaller tool.
+// Smallest distance from the polygon's centroid to any of its edges - used
+// ONLY for the human-readable size estimate in the "too small for this
+// tool" error message below, not as the actual pass/fail gate anymore (see
+// offsetPolygon's real check). Centroid-to-edge distance is a fine rough
+// estimate for a roughly-convex, roughly-circular hole, but it's a poor
+// proxy for a non-convex/elongated/slot-shaped one - a real bug found
+// against a real STEP file: a curved, non-convex internal cutout had its
+// centroid sitting close to one of its own edges (an artifact of the
+// shape's concavity, not a real tight constriction), which used to make
+// this the GATE and threw "too small" even though the tool fit fine along
+// the actual offset path. Kept for the message text since "here's roughly
+// how tight this is" is still useful context even when it isn't the
+// deciding factor.
 function minThroatDistance(pts) {
   let cx = 0, cy = 0;
   for (const p of pts) { cx += p.x; cy += p.y; }
@@ -151,16 +196,6 @@ export function offsetPolygon(points, distance) {
   if (n < 3) throw new Error('Polygon needs at least 3 vertices to offset');
   if (distance === 0) return ccw;
 
-  if (distance < 0) {
-    const throat = minThroatDistance(pts);
-    if (Math.abs(distance) >= throat) {
-      throw new Error(
-        `Feature is too small for this tool: tool radius ${Math.abs(distance).toFixed(4)}" but the tightest ` +
-        `point in this contour is only ~${throat.toFixed(4)}" from center - use a smaller tool or drop this hole/pocket`
-      );
-    }
-  }
-
   const edges = [];
   for (let i = 0; i < n; i += 1) {
     const a = pts[i];
@@ -171,7 +206,8 @@ export function offsetPolygon(points, distance) {
     const ny = -dx;
     edges.push({
       a: { x: a.x + nx * distance, y: a.y + ny * distance },
-      dir: [dx, dy]
+      dir: [dx, dy],
+      nx, ny
     });
   }
 
@@ -187,6 +223,50 @@ export function offsetPolygon(points, distance) {
     offset.push(dFromOriginal > MAX_MITER ? fallback : candidate);
   }
   offset.push(offset[0]);
+
+  // Real bug this catches: naive edge-offset-and-intersect doesn't fail
+  // gracefully when `distance` exceeds what the local geometry can support
+  // - it doesn't "collapse toward nothing," a miter intersection can
+  // overshoot far enough that a corner ends up diagonally opposite from
+  // where it should be, producing a same-size-ish but topologically
+  // inverted shape that can have valid CCW/positive area AND have every
+  // point still technically within the original polygon's bounds (tried
+  // and rejected two weaker checks before this one: area/winding alone
+  // misses it because a whole-polygon flip-through can cancel out and
+  // still look valid; "is each point outside any original edge" also
+  // misses it, because an overshot-but-still-inverted point can land
+  // genuinely inside the original bounds, just at the wrong corner).
+  //
+  // The one invariant that actually holds for every case: a valid inward
+  // offset can only ever shrink an edge, never reverse its direction. If
+  // offset edge i points opposite to where original edge i pointed, that
+  // edge - and the shape - inverted.
+  let reversed = false;
+  if (distance < 0) {
+    for (let i = 0; i < n; i += 1) {
+      const a = offset[i], b = offset[(i + 1) % n];
+      const dot = (b.x - a.x) * edges[i].dir[0] + (b.y - a.y) * edges[i].dir[1];
+      if (dot <= 0) { reversed = true; break; }
+    }
+  }
+
+  // "Does the tool actually fit" is checked on the REAL computed offset, not
+  // guessed beforehand - the reversed-edge check above is the actual bug this
+  // catches, backed by a coarse area/winding check for the ordinary
+  // "shrinks to nothing" collapse case. See minThroatDistance's doc comment
+  // for why a pre-emptive centroid-distance guess isn't reliable here.
+  if (distance < 0) {
+    const offsetArea = signedArea(offset);
+    const originalArea = Math.abs(signedArea(ccw));
+    if (reversed || offsetArea <= 0 || offsetArea < originalArea * 0.001) {
+      const throat = minThroatDistance(pts);
+      throw new Error(
+        `Feature is too small for this tool: tool radius ${Math.abs(distance).toFixed(4)}" collapses this contour ` +
+        `(roughly ~${throat.toFixed(4)}" at its tightest point) - use a smaller tool or drop this hole/pocket`
+      );
+    }
+  }
+
   return offset;
 }
 
@@ -209,11 +289,72 @@ function buildTabZones(perimeter, width, spacing) {
   return zones;
 }
 
-// Walks the path emitting G01 moves at full cut depth, except inside a tab
-// zone where depth is clamped so tabHeight of material is left uncut - only
-// on the FINAL pass (earlier passes stay above the tab height entirely and
-// cut normally, since they don't reach that deep anyway once clamped).
-function emitContourPass(lines, path, passDepth, targetDepth, tabZones, tabHeight, feedRate) {
+// Best-effort circle fit (center = centroid, radius = mean distance to it) +
+// how far the path actually deviates from that circle - see file header
+// "TRUE ARCS FOR CIRCULAR FEATURES". `path` is closed (last point repeats
+// the first); dropping the repeat before averaging avoids double-weighting it.
+//
+// Samples both vertices AND edge midpoints, not just vertices - a regular
+// polygon's vertices alone are ALWAYS equidistant from its centroid (a
+// square's 4 corners are exactly as "circular" as any circle's sample
+// points, by symmetry), which would otherwise let a plain square, hexagon,
+// or any other regular polygon false-positive as a circle. Edge midpoints
+// correctly expose that: a genuine many-segment circle approximation has
+// edge midpoints almost exactly as far from center as its vertices (each
+// segment subtends a tiny angle), while a square's edge midpoints sit
+// dramatically closer to center than its corners do. Caught by this file's
+// own tests, not shipped blind - see routing.test.js.
+function fitCircle(path) {
+  const pts = path.slice(0, -1);
+  let cx = 0, cy = 0;
+  for (const p of pts) { cx += p.x; cy += p.y; }
+  cx /= pts.length; cy /= pts.length;
+
+  const samples = [];
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    samples.push(a, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  }
+
+  const radii = samples.map((p) => Math.hypot(p.x - cx, p.y - cy));
+  const radius = radii.reduce((a, b) => a + b, 0) / radii.length;
+  const maxDeviation = Math.max(...radii.map((r) => Math.abs(r - radius)));
+  return { cx, cy, radius, maxDeviation };
+}
+const CIRCLE_FIT_TOLERANCE = 0.003; // inches - tight enough to reject genuinely non-circular shapes, loose enough to absorb STEP mesh tessellation facets
+
+// Max Z drop per unit of XY travel during a ramped/helical entry (rise/run,
+// not degrees) - conservative on purpose. Too steep and a "ramp" is just a
+// disguised plunge again; this caps it well short of that regardless of
+// stepDown/tool size. MIN_HELIX_TURNS keeps a helical entry gentle even
+// when MAX_RAMP_SLOPE alone would allow a single fast turn for a shallow pass.
+const MAX_RAMP_SLOPE = 0.15;
+const MIN_HELIX_TURNS = 2;
+
+// Real bug, found from an actual generated file: a roughing loop written as
+// `while (depth < targetDepth) { depth = Math.min(depth + stepDown,
+// targetDepth); ... }` looks like it always lands exactly on targetDepth
+// once it gets there, and normally does - EXCEPT when stepDown doesn't
+// divide evenly into targetDepth (the overwhelmingly common case for real,
+// user-entered values, not a corner case), accumulated floating-point error
+// can leave `depth` a hair below targetDepth even after the "last" step
+// (e.g. 0.09999999999999999 instead of 0.1) - `depth < targetDepth` is then
+// still true, so the loop runs one MORE time, clamps to targetDepth for
+// real this time, and emits a second pass at what prints as the identical
+// depth (fmt() rounds both to the same 4 decimals) - a fully redundant
+// extra pass on every single contour. Same fix pattern already used by
+// emitContourPass's own isFinalPass check: compare with a small epsilon
+// instead of exact floating-point equality.
+const DEPTH_EPSILON = 1e-6;
+
+// Walks the path emitting G01 moves, ramping Z linearly from `prevDepth` to
+// `passDepth` over the first `rampDistance` of travel instead of arriving at
+// this pass already at full depth (see file header "ENTRY SAFETY") - except
+// inside a tab zone (outer contour, final pass only), where depth is
+// clamped so tabHeight of material is left uncut regardless of ramp state.
+// The ramped portion runs at `plungeRate` (a deliberately cautious rate for
+// axial engagement), the rest at the normal cutting `feedRate`.
+function emitContourPass(lines, path, prevDepth, passDepth, targetDepth, tabZones, tabHeight, feedRate, plungeRate, rampDistance) {
   let dist = 0;
   const isFinalPass = passDepth >= targetDepth - 1e-9;
   for (let i = 1; i < path.length; i += 1) {
@@ -222,10 +363,53 @@ function emitContourPass(lines, path, passDepth, targetDepth, tabZones, tabHeigh
     const segLen = Math.hypot(b.x - a.x, b.y - a.y);
     const midDist = dist + segLen / 2;
     const inTab = isFinalPass && tabZones.some(([s, e]) => midDist >= s && midDist <= e);
-    const cutDepth = inTab ? Math.max(0, targetDepth - tabHeight) : passDepth;
-    lines.push(`G01 X${fmt(b.x)} Y${fmt(b.y)} Z${fmt(-cutDepth)} F${fmt(feedRate)}`);
+    const inRamp = rampDistance > 0 && dist < rampDistance;
+    const rampT = rampDistance > 0 ? Math.min(1, midDist / rampDistance) : 1;
+    const rampedDepth = prevDepth + (passDepth - prevDepth) * rampT;
+    const cutDepth = inTab ? Math.max(0, targetDepth - tabHeight) : rampedDepth;
+    const feed = inRamp ? plungeRate : feedRate;
+    lines.push(`G01 X${fmt(b.x)} Y${fmt(b.y)} Z${fmt(-cutDepth)} F${fmt(feed, 5)}`);
     dist += segLen;
   }
+}
+
+// Cuts a genuinely circular contour (see fitCircle) with true G02/G03
+// helical entry + circular interpolation instead of a many-sided polygon -
+// see file header. Arc direction (G02 vs G03) matches whichever way `path`
+// already winds (via signedArea, the same helper ensureCCW uses), so this
+// is never a new, separately-invented direction choice - just an arc
+// replacing the equivalent G01 segments that would have gone the same way.
+function emitHelicalCircularContour(lines, contour, path, circle, toolParams, safeZ) {
+  const { stepDown, targetDepth, feedRate, plungeRate } = toolParams;
+  const { cx, cy, radius } = circle;
+  const arcCmd = signedArea(path) > 0 ? 'G03' : 'G02';
+  const startX = cx + radius, startY = cy; // angle-0 start point - arbitrary but fixed, so every pass/turn returns to the same X/Y for a true full-circle move
+  const i = fmt(cx - startX), j = fmt(cy - startY); // I/J are relative to the arc's start point, per standard G02/G03 convention
+
+  lines.push(`(--- ${contour.isHole ? 'HOLE' : 'CIRCULAR BOSS'} - true circle (center ${fmt(cx, 3)},${fmt(cy, 3)} radius ${fmt(radius, 3)}") - helical entry + arc cut ---)`);
+  lines.push(`G00 X${fmt(startX)} Y${fmt(startY)} (rapid to start)`);
+  lines.push(`G00 Z0.0000 (rapid to material surface)`);
+
+  let depth = 0;
+  while (depth < targetDepth - DEPTH_EPSILON) {
+    const prevDepth = depth;
+    depth = Math.min(depth + stepDown, targetDepth);
+    const zDrop = depth - prevDepth;
+    const turns = Math.max(MIN_HELIX_TURNS, Math.ceil(zDrop / Math.max(1e-6, radius * MAX_RAMP_SLOPE)));
+    const dropPerTurn = zDrop / turns;
+    lines.push(`(-- pass at Z-${fmt(depth)}, helical entry over ${turns} turn${turns === 1 ? '' : 's'} --)`);
+    let z = prevDepth;
+    for (let t = 0; t < turns; t += 1) {
+      z += dropPerTurn;
+      lines.push(`${arcCmd} X${fmt(startX)} Y${fmt(startY)} I${i} J${j} Z${fmt(-z)} F${fmt(plungeRate, 5)}`);
+    }
+    // One more full circle at final depth to clean up the helical seam -
+    // uniform depth all the way around instead of a slight step where the
+    // helix met itself.
+    lines.push(`${arcCmd} X${fmt(startX)} Y${fmt(startY)} I${i} J${j} Z${fmt(-depth)} F${fmt(feedRate, 5)}`);
+  }
+  lines.push(`G00 Z${fmt(safeZ)} (retract)`);
+  return { perimeter: 2 * Math.PI * radius, tabZoneCount: 0 };
 }
 
 // Cuts one contour (all step-down passes + tabs) with one tool's params.
@@ -234,17 +418,34 @@ function cutContour(lines, contour, toolRadius, toolParams, safeZ) {
   const { stepDown, targetDepth, tabWidth, tabHeight, tabSpacing, feedRate, plungeRate } = toolParams;
   const path = offsetPolygon(contour.points, contour.isHole ? -toolRadius : toolRadius);
   const perimeter = pathLength(path);
-  const tabZones = tabSpacing > 0 ? buildTabZones(perimeter, tabWidth, tabSpacing) : [];
+  // Tabs only ever apply to the OUTER contour - a hole isn't a piece that
+  // needs holding in place, it's material being removed, and leaving
+  // tab-height webs inside a hole means it never actually cuts through.
+  // (This is the real bug fixed here: the old unconditional tabZones
+  // computation applied to every contour including holes, and
+  // buildTabZones always emits at least one zone no matter how small the
+  // contour is relative to tabWidth/tabSpacing - so a small hole's final
+  // pass could spend most of its perimeter clamped to targetDepth-tabHeight
+  // instead of cutting a clean through-hole.)
+  const tabZones = (!contour.isHole && tabSpacing > 0) ? buildTabZones(perimeter, tabWidth, tabSpacing) : [];
+
+  const circle = fitCircle(path);
+  const isCircular = circle.maxDeviation <= CIRCLE_FIT_TOLERANCE;
+  if (isCircular && (contour.isHole || tabZones.length === 0)) {
+    return emitHelicalCircularContour(lines, contour, path, circle, toolParams, safeZ);
+  }
 
   lines.push(`(--- ${contour.isHole ? 'HOLE' : 'OUTER'} CONTOUR, perimeter ~${fmt(perimeter, 2)}" ---)`);
   lines.push(`G00 X${fmt(path[0].x)} Y${fmt(path[0].y)} (rapid to start)`);
+  lines.push(`G00 Z0.0000 (rapid to material surface)`);
 
   let depth = 0;
-  while (depth < targetDepth) {
+  while (depth < targetDepth - DEPTH_EPSILON) {
+    const prevDepth = depth;
     depth = Math.min(depth + stepDown, targetDepth);
-    lines.push(`(-- pass at Z-${fmt(depth)} --)`);
-    lines.push(`G01 Z${fmt(-depth)} F${fmt(plungeRate)} (plunge)`);
-    emitContourPass(lines, path, depth, targetDepth, tabZones, tabHeight, feedRate);
+    const rampDistance = Math.min(perimeter * 0.5, (depth - prevDepth) / MAX_RAMP_SLOPE);
+    lines.push(`(-- pass at Z-${fmt(depth)}, ramped entry over ${fmt(rampDistance, 2)}" --)`);
+    emitContourPass(lines, path, prevDepth, depth, targetDepth, tabZones, tabHeight, feedRate, plungeRate, rampDistance);
   }
   lines.push(`G00 Z${fmt(safeZ)} (retract)`);
   return { perimeter, tabZoneCount: tabZones.length };
