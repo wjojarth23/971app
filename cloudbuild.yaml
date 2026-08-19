@@ -23,7 +23,7 @@ steps:
       - '--build-arg=PUBLIC_TBA_API_KEY=${_PUBLIC_TBA_API_KEY}'
       - '--build-arg=PUBLIC_AUTO_VENDOR=${_PUBLIC_AUTO_VENDOR}'
       - '-t'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
       - '-t'
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:latest'
       - .
@@ -38,18 +38,18 @@ steps:
   # on the Cloud Run service outside this file, or add --set-secrets here if
   # you want every deploy to declare them explicitly); plain PUBLIC_* runtime
   # values that don't need to be baked into the bundle can go in --set-env-vars.
-  - name: 'gcr.io/google-cloud-sdk/slim'
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
     args:
       - gcloud
       - run
       - deploy
       - '${_SERVICE_NAME}'
-      - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA'
+      - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
       - '--region=${_REGION}'
       - '--platform=managed'
 
 images:
-  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
   - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:latest'
 
 options:
