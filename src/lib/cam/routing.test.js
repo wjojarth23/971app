@@ -18,6 +18,21 @@ function circle(cx, cy, r, segments = 64) {
   return pts;
 }
 
+// An n-tooth star/spline-like hole boundary (alternating outer/inner
+// radius) - approximates a real internal spline bore (see the
+// minThroatDistance test below).
+function starHole(cx, cy, rOuter, rInner, teeth) {
+  const pts = [];
+  const n = teeth * 2;
+  for (let i = 0; i < n; i += 1) {
+    const r = i % 2 === 0 ? rOuter : rInner;
+    const a = (i / n) * 2 * Math.PI;
+    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+  }
+  pts.push(pts[0]);
+  return pts;
+}
+
 // 4"x4" outer square, a 1" hole (fits a 1/4" bit fine), and a 0.15" hole
 // (too small for a 1/4" bit's 0.125" radius against its ~0.075" throat -
 // only reachable with the 1/8" bit).
@@ -82,6 +97,40 @@ describe('offsetPolygon', () => {
         const newDir = { x: shrunk[i + 1].x - shrunk[i].x, y: shrunk[i + 1].y - shrunk[i].y };
         expect(origDir.x * newDir.x + origDir.y * newDir.y).toBeGreaterThan(0);
       }
+    });
+  });
+
+  describe('minThroatDistance message accuracy for many-toothed/non-convex holes (real bug: a real "MAXSpline" internal spline bore reported a wildly wrong throat estimate in the error message - not the pass/fail decision, which was already correct)', () => {
+    // A 12-tooth star/spline-like hole, oversized offset so it always
+    // collapses - only the reported ~X" throat estimate is under test here.
+    function throatFromError(points, distance) {
+      try {
+        offsetPolygon(points, distance);
+      } catch (e) {
+        const match = e.message.match(/~([\d.]+)"/);
+        return match ? Number(match[1]) : null;
+      }
+      throw new Error('expected offsetPolygon to throw');
+    }
+
+    it('does not fall back to the old centroid-distance overestimate (was ~7x too large against a real spline bore, roughly the outer radius instead of the tooth gap)', () => {
+      const star = starHole(0, 0, 1, 0.5, 24);
+      const throat = throatFromError(star, -0.2);
+      expect(throat).not.toBeNull();
+      expect(throat).toBeLessThan(1); // must read tighter than the shape's own outer radius
+    });
+
+    it('does not regress to 0 (an inverted-ray-direction bug introduced and caught while fixing the overestimate above: casting into the surrounding material instead of into the hole itself made every many-toothed shape read ~0.0000")', () => {
+      const star = starHole(0, 0, 1, 0.5, 24);
+      const throat = throatFromError(star, -0.2);
+      expect(throat).toBeGreaterThan(0.05);
+    });
+
+    it('still reads close to the true diameter for an ordinary round hole (no regression for the common case)', () => {
+      const round = circle(0, 0, 0.5);
+      const throat = throatFromError(round, -0.6); // oversized on purpose
+      expect(throat).toBeGreaterThan(0.8);
+      expect(throat).toBeLessThan(1.1);
     });
   });
 });

@@ -159,13 +159,54 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
   const bucketSize = (lengthMax - lengthMin) / buckets;
   const maxRadiusByBucket = new Array(buckets + 1).fill(-1);
 
+  function sample(lengthPos, radius) {
+    const bucket = Math.min(buckets, Math.max(0, Math.round((lengthPos - lengthMin) / bucketSize)));
+    if (radius > maxRadiusByBucket[bucket]) maxRadiusByBucket[bucket] = radius;
+  }
+
   for (const mesh of meshes) {
     const pos = mesh.attributes.position.array;
     for (let i = 0; i < pos.length; i += 3) {
-      const lengthPos = pos[i + li];
-      const radius = Math.hypot(pos[i + ai] - centerA, pos[i + bi] - centerB);
-      const bucket = Math.min(buckets, Math.max(0, Math.round((lengthPos - lengthMin) / bucketSize)));
-      if (radius > maxRadiusByBucket[bucket]) maxRadiusByBucket[bucket] = radius;
+      sample(pos[i + li], Math.hypot(pos[i + ai] - centerA, pos[i + bi] - centerB));
+    }
+
+    // Also walk every triangle edge and interpolate extra samples along it
+    // at roughly bucket resolution, not just its two endpoints. A straight
+    // cylindrical run of real bar stock can be tessellated with very few
+    // vertices (a flat surface doesn't need many to represent accurately),
+    // while a small local feature - e.g. a cross-drilled retention-pin hole
+    // - injects a dense vertex cluster right at its own axial position,
+    // including vertices on the hole's own near-zero-radius surface. Without
+    // this, a fine length-bucket landing in the gap between two sparse OD
+    // vertices could end up containing ONLY that hole's inner-surface
+    // vertices and nothing from the actual OD, reporting a false near-zero
+    // "max radius" there. Found against a real "Vortex Shaft" STEP file: the
+    // profile showed the shaft necking down to a literal 0.0000" radius
+    // mid-shaft, sandwiched between ~0.27"-radius readings on both sides -
+    // which would have cut a phantom groove into solid material. Most of the
+    // OD surface at any given length position is still intact even where a
+    // narrow cross-hole interrupts part of the circumference, so sampling
+    // along OD edges recovers the true envelope; the hole's own low-radius
+    // samples simply lose the per-bucket max to the real OD samples now
+    // present in the same bucket.
+    const idx = mesh.index.array;
+    for (let t = 0; t < idx.length; t += 3) {
+      for (let e = 0; e < 3; e += 1) {
+        const v1 = idx[t + e] * 3;
+        const v2 = idx[t + ((e + 1) % 3)] * 3;
+        const l1 = pos[v1 + li], l2 = pos[v2 + li];
+        const span = Math.abs(l2 - l1);
+        if (span <= bucketSize) continue; // endpoints alone already cover this edge's bucket(s)
+        const steps = Math.min(1000, Math.ceil(span / bucketSize));
+        const a1 = pos[v1 + ai], b1 = pos[v1 + bi];
+        const a2 = pos[v2 + ai], b2 = pos[v2 + bi];
+        for (let s = 1; s < steps; s += 1) {
+          const frac = s / steps;
+          const lengthPos = l1 + frac * (l2 - l1);
+          const radius = Math.hypot(a1 + frac * (a2 - a1) - centerA, b1 + frac * (b2 - b1) - centerB);
+          sample(lengthPos, radius);
+        }
+      }
     }
   }
 
@@ -350,7 +391,7 @@ export function extractRoutingContoursFromMeshes(meshes) {
   let best = null;
   for (const mesh of meshes) {
     const candidate = findLargestPlanarFace(mesh);
-    if (candidate && (!best || candidate.area > best.area)) best = candidate;
+    if (candidate && (!best || candidate.area > best.area)) best = { ...candidate, mesh };
   }
   if (!best) {
     throw new Error('No flat face found on this part - is this really a flat routed/laser-cut profile?');
@@ -370,15 +411,21 @@ export function extractRoutingContoursFromMeshes(meshes) {
   // Thickness = the part's full extent along the flat face's normal - i.e.
   // the perpendicular distance from this face to the opposite (parallel)
   // face, regardless of which world axis that direction happens to be.
+  //
+  // Measured only on best.mesh (the body the chosen face actually belongs
+  // to), not every mesh in the file - a STEP export can legitimately bundle
+  // more than one body (a bracket plus its mounting screws, in a real
+  // REV-21-2046 file that surfaced this: 3 meshes, 2 of them small fastener
+  // bodies). Scanning all meshes let unrelated hardware silently inflate or
+  // shrink the measured thickness whenever it extended further along the
+  // face normal than the actual part being routed.
   let minD = Infinity, maxD = -Infinity;
-  for (const mesh of meshes) {
-    const pos = mesh.attributes.position.array;
-    for (let i = 0; i < pos.length; i += 3) {
-      const dx = pos[i] - origin.x, dy = pos[i + 1] - origin.y, dz = pos[i + 2] - origin.z;
-      const d = dx * best.normal.x + dy * best.normal.y + dz * best.normal.z;
-      if (d < minD) minD = d;
-      if (d > maxD) maxD = d;
-    }
+  const pos = best.mesh.attributes.position.array;
+  for (let i = 0; i < pos.length; i += 3) {
+    const dx = pos[i] - origin.x, dy = pos[i + 1] - origin.y, dz = pos[i + 2] - origin.z;
+    const d = dx * best.normal.x + dy * best.normal.y + dz * best.normal.z;
+    if (d < minD) minD = d;
+    if (d > maxD) maxD = d;
   }
   const thickness = Number.isFinite(minD) && Number.isFinite(maxD) ? maxD - minD : null;
 

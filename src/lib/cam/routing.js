@@ -153,35 +153,75 @@ function intersectLines(p1, d1, p2, d2) {
   return { x: p1.x + d1[0] * t, y: p1.y + d1[1] * t };
 }
 
-function pointToSegmentDistance(p, a, b) {
-  const abx = b.x - a.x, aby = b.y - a.y;
-  const lenSq = abx * abx + aby * aby;
-  const t = lenSq > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq)) : 0;
-  return Math.hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
+function cross2(ax, ay, bx, by) {
+  return ax * by - ay * bx;
 }
 
-// Smallest distance from the polygon's centroid to any of its edges - used
-// ONLY for the human-readable size estimate in the "too small for this
-// tool" error message below, not as the actual pass/fail gate anymore (see
-// offsetPolygon's real check). Centroid-to-edge distance is a fine rough
-// estimate for a roughly-convex, roughly-circular hole, but it's a poor
-// proxy for a non-convex/elongated/slot-shaped one - a real bug found
-// against a real STEP file: a curved, non-convex internal cutout had its
-// centroid sitting close to one of its own edges (an artifact of the
-// shape's concavity, not a real tight constriction), which used to make
-// this the GATE and threw "too small" even though the tool fit fine along
-// the actual offset path. Kept for the message text since "here's roughly
-// how tight this is" is still useful context even when it isn't the
-// deciding factor.
+// Distance from ray (origin + t*dir, t>0) to where it crosses segment [a,b],
+// or null if it doesn't hit (behind the origin, parallel, or off the
+// segment's own extent). Standard ray/segment intersection via cross
+// products; dir is assumed to already be a unit vector, so the returned t
+// is a true distance.
+function rayHitDistance(origin, dir, a, b) {
+  const sx = b.x - a.x, sy = b.y - a.y;
+  const denom = cross2(dir[0], dir[1], sx, sy);
+  if (Math.abs(denom) < 1e-12) return null;
+  const qpx = a.x - origin.x, qpy = a.y - origin.y;
+  const t = cross2(qpx, qpy, sx, sy) / denom;
+  const u = cross2(qpx, qpy, dir[0], dir[1]) / denom;
+  if (t > 1e-6 && u >= -1e-9 && u <= 1 + 1e-9) return t;
+  return null;
+}
+
+// For each edge midpoint, casts a ray straight across the polygon's own
+// enclosed area (the (-dy,dx) direction - the same direction a negative/
+// inward offset moves points in offsetPolygon below, i.e. "into the void
+// this loop encloses," not out into the surrounding material) and finds
+// the nearest OTHER edge it crosses - i.e. "how far to the opposite wall
+// of this same pocket/hole from here." The global minimum across all edges
+// is the true narrowest local constriction. Used ONLY for the human-
+// readable size estimate in the "too small for this tool" error message,
+// not as the actual pass/fail gate (see offsetPolygon's real check).
+//
+// Replaced an earlier centroid-to-edge version that was a fine estimate for
+// a roughly-convex, roughly-circular hole but badly wrong for a non-convex/
+// many-featured one in EITHER direction: it could read falsely small (a
+// concave cutout's centroid sitting close to its own edge, an artifact of
+// concavity, not a real constriction) or - the case that caught this
+// specific version - falsely LARGE for a real splined bore (REV-21-2360, a
+// "MAXSpline" internal spline pattern): the centroid sits in the open hub
+// space at the bore's center, far from any edge, so it reported "~0.55" at
+// its tightest" for a hole whose actual narrowest tooth-to-tooth gap
+// (verified by bisecting the real pass/fail radius against offsetPolygon
+// itself) was 0.083" - nearly 7x off, and confusing for anyone reading the
+// error trying to understand why a 0.125" tool didn't fit a "0.55" wide"
+// feature. Ray-casting across the shape from each edge directly measures
+// local width instead of relying on a single global reference point, so it
+// isn't fooled by either failure mode.
 function minThroatDistance(pts) {
-  let cx = 0, cy = 0;
-  for (const p of pts) { cx += p.x; cy += p.y; }
-  cx /= pts.length; cy /= pts.length;
+  const n = pts.length;
+  // Skipping only the origin edge itself isn't enough on a fine, zigzagging
+  // boundary (e.g. gear/spline teeth): a ray from one tooth's edge can graze
+  // a NEIGHBORING edge that merely happens to share a nearby vertex, at a
+  // shallow near-t=0 angle - a self-geometry artifact, not a real opposite
+  // wall. Excluding a small local window of edges around the origin (scaled
+  // to point density) filters that out while still finding genuinely
+  // distant/opposite constrictions.
+  const window = Math.max(2, Math.round(n / 20));
   let min = Infinity;
-  for (let i = 0; i < pts.length; i += 1) {
-    min = Math.min(min, pointToSegmentDistance({ x: cx, y: cy }, pts[i], pts[(i + 1) % pts.length]));
+  for (let i = 0; i < n; i += 1) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const [dx, dy] = normalize(b.x - a.x, b.y - a.y);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const dir = [-dy, dx];
+    for (let j = 0; j < n; j += 1) {
+      const indexDist = Math.min((j - i + n) % n, (i - j + n) % n);
+      if (indexDist <= window) continue;
+      const t = rayHitDistance(mid, dir, pts[j], pts[(j + 1) % n]);
+      if (t !== null && t < min) min = t;
+    }
   }
-  return min;
+  return Number.isFinite(min) ? min : 0;
 }
 
 /**
