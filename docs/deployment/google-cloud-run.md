@@ -7,6 +7,43 @@ normal updates.
 **Target**: project `geminiapi-469220`, region `us-west1`, Cloud Run service and
 Artifact Registry repo both named `spartanshub`, domain `spartanshub.spartanrobotics.org`.
 
+## Current status (as of this migration)
+
+Done and verified live:
+- Artifact Registry repo `spartanshub` created in `us-west1`.
+- `cloudbuild.yaml` builds, pushes, and deploys successfully end-to-end via
+  `gcloud builds submit` (two real bugs found and fixed this way: `$SHORT_SHA` is
+  unset on manual submits — switched to `$BUILD_ID` — and
+  `gcr.io/google-cloud-sdk/slim` isn't a real image — switched to
+  `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`).
+- **`https://spartanshub.spartanrobotics.org/` is live**, serving the real app from
+  this pipeline, replacing the `gcr.io/cloudrun/placeholder` revision that was there
+  before. Domain mapping and DNS were already set up (confirmed working).
+- A Cloud Build GitHub trigger already exists (`rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi`,
+  connected to `frc971/spartanshub`), created outside this migration's own work —
+  likely via the Cloud Run Console's "set up continuous deployment" wizard. Its branch
+  pattern is currently `^migrate/gcp-cloud-run$`, not `^main$`.
+
+**Not done yet — real blocker before this is actually production-ready:**
+- The live deploy is running on **placeholder** `PUBLIC_SUPABASE_URL` /
+  `PUBLIC_SUPABASE_ANON_KEY` and other `PUBLIC_*` values (fake Supabase project) — auth
+  and data will not work until real values are set.
+- The existing GitHub trigger has **no `_PUBLIC_*` substitutions configured**. Since
+  `cloudbuild.yaml` doesn't define defaults for those 12 substitutions either, the
+  trigger will fail immediately the next time it fires — Cloud Build requires every
+  referenced substitution to resolve via either a default or an override, and right
+  now neither exists for these.
+- No Secret Manager secrets created yet (API is enabled, but `SUPABASE_SERVICE_KEY`
+  etc. haven't been created — see **Secrets** below).
+- Trigger branch pattern needs to move from `migrate/gcp-cloud-run` to `^main$` once
+  this branch is merged (`gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"`).
+
+**To finish this**: get real `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, and the
+rest of the `PUBLIC_*` values, add them as defaults in `cloudbuild.yaml`'s
+`substitutions:` block (they're non-secret by definition — safe to commit), redeploy,
+then the existing trigger will just work on the next push once its branch pattern is
+updated.
+
 ## Why the Dockerfile needs so many `--build-arg`s
 
 SvelteKit inlines every `PUBLIC_*` var referenced via `$env/static/public` into the
