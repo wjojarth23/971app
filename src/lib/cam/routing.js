@@ -331,6 +331,19 @@ const CIRCLE_FIT_TOLERANCE = 0.003; // inches - tight enough to reject genuinely
 const MAX_RAMP_SLOPE = 0.15;
 const MIN_HELIX_TURNS = 2;
 
+// The last bit of the approach to Z0 (the programmed top-of-stock surface)
+// is a FEED-rate move, not a rapid - standard defense-in-depth practice,
+// not a response to a specific known problem here: Z0 is only ever as
+// accurate as the operator's real-world touch-off and the actual stock's
+// true thickness/flatness, neither of which this generator has any way to
+// verify. Rapiding all the way to the programmed surface trusts both of
+// those completely; stopping short and feeding the rest of the way means
+// first contact happens at a controlled, slow speed instead of full rapid
+// if either is off by a little. Doesn't fix a bug - Z0.0000 was already
+// AT the surface, not into material, under a correctly-zeroed setup - it's
+// a cheap way to reduce how bad it is if that assumption turns out wrong.
+const APPROACH_CLEARANCE = 0.02;
+
 // Real bug, found from an actual generated file: a roughing loop written as
 // `while (depth < targetDepth) { depth = Math.min(depth + stepDown,
 // targetDepth); ... }` looks like it always lands exactly on targetDepth
@@ -361,15 +374,25 @@ function emitContourPass(lines, path, prevDepth, passDepth, targetDepth, tabZone
     const a = path[i - 1];
     const b = path[i];
     const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    const endDist = dist + segLen;
     const midDist = dist + segLen / 2;
     const inTab = isFinalPass && tabZones.some(([s, e]) => midDist >= s && midDist <= e);
     const inRamp = rampDistance > 0 && dist < rampDistance;
-    const rampT = rampDistance > 0 ? Math.min(1, midDist / rampDistance) : 1;
+    // Interpolate depth at the segment's ENDPOINT distance, not its
+    // midpoint - a G01 move commands where the tool should BE by the time
+    // it reaches `b`, so the ramp has to be evaluated there to actually
+    // finish by the declared rampDistance. Using the midpoint (a real
+    // precision bug, found by hand-checking a real generated file's first,
+    // unusually long edge) under-ramps whenever a single segment is longer
+    // than rampDistance itself - not unsafe (the motion stays gradual
+    // either way, nothing becomes a hard plunge), just stretches the ramp
+    // out past the distance the file's own comment claims it completes at.
+    const rampT = rampDistance > 0 ? Math.min(1, endDist / rampDistance) : 1;
     const rampedDepth = prevDepth + (passDepth - prevDepth) * rampT;
     const cutDepth = inTab ? Math.max(0, targetDepth - tabHeight) : rampedDepth;
     const feed = inRamp ? plungeRate : feedRate;
     lines.push(`G01 X${fmt(b.x)} Y${fmt(b.y)} Z${fmt(-cutDepth)} F${fmt(feed, 5)}`);
-    dist += segLen;
+    dist = endDist;
   }
 }
 
@@ -388,7 +411,8 @@ function emitHelicalCircularContour(lines, contour, path, circle, toolParams, sa
 
   lines.push(`(--- ${contour.isHole ? 'HOLE' : 'CIRCULAR BOSS'} - true circle (center ${fmt(cx, 3)},${fmt(cy, 3)} radius ${fmt(radius, 3)}") - helical entry + arc cut ---)`);
   lines.push(`G00 X${fmt(startX)} Y${fmt(startY)} (rapid to start)`);
-  lines.push(`G00 Z0.0000 (rapid to material surface)`);
+  lines.push(`G00 Z${fmt(APPROACH_CLEARANCE)} (rapid to just above material surface)`);
+  lines.push(`G01 Z0.0000 F${fmt(plungeRate, 5)} (feed down to material surface - not a rapid, in case Z0/stock height is slightly off)`);
 
   let depth = 0;
   while (depth < targetDepth - DEPTH_EPSILON) {
@@ -437,7 +461,8 @@ function cutContour(lines, contour, toolRadius, toolParams, safeZ) {
 
   lines.push(`(--- ${contour.isHole ? 'HOLE' : 'OUTER'} CONTOUR, perimeter ~${fmt(perimeter, 2)}" ---)`);
   lines.push(`G00 X${fmt(path[0].x)} Y${fmt(path[0].y)} (rapid to start)`);
-  lines.push(`G00 Z0.0000 (rapid to material surface)`);
+  lines.push(`G00 Z${fmt(APPROACH_CLEARANCE)} (rapid to just above material surface)`);
+  lines.push(`G01 Z0.0000 F${fmt(plungeRate, 5)} (feed down to material surface - not a rapid, in case Z0/stock height is slightly off)`);
 
   let depth = 0;
   while (depth < targetDepth - DEPTH_EPSILON) {

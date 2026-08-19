@@ -262,16 +262,35 @@ describe('generateRoutingGcode - tabs never apply to holes (real bug: a small ho
 
 describe('generateRoutingGcode - ramped entry, no more straight plunges into solid material', () => {
   it('the first cutting moves of a pass show gradually increasing depth, not an instant jump to full depth', () => {
+    // targetDepth deliberately large relative to the square's own edge
+    // length so the ramp distance (zDrop/MAX_RAMP_SLOPE) genuinely spans
+    // more than one edge - otherwise, correctly, the ramp can finish
+    // within a single (long) first edge, which is real, intended behavior
+    // now that the ramp is measured at each segment's endpoint instead of
+    // its midpoint (see emitContourPass) - not something to test around.
     const part = [{ points: square(0, 0, 4), isHole: false }];
-    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.5, targetDepth: 0.5, feedRate: 40, plungeRate: 15 });
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 2, targetDepth: 2, feedRate: 40, plungeRate: 15 });
     const lines = result.gcode.split('\n');
     const passStart = lines.findIndex((l) => l.includes('ramped entry'));
-    const cutLines = lines.slice(passStart + 1).filter((l) => l.startsWith('G01 X')).slice(0, 5);
+    const cutLines = lines.slice(passStart + 1).filter((l) => l.startsWith('G01 X')).slice(0, 4);
     const depths = cutLines.map((l) => Number(l.match(/Z(-[\d.]+)/)[1]));
     // Strictly increasing magnitude (getting deeper) across the first few
     // moves, and the very first one must NOT already be at full depth.
-    expect(Math.abs(depths[0])).toBeLessThan(0.5);
+    expect(Math.abs(depths[0])).toBeLessThan(2);
     for (let i = 1; i < depths.length; i += 1) expect(Math.abs(depths[i])).toBeGreaterThanOrEqual(Math.abs(depths[i - 1]));
+  });
+
+  it('the ramp actually completes by the declared rampDistance, not later (real bug: using segment midpoint instead of endpoint under-ramped past the stated distance whenever a single segment was longer than the ramp)', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.1, targetDepth: 0.1, feedRate: 40, plungeRate: 15 });
+    // rampDistance = min(perimeter*0.5, 0.1/0.15) = 0.1/0.15 =~ 0.67", well
+    // under one edge of this ~17"-perimeter square - the very first G01
+    // move (covering the whole first edge, ~4.25") must already show full
+    // depth, since by its endpoint the ramp distance has long passed.
+    const lines = result.gcode.split('\n');
+    const passStart = lines.findIndex((l) => l.includes('ramped entry'));
+    const firstCut = lines.slice(passStart + 1).find((l) => l.startsWith('G01 X'));
+    expect(firstCut).toContain('Z-0.1000');
   });
 
   it('no more standalone "(plunge)" line - descent is folded into the ramp', () => {
@@ -286,6 +305,24 @@ describe('generateRoutingGcode - ramped entry, no more straight plunges into sol
     expect(result.gcode).toContain('F7.00000');
     expect(result.gcode).toContain('F40.00000');
   });
+
+  it('approaches Z0 with a feed move, not a rapid - defense-in-depth in case Z0/stock height is slightly off', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.25, plungeRate: 12 });
+    const lines = result.gcode.split('\n');
+    expect(lines).not.toContain('G00 Z0.0000 (rapid to material surface)');
+    const clearanceIdx = lines.findIndex((l) => l.startsWith('G00 Z0.02'));
+    expect(clearanceIdx).toBeGreaterThan(-1);
+    expect(lines[clearanceIdx + 1]).toBe('G01 Z0.0000 F12.00000 (feed down to material surface - not a rapid, in case Z0/stock height is slightly off)');
+  });
+
+  it('same feed-down approach applies to the circular/helical path', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }, { points: circle(0, 0, 0.5), isHole: true }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.125, targetDepth: 0.25, plungeRate: 12 });
+    const lines = result.gcode.split('\n');
+    const holeStart = lines.findIndex((l) => l.includes('true circle'));
+    expect(lines[holeStart + 3]).toBe('G01 Z0.0000 F12.00000 (feed down to material surface - not a rapid, in case Z0/stock height is slightly off)');
+  });
 });
 
 describe('generateRoutingGcode - true arcs for circular features (real hole/boss geometry, not a polygon approximation)', () => {
@@ -298,7 +335,11 @@ describe('generateRoutingGcode - true arcs for circular features (real hole/boss
     const holeEnd = lines.findIndex((l, idx) => idx > holeStart && l.includes('(retract)'));
     const holeLines = lines.slice(holeStart, holeEnd);
     expect(holeLines.some((l) => l.startsWith('G02') || l.startsWith('G03'))).toBe(true);
-    expect(holeLines.some((l) => l.startsWith('G01'))).toBe(false);
+    // No G01 CUTTING (XY) moves - a real G01 Z-only move is expected here
+    // (the feed-down-to-surface approach move, see APPROACH_CLEARANCE),
+    // that's not a polygon segment, just a vertical feed.
+    expect(holeLines.some((l) => l.startsWith('G01 X'))).toBe(false);
+    expect(holeLines.some((l) => l.startsWith('G01 Z'))).toBe(true);
     expect(holeLines.some((l) => l.includes('I') && l.includes('J'))).toBe(true);
   });
 
