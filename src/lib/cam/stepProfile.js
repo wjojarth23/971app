@@ -132,6 +132,29 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
     throw new Error('STEP geometry has no usable extent for a turning profile');
   }
 
+  // Sanity check: real bar stock (round, hex, or square) is roughly as wide
+  // in one off-axis direction as the other - the bounding box cross-section
+  // is close to square even when the actual cross-section isn't circular
+  // (e.g. hex stock turned down to a round shaft is a completely normal
+  // lathe operation). A flat plate is the opposite: one off-axis extent
+  // (its thickness) is drastically smaller than the other (its width).
+  // Without this check, a flat plate's "radius" - computed as hypot() of
+  // both off-axis directions - is dominated by the wide direction and
+  // produces a numerically plausible profile for a shape that was never a
+  // solid of revolution to begin with. Found via a real "550 Motor Plate"
+  // STEP file (flat, with mounting holes) that slipped past the
+  // maxRadius<length/2 check below by coincidence and would have silently
+  // generated lathe G-code for a part that should never go near a lathe.
+  const radiusAxisSpanA = spans[radiusAxisA];
+  const radiusAxisSpanB = spans[radiusAxisB];
+  const crossSectionAspect = Math.min(radiusAxisSpanA, radiusAxisSpanB) / Math.max(radiusAxisSpanA, radiusAxisSpanB);
+  if (crossSectionAspect < 0.5) {
+    throw new Error(
+      `This doesn't look like a turned part: cross-section is ${radiusAxisA.toUpperCase()}=${radiusAxisSpanA.toFixed(3)}" by ${radiusAxisB.toUpperCase()}=${radiusAxisSpanB.toFixed(3)}" ` +
+      `at its widest - too flat/rectangular for bar stock (turning needs a roughly round/hex/square cross-section, not a plate). This looks like a routed/milled flat part instead.`
+    );
+  }
+
   const li = AXIS_INDEX[lengthAxis], ai = AXIS_INDEX[radiusAxisA], bi = AXIS_INDEX[radiusAxisB];
   const bucketSize = (lengthMax - lengthMin) / buckets;
   const maxRadiusByBucket = new Array(buckets + 1).fill(-1);

@@ -51,6 +51,32 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-shaft.step)', () 
     }];
     expect(() => extractTurningProfileFromMeshes(discMeshes)).toThrow(/doesn't look like a turned part/);
   });
+
+  it('rejects a flat plate whose cross-section aspect ratio gives it away, even when it passes the maxRadius<length/2 guard', () => {
+    // A thin plate: long in X (10), wide in Y (8), thin in Z (0.5) - this is
+    // exactly the shape that slipped through before this check existed (a
+    // real "550 Motor Plate" STEP file: long, wide, flat, with mounting
+    // holes). maxRadius here is hypot(4, 0.25) =~ 4.008, comfortably under
+    // length/2 = 5, so only the new aspect-ratio check catches it.
+    const plateMeshes = [{
+      attributes: {
+        position: {
+          array: new Float32Array([
+            0, -4, -0.25, 0, 4, -0.25, 0, 4, 0.25, 0, -4, 0.25,
+            10, -4, -0.25, 10, 4, -0.25, 10, 4, 0.25, 10, -4, 0.25
+          ])
+        }
+      },
+      index: { array: new Uint32Array([]) },
+      brep_faces: []
+    }];
+    expect(() => extractTurningProfileFromMeshes(plateMeshes)).toThrow(/too flat\/rectangular for bar stock/);
+  });
+
+  it('rejects the real flat-plate.step fixture (a genuinely flat/holed part, not bar stock)', async () => {
+    const plateMeshes = await readStepMeshes(fs.readFileSync(FLAT_PLATE));
+    expect(() => extractTurningProfileFromMeshes(plateMeshes)).toThrow(/doesn't look like a turned part/);
+  });
 });
 
 describe('extractRoutingContoursFromMeshes (real STEP file: flat-plate.step)', () => {
