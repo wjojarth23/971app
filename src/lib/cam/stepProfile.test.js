@@ -18,6 +18,11 @@ const MAXSPLINE_BRACKET = path.join(__dirname, '__fixtures__', 'maxspline-bracke
 const MULTIBODY_BRACKET = path.join(__dirname, '__fixtures__', 'multibody-bracket.step'); // REV-21-2046
 const MOUNTING_BRACKET_FLAT = path.join(__dirname, '__fixtures__', 'mounting-bracket-flat.step'); // REV-41-1624
 const MOUNTING_BRACKET_BENT = path.join(__dirname, '__fixtures__', 'mounting-bracket-bent.step'); // REV-41-1623
+// From AndyMark's public STEP library - a further round of stress-testing
+// against real, more complex parts.
+const SPROCKET_32T = path.join(__dirname, '__fixtures__', 'sprocket-32t.step'); // am-4781
+const LEAD_SCREW = path.join(__dirname, '__fixtures__', 'lead-screw.step'); // am-3257
+const TOUGHBOX_MOTOR_PLATE = path.join(__dirname, '__fixtures__', 'toughbox-motor-plate.step'); // am-0978
 
 // Real STEP files, committed as fixtures - these previously caught a real
 // bug (both extractors silently assumed the STEP file's Z axis was the
@@ -166,6 +171,39 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-adapter.step - a 
     const result = generateTurningGcode(profile, {
       stockDiameter: maxRadius * 2 * 1.05, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
     });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractTurningProfileFromMeshes (real STEP file: lead-screw.step - a long, thin, stepped shaft)', () => {
+  it('produces a clean profile with no near-zero-radius dropouts and generates G-code end to end', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(LEAD_SCREW));
+    const profile = extractTurningProfileFromMeshes(meshes);
+    const maxRadius = Math.max(...profile.map((p) => p.x));
+    for (let i = 2; i < profile.length - 2; i += 1) {
+      expect(profile[i].x).toBeGreaterThan(maxRadius * 0.4);
+    }
+    const result = generateTurningGcode(profile, {
+      stockDiameter: maxRadius * 2 * 1.05, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
+    });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP file: sprocket-32t.step - a 32-tooth chain sprocket, the file behind the silhouette-overrun check below)', () => {
+  it('rejects the part instead of silently tracing a toothless disc (real bug: the largest flat face stops at the tooth ROOT relief; the actual tooth TIPS are non-planar surfaces entirely outside that face and reach ~20% further out - the traced contour used to become a plain circular disc with zero indication the teeth had been dropped)', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(SPROCKET_32T));
+    expect(() => extractRoutingContoursFromMeshes(meshes)).toThrow(/geometry beyond the flat face/);
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP file: toughbox-motor-plate.step - a classic multi-hole gearbox motor plate)', () => {
+  it('generates G-code end to end with a multi-tool sequence sized for its smallest holes', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(TOUGHBOX_MOTOR_PLATE));
+    const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
+    expect(contours.length).toBeGreaterThan(5);
+    const toolSequence = [0.375, 0.25, 0.125].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
     expect(result.gcode).toContain('M30');
   });
 });

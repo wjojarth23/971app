@@ -408,6 +408,49 @@ export function extractRoutingContoursFromMeshes(meshes) {
   withArea.sort((a, b) => Math.abs(b.area) - Math.abs(a.area));
   const contours = withArea.map((c, i) => ({ points: c.points, isHole: i > 0 }));
 
+  // Sanity check: does the traced outer contour actually represent the
+  // part's full silhouette, or does real geometry extend beyond it that
+  // this flat-face trace can't see? A 2.5D router profile can only capture
+  // material reachable from ONE flat face straight through the part's
+  // thickness - it has no way to represent a stepped/relieved edge or a
+  // curved surface (like gear/sprocket teeth) that isn't part of that same
+  // flat plane. Without this check, such geometry just silently vanishes:
+  // found against a real 32-tooth sprocket STEP file where the chosen flat
+  // face stopped at the tooth ROOT relief (radius 1.125" from its own
+  // centroid) while the actual tooth TIPS - non-planar surfaces entirely
+  // outside that face - reached out to 1.345", almost 20% further. The
+  // traced contour became a plain circular disc with zero indication a
+  // third of the profile (the teeth) had been dropped.
+  //
+  // Measured as the ratio of the farthest any mesh vertex projects (in the
+  // same face-relative plane, from the outer contour's own centroid) versus
+  // the outer contour's own farthest point. Ordinary edge treatments
+  // (fillets, chamfers, a bent bracket's angled flange) read at ~1.0-1.06
+  // against every real fixture on hand; the sprocket's dropped teeth read
+  // at 1.196 - the 1.1 threshold sits with real margin on both sides.
+  const outerPoints = contours[0].points;
+  let outerCx = 0, outerCy = 0;
+  for (const p of outerPoints) { outerCx += p.x; outerCy += p.y; }
+  outerCx /= outerPoints.length; outerCy /= outerPoints.length;
+  const outerMaxR = Math.max(...outerPoints.map((p) => Math.hypot(p.x - outerCx, p.y - outerCy)));
+
+  let meshMaxR = 0;
+  for (const mesh of meshes) {
+    const pos = mesh.attributes.position.array;
+    for (let i = 0; i < pos.length; i += 3) {
+      const proj = project({ x: pos[i], y: pos[i + 1], z: pos[i + 2] }, origin, u, v);
+      const r = Math.hypot(proj.x - outerCx, proj.y - outerCy);
+      if (r > meshMaxR) meshMaxR = r;
+    }
+  }
+  if (meshMaxR > outerMaxR * 1.1) {
+    throw new Error(
+      `This part has geometry beyond the flat face used to trace its outline (real geometry reaches ${meshMaxR.toFixed(3)}" ` +
+      `from center vs ${outerMaxR.toFixed(3)}" for the traced face) - likely a stepped/relieved edge or curved features ` +
+      `(e.g. gear/sprocket teeth) that a flat 2.5D routing profile can't represent. Check this is a simple flat part.`
+    );
+  }
+
   // Thickness = the part's full extent along the flat face's normal - i.e.
   // the perpendicular distance from this face to the opposite (parallel)
   // face, regardless of which world axis that direction happens to be.
