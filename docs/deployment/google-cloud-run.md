@@ -34,15 +34,36 @@ Done and verified live:
   `availableSecrets`/`secretEnv` (not a plain `cloudbuild.yaml` substitution) so the
   raw values never sit in git history — see the comment block in `cloudbuild.yaml`.
 
-**Still open:**
-- `GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY`, `CRON_SECRET`, `CRON_TOKEN`,
-  `CRON_NOTIFICATION_TOKEN` — no values supplied yet, so Drive watcher and cron
-  notification endpoints won't work until these are created in Secret Manager and
-  added to `cloudbuild.yaml`'s `--set-secrets` line.
+**Still open, split by actual urgency — checked the code rather than assuming:**
+
+- **`CRON_SECRET` / `CRON_TOKEN` / `CRON_NOTIFICATION_TOKEN` — higher priority, a live
+  security gap, not just a missing feature.** `src/lib/server/cron_auth.js`'s
+  `isAuthorizedCronRequest()` is **fail-open**: `if (!expectedSecrets.length) return
+  true` — when none of these three env vars are set, the check accepts *any* request
+  as authorized. None are in Secret Manager yet, so on the current live deployment,
+  `/api/planner/notifications` (hit by the one genuinely active `pg_cron` job, every
+  15 minutes, per `implementations/drive-watcher-cron-plan.md`) and
+  `/api/drive-watcher` both currently accept unauthenticated requests. Needs whatever
+  token value the Supabase Vault secret (`planner_notifications_cron_token`) already
+  uses to keep working with the existing `pg_cron` job, added to Secret Manager and
+  `cloudbuild.yaml`'s `--set-secrets`.
+- **`GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY` — genuinely low priority, not stale, just never
+  activated.** Checked `src/lib/server/drive_watcher.js:284-286`: the sweep degrades
+  gracefully without this key (`{ ok: true, skipped: true, reason: 'not_configured'
+  }`), not a crash. Checked `migrations/20260817_cam_studio_system.sql:319,364-374`:
+  the migration adds the schema (`cam_machines.drive_folder_id`,
+  `drive_watcher_state`, `drive_watcher_files`) but explicitly documents — as a
+  comment, never executed — the `pg_cron` schedule that *would* activate it. No such
+  schedule exists. Nothing calls `/api/drive-watcher` automatically today. Safe to
+  defer indefinitely; only worth doing when the Drive-triggered CAM feature is
+  actually wanted, matching `implementations/drive-watcher-cron-plan.md`'s own
+  phased rollout (Google Cloud service-account setup was always its own separate,
+  later step).
 - `PUBLIC_SENTRY_DSN`, `PUBLIC_AUTOCAM_API_URL`, `PUBLIC_ROUTES`, `PUBLIC_TBA_API_KEY`,
   and the Drive/Slack-channel runtime env vars (`DRIVE_API`, `DRIVE_UPLOAD_API`,
   `DRIVE_SCOPE`, `DRIVE_PRACTICE_CATEGORY`, `SLACK_ALERT_CHANNEL_ID`) — still empty
-  placeholders in `cloudbuild.yaml`.
+  placeholders in `cloudbuild.yaml`. `DRIVE_*` only matter once the Drive watcher
+  above is actually being activated.
 - **Known pre-existing issue, not introduced by this migration**:
   `PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle today (on Vercel too —
   `src/lib/onshape.js` is imported by three client-side `.svelte` pages). Worth a
