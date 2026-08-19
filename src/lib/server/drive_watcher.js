@@ -30,6 +30,18 @@
  * explicitly shared with it, not blanket write access to the account's whole
  * Drive). Per the plan's security notes, the service account should only
  * ever be shared with the specific folders being watched/delivered to.
+ *
+ * SHARED DRIVES: fully supported, and the recommended target specifically
+ * for the output folder - files a service account creates in someone's
+ * personal "My Drive" are attributed to the service account's own storage
+ * quota, which is normally zero, and can fail with storageQuotaExceeded;
+ * files created inside a Shared Drive are owned by the Shared Drive itself,
+ * sidestepping that entirely. Every Drive API call below passes
+ * supportsAllDrives=true (the API silently excludes Shared Drive content
+ * otherwise), and getFileDriveId() detects whether a given folder lives in
+ * a Shared Drive so the Changes API calls can be scoped to it correctly
+ * (driveId/includeItemsFromAllDrives/corpora) - required, not optional, for
+ * the input sweep to see anything happening inside a Shared Drive at all.
  */
 
 import crypto from 'node:crypto';
@@ -90,14 +102,31 @@ export async function getServiceAccountAccessToken(serviceAccountJson) {
   return body.access_token;
 }
 
+// supportsAllDrives=true is appended to every call here - without it, the
+// Drive API silently excludes Shared Drive ("Team Drive") content from
+// every operation below (listing, downloading, uploading), for backward
+// compatibility with clients written before Shared Drives existed. This
+// matters for real setups here, not a hypothetical - see getFileDriveId.
 async function driveFetch(accessToken, path) {
-  const res = await fetch(`${DRIVE_API}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const sep = path.includes('?') ? '&' : '?';
+  const res = await fetch(`${DRIVE_API}${path}${sep}supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Drive API request failed (${res.status}): ${path}`);
   return res;
 }
 
-async function getStartPageToken(accessToken) {
-  const res = await driveFetch(accessToken, '/changes/startPageToken');
+// Which Shared Drive (if any) a folder lives in - null for a folder in
+// someone's personal "My Drive". The Changes API needs to be told this
+// explicitly (driveId param below) to see activity inside a Shared Drive at
+// all; unlike supportsAllDrives, there's no single blanket flag for it.
+async function getFileDriveId(accessToken, fileId) {
+  const res = await driveFetch(accessToken, `/files/${fileId}?fields=driveId`);
+  const body = await res.json();
+  return body.driveId || null;
+}
+
+async function getStartPageToken(accessToken, driveId) {
+  const q = driveId ? `?driveId=${encodeURIComponent(driveId)}` : '';
+  const res = await driveFetch(accessToken, `/changes/startPageToken${q}`);
   const body = await res.json();
   return body.startPageToken;
 }
@@ -107,12 +136,16 @@ async function getStartPageToken(accessToken) {
 // changes.list pages are followed within one sweep (bounded by Drive's own
 // page size, not by our batch cap - the per-file batch cap below limits how
 // much work one sweep actually DOES, not how much cursor-walking it needs).
-async function listChangesSince(accessToken, pageToken) {
+// `driveId` (see getFileDriveId) scopes this to a specific Shared Drive when
+// the watched folder lives in one - required, not optional, for the sweep
+// to see anything happening inside a Shared Drive at all.
+async function listChangesSince(accessToken, pageToken, driveId) {
   let token = pageToken;
   const changes = [];
+  const scope = driveId ? `&driveId=${encodeURIComponent(driveId)}&includeItemsFromAllDrives=true&corpora=drive` : '';
   for (let guard = 0; guard < 50; guard += 1) { // hard stop - never loop forever on a misbehaving response
     const fields = 'newStartPageToken,nextPageToken,changes(fileId,removed,file(id,name,mimeType,parents,trashed))';
-    const res = await driveFetch(accessToken, `/changes?pageToken=${encodeURIComponent(token)}&fields=${encodeURIComponent(fields)}&pageSize=100`);
+    const res = await driveFetch(accessToken, `/changes?pageToken=${encodeURIComponent(token)}&fields=${encodeURIComponent(fields)}&pageSize=100${scope}`);
     const body = await res.json();
     changes.push(...(body.changes || []));
     if (body.newStartPageToken) return { changes, nextPageToken: body.newStartPageToken };
@@ -143,7 +176,7 @@ async function uploadFileToDriveFolder(accessToken, folderId, filename, content,
     `${content}\r\n` +
     `--${boundary}--`;
 
-  const res = await fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart`, {
+  const res = await fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart&supportsAllDrives=true`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
     body
@@ -272,10 +305,11 @@ export async function runDriveWatcherSweep({ appOrigin } = {}) {
   for (const machine of machines) {
     const folderId = machine.drive_folder_id;
     try {
+      const driveId = await getFileDriveId(accessToken, folderId); // null if this folder is in a personal "My Drive", the Shared Drive's ID otherwise
       const { data: state } = await supabase.from('drive_watcher_state').select('page_token').eq('folder_id', folderId).maybeSingle();
-      const startToken = state?.page_token || (await getStartPageToken(accessToken));
+      const startToken = state?.page_token || (await getStartPageToken(accessToken, driveId));
 
-      const { changes, nextPageToken } = await listChangesSince(accessToken, startToken);
+      const { changes, nextPageToken } = await listChangesSince(accessToken, startToken, driveId);
 
       const candidates = changes.filter((c) =>
         !c.removed &&
