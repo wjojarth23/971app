@@ -166,16 +166,57 @@ describe('generateRoutingGcode - single-tool (default)', () => {
   });
 });
 
+describe('generateRoutingGcode - cut order (real-world CAM safety practice: internal features before the outer profile, not after)', () => {
+  it('cuts holes before the outer contour, single-tool mode (real bug: contours were cut in extraction order - outer first, since it is always the largest-area contour - meaning the outer profile got fully cut through material before any interior holes were touched; once a through-cut severs the part from the stock, continuing to machine anything else risks it shifting or coming loose)', () => {
+    const result = generateRoutingGcode(partWithHoles(), { toolDiameter: 0.125, targetDepth: 0.25 });
+    const holeIndex = result.gcode.indexOf('HOLE CONTOUR');
+    const outerIndex = result.gcode.indexOf('OUTER CONTOUR');
+    expect(holeIndex).toBeGreaterThan(-1);
+    expect(outerIndex).toBeGreaterThan(-1);
+    expect(holeIndex).toBeLessThan(outerIndex);
+  });
+
+  it('cuts holes before the outer contour, multi-tool mode, even when that means revisiting a tool already used for an earlier hole', () => {
+    const toolSequence = [
+      { toolDiameter: 0.25, toolNumber: 1, label: '1/4in roughing bit' },
+      { toolDiameter: 0.125, toolNumber: 2, label: '1/8in detail bit' }
+    ];
+    const result = generateRoutingGcode(partWithHoles(), { targetDepth: 0.25, toolSequence });
+    const lastHoleIndex = result.gcode.lastIndexOf('HOLE CONTOUR');
+    const outerIndex = result.gcode.indexOf('OUTER CONTOUR');
+    expect(lastHoleIndex).toBeGreaterThan(-1);
+    expect(outerIndex).toBeGreaterThan(-1);
+    expect(lastHoleIndex).toBeLessThan(outerIndex);
+  });
+
+  it('does not emit a spurious tool change when the outer contour needs the same tool that was already loaded for the last hole', () => {
+    const toolSequence = [
+      { toolDiameter: 0.25, toolNumber: 1, label: '1/4in roughing bit' },
+      { toolDiameter: 0.5, toolNumber: 2, label: 'unused 1/2in bit' }
+    ];
+    // Both the outer and the 1" hole fit tool 1; the 0.15" hole needs
+    // something smaller than tool 1 but tool 2 here is even bigger, so this
+    // sequence only has one usable tool - no change should ever be needed.
+    const contours = [
+      { points: square(0, 0, 4), isHole: false },
+      { points: square(1, 1, 1), isHole: true }
+    ];
+    const result = generateRoutingGcode(contours, { targetDepth: 0.25, toolSequence: [toolSequence[0]] });
+    expect(result.stats.toolChanges).toBe(0);
+    expect(result.gcode).not.toContain('TOOL CHANGE:');
+  });
+});
+
 describe('generateRoutingGcode - multi-tool (router only, see implementations/toolchange-gcode-plan.md)', () => {
   const toolSequence = [
     { toolDiameter: 0.25, toolNumber: 1, label: '1/4in roughing bit' },
     { toolDiameter: 0.125, toolNumber: 2, label: '1/8in detail bit' }
   ];
 
-  it('assigns the outer contour and the reachable hole to tool 1, the tiny hole to tool 2', () => {
+  it('assigns the outer contour and the reachable hole to tool 1, the tiny hole to tool 2 - 2 tool changes, not 1, because holes are cut before the outer contour (see cut-order test below) and the outer needs tool 1 again after tool 2 handled the tiny hole', () => {
     const result = generateRoutingGcode(partWithHoles(), { targetDepth: 0.25, toolSequence });
     expect(result.stats.toolsUsed).toBe(2);
-    expect(result.stats.toolChanges).toBe(1);
+    expect(result.stats.toolChanges).toBe(2);
     expect(result.gcode).toContain('TOOL PLAN');
     expect(result.gcode).toContain('TOOL CHANGE: load 1/8in detail bit');
   });

@@ -60,6 +60,17 @@
  * through a simulator) before cutting anything with sharp internal corners
  * smaller than the tool diameter.
  *
+ * CUT ORDER - internal features before the outer profile: every hole/pocket
+ * contour is fully machined before the outer contour is cut, regardless of
+ * which array position or tool it came from (see the ordering in
+ * generateRoutingGcode). Once the outer profile is cut through material,
+ * the part is only still attached to the surrounding stock via tabs (if
+ * any) or clamping - continuing to machine anything else after that risks
+ * the part shifting, vibrating, or coming loose mid-operation. This can
+ * mean an extra tool change if the outer needs a tool already used for an
+ * earlier hole; that's an acceptable, minor tradeoff for not cutting a
+ * loose part.
+ *
  * ENTRY SAFETY - no straight plunges into solid material: every pass ramps
  * into depth instead of dropping straight down at a fixed point before
  * cutting - see cutContour/emitContourPass. A vertical plunge with a
@@ -611,8 +622,17 @@ export function generateRoutingGcode(contours, params = {}) {
     lines.push(`S${spindleSpeed} M03 (spindle on)`);
     lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
 
+    // Real CAM safety practice: internal features (holes/pockets) must be
+    // fully machined BEFORE the final outer-profile cut, not after. Once the
+    // outer boundary is cut through, the part is only still connected to the
+    // surrounding stock via tabs (if any) or clamping - continuing to
+    // machine anything else after that risks the part shifting, vibrating,
+    // or coming loose mid-operation. `contours` arrives outer-first (largest
+    // area, from extractRoutingContoursFromMeshes), so cut holes first here
+    // regardless of that original order.
+    const orderedContours = [...contours].sort((a, b) => Number(b.isHole) - Number(a.isHole));
     let totalTabZones = 0;
-    for (const contour of contours) {
+    for (const contour of orderedContours) {
       const { tabZoneCount } = cutContour(lines, contour, toolDiameter / 2, { stepDown, targetDepth, tabWidth, tabHeight, tabSpacing, feedRate, plungeRate }, safeZ);
       totalTabZones += tabZoneCount;
     }
@@ -634,33 +654,60 @@ export function generateRoutingGcode(contours, params = {}) {
       lines.push(`(  ${i + 1}. ${t.label || `${fmt(t.toolDiameter, 3)}" tool`}${t.toolNumber ? ` (T${t.toolNumber})` : ''} - ${count} contour${count === 1 ? '' : 's'} )`);
     });
 
+    // Same ordering safety rule as the single-tool path above: every hole
+    // contour, on whichever tool it needs, is cut before the outer contour
+    // - even if that means revisiting a tool already used earlier in the
+    // program. Split into two passes (holes, then outer) and run the
+    // existing tool-grouping logic within each, so tool changes are still
+    // minimized inside each pass.
+    const holeAssignments = assignments.filter((a) => a.contour.isHole);
+    const outerAssignments = assignments.filter((a) => !a.contour.isHole);
+
     let totalTabZones = 0;
     let toolChanges = 0;
-    let firstUsedTool = true;
-    for (let toolIndex = 0; toolIndex < toolSequence.length; toolIndex += 1) {
-      const contoursForTool = assignments.filter((a) => a.toolIndex === toolIndex).map((a) => a.contour);
-      if (contoursForTool.length === 0) continue; // nothing needs this tool on this part - skip it, no pointless tool change
+    // Tracks which tool is physically loaded RIGHT NOW, across both the
+    // holes phase and the outer phase below - not just "have we started
+    // yet" - so that if the outer contour happens to need the same tool
+    // that was just used for the last hole (a common case: both fit the
+    // primary/largest tool), cutting continues straight through with no
+    // spurious tool-change block. Only a genuine difference from the
+    // currently-loaded tool counts as a change.
+    let currentToolIndex = -1;
 
-      const tool = toolSequence[toolIndex];
-      if (firstUsedTool) {
-        lines.push(`(--- TOOL 1: ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` (T${tool.toolNumber})` : ''} - load before starting ---)`);
-        lines.push(`S${tool.spindleSpeed} M03 (spindle on)`);
-        lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
-        firstUsedTool = false;
-      } else {
-        toolChanges += 1;
-        lines.push(`G00 Z${fmt(safeZ)} (retract clear before tool change)`);
-        lines.push('M05 (spindle off)');
-        lines.push(pauseLine(isWinCNC, `TOOL CHANGE: load ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` - T${tool.toolNumber}` : ''}, then RE-TOUCH OFF Z0 before resuming - no automatic tool length compensation assumed`));
-        lines.push(`S${tool.spindleSpeed} M03 (spindle back on)`);
-        lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
-      }
+    const cutAssignmentGroup = (groupAssignments) => {
+      for (let toolIndex = 0; toolIndex < toolSequence.length; toolIndex += 1) {
+        const contoursForTool = groupAssignments.filter((a) => a.toolIndex === toolIndex).map((a) => a.contour);
+        if (contoursForTool.length === 0) continue; // nothing needs this tool in this group - skip it, no pointless tool change
 
-      for (const contour of contoursForTool) {
-        const { tabZoneCount } = cutContour(lines, contour, tool.toolDiameter / 2, { ...tool, targetDepth: tool.targetDepth || targetDepth }, safeZ);
-        totalTabZones += tabZoneCount;
+        const tool = toolSequence[toolIndex];
+        if (toolIndex !== currentToolIndex) {
+          if (currentToolIndex === -1) {
+            lines.push(`(--- TOOL 1: ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` (T${tool.toolNumber})` : ''} - load before starting ---)`);
+            lines.push(`S${tool.spindleSpeed} M03 (spindle on)`);
+            lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
+          } else {
+            toolChanges += 1;
+            lines.push(`G00 Z${fmt(safeZ)} (retract clear before tool change)`);
+            lines.push('M05 (spindle off)');
+            lines.push(pauseLine(isWinCNC, `TOOL CHANGE: load ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` - T${tool.toolNumber}` : ''}, then RE-TOUCH OFF Z0 before resuming - no automatic tool length compensation assumed`));
+            lines.push(`S${tool.spindleSpeed} M03 (spindle back on)`);
+            lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
+          }
+          currentToolIndex = toolIndex;
+        } // else: same tool as what's already loaded and spinning - keep cutting, no change block, no re-announcement
+
+        for (const contour of contoursForTool) {
+          const { tabZoneCount } = cutContour(lines, contour, tool.toolDiameter / 2, { ...tool, targetDepth: tool.targetDepth || targetDepth }, safeZ);
+          totalTabZones += tabZoneCount;
+        }
       }
+    };
+
+    cutAssignmentGroup(holeAssignments);
+    if (holeAssignments.length > 0 && outerAssignments.length > 0) {
+      lines.push('(--- internal features complete - outer profile cut last, see file header on cut order ---)');
     }
+    cutAssignmentGroup(outerAssignments);
 
     lines.push('M05 (spindle off)');
     lines.push(isWinCNC ? '(PROGRAM END)' : 'M30 (program end)');
