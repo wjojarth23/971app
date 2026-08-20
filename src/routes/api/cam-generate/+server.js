@@ -18,8 +18,8 @@ import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 // load (occt-import-js, slow on a cold start), geometry extraction, and
 // several Supabase round trips, which can plausibly exceed that default.
 // Raises the ceiling on Vercel; vestigial (silently ignored, not harmful)
-// on any other adapter/host - left in case a Vercel deployment ever comes
-// back.
+// now that the app deploys via adapter-node/Cloud Run instead of Vercel's
+// adapter-auto - left in case a Vercel deployment ever comes back.
 export const config = { maxDuration: 60 };
 
 function getClientFromRequest(request) {
@@ -31,15 +31,16 @@ function getClientFromRequest(request) {
 
 // Prefers the known-good, build-time-configured public origin over the
 // request's own url.origin. Behind a reverse proxy that terminates TLS
-// (e.g. Cloud Run, which forwards to the container over plain HTTP),
-// SvelteKit's adapter-node docs are explicit that "HTTP doesn't give
+// (Cloud Run's setup - it forwards to the container over plain HTTP),
+// SvelteKit's own adapter-node docs are explicit that "HTTP doesn't give
 // SvelteKit a reliable way to know the URL that is currently being
 // requested" without the ORIGIN env var (or trusted proxy headers)
 // configured - url.origin can silently resolve with the wrong scheme
 // (http instead of https), which would break this self-fetch outright.
-// Same resolution order already established in camJobs.js/drive_watcher.js
-// for the equivalent problem - found and fixed while verifying AutoCAM
-// under the Cloud Run migration.
+// ORIGIN is now set in cloudbuild.yaml's deploy step to the same value as
+// these two, but this fallback chain means a real generation failure here
+// doesn't depend on that one env var alone - same resolution order already
+// established in camJobs.js/drive_watcher.js for the equivalent problem.
 function resolveAppOrigin(requestOrigin) {
   return PUBLIC_APP_ORIGIN || PUBLIC_SITE_URL || requestOrigin;
 }

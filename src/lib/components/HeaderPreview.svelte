@@ -103,7 +103,7 @@
 <nav class="header-preview" on:dragover={allowDrop} on:drop={dropOnEnd} on:dragleave={handleDragLeave} aria-label="Header preview">
   <div class="preview-brand">
     <Briefcase size={20} />
-    <span>971 Hub</span>
+    <span>Spartans Hub</span>
   </div>
 
   <div class="preview-home">

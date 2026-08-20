@@ -399,7 +399,7 @@
 </script>
 
 <svelte:head>
-  <title>971 Hub - Login</title>
+  <title>Spartans Hub - Login</title>
 </svelte:head>
 
 {#if isLoading}
@@ -637,7 +637,7 @@
     <div class="auth-card">      <div class="auth-header">
         <div class="brand">
           <span class="brand-mark lg" aria-hidden="true"></span>
-          <h1>971 Hub</h1>
+          <h1>Spartans Hub</h1>
         </div>
         <p class="subtitle">Spartan Robotics</p>
       </div>

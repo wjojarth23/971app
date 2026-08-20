@@ -1522,7 +1522,7 @@
 </script>
 
 <svelte:head>
-  <title>{subsystem?.name || 'Subsystem'} Timeline - 971 Hub</title>
+  <title>{subsystem?.name || 'Subsystem'} Timeline - Spartans Hub</title>
 </svelte:head>
 
 {#if loading}

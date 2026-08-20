@@ -1297,7 +1297,7 @@
 </script>
 
 <svelte:head>
-  <title>Build Details - {build?.subsystems?.name || 'Unknown'} {build?.release_name || ''} - 971 Hub</title>
+  <title>Build Details - {build?.subsystems?.name || 'Unknown'} {build?.release_name || ''} - Spartans Hub</title>
 </svelte:head>
 
 <div class="main-content">

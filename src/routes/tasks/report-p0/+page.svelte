@@ -318,7 +318,7 @@
 </script>
 
 <svelte:head>
-  <title>Drive Practice Report - 971 Hub</title>
+  <title>Drive Practice Report - Spartans Hub</title>
 </svelte:head>
 
 <div class="container report-page">

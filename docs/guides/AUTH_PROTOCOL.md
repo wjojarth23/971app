@@ -1,4 +1,4 @@
-# 971 Hub Auth Protocol (UUID-Only Local Persistence)
+# Spartans Hub Auth Protocol (UUID-Only Local Persistence)
 
 This document describes the updated authentication protocol and integration patterns across the app.
 
