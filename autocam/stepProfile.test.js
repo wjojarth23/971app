@@ -202,7 +202,12 @@ describe('extractRoutingContoursFromMeshes (real STEP file: toughbox-motor-plate
     const meshes = await readStepMeshes(fs.readFileSync(TOUGHBOX_MOTOR_PLATE));
     const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
     expect(contours.length).toBeGreaterThan(5);
-    const toolSequence = [0.375, 0.25, 0.125].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    // 0.0625" added after routing.js started rejecting a helical entry that
+    // doesn't leave real clearance (see MIN_HELIX_RADIUS_FRACTION) - this
+    // part's smallest holes are only marginally bigger than 0.125", which
+    // used to "fit" (didn't collapse the offset) but left almost no
+    // toolpath radius, producing a 100+ turn near-stationary "helix."
+    const toolSequence = [0.375, 0.25, 0.125, 0.0625].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
     const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
     expect(result.gcode).toContain('M30');
   });

@@ -477,6 +477,23 @@ function fitCircle(path) {
 }
 const CIRCLE_FIT_TOLERANCE = 0.003; // inches - tight enough to reject genuinely non-circular shapes, loose enough to absorb STEP mesh tessellation facets
 
+// Minimum helical-toolpath radius, as a fraction of the tool's own radius,
+// for a circular hole's entry to still be a genuine helix rather than a
+// disguised plunge wearing an arc-command costume. Real bug this guards
+// against: emitHelicalCircularContour's turn count (turns = ceil(zDrop /
+// (radius * MAX_RAMP_SLOPE))) blows up without bound as radius shrinks - a
+// real hole only marginally bigger than its assigned tool (found on a real
+// fixture: a ~0.264" hole cut with a 0.25" tool, leaving a 0.007" toolpath
+// radius) produces 100+ turns per step-down pass while the tool barely
+// moves in XY at all - functionally full-width radial engagement spinning
+// straight down, exactly the loaded-plunge risk ENTRY SAFETY exists to
+// prevent, just relabeled as G02/G03 instead of G01. Below this threshold
+// there isn't enough real clearance for helixing to mean anything - reject
+// with the same actionable-error pattern offsetPolygon already uses for
+// "tool doesn't fit at all," pointing at the same fix (a smaller tool, via
+// a multi-tool sequence) rather than silently emitting something unsafe.
+const MIN_HELIX_RADIUS_FRACTION = 0.15;
+
 // Max Z drop per unit of XY travel during a ramped/helical entry (rise/run,
 // not degrees) - conservative on purpose. Too steep and a "ramp" is just a
 // disguised plunge again; this caps it well short of that regardless of
@@ -521,38 +538,70 @@ const DEPTH_EPSILON = 1e-6;
 // clamped so tabHeight of material is left uncut regardless of ramp state.
 // The ramped portion runs at `plungeRate` (a deliberately cautious rate for
 // axial engagement), the rest at the normal cutting `feedRate`.
+//
+// SEGMENTS ARE SPLIT AT TAB-ZONE BOUNDARIES - real bug this fixes: an
+// earlier version tested "does this SEGMENT's midpoint fall in a zone,"
+// which silently drops a zone whenever it falls inside a segment much
+// longer than the zone itself (the zone's own span doesn't reach the
+// segment's midpoint) - found on a real 20"-perimeter motor mounting plate
+// with long straight edges, where 2 of 3 intended tabs vanished entirely
+// with no error. Splitting each segment at every overlapping zone's start/
+// end means a sub-move's own midpoint is always either fully inside or
+// fully outside a zone (never straddling one), so the same midpoint check
+// is correct again - and only the zone's actual width ends up at tab
+// depth, not the whole original segment.
 function emitContourPass(lines, path, prevDepth, passDepth, targetDepth, tabZones, tabHeight, feedRate, plungeRate, rampDistance) {
-  let dist = 0;
   const isFinalPass = passDepth >= targetDepth - 1e-9;
   const n = path.length; // path is closed: path[0] === path[n-1]
+  const tabCutDepth = Math.max(0, targetDepth - tabHeight);
+
+  // Depth at absolute path-distance `d`, ramped from prevDepth to passDepth
+  // - same formula as before, just pulled out so it can be evaluated at an
+  // arbitrary split point, not only a segment's endpoint.
+  function rampedDepthAt(d) {
+    const rampT = rampDistance > 0 ? Math.min(1, d / rampDistance) : 1;
+    return prevDepth + (passDepth - prevDepth) * rampT;
+  }
+
+  let dist = 0;
   for (let i = 1; i < path.length; i += 1) {
     const a = path[i - 1];
     const b = path[i];
+    const segStart = dist;
     const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-    const endDist = dist + segLen;
-    const midDist = dist + segLen / 2;
-    const inTab = isFinalPass && tabZones.some(([s, e]) => midDist >= s && midDist <= e);
-    const inRamp = rampDistance > 0 && dist < rampDistance;
-    // Interpolate depth at the segment's ENDPOINT distance, not its
-    // midpoint - a G01 move commands where the tool should BE by the time
-    // it reaches `b`, so the ramp has to be evaluated there to actually
-    // finish by the declared rampDistance. Using the midpoint (a real
-    // precision bug, found by hand-checking a real generated file's first,
-    // unusually long edge) under-ramps whenever a single segment is longer
-    // than rampDistance itself - not unsafe (the motion stays gradual
-    // either way, nothing becomes a hard plunge), just stretches the ramp
-    // out past the distance the file's own comment claims it completes at.
-    const rampT = rampDistance > 0 ? Math.min(1, endDist / rampDistance) : 1;
-    const rampedDepth = prevDepth + (passDepth - prevDepth) * rampT;
-    const cutDepth = inTab ? Math.max(0, targetDepth - tabHeight) : rampedDepth;
+    const segEnd = segStart + segLen;
     // Corner slowdown - see cornerFeedScale's doc comment. `b`'s neighbors
     // are `a` (already have it) and whatever comes after `b`, wrapping to
-    // path[1] (not path[0], which duplicates path[n-1]) at the seam.
+    // path[1] (not path[0], which duplicates path[n-1]) at the seam. Only
+    // ever applies to the sub-move that actually lands ON `b` below - a
+    // synthetic zone-boundary point partway along this segment isn't a real
+    // corner.
     const nextIdx = i === n - 1 ? 1 : i + 1;
     const cornerScale = cornerFeedScale(a, b, path[nextIdx]);
-    const feed = (inRamp ? plungeRate : feedRate) * cornerScale;
-    lines.push(`G01 X${fmt(b.x)} Y${fmt(b.y)} Z${fmt(-cutDepth)} F${fmt(feed, 5)}`);
-    dist = endDist;
+
+    const overlappingZones = isFinalPass
+      ? tabZones.filter(([s, e]) => e > segStart + 1e-9 && s < segEnd - 1e-9)
+      : [];
+    // Every point within this segment where the cut depth could change:
+    // each overlapping zone's start/end (clamped to the segment's own
+    // span), plus the segment's own end. De-duped and sorted so a segment
+    // with no zone touching it - the overwhelming common case - collapses
+    // back to exactly one G01 move, identical to the pre-fix output.
+    const cutpoints = [...new Set([...overlappingZones.flatMap(([s, e]) => [Math.max(s, segStart), Math.min(e, segEnd)]), segEnd])]
+      .filter((d) => d > dist + 1e-9)
+      .sort((p, q) => p - q);
+
+    for (const cutDist of cutpoints) {
+      const atVertexB = cutDist >= segEnd - 1e-9;
+      const point = atVertexB ? b : { x: a.x + (b.x - a.x) * ((cutDist - segStart) / segLen), y: a.y + (b.y - a.y) * ((cutDist - segStart) / segLen) };
+      const midOfSubMove = (dist + cutDist) / 2;
+      const inTab = overlappingZones.some(([s, e]) => midOfSubMove >= s - 1e-9 && midOfSubMove <= e + 1e-9);
+      const cutDepth = inTab ? tabCutDepth : rampedDepthAt(cutDist);
+      const inRamp = rampDistance > 0 && dist < rampDistance;
+      const feed = (inRamp ? plungeRate : feedRate) * (atVertexB ? cornerScale : 1);
+      lines.push(`G01 X${fmt(point.x)} Y${fmt(point.y)} Z${fmt(-cutDepth)} F${fmt(feed, 5)}`);
+      dist = cutDist;
+    }
   }
 }
 
@@ -596,11 +645,33 @@ function emitHelicalCircularContour(lines, contour, path, circle, toolParams, sa
   return { perimeter: 2 * Math.PI * radius, tabZoneCount: 0 };
 }
 
+// Offsets a HOLE contour inward by toolRadius and validates the result is
+// actually safe to cut, not just non-collapsed: offsetPolygon alone only
+// catches "this tool doesn't fit at all" (the offset collapses/inverts). A
+// circular hole can still pass that check while leaving only a sliver of
+// helical-entry clearance - see MIN_HELIX_RADIUS_FRACTION's doc comment for
+// the real bug this catches. Shared by cutContour (the real cut) and
+// assignContoursToTools (multi-tool "does this tool fit" probing) so a tool
+// multi-tool mode accepts is always one cutContour can actually cut safely,
+// not just one that produces some offset.
+function checkHoleFits(points, toolRadius) {
+  const path = offsetPolygon(points, -toolRadius);
+  const circle = fitCircle(path);
+  if (circle.maxDeviation <= CIRCLE_FIT_TOLERANCE && circle.radius < toolRadius * MIN_HELIX_RADIUS_FRACTION) {
+    throw new Error(
+      `Hole too close to this tool's diameter for a safe helical entry: only ${circle.radius.toFixed(4)}" of ` +
+      `toolpath clearance for a ${(toolRadius * 2).toFixed(3)}" tool (needs at least ${(toolRadius * MIN_HELIX_RADIUS_FRACTION).toFixed(4)}") - ` +
+      `use a smaller tool for this hole (a multi-tool sequence falls through to one automatically) or drop this hole`
+    );
+  }
+  return path;
+}
+
 // Cuts one contour (all step-down passes + tabs) with one tool's params.
 // Shared by both the single-tool and multi-tool code paths.
 function cutContour(lines, contour, toolRadius, toolParams, safeZ) {
   const { stepDown, targetDepth, tabWidth, tabHeight, tabSpacing, feedRate, plungeRate } = toolParams;
-  const path = offsetPolygon(contour.points, contour.isHole ? -toolRadius : toolRadius);
+  const path = contour.isHole ? checkHoleFits(contour.points, toolRadius) : offsetPolygon(contour.points, toolRadius);
   const perimeter = pathLength(path);
   // Tabs only ever apply to the OUTER contour - a hole isn't a piece that
   // needs holding in place, it's material being removed, and leaving
@@ -654,11 +725,11 @@ function assignContoursToTools(contours, toolSequence) {
       const radius = toolSequence[i].toolDiameter / 2;
       if (!contour.isHole) { assigned = i; break; } // outer contour always fits the first tool that reaches it geometrically; only holes can be "too small"
       try {
-        offsetPolygon(contour.points, -radius);
+        checkHoleFits(contour.points, radius);
         assigned = i;
         break;
       } catch {
-        continue; // this tool doesn't fit - try the next (smaller) one
+        continue; // this tool doesn't fit (or doesn't leave safe helical clearance) - try the next (smaller) one
       }
     }
     if (assigned === -1) {

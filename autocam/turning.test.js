@@ -188,6 +188,41 @@ describe('generateTurningGcode - tailstock mode', () => {
   });
 });
 
+describe('generateTurningGcode - unsupported length-to-diameter warning (real bug: setupMode defaulted to \'single\' with zero automatic detection that a part was too long/thin to safely cantilever - found on a real ~15"-long, ~0.34"-diameter fixture that generated with no warning at all)', () => {
+  // A long, thin profile: 10" long, necking down to 0.2" diameter (x=0.1) -
+  // a 50:1 unsupported ratio, well past the 8:1 warning threshold.
+  function longThinProfile() {
+    return [
+      { z: 0, x: 0.3 },
+      { z: 0.5, x: 0.3 },
+      { z: 1, x: 0.1 },
+      { z: 9, x: 0.1 },
+      { z: 10, x: 0.3 }
+    ];
+  }
+
+  it('warns in single mode (the default) when the length-to-diameter ratio is dangerously high', () => {
+    const result = generateTurningGcode(longThinProfile(), { ...baseParams, stockDiameter: 0.7 });
+    expect(result.gcode).toContain('WARNING: LONG/THIN PART');
+    expect(result.gcode).toContain('50.0:1');
+  });
+
+  it('does not warn for an ordinary, well-supported-by-its-own-stoutness profile', () => {
+    const result = generateTurningGcode(shaftProfile(), baseParams); // 2.5:1 ratio
+    expect(result.gcode).not.toContain('WARNING: LONG/THIN PART');
+  });
+
+  it('does not double-warn in tailstock mode - that mode already carries its own dedicated note', () => {
+    const result = generateTurningGcode(longThinProfile(), { ...baseParams, stockDiameter: 0.7, setupMode: 'tailstock' });
+    expect(result.gcode).toContain('TAILSTOCK REQUIRED');
+    expect(result.gcode).not.toContain('WARNING: LONG/THIN PART');
+  });
+
+  it('does not block generation - this is a warning, not a hard error, since the operator may have a deliberate reason', () => {
+    expect(() => generateTurningGcode(longThinProfile(), { ...baseParams, stockDiameter: 0.7 })).not.toThrow();
+  });
+});
+
 describe('generateTurningGcode - flip-turning mode', () => {
   it('requires flipAt', () => {
     expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, setupMode: 'flip' })).toThrow(/flipAt.*is required/);
