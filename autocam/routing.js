@@ -96,6 +96,15 @@
  * also wants tabs falls back to the polygon path, since interrupting a
  * helical arc cut to leave tab webs isn't implemented.
  *
+ * CORNER FEED SLOWDOWN: every G01 cutting move on the polygon-following path
+ * (not the true-arc path above - a circle has no corners) is fed at a
+ * reduced rate when it arrives at a sharp vertex, easing back to full feed
+ * on gentle bends and dead-straight runs - see cornerFeedScale. Protects
+ * against the force/deflection spike a round tool sees wrapping a sharp
+ * corner at full feed. Cross-checked against PenguinCAM (github.com/6238/
+ * PenguinCAM), an independent open-source FRC router CAM tool that does the
+ * same thing - not an invented-from-scratch technique.
+ *
  * MULTI-TOOL SUPPORT: pass params.toolSequence (ordered array of tool specs,
  * primary/largest tool first) to cut different contours with different
  * tools - each contour is assigned to the *first* tool in the sequence that
@@ -377,6 +386,44 @@ export function offsetPolygon(points, distance) {
   return offset;
 }
 
+// Feed-rate scaling at sharp corners - a real technique independently found
+// in PenguinCAM (github.com/6238/PenguinCAM, an open-source FRC router CAM
+// tool used by other teams), cross-checked here against it rather than
+// invented blind. A round tool cutting a polygon at a constant feed wraps
+// both adjacent edges at once as it goes around a sharp corner - the
+// effective engagement (and cutting force) spikes right at the vertex,
+// which is exactly the kind of load spike that deflects a small router bit
+// or leaves visible burning/chatter marks on the inside of a tight corner.
+// Slowing the feed specifically through that vertex tames the spike without
+// changing the toolpath geometry at all - same path, just paced differently.
+//
+// Adapted, not copied 1:1: PenguinCAM inserts extra waypoints to ease feed
+// in/out over a tool-diameter-sized zone approaching each corner; this
+// applies the scale directly to the G01 move that ARRIVES at the corner
+// vertex instead, since routing.js's existing per-segment loop already
+// walks vertex-by-vertex (see emitContourPass) - simpler, and the moment
+// that actually matters (the tool physically engaging the corner) is still
+// slowed, without threading corner-aware sub-segment splitting through the
+// ramp-Z and tab-zone interpolation that segment loop already has to get
+// right. Thresholds and the feed floor match PenguinCAM's own values
+// (150deg/60deg/0.4x) as a real-world-calibrated starting point, not a guess.
+const CORNER_GENTLE_DEGREES = 150; // included angle >= this: straight-through enough that no slowdown is needed
+const CORNER_SHARP_DEGREES = 60; // included angle <= this: full slowdown (CORNER_MIN_FEED_SCALE)
+const CORNER_MIN_FEED_SCALE = 0.4; // feed multiplier floor at the sharpest corners
+
+export function cornerFeedScale(prev, cur, next) {
+  const ax = prev.x - cur.x, ay = prev.y - cur.y;
+  const bx = next.x - cur.x, by = next.y - cur.y;
+  const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+  if (la < 1e-9 || lb < 1e-9) return 1; // degenerate (coincident points) - nothing meaningful to slow down for
+  const cosIncluded = Math.max(-1, Math.min(1, (ax * bx + ay * by) / (la * lb)));
+  const includedDegrees = Math.acos(cosIncluded) * (180 / Math.PI); // 0 = spike back on itself, 180 = dead straight
+  if (includedDegrees >= CORNER_GENTLE_DEGREES) return 1;
+  if (includedDegrees <= CORNER_SHARP_DEGREES) return CORNER_MIN_FEED_SCALE;
+  const t = (includedDegrees - CORNER_SHARP_DEGREES) / (CORNER_GENTLE_DEGREES - CORNER_SHARP_DEGREES);
+  return CORNER_MIN_FEED_SCALE + t * (1 - CORNER_MIN_FEED_SCALE);
+}
+
 function pathLength(path) {
   let len = 0;
   for (let i = 0; i < path.length - 1; i += 1) len += Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
@@ -477,6 +524,7 @@ const DEPTH_EPSILON = 1e-6;
 function emitContourPass(lines, path, prevDepth, passDepth, targetDepth, tabZones, tabHeight, feedRate, plungeRate, rampDistance) {
   let dist = 0;
   const isFinalPass = passDepth >= targetDepth - 1e-9;
+  const n = path.length; // path is closed: path[0] === path[n-1]
   for (let i = 1; i < path.length; i += 1) {
     const a = path[i - 1];
     const b = path[i];
@@ -497,7 +545,12 @@ function emitContourPass(lines, path, prevDepth, passDepth, targetDepth, tabZone
     const rampT = rampDistance > 0 ? Math.min(1, endDist / rampDistance) : 1;
     const rampedDepth = prevDepth + (passDepth - prevDepth) * rampT;
     const cutDepth = inTab ? Math.max(0, targetDepth - tabHeight) : rampedDepth;
-    const feed = inRamp ? plungeRate : feedRate;
+    // Corner slowdown - see cornerFeedScale's doc comment. `b`'s neighbors
+    // are `a` (already have it) and whatever comes after `b`, wrapping to
+    // path[1] (not path[0], which duplicates path[n-1]) at the seam.
+    const nextIdx = i === n - 1 ? 1 : i + 1;
+    const cornerScale = cornerFeedScale(a, b, path[nextIdx]);
+    const feed = (inRamp ? plungeRate : feedRate) * cornerScale;
     lines.push(`G01 X${fmt(b.x)} Y${fmt(b.y)} Z${fmt(-cutDepth)} F${fmt(feed, 5)}`);
     dist = endDist;
   }
