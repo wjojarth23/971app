@@ -213,6 +213,53 @@ export function todayDriveDateFolderName() {
   }).format(new Date());
 }
 
+// Same slugify rule as gcodeFileNameFor (camJobs.js) - kept as a tiny local
+// copy rather than exported/reused from there, since that function's
+// contract (produce a plain "<slug>.<ext>" for one file, used all over the
+// app for downloads/display) shouldn't have to know about this module's
+// extra machine-prefix/collision-suffix needs.
+function slugify(value, fallback) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || fallback;
+}
+
+// HHMMSS in Pacific time - see todayDriveDateFolderName for why Pacific, not
+// server/UTC time.
+function nowDriveTimeSuffix() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: PACIFIC_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value || '00';
+  return `${get('hour')}${get('minute')}${get('second')}`;
+}
+
+// Naming convention for a file delivered to Drive: <machine>_<part>_<HHMMSS>.<ext>
+// The machine prefix and time suffix exist for one concrete reason: multiple
+// machines can be (and, per the real setup this was built for, ARE) configured
+// to share the SAME drive_output_folder_id, so more than one machine's output
+// can land in the exact same dated folder. Without a machine prefix, two
+// routers cutting a same-named part would produce ambiguous or literally
+// identical filenames in that shared folder - the whole point of separate
+// "cad/oldrouter" and "cad/newrouter" input folders (route to the right
+// physical machine) would be lost the moment the file reaches Cammed, since
+// nothing in the filename says which router actually generated it. The date
+// itself is deliberately NOT repeated here (see todayDriveDateFolderName) -
+// it's already the enclosing folder's name.
+export function driveDeliveryFileName(job, machine) {
+  const machineSlug = slugify(machine?.name, 'machine');
+  const rawName = (job.gcode_file_name || 'output.ngc').replace(/\.[a-z0-9]+$/i, '');
+  const partSlug = slugify(rawName, 'part');
+  const ext = (job.gcode_file_name || 'output.ngc').match(/\.([a-z0-9]+)$/i)?.[1] || 'ngc';
+  return `${machineSlug}_${partSlug}_${nowDriveTimeSuffix()}.${ext}`;
+}
+
 // Finds a child folder of `parentFolderId` named exactly `folderName`
 // (case-sensitive, Drive's own `=` query operator), creating it if it
 // doesn't exist yet. Used to group each day's delivered G-code into one
@@ -429,9 +476,9 @@ export async function deliverJobToDrive(job, machine) {
     const driveId = await getFileDriveId(accessToken, machine.drive_output_folder_id);
     const dateFolderName = todayDriveDateFolderName();
     const dateFolderId = await findOrCreateDateFolder(accessToken, machine.drive_output_folder_id, dateFolderName, driveId);
-    const filename = job.gcode_file_name || 'output.ngc';
+    const filename = driveDeliveryFileName(job, machine);
     await uploadFileToDriveFolder(accessToken, dateFolderId, filename, job.gcode, 'text/plain');
-    return { delivered: true, dateFolder: dateFolderName };
+    return { delivered: true, dateFolder: dateFolderName, filename };
   } catch (e) {
     const message = e?.message || String(e);
     console.error(`Drive watcher: delivery failed for job ${job.id} (machine "${machine.name}")`, message);

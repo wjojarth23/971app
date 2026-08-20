@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { todayDriveDateFolderName } from './drive_watcher.js';
+import { todayDriveDateFolderName, driveDeliveryFileName } from './drive_watcher.js';
 
 describe('todayDriveDateFolderName', () => {
   afterEach(() => {
@@ -26,5 +26,44 @@ describe('todayDriveDateFolderName', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-21T07:01:00Z'));
     expect(todayDriveDateFolderName()).toBe('2026-08-21');
+  });
+});
+
+describe('driveDeliveryFileName', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('prefixes with the machine name and keeps the original extension - the real reason this exists: multiple machines can share one drive_output_folder_id (both routers deliver into the same dated Cammed folder), so nothing else in this system tells two machines\' files apart once they land there', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T21:05:09Z')); // 14:05:09 PDT
+    const job = { gcode_file_name: 'gearbox-plate.ngc' };
+    const machine = { name: 'Old Router (ShopSabre)' };
+    expect(driveDeliveryFileName(job, machine)).toBe('old-router-shopsabre_gearbox-plate_140509.ngc');
+  });
+
+  it('two different machines cutting the same-named part at the same moment still produce different filenames', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T21:05:09Z'));
+    const job = { gcode_file_name: 'bracket.ngc' };
+    const oldRouter = driveDeliveryFileName(job, { name: 'Old Router' });
+    const newRouter = driveDeliveryFileName(job, { name: 'New Router' });
+    expect(oldRouter).not.toBe(newRouter);
+    expect(oldRouter).toContain('old-router');
+    expect(newRouter).toContain('new-router');
+  });
+
+  it('preserves a non-.ngc extension (e.g. .tap for a Mach3/Mach4-style profile)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T21:05:09Z'));
+    const job = { gcode_file_name: 'bracket.tap' };
+    expect(driveDeliveryFileName(job, { name: 'New Router' })).toMatch(/\.tap$/);
+  });
+
+  it('falls back to sane defaults for a missing machine name or gcode_file_name', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-20T21:05:09Z'));
+    // Matches the pre-existing 'output.ngc' fallback this replaced.
+    expect(driveDeliveryFileName({}, {})).toBe('machine_output_140509.ngc');
   });
 });
