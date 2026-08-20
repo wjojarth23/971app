@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateRoutingGcode, offsetPolygon } from './routing.js';
+import { generateRoutingGcode, offsetPolygon, cornerFeedScale } from './routing.js';
 
 function square(cx, cy, size) {
   const h = size / 2;
@@ -419,8 +419,15 @@ describe('generateRoutingGcode - ramped entry, no more straight plunges into sol
   it('ramp uses plungeRate, the flat remainder of the pass uses feedRate', () => {
     const part = [{ points: square(0, 0, 4), isHole: false }];
     const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.05, targetDepth: 0.05, feedRate: 40, plungeRate: 7 });
+    // The initial feed-down-to-surface move (not part of the per-vertex
+    // contour loop, so not corner-scaled) still carries the raw plungeRate.
     expect(result.gcode).toContain('F7.00000');
-    expect(result.gcode).toContain('F40.00000');
+    // Every vertex of a square is a 90deg corner, which falls in
+    // cornerFeedScale's partial-slowdown range (60deg-150deg) - so the "flat"
+    // feedRate segments here are all scaled to 40 * 0.6 = 24, not raw 40.
+    // See the dedicated corner-slowdown describe block below for the
+    // unscaled-vs-scaled feed math itself.
+    expect(result.gcode).toContain('F24.00000');
   });
 
   it('approaches Z0 with a feed move, not a rapid - defense-in-depth in case Z0/stock height is slightly off', () => {
@@ -488,5 +495,58 @@ describe('generateRoutingGcode - true arcs for circular features (real hole/boss
     const part = [{ points: circle(0, 0, 2), isHole: false }];
     const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.25, tabSpacing: 0 });
     expect(result.gcode).toContain('true circle');
+  });
+});
+
+describe('cornerFeedScale (corner feed-rate slowdown)', () => {
+  it('applies no slowdown on a dead-straight run (180deg included angle)', () => {
+    expect(cornerFeedScale({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 })).toBe(1);
+  });
+
+  it('applies no slowdown on a gentle bend at/above the 150deg gentle threshold', () => {
+    // 150deg included angle: prev/next symmetric about the cur->next direction
+    const cur = { x: 0, y: 0 };
+    const prev = { x: -1, y: 0 };
+    const next = { x: Math.cos(Math.PI / 6), y: Math.sin(Math.PI / 6) }; // 150deg included angle from prev
+    expect(cornerFeedScale(prev, cur, next)).toBe(1);
+  });
+
+  it('applies the full slowdown floor (0.4x) at a genuinely sharp (30deg) corner', () => {
+    const cur = { x: 0, y: 0 };
+    const prev = { x: -1, y: 0 }; // pointing at 180deg
+    const sharpNext = { x: -Math.cos(Math.PI / 6), y: Math.sin(Math.PI / 6) }; // pointing at 150deg -> 30deg included angle from prev
+    expect(cornerFeedScale(prev, cur, sharpNext)).toBeCloseTo(0.4, 10);
+  });
+
+  it('applies a right-angle (90deg) corner a partial, in-between slowdown', () => {
+    const cur = { x: 0, y: 0 };
+    const prev = { x: -1, y: 0 };
+    const next = { x: 0, y: 1 }; // 90deg included angle
+    const scale = cornerFeedScale(prev, cur, next);
+    expect(scale).toBeGreaterThan(0.4);
+    expect(scale).toBeLessThan(1);
+    expect(scale).toBeCloseTo(0.6, 10); // (90-60)/(150-60) = 1/3 of the way from floor to 1: 0.4 + 1/3*0.6 = 0.6
+  });
+
+  it('treats a full reversal (spike back on itself, ~0deg) the same as any other sharp corner - the floor, not a special case', () => {
+    const cur = { x: 0, y: 0 };
+    const prev = { x: -1, y: 0 };
+    const next = { x: -1, y: 0.001 }; // nearly doubles back on itself
+    expect(cornerFeedScale(prev, cur, next)).toBeCloseTo(0.4, 5);
+  });
+
+  it('returns 1 (no-op) for degenerate/coincident points instead of dividing by zero', () => {
+    const cur = { x: 0, y: 0 };
+    expect(cornerFeedScale(cur, cur, { x: 1, y: 0 })).toBe(1);
+    expect(cornerFeedScale({ x: -1, y: 0 }, cur, cur)).toBe(1);
+  });
+
+  it('end to end: a right-angle rectangle contour shows both the plunge-rate and cutting-feed corner scaling in the emitted G-code', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.05, targetDepth: 0.05, feedRate: 40, plungeRate: 7 });
+    // Ramp-portion move landing on a 90deg corner: 7 * 0.6 = 4.2
+    expect(result.gcode).toContain('F4.20000');
+    // Flat cutting-feed move landing on a 90deg corner: 40 * 0.6 = 24
+    expect(result.gcode).toContain('F24.00000');
   });
 });
