@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
-import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public';
+import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL, PUBLIC_APP_ORIGIN, PUBLIC_SITE_URL } from '$env/static/public';
 import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '$lib/cam/stepProfile.js';
 import { generateTurningGcode } from '$lib/cam/turning.js';
 import { generateRoutingGcode } from '$lib/cam/routing.js';
@@ -17,8 +17,9 @@ import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 // 10s on some plans) - this route does a STEP file download, WASM parser
 // load (occt-import-js, slow on a cold start), geometry extraction, and
 // several Supabase round trips, which can plausibly exceed that default.
-// Raises the ceiling on Vercel; harmless everywhere else (adapter-auto only
-// applies Vercel-specific route config when actually deploying to Vercel).
+// Raises the ceiling on Vercel; vestigial (silently ignored, not harmful)
+// on any other adapter/host - left in case a Vercel deployment ever comes
+// back.
 export const config = { maxDuration: 60 };
 
 function getClientFromRequest(request) {
@@ -26,6 +27,21 @@ function getClientFromRequest(request) {
   return createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: auth } }
   });
+}
+
+// Prefers the known-good, build-time-configured public origin over the
+// request's own url.origin. Behind a reverse proxy that terminates TLS
+// (e.g. Cloud Run, which forwards to the container over plain HTTP),
+// SvelteKit's adapter-node docs are explicit that "HTTP doesn't give
+// SvelteKit a reliable way to know the URL that is currently being
+// requested" without the ORIGIN env var (or trusted proxy headers)
+// configured - url.origin can silently resolve with the wrong scheme
+// (http instead of https), which would break this self-fetch outright.
+// Same resolution order already established in camJobs.js/drive_watcher.js
+// for the equivalent problem - found and fixed while verifying AutoCAM
+// under the Cloud Run migration.
+function resolveAppOrigin(requestOrigin) {
+  return PUBLIC_APP_ORIGIN || PUBLIC_SITE_URL || requestOrigin;
 }
 
 let wasmBinaryPromise = null;
@@ -148,7 +164,7 @@ export async function POST({ request, url }) {
 
     await setProgress(supabase, jobId, 20, 'Loading STEP geometry parser...');
     const stepBuffer = new Uint8Array(await fileBlob.arrayBuffer());
-    const wasmBinary = await getWasmBinary(url.origin);
+    const wasmBinary = await getWasmBinary(resolveAppOrigin(url.origin));
     const meshes = await readStepMeshes(stepBuffer, wasmBinary);
 
     await setProgress(supabase, jobId, 55, 'Extracting toolpath geometry...');
