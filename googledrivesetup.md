@@ -8,7 +8,7 @@ steps - come back to those once you have them.
 
 ## Architecture (what this actually does)
 
-Full details in `autocam/docs/architecture.md` - short version:
+Full details in `autocam/docs/drive-watcher-folder-layout.md` - short version:
 
 - **Two `cad` subfolders, one per router** — `cad/oldrouter` (ShopSabre) and
   `cad/newrouter` (the other router). Dropping a CAD file into either one

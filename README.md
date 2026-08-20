@@ -13,7 +13,7 @@ new external integration, or changes how the app is deployed, that change
 isn't done until this file reflects it.
 
 For a specific feature's own deep-dive architecture, see `autocam/docs/`
-(AutoCAM specifically - e.g. `autocam/docs/architecture.md` for the Google
+(AutoCAM specifically - e.g. `autocam/docs/drive-watcher-folder-layout.md` for the Google
 Drive/manufacturing-folder integration) or `implementations/` (everything
 else) - this file stays at the whole-project level and links out rather
 than duplicating that detail.
@@ -41,7 +41,7 @@ than duplicating that detail.
   Onshape API (CAD source of truth for parts - see the Onshape-key exposure
   note under **Known gaps** below), The Blue Alliance API (scouting), Sentry
   (error monitoring), Google Drive API (AutoCAM input/output watcher, hand-
-  rolled, no `googleapis` dependency - see `autocam/docs/architecture.md`).
+  rolled, no `googleapis` dependency - see `autocam/docs/drive-watcher-folder-layout.md`).
 
 ## AutoCAM (`autocam/`, top-level - not under `src/lib/`)
 
@@ -62,7 +62,7 @@ own docs are all together in one place instead of scattered across
   toolpath for preview (`autocam/components/ToolpathViewer.svelte`).
 - **`autocam/drive_watcher.js`** - Google Drive input-sweep (`cad` →
   auto-queue) and output-delivery (finished G-code → dated `cammed`
-  subfolder) - see `autocam/docs/architecture.md` for the real folder
+  subfolder) - see `autocam/docs/drive-watcher-folder-layout.md` for the real folder
   layout this was built for.
 - **`autocam/camJobs.js`** - shared job-queue helpers used by both
   `/autocam` and `/manufacture`.
