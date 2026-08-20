@@ -114,6 +114,80 @@ const AXIS_INDEX = { x: 0, y: 1, z: 2 };
  * two axes. Returns [{z, x}...] (z = position along the detected length
  * axis, x = radius), ordered by position ascending.
  */
+// Max plausible diameter-to-length ratio for the short-axis fallback below
+// (a disc-shaped turned part - a hub, pulley, washer, flange) before it's
+// almost certainly actually flat sheet stock instead. Real hubs/pulleys/
+// washers/flanges are rarely more than a few times wider than they are
+// thick (found examples: a set-screw hub at ~2.2:1, a V-belt pulley at
+// ~3:1); a genuine routed flat plate is typically well past 10:1, often
+// 20-100:1. 8 sits comfortably in the gap, generous to legitimate large
+// thin discs without accepting an obviously-flat plate through this path.
+const MAX_DISC_DIAMETER_TO_LENGTH_RATIO = 8;
+
+/**
+ * Picks which bounding-box axis is the part's true rotational axis, trying
+ * the largest-span axis first (the common case: an elongated shaft/bar is
+ * always much longer than it is wide) and falling back to the SMALLEST-span
+ * axis (a short, wide, disc-shaped turned part - a hub, pulley, washer,
+ * flange - where the true axial length is the SHORT dimension, not the
+ * long one; its diameter, not its thickness, is what dominates the
+ * bounding box). Real bug this fixes: "largest span = length" alone
+ * rejected a real V-belt pulley and a real set-screw hub as "not a turned
+ * part" - both are completely ordinary lathe parts, just wider than they
+ * are long, which the largest-span-only heuristic never considered.
+ *
+ * Returns the accepted candidate's axis assignment, or null if neither the
+ * largest-span nor the smallest-span axis produces a plausible turned-part
+ * cross-section (see crossSectionAspect below) - the caller throws in that
+ * case, using the largest-span candidate's numbers for the error message
+ * (the "primary"/expected hypothesis for a typical shaft-like part).
+ */
+export function pickLengthAxis(spans) {
+  const axes = ['x', 'y', 'z'];
+  const bySpan = [...axes].sort((a, b) => spans[b] - spans[a]);
+  const candidates = [bySpan[0]]; // largest span
+  if (bySpan[2] !== bySpan[0]) candidates.push(bySpan[2]); // smallest span, if distinct (skips a perfect-cube tie)
+
+  let primary = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const lengthAxis = candidates[i];
+    const [radiusAxisA, radiusAxisB] = axes.filter((a) => a !== lengthAxis);
+    const radiusAxisSpanA = spans[radiusAxisA];
+    const radiusAxisSpanB = spans[radiusAxisB];
+    // Sanity check: real bar stock (round, hex, or square) is roughly as
+    // wide in one off-axis direction as the other - the bounding box
+    // cross-section is close to square even when the actual cross-section
+    // isn't circular (e.g. hex stock turned down to a round shaft is a
+    // completely normal lathe operation). A flat plate is the opposite:
+    // one off-axis extent (its thickness) is drastically smaller than the
+    // other (its width). Without this check, a flat plate's "radius" -
+    // computed as hypot() of both off-axis directions - is dominated by
+    // the wide direction and produces a numerically plausible profile for
+    // a shape that was never a solid of revolution to begin with. Found
+    // via a real "550 Motor Plate" STEP file (flat, with mounting holes)
+    // that slipped past the maxRadius<length/2 check below by coincidence
+    // and would have silently generated lathe G-code for a part that
+    // should never go near a lathe.
+    const crossSectionAspect = Math.min(radiusAxisSpanA, radiusAxisSpanB) / Math.max(radiusAxisSpanA, radiusAxisSpanB);
+    const candidate = { lengthAxis, radiusAxisA, radiusAxisB, radiusAxisSpanA, radiusAxisSpanB, crossSectionAspect };
+    if (i === 0) primary = candidate; // always the largest-span attempt, for the error message below
+
+    if (crossSectionAspect < 0.5) continue;
+    if (i === 0) return candidate; // largest-span candidate passed outright - the common, unambiguous case
+
+    // The smallest-span candidate passed the roundness bar too, but that
+    // alone can't distinguish a genuine disc from a same-proportioned
+    // square/rectangular PLATE (a circle and a square share the exact same
+    // bounding box) - the diameter-to-length ratio is what actually
+    // separates "ordinary hub/pulley/washer" from "obviously flat sheet
+    // stock that happens to be square-ish," so gate the fallback on it.
+    const approxMaxRadius = Math.hypot(radiusAxisSpanA / 2, radiusAxisSpanB / 2);
+    const length = spans[lengthAxis];
+    if (approxMaxRadius * 2 / length <= MAX_DISC_DIAMETER_TO_LENGTH_RATIO) return candidate;
+  }
+  return null; // neither candidate worked - let the caller report the primary (largest-span) attempt's numbers
+}
+
 export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) {
   const bbox = meshesBoundingBox(meshes);
   const spans = {
@@ -121,39 +195,27 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
     y: bbox.maxY - bbox.minY,
     z: bbox.maxZ - bbox.minZ
   };
-  const lengthAxis = Object.keys(spans).reduce((a, b) => (spans[b] > spans[a] ? b : a));
-  const [radiusAxisA, radiusAxisB] = ['x', 'y', 'z'].filter((a) => a !== lengthAxis);
-  const lengthMin = { x: bbox.minX, y: bbox.minY, z: bbox.minZ }[lengthAxis];
-  const lengthMax = { x: bbox.maxX, y: bbox.maxY, z: bbox.maxZ }[lengthAxis];
-  const centerA = ({ x: bbox.minX, y: bbox.minY, z: bbox.minZ }[radiusAxisA] + { x: bbox.maxX, y: bbox.maxY, z: bbox.maxZ }[radiusAxisA]) / 2;
-  const centerB = ({ x: bbox.minX, y: bbox.minY, z: bbox.minZ }[radiusAxisB] + { x: bbox.maxX, y: bbox.maxY, z: bbox.maxZ }[radiusAxisB]) / 2;
 
-  if (!Number.isFinite(lengthMin) || !Number.isFinite(lengthMax) || lengthMax <= lengthMin) {
+  const lengthMinByAxis = { x: bbox.minX, y: bbox.minY, z: bbox.minZ };
+  const lengthMaxByAxis = { x: bbox.maxX, y: bbox.maxY, z: bbox.maxZ };
+  const primaryLengthAxis = Object.keys(spans).reduce((a, b) => (spans[b] > spans[a] ? b : a));
+  if (!Number.isFinite(lengthMinByAxis[primaryLengthAxis]) || !Number.isFinite(lengthMaxByAxis[primaryLengthAxis]) || lengthMaxByAxis[primaryLengthAxis] <= lengthMinByAxis[primaryLengthAxis]) {
     throw new Error('STEP geometry has no usable extent for a turning profile');
   }
 
-  // Sanity check: real bar stock (round, hex, or square) is roughly as wide
-  // in one off-axis direction as the other - the bounding box cross-section
-  // is close to square even when the actual cross-section isn't circular
-  // (e.g. hex stock turned down to a round shaft is a completely normal
-  // lathe operation). A flat plate is the opposite: one off-axis extent
-  // (its thickness) is drastically smaller than the other (its width).
-  // Without this check, a flat plate's "radius" - computed as hypot() of
-  // both off-axis directions - is dominated by the wide direction and
-  // produces a numerically plausible profile for a shape that was never a
-  // solid of revolution to begin with. Found via a real "550 Motor Plate"
-  // STEP file (flat, with mounting holes) that slipped past the
-  // maxRadius<length/2 check below by coincidence and would have silently
-  // generated lathe G-code for a part that should never go near a lathe.
-  const radiusAxisSpanA = spans[radiusAxisA];
-  const radiusAxisSpanB = spans[radiusAxisB];
-  const crossSectionAspect = Math.min(radiusAxisSpanA, radiusAxisSpanB) / Math.max(radiusAxisSpanA, radiusAxisSpanB);
-  if (crossSectionAspect < 0.5) {
+  const picked = pickLengthAxis(spans);
+  if (!picked) {
+    const [radiusAxisA, radiusAxisB] = ['x', 'y', 'z'].filter((a) => a !== primaryLengthAxis);
     throw new Error(
-      `This doesn't look like a turned part: cross-section is ${radiusAxisA.toUpperCase()}=${radiusAxisSpanA.toFixed(3)}" by ${radiusAxisB.toUpperCase()}=${radiusAxisSpanB.toFixed(3)}" ` +
+      `This doesn't look like a turned part: cross-section is ${radiusAxisA.toUpperCase()}=${spans[radiusAxisA].toFixed(3)}" by ${radiusAxisB.toUpperCase()}=${spans[radiusAxisB].toFixed(3)}" ` +
       `at its widest - too flat/rectangular for bar stock (turning needs a roughly round/hex/square cross-section, not a plate). This looks like a routed/milled flat part instead.`
     );
   }
+  const { lengthAxis, radiusAxisA, radiusAxisB } = picked;
+  const lengthMin = lengthMinByAxis[lengthAxis];
+  const lengthMax = lengthMaxByAxis[lengthAxis];
+  const centerA = (lengthMinByAxis[radiusAxisA] + lengthMaxByAxis[radiusAxisA]) / 2;
+  const centerB = (lengthMinByAxis[radiusAxisB] + lengthMaxByAxis[radiusAxisB]) / 2;
 
   const li = AXIS_INDEX[lengthAxis], ai = AXIS_INDEX[radiusAxisA], bi = AXIS_INDEX[radiusAxisB];
   const bucketSize = (lengthMax - lengthMin) / buckets;
@@ -219,9 +281,15 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
     throw new Error('Not enough geometry variation along the detected length axis to build a turning profile - is this really a lathe part?');
   }
 
-  // Sanity check: a real turned part's max radius should be meaningfully
-  // smaller than half its length (it's a shaft, not a disc) - if not, the
-  // "long axis" heuristic likely picked the wrong axis for this geometry.
+  // Sanity check: for the PRIMARY (largest-span-as-length) path only, a real
+  // turned part's max radius should be meaningfully smaller than half its
+  // length (it's an elongated shaft, not a disc) - if not, the "long axis"
+  // heuristic likely picked the wrong axis for this geometry. Does NOT apply
+  // to the short-axis fallback path (see pickLengthAxis) - that path exists
+  // specifically for disc-shaped turned parts (a hub, pulley, washer,
+  // flange) where maxRadius comfortably exceeding half the (short) length
+  // is the expected, correct shape, not a red flag; pickLengthAxis already
+  // has its own appropriate diameter-to-length guard for that path.
   //
   // Threshold is length/2, not length: since `length` is defined as the
   // single largest bounding-box axis span and `maxRadius` is computed from
@@ -234,7 +302,7 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
   // not be made to fail no matter what geometry it was given.
   const maxRadius = Math.max(...profile.map((p) => p.x));
   const length = lengthMax - lengthMin;
-  if (maxRadius > length / 2) {
+  if (lengthAxis === primaryLengthAxis && maxRadius > length / 2) {
     throw new Error(
       `This doesn't look like a turned part: detected length ${length.toFixed(3)}" along the "${lengthAxis}" axis ` +
       `but max radius ${maxRadius.toFixed(3)}" - too wide relative to its length for a shaft. Check the STEP file is a single lathe part, not an assembly or a non-axisymmetric shape.`

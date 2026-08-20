@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from './stepProfile.js';
+import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes, pickLengthAxis } from './stepProfile.js';
 import { generateTurningGcode } from './turning.js';
 import { generateRoutingGcode } from './routing.js';
 
@@ -23,6 +23,14 @@ const MOUNTING_BRACKET_BENT = path.join(__dirname, '__fixtures__', 'mounting-bra
 const SPROCKET_32T = path.join(__dirname, '__fixtures__', 'sprocket-32t.step'); // am-4781
 const LEAD_SCREW = path.join(__dirname, '__fixtures__', 'lead-screw.step'); // am-3257
 const TOUGHBOX_MOTOR_PLATE = path.join(__dirname, '__fixtures__', 'toughbox-motor-plate.step'); // am-0978
+// From step.parts (github.com/earthtojake/step.parts, MIT licensed) - real,
+// short/wide (diameter > length) turned parts that caught a real bug: the
+// turning-profile length-axis auto-detection only ever tried the bounding
+// box's LARGEST span as the rotational axis, which is wrong for a
+// disc-shaped part (a hub, pulley, washer, flange) where the true axial
+// length is the SHORTEST span - see pickLengthAxis in stepProfile.js.
+const SET_SCREW_HUB = path.join(__dirname, '__fixtures__', 'set-screw-hub.step');
+const V_BELT_PULLEY = path.join(__dirname, '__fixtures__', 'v-belt-pulley.step');
 
 // Real STEP files, committed as fixtures - these previously caught a real
 // bug (both extractors silently assumed the STEP file's Z axis was the
@@ -190,6 +198,38 @@ describe('extractTurningProfileFromMeshes (real STEP file: lead-screw.step - a l
   });
 });
 
+describe('extractTurningProfileFromMeshes (real STEP file: set-screw-hub.step - a real bug: short/wide disc-shaped part, diameter > length)', () => {
+  it('correctly picks the short axis as rotational, not the largest-span diameter axis, and generates G-code end to end', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(SET_SCREW_HUB));
+    const profile = extractTurningProfileFromMeshes(meshes);
+    const maxRadius = Math.max(...profile.map((p) => p.x));
+    const length = Math.abs(profile[profile.length - 1].z - profile[0].z);
+    // This part is genuinely wider than it is long (a real hub, not a
+    // shaft) - the pre-fix version rejected this outright as "not a turned
+    // part" because it always tried the largest bounding-box span (a
+    // diameter direction) as the rotational axis first and never fell back.
+    expect(maxRadius).toBeGreaterThan(length / 2);
+    const result = generateTurningGcode(profile, {
+      stockDiameter: maxRadius * 2 * 1.1, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
+    });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractTurningProfileFromMeshes (real STEP file: v-belt-pulley.step - another short/wide disc-shaped part)', () => {
+  it('correctly picks the short axis as rotational and generates G-code end to end', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(V_BELT_PULLEY));
+    const profile = extractTurningProfileFromMeshes(meshes);
+    const maxRadius = Math.max(...profile.map((p) => p.x));
+    const length = Math.abs(profile[profile.length - 1].z - profile[0].z);
+    expect(maxRadius).toBeGreaterThan(length / 2);
+    const result = generateTurningGcode(profile, {
+      stockDiameter: maxRadius * 2 * 1.1, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
+    });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
 describe('extractRoutingContoursFromMeshes (real STEP file: sprocket-32t.step - a 32-tooth chain sprocket, the file behind the silhouette-overrun check below)', () => {
   it('rejects the part instead of silently tracing a toothless disc (real bug: the largest flat face stops at the tooth ROOT relief; the actual tooth TIPS are non-planar surfaces entirely outside that face and reach ~20% further out - the traced contour used to become a plain circular disc with zero indication the teeth had been dropped)', async () => {
     const meshes = await readStepMeshes(fs.readFileSync(SPROCKET_32T));
@@ -319,5 +359,52 @@ describe('readStepMeshes', () => {
   it('throws a clear error for garbage input instead of a cryptic WASM crash', async () => {
     const garbage = new Uint8Array([1, 2, 3, 4, 5]);
     await expect(readStepMeshes(garbage)).rejects.toThrow();
+  });
+});
+
+describe('pickLengthAxis (synthetic bounding-box spans - the length-axis auto-detection heuristic itself)', () => {
+  it('picks the largest span as length for an elongated shaft (the common case, unchanged from before)', () => {
+    const picked = pickLengthAxis({ x: 4, y: 0.5, z: 0.5 });
+    expect(picked.lengthAxis).toBe('x');
+  });
+
+  it('falls back to the SMALLEST span as length for a short/wide disc-shaped part (a hub, pulley, washer) - real bug: the largest-span-only heuristic rejected these outright', () => {
+    const picked = pickLengthAxis({ x: 0.7, y: 0.7, z: 0.3 });
+    expect(picked.lengthAxis).toBe('z');
+  });
+
+  it('still rejects a genuine flat SQUARE plate even though its bounding box is indistinguishable from a round disc by aspect ratio alone - gated by the diameter-to-length ratio, not just roundness', () => {
+    // 4"x4"x0.1" square plate: same off-axis aspect ratio (1.0, perfectly
+    // "round"-looking by bounding box alone) as a genuine 4"-diameter,
+    // 0.1"-thick disc would have - only the diameter:length ratio (40:1
+    // here, versus a real disc's typical single-digit ratio) tells them apart.
+    const picked = pickLengthAxis({ x: 4, y: 4, z: 0.1 });
+    expect(picked).toBeNull();
+  });
+
+  it('still rejects a genuine rectangular (non-square) flat plate', () => {
+    const picked = pickLengthAxis({ x: 4, y: 2, z: 0.1 });
+    expect(picked).toBeNull();
+  });
+
+  it('accepts a reasonably proportioned disc (diameter well within the sanity ratio)', () => {
+    const picked = pickLengthAxis({ x: 1, y: 1, z: 0.3 }); // ~3.3:1 diameter:length
+    expect(picked.lengthAxis).toBe('z');
+  });
+
+  it('rejects an unreasonably thin "disc" past the diameter-to-length sanity ratio (still plate-like, just happened to pass the roundness check)', () => {
+    const picked = pickLengthAxis({ x: 5, y: 0.1, z: 3 }); // passes roundness on the y-as-length fallback, but the diameter:length ratio is still plate-like
+    expect(picked).toBeNull();
+  });
+
+  it('tolerates a hex/square bar-stock cross-section on the primary (elongated) path - real turned parts are not always circular', () => {
+    const picked = pickLengthAxis({ x: 3, y: 0.5, z: 0.4 }); // 0.8 aspect - within the 0.5 roundness bar
+    expect(picked.lengthAxis).toBe('x');
+  });
+
+  it('handles a perfect-cube bounding box without erroring (degenerate tie between largest and smallest span)', () => {
+    const picked = pickLengthAxis({ x: 1, y: 1, z: 1 });
+    expect(picked).not.toBeNull();
+    expect(['x', 'y', 'z']).toContain(picked.lengthAxis);
   });
 });
