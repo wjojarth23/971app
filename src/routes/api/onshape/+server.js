@@ -1,14 +1,8 @@
 import { PUBLIC_ONSHAPE_ACCESS_KEY, PUBLIC_ONSHAPE_SECRET_KEY, PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
 import { json } from '@sveltejs/kit';
+import { getCached, setCached, CACHE_TTL_MS, buildCacheKey } from '$lib/server/onshape_cache.js';
 
 const ONSHAPE_BASE_URL = PUBLIC_ONSHAPE_BASE_URL || 'https://frc971.onshape.com';
-
-// Short-lived in-memory cache for document-info responses. Onshape enforces a
-// hard API rate limit (HTTP 402), and the CAD page fetches document-info for
-// every linked subsystem on each load/mutation — without this the same
-// documents get re-fetched constantly and quickly trip the limit.
-const documentInfoCache = new Map(); // documentId -> { data, expires }
-const DOCUMENT_INFO_TTL_MS = 60_000;
 
 /* ── SVG Conversion Helper Functions ─────────────────────────────── */
 async function getBoundingBox(documentId, wvm, wvmId, elementId, partId) {
@@ -565,18 +559,28 @@ export async function GET({ url }) {
         return json({ error: 'Missing required parameters' }, { status: 400 });
     }
 
-    // Serve document-info from the short-lived cache when a fresh copy exists,
-    // so repeated loads of the same document don't hit the Onshape API again.
-    if (action === 'document-info') {
-        const cached = documentInfoCache.get(documentId);
-        if (cached && cached.expires > Date.now()) {
-            return json(cached.data);
-        }
+    // Serve cacheable metadata actions (document-info, versions,
+    // version-details, assembly-info, assembly-bom) from the in-memory cache
+    // when a fresh copy exists, so repeated loads of the same
+    // document/assembly don't hit the Onshape API again.
+    let cacheKey = null;
+    if (CACHE_TTL_MS[action]) {
+        cacheKey = buildCacheKey(action, [
+            documentId,
+            workspaceId,
+            elementId,
+            url.searchParams.get('versionId'),
+            url.searchParams.get('wvm'),
+            url.searchParams.get('wvmid'),
+            url.searchParams.get('indented')
+        ]);
+        const cached = getCached(cacheKey);
+        if (cached) return json(cached);
     }
 
     try {
         let apiPath;
-        
+
   switch (action) {
             case 'document-info':
                 apiPath = `/api/v11/documents/${documentId}`;
@@ -679,6 +683,12 @@ export async function GET({ url }) {
                     return json({ error: 'Missing wvmId for shaded views' }, { status: 400 });
                 }
 
+                const shadedCacheKey = buildCacheKey('shaded-views', [
+                    documentId, shadedWvm, shadedWvmId, elementId, shadedPartId, outputHeight, outputWidth
+                ]);
+                const cachedShadedView = getCached(shadedCacheKey);
+                if (cachedShadedView) return json(cachedShadedView);
+
                 let targetElementId = elementId;
                 let targetDocumentId = documentId;
                 let targetWvm = shadedWvm;
@@ -718,11 +728,13 @@ export async function GET({ url }) {
                 
                 // The response contains an images array with base64-encoded PNG data
                 if (shadedData.images && shadedData.images.length > 0) {
-                    return json({ 
-                        success: true, 
+                    const shadedResult = {
+                        success: true,
                         image: shadedData.images[0],  // Base64 PNG image
                         partId: shadedPartId
-                    });
+                    };
+                    setCached(shadedCacheKey, shadedResult, CACHE_TTL_MS['shaded-views']);
+                    return json(shadedResult);
                 } else {
                     return json({ error: 'No image returned from Onshape' }, { status: 500 });
                 }
@@ -932,8 +944,8 @@ export async function GET({ url }) {
         }
 
         const data = await response.json();
-        if (action === 'document-info') {
-            documentInfoCache.set(documentId, { data, expires: Date.now() + DOCUMENT_INFO_TTL_MS });
+        if (cacheKey) {
+            setCached(cacheKey, data, CACHE_TTL_MS[action]);
         }
         return json(data);
     } catch (error) {
