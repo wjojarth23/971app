@@ -5,22 +5,22 @@
  * login, or a live database. Useful for:
  *   - Diagnosing "why did this part fail to generate" before/without
  *     attaching it to a real part in the app.
- *   - Regression-testing src/lib/cam/*.js changes against real files.
+ *   - Regression-testing autocam/*.js changes against real files.
  *
  * Usage:
- *   node scripts/test-cam-extraction.mjs turning "/path/to/part.step"
- *   node scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth]
- *   node scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth] --tools=0.25,0.125
- *     (multi-tool router mode - see implementations/toolchange-gcode-plan.md - diameters
+ *   node autocam/scripts/test-cam-extraction.mjs turning "/path/to/part.step"
+ *   node autocam/scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth]
+ *   node autocam/scripts/test-cam-extraction.mjs routing "/path/to/part.step" [targetDepth] --tools=0.25,0.125
+ *     (multi-tool router mode - see autocam/docs/toolchange-gcode-plan.md - diameters
  *     largest first; the real part's contours still decide which tool each
  *     one actually needs)
  *
  * Exit code 0 = extraction + G-code generation succeeded, 1 = failed.
  */
 import fs from 'fs';
-import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '../src/lib/cam/stepProfile.js';
-import { generateTurningGcode } from '../src/lib/cam/turning.js';
-import { generateRoutingGcode } from '../src/lib/cam/routing.js';
+import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '../stepProfile.js';
+import { generateTurningGcode } from '../turning.js';
+import { generateRoutingGcode } from '../routing.js';
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--tools='));
 const toolsArg = process.argv.find((a) => a.startsWith('--tools='));

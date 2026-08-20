@@ -59,7 +59,7 @@
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/private';
-import { gcodeFileNameFor } from '$lib/camJobs.js';
+import { gcodeFileNameFor } from './camJobs.js';
 import { PACIFIC_TIME_ZONE } from '$lib/timezone.js';
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';

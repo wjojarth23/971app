@@ -1,141 +1,211 @@
-# Google Drive Setup (AutoCAM watcher)
+# Spartans Hub
 
-Full checklist, start to finish, for wiring up the `cad` → auto-CAM → `cammed`
-Drive integration. Steps 1–4 you can do entirely in the Cloud Console (no
-`gcloud` needed, `gcloud` equivalents included). Steps 5–7 need real values
-(folder IDs, the generated key) that only exist once you've done the earlier
-steps - come back to those once you have them.
+Team management hub for FRC team 971 (Spartan Robotics) - manufacturing/CAM,
+scouting, planning, and purchasing in one app.
 
-## Architecture (what this actually does)
+## Architecture
 
-Full details in `implementations/architecture.md` - short version:
+Whole-project overview: tech stack, module map, data layer, deployment, and
+contribution workflow. This is a **living reference** - **update it whenever
+a new feature or subsystem is added**, not just when someone happens to read
+it. If a change adds a new top-level route, a new major `src/lib` module, a
+new external integration, or changes how the app is deployed, that change
+isn't done until this file reflects it.
 
-- **Two `cad` subfolders, one per router** — `cad/oldrouter` (ShopSabre) and
-  `cad/newrouter` (the other router). Dropping a CAD file into either one
-  auto-queues (and for routing jobs, auto-generates) a job against that
-  router's own machine profile (its own default material/tool/params).
-- **Both routers share ONE `cammed` folder.** Finished G-code doesn't go
-  directly into it - every delivery lands in a dated subfolder inside it
-  (`2026-08-20`, Pacific time), created on first use each day and reused for
-  the rest of that day, regardless of which router produced it.
-- **Filenames are prefixed with the machine name**
-  (`<machine-slug>_<part-slug>_<HHMMSS>.<ext>`) specifically because both
-  routers land in the same dated folder - otherwise there'd be no way to tell
-  which physical router a file came from, or avoid two routers colliding on a
-  same-named part.
-- **`cammed` fills up from every completed job on a Drive-configured machine,
-  not just ones that started from a `cad` folder.** A job created manually
-  through `/autocam`'s "New Job", from `/manufacture`'s "Convert to G-code",
-  or as part of a batch run - any of those still lands in `cammed` once it
-  completes. Delivery is a property of the machine profile, not of how the
-  job began.
-- Output delivery starts working the moment steps 1–6 below are done, no
-  scheduler required. The input trigger (`cad` → auto-queue) additionally
-  needs step 7.
+For a specific feature's own deep-dive architecture, see `autocam/docs/`
+(AutoCAM specifically - e.g. `autocam/docs/architecture.md` for the Google
+Drive/manufacturing-folder integration) or `implementations/` (everything
+else) - this file stays at the whole-project level and links out rather
+than duplicating that detail.
 
-## 1. Create the service account
+## Stack
 
-- Go to [console.cloud.google.com](https://console.cloud.google.com) and make sure
-  you're in the `geminiapi-469220` project (project selector top-left).
-- Left sidebar → **IAM & Admin** → **Service Accounts**.
-- **+ Create Service Account** at the top.
-- Give it a name (e.g. `drive-watcher`) — the ID auto-fills.
-- Click **Create and Continue**.
-- On the "Grant access" step, click **Continue** without adding any
-  project-level roles — this service account only needs access to the two
-  Drive folders you'll share with it directly, not anything project-wide.
-- Click **Done**.
+- **Framework**: SvelteKit (Svelte 5), plain JS (no TypeScript) with
+  `jsconfig.json` for editor type-checking.
+- **Hosting**: dual right now - Google Cloud Run (`adapter-node`, primary
+  going forward) and Vercel (`adapter-auto`, being phased out). See
+  `docs/deployment/google-cloud-run.md` and `googledrivesetup.md` (Drive
+  watcher setup) for the Cloud Run side. `cloudbuild.yaml`/`Dockerfile` are
+  Cloud-Run-specific config - they may or may not be physically present on
+  every remote's `main` depending on sync history, but they're only
+  functionally active via `spartanshub`'s own Cloud Build trigger (see
+  **Contribution workflow** below), regardless of which mirrors happen to
+  carry the files.
+- **Database/Auth/Storage**: Supabase (Postgres + RLS, Supabase Auth,
+  Supabase Storage). `docs/guides/AUTH_PROTOCOL.md` covers the auth flow in
+  detail (UUID-only local persistence, client-side only - no SSR session,
+  `@supabase/ssr` is a declared but unused dependency).
+- **3D/CAD**: `occt-import-js` (STEP file parsing, WASM) + `three.js`
+  (client-side 3D viewing, `CadViewer.svelte`).
+- **Other integrations**: Slack (`@slack/web-api`, bot notifications/DMs),
+  Onshape API (CAD source of truth for parts - see the Onshape-key exposure
+  note under **Known gaps** below), The Blue Alliance API (scouting), Sentry
+  (error monitoring), Google Drive API (AutoCAM input/output watcher, hand-
+  rolled, no `googleapis` dependency - see `autocam/docs/architecture.md`).
 
-## 2. Enable the Drive API (once per project)
+## AutoCAM (`autocam/`, top-level - not under `src/lib/`)
 
-- Left sidebar → **APIs & Services** → **Library**.
-- Search "Google Drive API" → click it → **Enable**.
+STEP → G-code generation for turning/routing: pure JS geometry math, no
+external CAM software, no DXF. Deliberately lives outside `src/lib/` in its
+own top-level folder, imported via the `$autocam` alias
+(`svelte.config.js`) - the whole engine, the Google Drive watcher, shared
+job-queue helpers, AutoCAM-specific components, its CLI test script, and its
+own docs are all together in one place instead of scattered across
+`src/lib/cam/`, `src/lib/server/`, `src/lib/components/`, and
+`implementations/`.
 
-## 3. Generate the JSON key
+- **`autocam/stepProfile.js`** - extracts 2D profiles directly from a STEP
+  file's triangulated mesh (via `occt-import-js`).
+- **`autocam/turning.js`** / **`autocam/routing.js`** - generate the actual
+  G-code from that profile.
+- **`autocam/toolpathPreview.js`** - parses generated G-code back into a
+  toolpath for preview (`autocam/components/ToolpathViewer.svelte`).
+- **`autocam/drive_watcher.js`** - Google Drive input-sweep (`cad` →
+  auto-queue) and output-delivery (finished G-code → dated `cammed`
+  subfolder) - see `autocam/docs/architecture.md` for the real folder
+  layout this was built for.
+- **`autocam/camJobs.js`** - shared job-queue helpers used by both
+  `/autocam` and `/manufacture`.
+- **`autocam/components/`** - `ToolpathViewer.svelte`, `CamParamFields.svelte`,
+  `RoutingToolSequence.svelte`, `TurningFinishTool.svelte`,
+  `AutocamReviewModal.svelte` (the last one currently unused anywhere - a
+  known dead-code candidate, not yet removed).
+- **`autocam/scripts/test-cam-extraction.mjs`** - standalone CLI to run a
+  real STEP file through the pipeline without the web app - the main tool
+  used to stress-test this system against real CAD files.
+- **`autocam/__fixtures__/`** - real STEP files, committed as regression
+  fixtures - each one was chosen because it caught a real bug (see the
+  `*.test.js` files next to the engine modules for what each one covers),
+  not arbitrarily.
+- **`autocam/docs/`** - AutoCAM-specific planning/architecture docs
+  (`architecture.md`, `drive-watcher-implementation.md`, etc.).
+- **`autocam/runner/README.md`** - the still-deferred milling Runner concept
+  (turning/routing are synchronous in-process math; milling would need an
+  actual external Fusion 360 Runner, not built).
+- **Route files stay in `src/routes/`** regardless (`src/routes/autocam/+page.svelte`,
+  `src/routes/api/cam-generate/+server.js`, `src/routes/api/drive-watcher/+server.js`)
+  - SvelteKit determines a route's URL from its file location under
+    `src/routes/`, so these can't move into `autocam/` themselves; they just
+    import the engine from `$autocam/...` instead of holding logic directly.
+- **Legacy, NOT part of the above, NOT moved**: `src/lib/autocam.js` and
+  `src/routes/manufacture/autocam/+page.svelte` are remnants of an older,
+  disabled DXF/PenguinCAM-based system (`DISABLE_AUTOCAM` in
+  `src/lib/config/autocam.js`), unreferenced from anywhere in the app's
+  navigation. Left in place as a known dead-code finding, not yet removed.
 
-- Back in **IAM & Admin → Service Accounts**, click the service account you
-  just made.
-- Go to the **Keys** tab.
-- **Add Key** → **Create new key** → choose **JSON** → **Create**.
-- A `.json` file downloads automatically. **Its entire contents are the value
-  of `GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY`** — don't edit it, don't extract
-  individual fields, the whole JSON blob is the secret value.
-- **Handle it carefully**: it's a real, standing credential — anyone who has it
-  can act as this service account against whatever it's shared with. Don't
-  commit it to git, don't paste its contents into chat.
+## Module map (`src/routes`, by domain)
 
-## 4. Share the folders with it
+- **`manufacture/`, `cad/`, `autocam/`** - the CAD-to-manufacturing pipeline:
+  part tracking, STEP viewing, and AutoCAM (see the **AutoCAM** section
+  above for where its actual code lives).
+- **`planner/`** - scheduling/task system with a Gantt view
+  (`wx-svelte-gantt`), Slack-driven prompts/notifications
+  (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
+  Supabase `pg_cron` job every 15 minutes.
+- **`pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
+  `teamview/`, `discover/`** - FRC competition scouting: pit scouting forms,
+  match data scouting, notes, and cross-team data discovery/analysis.
+- **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
+  off-the-shelf) part stock tracking and kitting workflows.
+- **`tasks/`** - general task tracking, separate from the planner's
+  scheduling-focused tasks.
+- **`admin/`, `profile/`** - user/permission administration, user profile
+  settings.
+- **`api/`** - server endpoints backing the above, plus integration
+  webhooks/crons: `api/cam-generate` (synchronous G-code generation),
+  `api/drive-watcher` (Drive input-sweep, cron-gated), `api/planner`
+  (notification sweep, cron-gated), `api/onshape`, `api/tba`, `api/971bot`
+  (Slack), `api/attendance`, `api/scout-assignments`, `api/scouting-admin`,
+  `api/scouting-config`, `api/tasks`, `api/admin`, `api/notifications`.
 
-Three folders total: both `cad` subfolders (one per router) and the one
-shared `cammed` folder.
+## `src/lib` (shared code)
 
-- Still on the service account's page, copy its email address at the top —
-  looks like `drive-watcher@geminiapi-469220.iam.gserviceaccount.com`.
-- In Google Drive, right-click `cad/oldrouter` → **Share** → paste that email
-  → set its role to **Viewer** → Send.
-- Right-click `cad/newrouter` → **Share** → same email → **Viewer** → Send.
-- Right-click `cammed` → **Share** → same email → set its role to **Editor**
-  (it needs to create the dated subfolders and upload files) → Send.
-- **Note all three folders' IDs** while you're there — you'll need them for
-  step 6. Two ways to get a folder's ID:
-  - **From the address bar**: double-click to open the folder in Drive. The URL
-    looks like `https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz`
-    — everything after the last `/` is the folder ID (`1AbCdEfGhIjKlMnOpQrStUvWxYz`
-    in that example). Copy just that part, not the whole URL.
-  - **From the share dialog**: right-click the folder → **Share** → **Copy link**.
-    The copied link has the same `.../folders/<ID>` shape — paste it somewhere
-    and pull out the same trailing segment.
-  - Do this for `cad/oldrouter`, `cad/newrouter`, and `cammed` — three IDs
-    total, but `cammed`'s ID gets reused for BOTH machine profiles in step 6.
+AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
+**not** here - see the dedicated **AutoCAM** section above for why.
 
-## 5. Create the Secret Manager secret from the downloaded key
+- **`server/`** - server-only modules (`$lib/server/...`, never bundled to
+  the client): `971bot.js` (Slack), `cron_auth.js` (shared auth check for
+  cron-triggered endpoints - see **Known gaps**), `planner_notifications.js`.
+- **`planner/`** - planner domain logic (scheduling, interaction rules,
+  timezone handling - Pacific time throughout, see `PACIFIC_TIME_ZONE` in
+  `src/lib/timezone.js`).
+- **`components/`** - shared Svelte components: `CadViewer.svelte` (a
+  generic STEP/3D viewer used outside AutoCAM too - `/manufacture`,
+  `/manufacture/completed` - so it stayed here rather than moving into
+  `autocam/` despite being CAD-adjacent), nav/layout pieces, etc.
+- **`config/`** - feature flags (e.g. `DISABLE_AUTOCAM` - see **Known
+  gaps**, the legacy autocam system this flag referred to has since been
+  removed entirely).
+- **`notifications/`, `stores/`** - notification settings, Svelte stores for
+  cross-component state.
 
-Console path (no `gcloud`):
-- **Secret Manager** → **Create Secret** → name it `GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY`
-  → upload the downloaded `.json` file as the secret value → **Create Secret**.
-- On that secret's page → **Permissions** → grant the Cloud Run runtime service
-  account (`819718873862-compute@developer.gserviceaccount.com`) the **Secret
-  Manager Secret Accessor** role.
+## Data layer
 
-`gcloud` equivalent:
-```bash
-gcloud secrets create GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY --data-file=/path/to/downloaded-key.json
-gcloud secrets add-iam-policy-binding GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY \
-  --member="serviceAccount:819718873862-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
-```
+- **Migrations** live in `migrations/*.sql`, applied via the Supabase MCP
+  tooling (`apply_migration`) - not a formal migration framework, just
+  timestamped SQL files. Many migrations use `CREATE ... IF NOT EXISTS` /
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` throughout specifically so
+  they're safe to re-run (see `migrations/20260817_cam_studio_system.sql`'s
+  own header comment for the reasoning) - prefer that pattern for new
+  migrations too.
+- **RLS (Row Level Security)** is the real authorization boundary - not
+  app-layer checks. Every table should have RLS enabled with real policies;
+  see **Known gaps** for tables that currently don't.
+- **Auth**: Supabase Auth, client-side only (no server session/SSR) - see
+  `docs/guides/AUTH_PROTOCOL.md`.
 
-## 6. Wire the secret and folder IDs in
+## Deployment & CI
 
-Two separate places:
-- **`cloudbuild.yaml`**: add `GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY=GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY:latest`
-  to the deploy step's `--set-secrets` line (same pattern already used for
-  `CRON_NOTIFICATION_TOKEN`). Not done yet as of this doc — say the word once
-  the secret from step 5 actually exists, and this line gets added; adding it
-  before the secret exists would make the next deploy fail.
-- **`/autocam` → Manage Profiles**: edit each router's machine profile
-  separately -
-  - **ShopSabre profile**: `cad/oldrouter`'s ID into "Drive Auto-Trigger
-    Folder ID", `cammed`'s ID into "Drive Delivery Folder ID".
-  - **Other router's profile**: `cad/newrouter`'s ID into "Drive Auto-Trigger
-    Folder ID", the SAME `cammed` ID into "Drive Delivery Folder ID".
-  - Both profiles end up pointing at the same output folder ID on purpose -
-    that's what makes both routers' output land in one shared `cammed`
-    folder, grouped by date.
+- **Cloud Run** (`geminiapi-469220` project, `spartanshub` service,
+  `spartanshub.spartanrobotics.org`): builds via Cloud Build
+  (`cloudbuild.yaml`), triggered on push to `main` on the `spartanshub`
+  GitHub remote. See `docs/deployment/google-cloud-run.md` for the full
+  setup/secrets checklist.
+- **Vercel**: the original deployment target, being phased out per
+  `implementations/vercel-and-supabase-to-google-plan.md` - not yet
+  decommissioned as of this writing (see that plan doc's TODOs).
+- **No GitHub Actions CI** - "the GitHub workflow" for this project is the
+  branch/PR process below, not a `.github/workflows/*.yml` file (none
+  exists). The closest thing to a CI check is the Cloud Build trigger
+  itself, which runs on real pushes to `spartanshub`'s `main`.
 
-## 7. Schedule the input sweep
+## Contribution workflow
 
-Nothing calls `/api/drive-watcher` on a timer yet — dropping a file in `cad`
-won't trigger anything until one of these exists:
+- **Remotes**: two - `stormcoded` and `spartanshub` (`frc971/spartanshub`,
+  the team's org repo). `spartanshub` is the **primary** remote and the
+  source of truth for day-to-day feature work; `stormcoded` is kept in sync
+  afterward. `spartanshub` requires PRs (branch protection) - `stormcoded`
+  accepts direct pushes to `main`. (A third remote, `origin`, existed
+  earlier but was removed.)
+- **New feature work starts on a branch**, not direct commits to `main` -
+  and **the branch+PR dance is `spartanshub`-only**: branch off `main`, do
+  the work, push the branch to `spartanshub`, open a PR against
+  `frc971/spartanshub`, merge it there (don't delete the branch after
+  merging), then sync `stormcoded` with a plain direct push to `main` - no
+  branch/PR for `stormcoded`, ever. Small fixes/doc tweaks can still go
+  straight to `main` on both.
+- **Check sync before starting a new feature** - `git fetch spartanshub
+  main` and compare against local `main`/the working branch before
+  branching, so feature work doesn't start from a stale base.
+- **Never add a Claude/AI co-author trailer** on commits in this repo - a
+  standing, explicit, non-negotiable rule.
 
-- **Cloud Scheduler** (simpler now that you're on GCP): a scheduled job that
-  hits `POST https://spartanshub.spartanrobotics.org/api/drive-watcher` on an
-  interval, with `Authorization: Bearer <CRON_NOTIFICATION_TOKEN value>` (the
-  same token from the cron-auth fix — this endpoint is gated by the same
-  check).
-- **Supabase `pg_cron`**: a Vault secret + wrapper function calling this
-  endpoint, mirroring the existing `invoke_planner_notification_cron()`
-  job that already runs every 15 minutes.
+## Known gaps (check before assuming otherwise)
 
-Either way, output delivery (step 4–6) doesn't need this — it fires
-automatically whenever a job on a Drive-configured machine completes.
+- **8 tables have RLS fully disabled**: `scouting_settings`,
+  `attendance_locations`, `attendance_schedules`,
+  `attendance_schedule_locations`, `user_attendance_logs`,
+  `user_notification_logs`, `pit_scout_entries`, `runtime_leases`. Confirmed
+  live via the Supabase security advisor - re-check before relying on this
+  list being current, since it should shrink over time as these get fixed.
+- **`PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle** - a
+  pre-existing design choice (`src/lib/onshape.js` uses
+  `$env/static/public`), not something introduced by any specific recent
+  change. Worth a follow-up to proxy Onshape calls server-side and rotate
+  the key once that's done.
+- **Cron-auth (`cron_auth.js`) is fail-open by design** when no
+  `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` is configured -
+  intentional for frictionless local dev, but means the real secret must
+  actually be set in production or `/api/planner/notifications` and
+  `/api/drive-watcher` accept unauthenticated requests. Confirm this is
+  configured before trusting either deployment target is fully locked down.

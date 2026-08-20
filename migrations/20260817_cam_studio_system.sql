@@ -311,7 +311,7 @@ CREATE TRIGGER zz_activity_log AFTER INSERT OR UPDATE OR DELETE ON public.cam_ma
   FOR EACH ROW EXECUTE FUNCTION public.log_activity();
 
 -- ============================================================================
--- DRIVE WATCHER (scaffolding - see implementations/drive-watcher-cron-plan.md)
+-- DRIVE WATCHER (scaffolding - see autocam/docs/drive-watcher-cron-plan.md)
 -- ============================================================================
 -- Auto-triggers a CAM job when a STEP file lands in a Google Drive folder
 -- mapped to a machine profile. Schema/endpoint/UI (src/lib/server/drive_watcher.js,
@@ -323,7 +323,7 @@ CREATE TRIGGER zz_activity_log AFTER INSERT OR UPDATE OR DELETE ON public.cam_ma
 -- why, and the exact SQL to run once real credentials exist.
 
 ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS drive_folder_id text; -- INPUT: Google Drive folder ID this machine auto-triggers a job from when a STEP file lands in it; null = auto-trigger disabled for this machine
-ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS drive_output_folder_id text; -- OUTPUT: Google Drive folder ID a completed job's G-code gets written to (any job on this machine, not just Drive-triggered ones) - pairs with a Drive desktop sync client on the machine's control PC so the file appears locally with no manual download; null = no auto-delivery for this machine. Deliberately a SEPARATE folder from drive_folder_id (see implementations/direct-machine-file-transfer-plan.md) so the input watcher never mistakes its own output for a new STEP file to process.
+ALTER TABLE public.cam_machines ADD COLUMN IF NOT EXISTS drive_output_folder_id text; -- OUTPUT: Google Drive folder ID a completed job's G-code gets written to (any job on this machine, not just Drive-triggered ones) - pairs with a Drive desktop sync client on the machine's control PC so the file appears locally with no manual download; null = no auto-delivery for this machine. Deliberately a SEPARATE folder from drive_folder_id (see autocam/docs/direct-machine-file-transfer-plan.md) so the input watcher never mistakes its own output for a new STEP file to process.
 
 CREATE TABLE IF NOT EXISTS public.drive_watcher_state (
   folder_id text NOT NULL,

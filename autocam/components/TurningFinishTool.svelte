@@ -1,6 +1,6 @@
 <script>
   // Optional second insert for a turning job's finishing pass (multi-tool
-  // turning - see src/lib/cam/turning.js's appendSetupBody `finishTool`
+  // turning - see autocam/turning.js's appendSetupBody `finishTool`
   // param). Denormalized off a cam_tools row into a plain {toolId,
   // toolNumber, label, noseRadius} object, same pattern as
   // RoutingToolSequence's entries, since that's the shape the generator

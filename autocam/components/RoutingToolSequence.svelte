@@ -1,8 +1,8 @@
 <script>
   // Multi-tool builder for routing jobs (router only - see
-  // implementations/toolchange-gcode-plan.md). Each entry is denormalized off a cam_tools
+  // autocam/docs/toolchange-gcode-plan.md). Each entry is denormalized off a cam_tools
   // row into a plain {toolId, toolDiameter, toolNumber, label} object, since
-  // that's the shape src/lib/cam/routing.js's generator actually consumes
+  // that's the shape autocam/routing.js's generator actually consumes
   // (it doesn't look tools up itself). Order matters: primary/largest tool
   // first - later tools are only used for contours (usually small holes)
   // the earlier ones physically can't fit.
