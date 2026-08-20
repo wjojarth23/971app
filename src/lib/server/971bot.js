@@ -418,8 +418,11 @@ export async function postUserApprovalNeeded(name) {
 
 // Basic signature verification for Slack requests (raw body needed by SvelteKit handler)
 import crypto from 'crypto';
-export function verifySlackSignature(rawBody, headers) {
-  const SLACK_SIGNING_SECRET = env.SLACK_SIGNING_SECRET || '';
+// secretOverride exists for testability (mirrors cron_auth.js's isAuthorizedCronRequest
+// taking env as a parameter) - SvelteKit's $env/dynamic/private doesn't reliably pick up
+// vi.stubEnv in a unit test, but it's never passed by the one real call site.
+export function verifySlackSignature(rawBody, headers, secretOverride) {
+  const SLACK_SIGNING_SECRET = secretOverride ?? env.SLACK_SIGNING_SECRET ?? '';
   if (!SLACK_SIGNING_SECRET) return true;
   const timestamp = headers['x-slack-request-timestamp'];
   if (!timestamp) return false;
