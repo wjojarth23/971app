@@ -176,3 +176,93 @@ directly:
   routing profiles - a pre-existing, already-documented limitation in
   `routing.js`'s own header, not something this validation pass newly found
   or attempted to fix.
+
+## Batch 2: 10 external parts from step.parts (same day, follow-up pass)
+
+A second, independently-sourced batch - 6 router parts, 4 lathe parts, all
+real STEP files downloaded from [step.parts](https://www.step.parts)
+(github.com/earthtojake/step.parts, MIT licensed, 16,847-part public
+catalog) rather than reused from this repo's own fixture library, to test
+against genuinely new, externally-sourced geometry.
+
+**Router candidates**: `nema17_face_mount_plate`, `nema17_l_bracket`,
+`nema23_face_mount_plate`, `corner_bracket_3030_gusseted_simple`,
+`corner_bracket_4040_double_simple`, `nema17_adjustable_mount_plate`.
+**Lathe candidates**: `shaft_collar_set_screw_bore_d06_simple`,
+`set_screw_hub_bore6_bc20`, `v_belt_a_pulley_d30_bore8`,
+`shaft_coupler_rigid_clamp_d06_d08_simple`.
+
+### 1 real bug found and fixed: short/wide disc-shaped turned parts were rejected outright
+
+`extractTurningProfileFromMeshes`'s length-axis auto-detection only ever
+tried the bounding box's **largest** span as the part's rotational axis -
+correct for an elongated shaft (always much longer than it is wide), but
+wrong for a disc-shaped turned part (a hub, pulley, washer, flange) where
+diameter exceeds axial length, so the true rotational axis is the
+**shortest** span, not the longest. Two real, completely ordinary lathe
+parts from this batch - `set_screw_hub_bore6_bc20` and
+`v_belt_a_pulley_d30_bore8` - were rejected outright with "This doesn't
+look like a turned part... too flat/rectangular for bar stock," even though
+both are genuinely round, machinable hub/pulley shapes.
+
+**Fix**: `pickLengthAxis` (new, in `stepProfile.js`) now tries the
+largest-span axis first (unchanged, common case), and falls back to the
+smallest-span axis specifically for short/wide parts - gated by both the
+existing roundness check (off-axis bounding-box aspect ratio ≥ 0.5, which
+also still tolerates hex/square bar stock, unchanged) **and** a new
+diameter-to-length sanity ratio (≤8:1) that keeps a genuinely flat,
+same-proportioned square/rectangular plate from being misclassified as a
+disc - a real risk since a circle and a square share the exact same
+bounding box, and bounding-box aspect ratio alone can't tell them apart.
+The later `maxRadius > length/2` sanity check (previously dead code on the
+primary path per its own comment) is now correctly scoped to the primary
+path only - it would otherwise actively reject every genuine disc the new
+fallback exists to accept, since "max radius exceeds half the length" is
+the *expected*, correct shape for a disc, not a red flag.
+
+Verified: both real parts now correctly generate G-code end to end
+(spot-checked the resulting toolpaths directly - clean roughing/finishing
+sequences, no anomalies). Added both as permanent regression fixtures
+(`autocam/__fixtures__/set-screw-hub.step`, `v-belt-pulley.step`), plus
+direct synthetic-geometry unit tests for `pickLengthAxis` covering the
+decision boundaries (elongated shaft, short/wide disc, square plate at the
+same aspect ratio as a disc, rectangular plate, hex/square bar stock,
+degenerate cube).
+
+### Everything else: correct, or a real finding about the test data itself
+
+- `shaft_collar_set_screw_bore_d06_simple` and
+  `shaft_coupler_rigid_clamp_d06_d08_simple` (both genuinely elongated
+  enough to use the existing primary/largest-span path) generated cleanly
+  with no changes needed.
+- `corner_bracket_3030_gusseted_simple` was correctly **rejected** by the
+  existing silhouette-overrun safety check - its real geometry reaches
+  further than its traced flat face, consistent with a genuinely
+  non-planar gusseted shape a 2.5D router profile can't represent. Same
+  safety behavior already validated in Batch 1 against `sprocket-32t.step`,
+  now confirmed against a second, unrelated real part.
+- **Honest caveat about the other 5 router files**: `nema17_face_mount_plate`,
+  `nema17_l_bracket`, `nema23_face_mount_plate`,
+  `nema17_adjustable_mount_plate`, and `corner_bracket_4040_double_simple`
+  all generated "successfully," but inspecting the actual source geometry
+  (`nema17_face_mount_plate.step` is a 24-vertex, 6-face plain rectangular
+  box - literally just a bounding block, no mounting holes at all) revealed
+  these are step.parts' **simplified clearance-envelope placeholders** (the
+  catalog's own metadata confirms this: `"generic mounting pattern"`), not
+  fully-detailed, directly-machinable parts - true of this catalog's
+  `mechanical-hardware`/bracket families generally, not specific to these
+  file picks. AutoCAM correctly processed exactly the geometry it was
+  given (a plain box has one contour, no holes, and whatever thickness the
+  block actually is - `corner_bracket_4040_double_simple`'s "3.27" cut
+  depth" reflects a genuinely 1.57"-thick solid placeholder block, not sheet
+  material). This is a real, useful finding about **sourcing test data**,
+  not a pipeline bug: the 4 lathe candidates from the same catalog (496/492
+  real vertices, actual bore/step/groove geometry) were far more detailed
+  than the bracket-family files, and produced the one genuine bug found
+  this batch.
+
+### Verification
+
+- Full vitest suite: 412/412 passing (10 new tests: 2 real-fixture
+  end-to-end tests + 8 synthetic `pickLengthAxis` unit tests).
+- `svelte-check`: 0 errors. Production build: succeeds.
