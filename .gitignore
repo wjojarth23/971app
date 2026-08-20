@@ -25,10 +25,8 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-/autocam
 /backup
 /docs/migrations
-/PenguinCAM
 /supabase
 /logs
 
