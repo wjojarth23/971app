@@ -36,17 +36,42 @@ Done and verified live:
 
 **Still open, split by actual urgency — checked the code rather than assuming:**
 
-- **`CRON_SECRET` / `CRON_TOKEN` / `CRON_NOTIFICATION_TOKEN` — higher priority, a live
-  security gap, not just a missing feature.** `src/lib/server/cron_auth.js`'s
-  `isAuthorizedCronRequest()` is **fail-open**: `if (!expectedSecrets.length) return
-  true` — when none of these three env vars are set, the check accepts *any* request
-  as authorized. None are in Secret Manager yet, so on the current live deployment,
-  `/api/planner/notifications` (hit by the one genuinely active `pg_cron` job, every
-  15 minutes, per `implementations/drive-watcher-cron-plan.md`) and
-  `/api/drive-watcher` both currently accept unauthenticated requests. Needs whatever
-  token value the Supabase Vault secret (`planner_notifications_cron_token`) already
-  uses to keep working with the existing `pg_cron` job, added to Secret Manager and
-  `cloudbuild.yaml`'s `--set-secrets`.
+- **`CRON_NOTIFICATION_TOKEN` — higher priority, a live security gap, not just a
+  missing feature. `cloudbuild.yaml`'s `--set-secrets` now references it (deploys will
+  FAIL until the secret below actually exists), but the secret itself still needs to
+  be created with the correct value — deliberately left as a manual step.**
+  `src/lib/server/cron_auth.js`'s `isAuthorizedCronRequest()` is **fail-open**: `if
+  (!expectedSecrets.length) return true` — when none of
+  `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` are set, the check accepts *any*
+  request as authorized. None are in Secret Manager yet, so on the current live
+  deployment, `/api/planner/notifications` (hit by the one genuinely active `pg_cron`
+  job, every 15 minutes, per `implementations/drive-watcher-cron-plan.md`) and
+  `/api/drive-watcher` both currently accept unauthenticated requests.
+
+  **This must be the exact same value already stored in the Supabase Vault secret
+  `planner_notifications_cron_token`** — that's what the live `pg_cron` job actually
+  sends today. Setting a different (e.g. freshly generated) value here would
+  authenticate *this* endpoint while breaking the real cron job's own requests, a
+  worse outcome than the current fail-open state. Retrieve the real value yourself
+  (requires reading a decrypted Vault secret — a real credential, not something to
+  paste into a chat or automate blindly) via the Supabase SQL editor:
+
+  ```sql
+  select decrypted_secret from vault.decrypted_secrets
+  where name = 'planner_notifications_cron_token';
+  ```
+
+  Then create the GCP secret from that exact value and grant access:
+
+  ```bash
+  gcloud secrets create CRON_NOTIFICATION_TOKEN --data-file=-   # paste the value above, then Ctrl-D
+  gcloud secrets add-iam-policy-binding CRON_NOTIFICATION_TOKEN \
+    --member="serviceAccount:RUNTIME_SA" \
+    --role="roles/secretmanager.secretAccessor"
+  ```
+
+  Until this secret exists, the Cloud Build deploy step will fail (by design — better
+  a loud build failure than a silent auth bypass shipping unnoticed).
 - **`GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY` — genuinely low priority, not stale, just never
   activated.** Checked `src/lib/server/drive_watcher.js:284-286`: the sweep degrades
   gracefully without this key (`{ ok: true, skipped: true, reason: 'not_configured'

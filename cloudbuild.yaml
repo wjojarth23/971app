@@ -98,11 +98,29 @@ steps:
       - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
       - '--region=${_REGION}'
       - '--platform=managed'
-      # Only secrets that actually exist in Secret Manager today. Still
-      # missing: GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY, CRON_SECRET, CRON_TOKEN,
-      # CRON_NOTIFICATION_TOKEN — add to both Secret Manager and this line
-      # once real values are available (see docs/deployment/google-cloud-run.md).
-      - '--set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,TBA_API_KEY=TBA_API_KEY:latest'
+      # CRON_NOTIFICATION_TOKEN closes a real fail-open gap:
+      # src/lib/server/cron_auth.js's isAuthorizedCronRequest() returns true
+      # (accepts ANY request) when none of
+      # CRON_SECRET/CRON_TOKEN/CRON_NOTIFICATION_TOKEN are set - without this,
+      # /api/planner/notifications (hit every 15 min by the one active
+      # pg_cron job) and /api/drive-watcher accept unauthenticated requests on
+      # the live service. MUST be the SAME value already stored in the
+      # Supabase Vault secret `planner_notifications_cron_token` (that's what
+      # the live pg_cron job actually sends) - a mismatched or freshly
+      # generated value here would authenticate this endpoint while breaking
+      # the real cron job's own requests. See docs/deployment/google-cloud-run.md
+      # for how to retrieve that exact value and create this secret from it -
+      # deliberately not done as part of this commit (requires reading a
+      # decrypted Vault secret, a real human-in-the-loop step, not something
+      # to automate blindly). Requires the CRON_NOTIFICATION_TOKEN secret to
+      # actually exist in Secret Manager BEFORE this deploys, or this step
+      # fails outright.
+      #
+      # Still missing: GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY (low priority - the
+      # Drive watcher degrades gracefully without it and nothing schedules it
+      # yet) — add to both Secret Manager and this line once a real value is
+      # available (see docs/deployment/google-cloud-run.md).
+      - '--set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,TBA_API_KEY=TBA_API_KEY:latest,CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest'
       - '--set-env-vars=SUPABASE_URL=${_PUBLIC_SUPABASE_URL},SENTRY_DSN=${_PUBLIC_SENTRY_DSN},DRIVE_API=${_DRIVE_API},DRIVE_UPLOAD_API=${_DRIVE_UPLOAD_API},DRIVE_SCOPE=${_DRIVE_SCOPE},DRIVE_PRACTICE_CATEGORY=${_DRIVE_PRACTICE_CATEGORY},SLACK_ALERT_CHANNEL_ID=${_SLACK_ALERT_CHANNEL_ID}'
 
 images:
