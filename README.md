@@ -3,6 +3,49 @@
 Team management hub for FRC team 971 (Spartan Robotics) - manufacturing/CAM,
 scouting, planning, and purchasing in one app.
 
+## Features
+
+Full scope of what the app actually does, grouped by domain - see **Module
+map** below for where each of these lives in code. Like the rest of this
+file, **keep this current when a feature is added, removed, or changes
+scope** - it's the one place meant to answer "does this app do X?" without
+reading code.
+
+- **Manufacturing/CAM**: part tracking through the manufacturing pipeline
+  (queued → in-progress → completed), STEP file 3D viewing, BOM and build
+  tracking, kitting, bins, post-processing, router-specific workflows. See
+  the **AutoCAM** section below for automatic G-code generation
+  specifically.
+- **AutoCAM**: automatic STEP → G-code generation for lathe turning and
+  router routing jobs - either manually queued from `/autocam` or
+  auto-triggered by dropping a CAD file into a machine's watched Google
+  Drive folder. No external CAM software involved (pure JS geometry math);
+  milling is a recognized job type but not yet implemented. See the
+  **AutoCAM** section below for the code-level detail.
+- **Scouting**: pit scouting forms, match/data scouting, free-form notes,
+  cross-team data discovery and analysis (`discover/`), a consolidated
+  team-view, and scouting-admin tooling (assignment management, form/config
+  editing) - integrates with The Blue Alliance API for competition data.
+- **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),
+  Slack-driven prompts and reminders on a 15-minute cron sweep.
+- **Purchasing/Budget**: COTS (commercial off-the-shelf) part stock
+  tracking, purchasing tied to CAD parts (`cad/purchasing`), budget
+  tracking/allocation by project or build (admin Budgets tab).
+- **Tasks**: general task tracking separate from the planner's
+  scheduling-focused tasks, including a dedicated P0 (priority-zero issue)
+  report view.
+- **Admin & permissions**: user/role/permission management, an activity
+  log, attendance location/schedule configuration.
+- **Attendance**: attendance logging against configured locations/schedules,
+  surfaced on user profiles.
+- **Profile**: per-user profile settings and personal stats (attendance
+  history, etc.).
+- **Integrations**: Onshape (CAD source of truth for parts), Slack (bot
+  notifications/DMs, `971bot`), The Blue Alliance (competition data),
+  Google Drive (AutoCAM input/output watcher), Sentry (error monitoring),
+  Supabase (database, auth, storage - the backbone every feature above sits
+  on).
+
 ## Architecture
 
 Whole-project overview: tech stack, module map, data layer, deployment, and
@@ -78,7 +121,7 @@ own docs are all together in one place instead of scattered across
   `*.test.js` files next to the engine modules for what each one covers),
   not arbitrarily.
 - **`autocam/docs/`** - AutoCAM-specific planning/architecture docs
-  (`architecture.md`, `drive-watcher-implementation.md`, etc.).
+  (`drive-watcher-folder-layout.md`, `drive-watcher-implementation.md`, etc.).
 - **`autocam/runner/README.md`** - the still-deferred milling Runner concept
   (turning/routing are synchronous in-process math; milling would need an
   actual external Fusion 360 Runner, not built).
