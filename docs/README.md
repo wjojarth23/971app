@@ -1,5 +1,10 @@
 # Spartans Hub Documentation
 
+**The whole-project architecture overview lives at the repo root -
+[`README.md`](../README.md)** - stack, module map, data layer, deployment,
+contribution workflow. Deliberately not in this folder so it's the first
+thing anyone sees landing on the repo, not something to go looking for.
+
 Docs are split by purpose:
 
 ## `guides/` — living reference
@@ -8,7 +13,6 @@ How a system works **today**. Update these when the system changes.
 
 | Doc | Covers |
 |---|---|
-| [ARCHITECTURE.md](guides/ARCHITECTURE.md) | Whole-project overview: stack, module map, data layer, deployment, contribution workflow - **update whenever a feature/subsystem is added** |
 | [AUTH_PROTOCOL.md](guides/AUTH_PROTOCOL.md) | Authentication flow, UUID-only local persistence, profile fetching |
 | [BUDGET_SYSTEM_GUIDE.md](guides/BUDGET_SYSTEM_GUIDE.md) | Purchasing budgets: scopes, Project ID matching, pinning |
 

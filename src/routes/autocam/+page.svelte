@@ -8,11 +8,11 @@
   import { passesTeamFilter } from '$lib/frcTeams.js';
   import TeamFilter from '$lib/components/TeamFilter.svelte';
   import SeasonFilter from '$lib/components/SeasonFilter.svelte';
-  import CamParamFields from '$lib/components/CamParamFields.svelte';
-  import RoutingToolSequence from '$lib/components/RoutingToolSequence.svelte';
-  import TurningFinishTool from '$lib/components/TurningFinishTool.svelte';
+  import CamParamFields from '$autocam/components/CamParamFields.svelte';
+  import RoutingToolSequence from '$autocam/components/RoutingToolSequence.svelte';
+  import TurningFinishTool from '$autocam/components/TurningFinishTool.svelte';
   import CadViewer from '$lib/components/CadViewer.svelte';
-  import ToolpathViewer from '$lib/components/ToolpathViewer.svelte';
+  import ToolpathViewer from '$autocam/components/ToolpathViewer.svelte';
   import { toastActions } from '$lib/toast.js';
   import {
     queueCamJobForPart,
@@ -32,7 +32,7 @@
     downloadStepFile,
     partHasStepFile,
     CAM_GCODE_FORMAT
-  } from '$lib/camJobs.js';
+  } from '$autocam/camJobs.js';
   import { Cpu, Upload, Package, Settings, Download, AlertTriangle, X, Link as LinkIcon, Plus, Wrench, Layers, CheckCircle2, Loader2, Search, Filter, Box, Route, ExternalLink, Copy } from 'lucide-svelte';
 
   let user = null;
@@ -304,7 +304,7 @@
   }
 
   // Numeric fields get coerced to Number(); toolSequence (routing multi-tool,
-  // see implementations/toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
+  // see autocam/docs/toolchange-gcode-plan.md) is an array of {toolId, toolDiameter,
   // toolNumber, label} objects and finishTool (turning multi-tool) is one
   // {toolId, toolNumber, label, noseRadius} object - both must pass through untouched.
   const NON_NUMERIC_PARAM_KEYS = new Set(['toolSequence', 'setupMode', 'finishTool']);
@@ -689,7 +689,7 @@
     </button>
   </div>
 </div>
-<p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Milling isn't implemented yet (see implementations/millimplementations.md).</p>
+<p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Milling isn't implemented yet (see autocam/docs/millimplementations.md).</p>
 
 {#if !loading && materials.length === 0 && tools.length === 0 && machines.length === 0}
   <div class="card setup-warning">
@@ -1021,7 +1021,7 @@
             <div class="source-toggle" id="job-operation">
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'turning'} class:btn-secondary={newJobOperation !== 'turning'} on:click={() => (newJobOperation = 'turning')}>Turning</button>
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'routing'} class:btn-secondary={newJobOperation !== 'routing'} on:click={() => (newJobOperation = 'routing')}>Routing</button>
-              <button class="btn btn-sm btn-secondary" disabled title="Not implemented yet - see implementations/millimplementations.md">Milling</button>
+              <button class="btn btn-sm btn-secondary" disabled title="Not implemented yet - see autocam/docs/millimplementations.md">Milling</button>
             </div>
           </div>
           <div class="form-group">
@@ -1446,7 +1446,7 @@
             <label class="form-label" for="mp-drive-output-folder">Drive Delivery Folder ID (output) <span class="text-muted">(optional)</span></label>
             <input id="mp-drive-output-folder" class="form-input" placeholder="e.g. 9zY8xW7vUtSrqPonMLkjihGF" bind:value={machineForm.drive_output_folder_id} />
             <p class="cam-form-hint">
-              Any completed job's G-code on this machine gets written here - pair with a Drive desktop sync client on the machine's control PC for zero-download delivery. Deliberately a separate folder from the one above. See implementations/direct-machine-file-transfer-plan.md.
+              Any completed job's G-code on this machine gets written here - pair with a Drive desktop sync client on the machine's control PC for zero-download delivery. Deliberately a separate folder from the one above. See autocam/docs/direct-machine-file-transfer-plan.md.
             </p>
           </div>
         </div>

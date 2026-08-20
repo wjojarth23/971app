@@ -45,7 +45,7 @@ Done and verified live:
   `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` are set, the check accepts *any*
   request as authorized. None are in Secret Manager yet, so on the current live
   deployment, `/api/planner/notifications` (hit by the one genuinely active `pg_cron`
-  job, every 15 minutes, per `implementations/drive-watcher-cron-plan.md`) and
+  job, every 15 minutes, per `autocam/docs/drive-watcher-cron-plan.md`) and
   `/api/drive-watcher` both currently accept unauthenticated requests.
 
   **This must be the exact same value already stored in the Supabase Vault secret
@@ -81,7 +81,7 @@ Done and verified live:
   comment, never executed — the `pg_cron` schedule that *would* activate it. No such
   schedule exists. Nothing calls `/api/drive-watcher` automatically today. Safe to
   defer indefinitely; only worth doing when the Drive-triggered CAM feature is
-  actually wanted, matching `implementations/drive-watcher-cron-plan.md`'s own
+  actually wanted, matching `autocam/docs/drive-watcher-cron-plan.md`'s own
   phased rollout (Google Cloud service-account setup was always its own separate,
   later step).
 - `PUBLIC_SENTRY_DSN`, `PUBLIC_AUTOCAM_API_URL`, `PUBLIC_ROUTES`, `PUBLIC_TBA_API_KEY`,

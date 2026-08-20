@@ -1,16 +1,16 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL, PUBLIC_APP_ORIGIN, PUBLIC_SITE_URL } from '$env/static/public';
-import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '$lib/cam/stepProfile.js';
-import { generateTurningGcode } from '$lib/cam/turning.js';
-import { generateRoutingGcode } from '$lib/cam/routing.js';
-import { deliverJobToDrive } from '$lib/server/drive_watcher.js';
+import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '$autocam/stepProfile.js';
+import { generateTurningGcode } from '$autocam/turning.js';
+import { generateRoutingGcode } from '$autocam/routing.js';
+import { deliverJobToDrive } from '$autocam/drive_watcher.js';
 // Vite-built asset URL for occt-import-js's WASM binary - the same one
 // CadViewer.svelte already fetches successfully client-side. Fetching it
 // over HTTP (below) instead of reading it off disk sidesteps Vercel's
 // build-time file tracer entirely, which doesn't see the WASM binary as a
 // dependency when it's only referenced via a runtime require.resolve() -
-// see stepProfile.js and implementations/vercel-cam-generate-timeout-fix.md.
+// see stepProfile.js and autocam/docs/vercel-cam-generate-timeout-fix.md.
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 
 // Vercel serverless functions default to a short execution limit (as low as
@@ -138,7 +138,7 @@ export async function POST({ request, url }) {
     if (job.operation_type === 'milling') {
       await supabase.from('cam_jobs').update({
         status: 'rejected',
-        errors: ['Milling is not implemented yet - see implementations/millimplementations.md']
+        errors: ['Milling is not implemented yet - see autocam/docs/millimplementations.md']
       }).eq('id', jobId);
       return json({ success: false, error: 'Milling is not implemented yet' }, { status: 400 });
     }
@@ -214,7 +214,7 @@ export async function POST({ request, url }) {
 
     // Best-effort - never throws, never affects the already-successful
     // 'completed' status or this response. See deliverJobToDrive's own doc
-    // comment and implementations/direct-machine-file-transfer-plan.md.
+    // comment and autocam/docs/direct-machine-file-transfer-plan.md.
     await deliverJobToDrive(
       { id: jobId, gcode: result.gcode, gcode_file_name: job.gcode_file_name || 'output.ngc' },
       job.cam_machines

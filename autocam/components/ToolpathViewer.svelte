@@ -1,5 +1,5 @@
 <script>
-  import { parseGcodeToolpath, toolpathBounds } from '$lib/cam/toolpathPreview.js';
+  import { parseGcodeToolpath, toolpathBounds } from '../toolpathPreview.js';
 
   export let gcode = '';
   export let operationType = 'routing';

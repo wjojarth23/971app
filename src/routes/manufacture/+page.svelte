@@ -20,7 +20,7 @@
   import { formatPacificDate, formatPacificDateTimeWithZone } from '$lib/timezone.js';
   import PartDueDate from '$lib/components/PartDueDate.svelte';
   import PartNotes from '$lib/components/PartNotes.svelte';
-  import ToolpathViewer from '$lib/components/ToolpathViewer.svelte';
+  import ToolpathViewer from '$autocam/components/ToolpathViewer.svelte';
   import {
     queueCamJobForPart,
     retryCamJob,
@@ -30,7 +30,7 @@
     camJobStatusLabel,
     isCamJobActive,
     WORKFLOW_OPERATION_TYPE
-  } from '$lib/camJobs.js';
+  } from '$autocam/camJobs.js';
 
   const LAST_SUBSYSTEM_STORAGE_KEY = '971hub:lastSubsystem';
   const QUICK_PRINT_STOCK_OPTIONS = stockData['3d-print'] || [];
