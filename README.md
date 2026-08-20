@@ -124,7 +124,11 @@ own docs are all together in one place instead of scattered across
   (`drive-watcher-folder-layout.md`, `drive-watcher-implementation.md`, etc.).
 - **`autocam/runner/README.md`** - the still-deferred milling Runner concept
   (turning/routing are synchronous in-process math; milling would need an
-  actual external Fusion 360 Runner, not built).
+  actual external Fusion 360 Runner, not built). See
+  `valor6800-autocam-runner-setup.md` (repo root) for a real, evaluated
+  candidate for that Runner - Team Valor 6800's open-source AutoCAM Fusion
+  360 add-in - including how it would (or wouldn't) connect to this app's
+  own `cam_jobs` schema.
 - **Route files stay in `src/routes/`** regardless (`src/routes/autocam/+page.svelte`,
   `src/routes/api/cam-generate/+server.js`, `src/routes/api/drive-watcher/+server.js`)
   - SvelteKit determines a route's URL from its file location under
