@@ -439,7 +439,7 @@
 </script>
 
 <svelte:head>
-  <title>P0 Bugs - 971 Hub</title>
+  <title>P0 Bugs - Spartans Hub</title>
 </svelte:head>
 
 <div class="container tasks-page">

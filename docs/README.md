@@ -1,4 +1,4 @@
-# 971 Hub Documentation
+# Spartans Hub Documentation
 
 Docs are split by purpose:
 

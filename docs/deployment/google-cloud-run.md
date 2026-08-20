@@ -1,0 +1,287 @@
+# Deploying to Google Cloud Run
+
+This app moved from Vercel to Cloud Run. This doc covers the actual GCP setup and the
+day-to-day workflow, split so a GitHub-only maintainer never needs GCP access for
+normal updates.
+
+**Target**: project `geminiapi-469220`, region `us-west1`, Cloud Run service and
+Artifact Registry repo both named `spartanshub`, domain `spartanshub.spartanrobotics.org`.
+
+## Current status (as of this migration)
+
+Done and verified live:
+- Artifact Registry repo `spartanshub` created in `us-west1`.
+- `cloudbuild.yaml` builds, pushes, and deploys successfully end-to-end (two real bugs
+  found and fixed by actually running it: `$SHORT_SHA` is unset on manual submits —
+  switched to `$BUILD_ID` — and `gcr.io/google-cloud-sdk/slim` isn't a real image —
+  switched to `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`).
+- The pre-existing Cloud Build GitHub trigger (`rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi`,
+  connected to `frc971/spartanshub` — created outside this migration's own work,
+  likely via the Cloud Run Console's "set up continuous deployment" wizard) **fired on
+  a real push and passed** (`gh pr checks 1` → `pass`), building and deploying with
+  real config. Its branch pattern is currently `^migrate/gcp-cloud-run$` — still needs
+  moving to `^main$` once this branch merges:
+  `gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"`.
+- **`https://spartanshub.spartanrobotics.org/` is live** with real `PUBLIC_*` config
+  (real Supabase project, real Onshape base URL), replacing both the original
+  `gcr.io/cloudrun/placeholder` revision and the earlier placeholder-config smoke test.
+  Domain mapping and DNS were already set up.
+- 7 Secret Manager secrets created and wired to the Cloud Run runtime service account
+  (`819718873862-compute@developer.gserviceaccount.com`) via `roles/secretmanager.secretAccessor`,
+  scoped per-secret: `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `SLACK_BOT_TOKEN`,
+  `SLACK_SIGNING_SECRET`, `TBA_API_KEY`, `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY`.
+  The Onshape pair is deliberately pulled into the *build* step via Cloud Build's
+  `availableSecrets`/`secretEnv` (not a plain `cloudbuild.yaml` substitution) so the
+  raw values never sit in git history — see the comment block in `cloudbuild.yaml`.
+
+**Still open, split by actual urgency — checked the code rather than assuming:**
+
+- **`CRON_NOTIFICATION_TOKEN` — higher priority, a live security gap, not just a
+  missing feature. `cloudbuild.yaml`'s `--set-secrets` now references it (deploys will
+  FAIL until the secret below actually exists), but the secret itself still needs to
+  be created with the correct value — deliberately left as a manual step.**
+  `src/lib/server/cron_auth.js`'s `isAuthorizedCronRequest()` is **fail-open**: `if
+  (!expectedSecrets.length) return true` — when none of
+  `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` are set, the check accepts *any*
+  request as authorized. None are in Secret Manager yet, so on the current live
+  deployment, `/api/planner/notifications` (hit by the one genuinely active `pg_cron`
+  job, every 15 minutes, per `implementations/drive-watcher-cron-plan.md`) and
+  `/api/drive-watcher` both currently accept unauthenticated requests.
+
+  **This must be the exact same value already stored in the Supabase Vault secret
+  `planner_notifications_cron_token`** — that's what the live `pg_cron` job actually
+  sends today. Setting a different (e.g. freshly generated) value here would
+  authenticate *this* endpoint while breaking the real cron job's own requests, a
+  worse outcome than the current fail-open state. Retrieve the real value yourself
+  (requires reading a decrypted Vault secret — a real credential, not something to
+  paste into a chat or automate blindly) via the Supabase SQL editor:
+
+  ```sql
+  select decrypted_secret from vault.decrypted_secrets
+  where name = 'planner_notifications_cron_token';
+  ```
+
+  Then create the GCP secret from that exact value and grant access:
+
+  ```bash
+  gcloud secrets create CRON_NOTIFICATION_TOKEN --data-file=-   # paste the value above, then Ctrl-D
+  gcloud secrets add-iam-policy-binding CRON_NOTIFICATION_TOKEN \
+    --member="serviceAccount:RUNTIME_SA" \
+    --role="roles/secretmanager.secretAccessor"
+  ```
+
+  Until this secret exists, the Cloud Build deploy step will fail (by design — better
+  a loud build failure than a silent auth bypass shipping unnoticed).
+- **`GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY` — genuinely low priority, not stale, just never
+  activated.** Checked `src/lib/server/drive_watcher.js:284-286`: the sweep degrades
+  gracefully without this key (`{ ok: true, skipped: true, reason: 'not_configured'
+  }`), not a crash. Checked `migrations/20260817_cam_studio_system.sql:319,364-374`:
+  the migration adds the schema (`cam_machines.drive_folder_id`,
+  `drive_watcher_state`, `drive_watcher_files`) but explicitly documents — as a
+  comment, never executed — the `pg_cron` schedule that *would* activate it. No such
+  schedule exists. Nothing calls `/api/drive-watcher` automatically today. Safe to
+  defer indefinitely; only worth doing when the Drive-triggered CAM feature is
+  actually wanted, matching `implementations/drive-watcher-cron-plan.md`'s own
+  phased rollout (Google Cloud service-account setup was always its own separate,
+  later step).
+- `PUBLIC_SENTRY_DSN`, `PUBLIC_AUTOCAM_API_URL`, `PUBLIC_ROUTES`, `PUBLIC_TBA_API_KEY`,
+  and the Drive/Slack-channel runtime env vars (`DRIVE_API`, `DRIVE_UPLOAD_API`,
+  `DRIVE_SCOPE`, `DRIVE_PRACTICE_CATEGORY`, `SLACK_ALERT_CHANNEL_ID`) — still empty
+  placeholders in `cloudbuild.yaml`. `DRIVE_*` only matter once the Drive watcher
+  above is actually being activated.
+- **Known pre-existing issue, not introduced by this migration**:
+  `PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle today (on Vercel too —
+  `src/lib/onshape.js` is imported by three client-side `.svelte` pages). Worth a
+  follow-up to proxy Onshape calls server-side and rotate both Onshape keys.
+- Trigger branch pattern still needs to move to `^main$` (see above).
+- Recommended: turn on GitHub branch protection requiring this Cloud Build check to
+  pass before merge.
+
+## Why the Dockerfile needs so many `--build-arg`s
+
+SvelteKit inlines every `PUBLIC_*` var referenced via `$env/static/public` into the
+client-side JS bundle **at build time** — this isn't a Vercel-specific mechanism, it's
+just something Vercel's own build step used to handle transparently by reading its
+dashboard env vars. Cloud Build has to pass the same values explicitly, or the build
+fails immediately with `"X" is not exported by "virtual:env/static/public"` (fail
+loudly, not a silent bad deploy). The full set, discovered by grepping `src/` for every
+`PUBLIC_*` reference:
+
+```
+PUBLIC_SUPABASE_URL
+PUBLIC_SUPABASE_ANON_KEY
+PUBLIC_SENTRY_DSN
+PUBLIC_ONSHAPE_ACCESS_KEY
+PUBLIC_ONSHAPE_SECRET_KEY
+PUBLIC_ONSHAPE_BASE_URL
+PUBLIC_AUTOCAM_API_URL
+PUBLIC_APP_ORIGIN
+PUBLIC_SITE_URL
+PUBLIC_ROUTES
+PUBLIC_TBA_API_KEY
+PUBLIC_AUTO_VENDOR
+```
+
+**Implication worth knowing**: because these are baked into the built bundle, a
+different value per environment (e.g. a staging Supabase project) needs a separate
+image build, not just a different Cloud Run deploy-time env var. There's only one
+environment today (prod), so this doesn't bite yet — flag it if a staging environment
+gets added later.
+
+Non-`PUBLIC_*` (private) vars are normal runtime env vars / secrets and don't have
+this constraint — see **Secrets** below.
+
+## One-time GCP setup (admin only)
+
+Run these yourself once `gcloud` is authenticated (`gcloud auth login`,
+`gcloud config set project geminiapi-469220`):
+
+### 1. Enable required APIs
+
+```bash
+gcloud services enable run.googleapis.com \
+  cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com
+```
+
+### 2. Create the Artifact Registry repo
+
+```bash
+gcloud artifacts repositories create spartanshub \
+  --repository-format=docker \
+  --location=us-west1 \
+  --description="SpartansHub app images"
+```
+
+### 3. Create secrets (values piped in locally — never pasted into chat)
+
+```bash
+gcloud secrets create SUPABASE_SERVICE_KEY --data-file=-   # paste value, then Ctrl-D
+gcloud secrets create SLACK_BOT_TOKEN --data-file=-
+gcloud secrets create SLACK_SIGNING_SECRET --data-file=-
+gcloud secrets create GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY --data-file=/path/to/key.json
+gcloud secrets create TBA_API_KEY --data-file=-
+gcloud secrets create CRON_NOTIFICATION_TOKEN --data-file=-
+```
+
+Grant the Cloud Run runtime service account access to just these secrets (replace
+`RUNTIME_SA` with the service account Cloud Run actually runs as — by default the
+Compute Engine default service account unless you create a dedicated one, which is
+the better long-term choice):
+
+```bash
+for SECRET in SUPABASE_SERVICE_KEY SLACK_BOT_TOKEN SLACK_SIGNING_SECRET \
+              GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY TBA_API_KEY CRON_NOTIFICATION_TOKEN; do
+  gcloud secrets add-iam-policy-binding "$SECRET" \
+    --member="serviceAccount:RUNTIME_SA" \
+    --role="roles/secretmanager.secretAccessor"
+done
+```
+
+Since `SUPABASE_SERVICE_KEY` currently lives in Vercel's dashboard, rotate it in
+Supabase once it's confirmed working from Secret Manager — the old value stays valid
+until you do, so this is a deliberate cutover step, not automatic.
+
+### 4. First manual deploy (proves the container actually runs before automating it)
+
+```bash
+gcloud builds submit \
+  --substitutions=_PUBLIC_SUPABASE_URL="...",_PUBLIC_SUPABASE_ANON_KEY="...",... \
+  --config=cloudbuild.yaml
+```
+
+Then confirm the service responds:
+
+```bash
+gcloud run services describe spartanshub --region=us-west1 --format="value(status.url)"
+curl -I <that URL>
+```
+
+Wire in the private env vars / secrets on the service:
+
+```bash
+gcloud run services update spartanshub \
+  --region=us-west1 \
+  --set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,... \
+  --set-env-vars=PUBLIC_SUPABASE_URL=...,PUBLIC_SITE_URL=https://spartanshub.spartanrobotics.org,...
+```
+
+### 5. Custom domain
+
+DNS for `spartanrobotics.org` is already controlled and wired up (confirmed with
+project owner). Map the domain:
+
+```bash
+gcloud run domain-mappings create \
+  --service=spartanshub \
+  --domain=spartanshub.spartanrobotics.org \
+  --region=us-west1
+```
+
+This prints the DNS records (a CNAME or A/AAAA set) to add — add them, then wait for
+the managed TLS cert to provision (can take up to ~24h on a fresh mapping).
+
+### 6. Connect Cloud Build to GitHub (this is what makes merges auto-deploy)
+
+Via Cloud Console: **Cloud Build → Triggers → Connect Repository**, authorize the
+Cloud Build GitHub App for this repo, then create a trigger:
+
+```bash
+gcloud builds triggers create github \
+  --repo-name=spartanshub \
+  --repo-owner=<github-org-or-user> \
+  --branch-pattern="^main$" \
+  --build-config=cloudbuild.yaml \
+  --substitutions=_PUBLIC_SUPABASE_URL="...",_PUBLIC_SUPABASE_ANON_KEY="...",...
+```
+
+(Non-secret `PUBLIC_*` substitutions can live directly on the trigger config in Cloud
+Console/`gcloud`; they're not sensitive by definition — they end up in the public
+client bundle either way.)
+
+**Recommended**: turn on GitHub branch protection on `main` requiring the Cloud Build
+check to pass before merge is allowed, so a broken build never reaches `main`.
+
+## Ongoing workflow (the GitHub-only maintainer)
+
+1. Open a PR, get it reviewed.
+2. Merge to `main`.
+3. Cloud Build trigger fires automatically → builds → pushes to Artifact Registry →
+   deploys the new revision to Cloud Run.
+4. Check build/deploy status and logs at **Cloud Console → Cloud Build → History**
+   (no `gcloud` needed) — click the failed build to see exactly which step and line
+   failed, same as a failed CI check on any other platform.
+
+That's the entire deploy action. No `gcloud`, no Cloud Run console access, no IAM
+needed for this workflow.
+
+## Local development / testing the container
+
+```bash
+npm run build   # requires all PUBLIC_* vars above set in your shell or .env
+npm run start    # or: node build/index.js
+
+# or, to test the actual container:
+docker build \
+  --build-arg PUBLIC_SUPABASE_URL=... \
+  --build-arg PUBLIC_SUPABASE_ANON_KEY=... \
+  # ...(all 12 PUBLIC_* args)
+  -t spartanshub .
+docker run -p 8080:8080 -e PUBLIC_SUPABASE_URL=... -e PUBLIC_SUPABASE_ANON_KEY=... spartanshub
+```
+
+`maxDuration: 60` in `src/routes/api/cam-generate/+server.js` is a Vercel-specific
+route config left in place intentionally — it's a harmless no-op on Cloud Run, whose
+default request timeout is much longer.
+
+## What's intentionally out of scope here
+
+- **The `autocam/` FastAPI service** is not part of this migration. It's currently
+  disabled (`DISABLE_AUTOCAM = true` in `src/lib/config/autocam.js`) and superseded —
+  turning/routing G-code generation now happens synchronously in this app itself
+  (`src/lib/cam/turning.js`, `routing.js`, `stepProfile.js`). Its Dockerfile also has
+  an unresolved dependency on a `PenguinCAM/` directory that doesn't exist anywhere in
+  this repo. Revisit as a separate task if it's ever re-enabled.
+- **Replacing Supabase** — see `docs/deployment/supabase-alternative-design.md` for
+  that as a fully separate, not-yet-executed design.

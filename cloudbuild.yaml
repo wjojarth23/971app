@@ -1,0 +1,131 @@
+substitutions:
+  _REGION: us-west1
+  _SERVICE_NAME: spartanshub
+  _AR_REPO: spartanshub
+  # PUBLIC_* build args — real, non-secret values, safe to commit: these get
+  # baked into the public client bundle regardless of where they're stored.
+  # Supabase's anon key is designed to be public (like a Stripe publishable
+  # key) — it only grants what RLS allows the `anon` role, no bypass
+  # privilege (that's SUPABASE_SERVICE_KEY, which stays in Secret Manager).
+  #
+  # PUBLIC_ONSHAPE_ACCESS_KEY / PUBLIC_ONSHAPE_SECRET_KEY are deliberately
+  # NOT here — pulled from Secret Manager at build time instead (see
+  # availableSecrets below) so the raw values never sit in this committed
+  # file / git history, even though they still end up in the app's public
+  # client bundle at runtime (src/lib/onshape.js is imported by three
+  # client-side .svelte pages — a pre-existing app design choice, not
+  # introduced by this migration; worth a separate follow-up to proxy
+  # Onshape calls server-side instead, and to rotate these keys).
+  _PUBLIC_SUPABASE_URL: 'https://ypkjxqwjkjkznlmjmwpe.supabase.co'
+  _PUBLIC_ONSHAPE_BASE_URL: 'https://frc971.onshape.com'
+  _PUBLIC_AUTO_VENDOR: 'false'
+  _PUBLIC_APP_ORIGIN: 'https://spartanshub.spartanrobotics.org'
+  _PUBLIC_SITE_URL: 'https://spartanshub.spartanrobotics.org'
+  _PUBLIC_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlwa2p4cXdqa2prem5sbWptd3BlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk5NDk5NTYsImV4cCI6MjA2NTUyNTk1Nn0.qqKGsZ1v2UuViIfRSwU_P-RvvOJynJfHnsgAh7O9jfM'
+  # Still placeholders — not yet supplied. See "Still open" in
+  # docs/deployment/google-cloud-run.md.
+  _PUBLIC_SENTRY_DSN: ''
+  _PUBLIC_AUTOCAM_API_URL: ''
+  _PUBLIC_ROUTES: ''
+  _PUBLIC_TBA_API_KEY: ''
+  # Non-secret runtime config for the deploy step (see --set-env-vars below).
+  # Real values not supplied yet.
+  _DRIVE_API: ''
+  _DRIVE_UPLOAD_API: ''
+  _DRIVE_SCOPE: ''
+  _DRIVE_PRACTICE_CATEGORY: ''
+  _SLACK_ALERT_CHANNEL_ID: ''
+
+# Pulled into the build step below as env vars via secretEnv — never written
+# to this file or git history. Requires options.logging to be non-default
+# (already set at the bottom of this file) per Cloud Build's requirement
+# whenever a step uses secrets.
+availableSecrets:
+  secretManager:
+    - versionName: 'projects/$PROJECT_ID/secrets/ONSHAPE_ACCESS_KEY/versions/latest'
+      env: 'ONSHAPE_ACCESS_KEY'
+    - versionName: 'projects/$PROJECT_ID/secrets/ONSHAPE_SECRET_KEY/versions/latest'
+      env: 'ONSHAPE_SECRET_KEY'
+
+steps:
+  # Build the app image. PUBLIC_* build args are baked into the client
+  # bundle at build time — see Dockerfile comment. `sh -c` (not bash — the
+  # docker builder image is Alpine-based, no bash) so the two Onshape
+  # secretEnv values can be referenced as real shell vars ($$ becomes a
+  # literal $ after Cloud Build's own substitution pass runs first).
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - >-
+        docker build
+        --build-arg=PUBLIC_SUPABASE_URL=${_PUBLIC_SUPABASE_URL}
+        --build-arg=PUBLIC_SUPABASE_ANON_KEY=${_PUBLIC_SUPABASE_ANON_KEY}
+        --build-arg=PUBLIC_SENTRY_DSN=${_PUBLIC_SENTRY_DSN}
+        --build-arg=PUBLIC_ONSHAPE_ACCESS_KEY="$$ONSHAPE_ACCESS_KEY"
+        --build-arg=PUBLIC_ONSHAPE_SECRET_KEY="$$ONSHAPE_SECRET_KEY"
+        --build-arg=PUBLIC_ONSHAPE_BASE_URL=${_PUBLIC_ONSHAPE_BASE_URL}
+        --build-arg=PUBLIC_AUTOCAM_API_URL=${_PUBLIC_AUTOCAM_API_URL}
+        --build-arg=PUBLIC_APP_ORIGIN=${_PUBLIC_APP_ORIGIN}
+        --build-arg=PUBLIC_SITE_URL=${_PUBLIC_SITE_URL}
+        --build-arg=PUBLIC_ROUTES=${_PUBLIC_ROUTES}
+        --build-arg=PUBLIC_TBA_API_KEY=${_PUBLIC_TBA_API_KEY}
+        --build-arg=PUBLIC_AUTO_VENDOR=${_PUBLIC_AUTO_VENDOR}
+        -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID
+        -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:latest
+        .
+    secretEnv: ['ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - '--all-tags'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}'
+
+  # Deploy. Declared here (not as a one-off `gcloud run services update`) so the
+  # wiring lives in version control and every deploy stays consistent.
+  # --set-secrets pulls the *runtime-only* private vars from Secret Manager
+  # (none of these are baked into the build — confirmed by checking that every
+  # private var in src/ is read via $env/dynamic/private or process.env, never
+  # $env/static/private). Create the secrets once (see
+  # docs/deployment/google-cloud-run.md) before the first deploy that uses this.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    args:
+      - gcloud
+      - run
+      - deploy
+      - '${_SERVICE_NAME}'
+      - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      # CRON_NOTIFICATION_TOKEN closes a real fail-open gap:
+      # src/lib/server/cron_auth.js's isAuthorizedCronRequest() returns true
+      # (accepts ANY request) when none of
+      # CRON_SECRET/CRON_TOKEN/CRON_NOTIFICATION_TOKEN are set - without this,
+      # /api/planner/notifications (hit every 15 min by the one active
+      # pg_cron job) and /api/drive-watcher accept unauthenticated requests on
+      # the live service. MUST be the SAME value already stored in the
+      # Supabase Vault secret `planner_notifications_cron_token` (that's what
+      # the live pg_cron job actually sends) - a mismatched or freshly
+      # generated value here would authenticate this endpoint while breaking
+      # the real cron job's own requests. See docs/deployment/google-cloud-run.md
+      # for how to retrieve that exact value and create this secret from it -
+      # deliberately not done as part of this commit (requires reading a
+      # decrypted Vault secret, a real human-in-the-loop step, not something
+      # to automate blindly). Requires the CRON_NOTIFICATION_TOKEN secret to
+      # actually exist in Secret Manager BEFORE this deploys, or this step
+      # fails outright.
+      #
+      # Still missing: GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY (low priority - the
+      # Drive watcher degrades gracefully without it and nothing schedules it
+      # yet) — add to both Secret Manager and this line once a real value is
+      # available (see docs/deployment/google-cloud-run.md).
+      - '--set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,TBA_API_KEY=TBA_API_KEY:latest,CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest'
+      - '--set-env-vars=SUPABASE_URL=${_PUBLIC_SUPABASE_URL},SENTRY_DSN=${_PUBLIC_SENTRY_DSN},DRIVE_API=${_DRIVE_API},DRIVE_UPLOAD_API=${_DRIVE_UPLOAD_API},DRIVE_SCOPE=${_DRIVE_SCOPE},DRIVE_PRACTICE_CATEGORY=${_DRIVE_PRACTICE_CATEGORY},SLACK_ALERT_CHANNEL_ID=${_SLACK_ALERT_CHANNEL_ID}'
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
