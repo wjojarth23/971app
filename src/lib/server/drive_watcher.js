@@ -7,6 +7,18 @@
  * with no manual download - see runDriveWatcherSweep for input,
  * deliverJobToDrive for output).
  *
+ * FOLDER ARCHITECTURE (explicit user requirement, not a guess): the input
+ * folder (`cam_machines.drive_folder_id`) is meant to be a subfolder literally
+ * named "cad" inside a larger Shared Drive structure - dropping a CAD file
+ * there is the trigger. The output folder (`drive_output_folder_id`) is
+ * meant to be a sibling "cammed" folder - but delivered G-code is NOT
+ * dropped directly into it. Every delivery is grouped into a dated
+ * subfolder ("2026-08-20", Pacific time - see todayDriveDateFolderName),
+ * created on first use each day and reused for every job delivered that
+ * same day. Both folder IDs are supplied directly by whoever configures a
+ * machine (paste the "cad"/"cammed" folder's own ID) - this module never
+ * has to search a parent for a child folder by that name.
+ *
  * STATUS: built, wired up, and safe to ship with zero configuration - but
  * genuinely untested against a real Google Drive folder, because this
  * environment has no Google credentials. Both entry points below are
@@ -48,6 +60,7 @@ import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/private';
 import { gcodeFileNameFor } from '$lib/camJobs.js';
+import { PACIFIC_TIME_ZONE } from '$lib/timezone.js';
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -184,6 +197,51 @@ async function uploadFileToDriveFolder(accessToken, folderId, filename, content,
   const responseBody = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`Drive upload failed (${res.status}): ${responseBody.error?.message || res.statusText}`);
   return responseBody; // { id, name, ... }
+}
+
+// YYYY-MM-DD in the team's local (Pacific) time, not server/UTC time - a job
+// finished at 11pm Pacific should land in that day's folder, not tomorrow's
+// just because the server happens to be running in UTC. en-CA's date
+// formatting conveniently IS YYYY-MM-DD (a standard trick), no manual
+// zero-padding/reassembly needed.
+export function todayDriveDateFolderName() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: PACIFIC_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
+// Finds a child folder of `parentFolderId` named exactly `folderName`
+// (case-sensitive, Drive's own `=` query operator), creating it if it
+// doesn't exist yet. Used to group each day's delivered G-code into one
+// dated subfolder ("2026-08-20") inside the machine's output folder, shared
+// across every job delivered that same day - see
+// implementations/drive-watcher-implementation.md's architecture note.
+// `driveId` (see getFileDriveId, same pattern the input-sweep side already
+// uses for the Changes API) scopes files.list to that specific Shared
+// Drive - more correct AND faster than the blanket corpora=allDrives
+// Google's own docs advise against, and null-safe for a folder that turns
+// out to live in someone's personal My Drive instead.
+async function findOrCreateDateFolder(accessToken, parentFolderId, folderName, driveId) {
+  const escapedName = folderName.replace(/'/g, "\\'");
+  const query = `'${parentFolderId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const scope = driveId ? `&driveId=${encodeURIComponent(driveId)}&includeItemsFromAllDrives=true&corpora=drive` : '';
+  const listRes = await driveFetch(accessToken, `/files?q=${encodeURIComponent(query)}&fields=files(id,name)${scope}`);
+  const listBody = await listRes.json();
+  if (listBody.files?.[0]?.id) return listBody.files[0].id;
+
+  const createRes = await fetch(`${DRIVE_API}/files?supportsAllDrives=true`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [parentFolderId] })
+  });
+  const createBody = await createRes.json().catch(() => ({}));
+  if (!createRes.ok || !createBody.id) {
+    throw new Error(`Could not create Drive date folder "${folderName}" (${createRes.status}): ${createBody.error?.message || createRes.statusText}`);
+  }
+  return createBody.id;
 }
 
 // Cheap sanity check, not a real parse - real validation happens inside
@@ -353,11 +411,15 @@ export async function runDriveWatcherSweep({ appOrigin } = {}) {
 
 /**
  * OUTPUT side: after a job completes, if its machine has a
- * drive_output_folder_id configured, upload the finished G-code there so a
- * Drive desktop sync client on the machine's control PC picks it up with no
- * manual download - see implementations/direct-machine-file-transfer-plan.md.
- * Applies to ANY completed job on that machine, not just Drive-triggered
- * ones - delivery is a property of the machine, not of how the job started.
+ * drive_output_folder_id configured, upload the finished G-code into that
+ * day's dated subfolder ("2026-08-20", created if this is the first
+ * delivery today, reused for every later one the same day - see
+ * findOrCreateDateFolder/todayDriveDateFolderName and the file header's
+ * FOLDER ARCHITECTURE note) so a Drive desktop sync client on the machine's
+ * control PC picks it up with no manual download - see
+ * implementations/direct-machine-file-transfer-plan.md. Applies to ANY
+ * completed job on that machine, not just Drive-triggered ones - delivery
+ * is a property of the machine, not of how the job started.
  *
  * Never throws - called as a best-effort step after a job is already marked
  * 'completed' (see /api/cam-generate/+server.js); a Drive delivery failure
@@ -375,9 +437,12 @@ export async function deliverJobToDrive(job, machine) {
 
   try {
     const accessToken = await getServiceAccountAccessToken(serviceAccountJson);
+    const driveId = await getFileDriveId(accessToken, machine.drive_output_folder_id);
+    const dateFolderName = todayDriveDateFolderName();
+    const dateFolderId = await findOrCreateDateFolder(accessToken, machine.drive_output_folder_id, dateFolderName, driveId);
     const filename = job.gcode_file_name || 'output.ngc';
-    await uploadFileToDriveFolder(accessToken, machine.drive_output_folder_id, filename, job.gcode, 'text/plain');
-    return { delivered: true };
+    await uploadFileToDriveFolder(accessToken, dateFolderId, filename, job.gcode, 'text/plain');
+    return { delivered: true, dateFolder: dateFolderName };
   } catch (e) {
     const message = e?.message || String(e);
     console.error(`Drive watcher: delivery failed for job ${job.id} (machine "${machine.name}")`, message);
