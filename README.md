@@ -14,6 +14,12 @@ steps - come back to those once you have them.
 - A sibling `cammed` folder is where finished G-code lands — but not directly.
   Every delivery goes into a dated subfolder inside it (`2026-08-20`, Pacific
   time), created on first use each day and reused for the rest of that day.
+- **`cammed` fills up from every completed job on the configured machine, not
+  just ones that started from the `cad` folder.** A job created manually
+  through `/autocam`'s "New Job", from `/manufacture`'s "Convert to G-code",
+  or as part of a batch run - any of those still lands in `cammed` once it
+  completes, as long as that job's machine has a `drive_output_folder_id` set.
+  Delivery is a property of the machine profile, not of how the job began.
 - Output delivery starts working the moment steps 1–6 below are done, no
   scheduler required. The input trigger (`cad` → auto-queue) additionally
   needs step 7.
