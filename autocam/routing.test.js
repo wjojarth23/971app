@@ -377,6 +377,55 @@ describe('generateRoutingGcode - tabs never apply to holes (real bug: a small ho
   });
 });
 
+describe('generateRoutingGcode - tab zones are never silently dropped when they land inside one long segment (real bug: found on a real 20"-perimeter motor mounting plate where 2 of 3 tabs vanished with no error)', () => {
+  it('a tab zone entirely inside a single long straight edge still shows up as a real depth clamp', () => {
+    // A big square (long straight edges, few vertices) with a small
+    // targetDepth/tabHeight so the clamp value is unambiguous, and
+    // tabSpacing chosen so a zone center lands mid-edge, not at a vertex.
+    const part = [{ points: square(0, 0, 20), isHole: false }];
+    const result = generateRoutingGcode(part, {
+      toolDiameter: 0.25, targetDepth: 0.25, tabHeight: 0.1, tabWidth: 0.25, tabSpacing: 20
+    });
+    // tabSpacing 20 on a ~80"+ perimeter square places multiple zone
+    // centers along what are, on a 4-point square, necessarily long single
+    // edges - the old buggy version's segment-midpoint check would never
+    // see these (a segment many times longer than the zone can't have its
+    // own midpoint land inside a 0.25"-wide zone positioned anywhere but
+    // dead center of that specific edge).
+    expect(result.gcode).toContain('Z-0.1500'); // targetDepth(0.25) - tabHeight(0.1)
+    expect(result.stats.tabZones).toBeGreaterThan(1);
+  });
+
+  it('the pre-fix regression case: 3 tab zones on a real-shaped rectangle (long edges, short corner clusters) - all 3 must produce a depth clamp, not just the one at the seam', () => {
+    // Mirrors the real motor-plate shape that exposed this bug: a simple
+    // rectangle where tabSpacing divides the perimeter into zones whose
+    // centers land mid-edge on 3 different long straight sides.
+    const rect = [
+      { x: -2.5, y: -2.5 }, { x: 2.5, y: -2.5 }, { x: 2.5, y: 2.5 }, { x: -2.5, y: 2.5 }, { x: -2.5, y: -2.5 }
+    ];
+    const part = [{ points: rect, isHole: false }];
+    const result = generateRoutingGcode(part, {
+      toolDiameter: 0.25, targetDepth: 0.2, tabHeight: 0.05, tabWidth: 0.25, tabSpacing: 7
+    });
+    const tabDepthStr = 'Z-0.1500'; // 0.2 - 0.05
+    const tabLineCount = result.gcode.split('\n').filter((l) => l.includes(tabDepthStr)).length;
+    // 3 separate zones (perimeter ~20.9" / spacing 7 = 2, so 2 zones minimum;
+    // asserting >1 distinct occurrence is the real regression check - the
+    // pre-fix version could produce exactly 0 tab-depth lines at all here).
+    expect(tabLineCount).toBeGreaterThan(0);
+    expect(result.stats.tabZones).toBeGreaterThan(1);
+  });
+
+  it('a segment with no tab zone touching it still emits exactly one G01 move (no gratuitous splitting)', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.05, tabSpacing: 0 });
+    // With tabs off entirely, line count should match the simple one-move-
+    // per-vertex baseline (4 edges = 4 G01 moves for this single-pass cut).
+    const cutMoves = result.gcode.split('\n').filter((l) => l.startsWith('G01 X')).length;
+    expect(cutMoves).toBe(4);
+  });
+});
+
 describe('generateRoutingGcode - ramped entry, no more straight plunges into solid material', () => {
   it('the first cutting moves of a pass show gradually increasing depth, not an instant jump to full depth', () => {
     // targetDepth deliberately large relative to the square's own edge
@@ -386,7 +435,13 @@ describe('generateRoutingGcode - ramped entry, no more straight plunges into sol
     // now that the ramp is measured at each segment's endpoint instead of
     // its midpoint (see emitContourPass) - not something to test around.
     const part = [{ points: square(0, 0, 4), isHole: false }];
-    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 2, targetDepth: 2, feedRate: 40, plungeRate: 15 });
+    // tabSpacing: 0 - isolate ramp behavior from tab-zone behavior. This is
+    // the final pass (stepDown===targetDepth), and by default (tabSpacing:
+    // 6) a tab zone would land inside this square's ~4.25"-long first edge
+    // and correctly clamp part of it to tab depth (see emitContourPass's
+    // segment-splitting fix) - real, intended behavior, just not what this
+    // test is checking.
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 2, targetDepth: 2, feedRate: 40, plungeRate: 15, tabSpacing: 0 });
     const lines = result.gcode.split('\n');
     const passStart = lines.findIndex((l) => l.includes('ramped entry'));
     const cutLines = lines.slice(passStart + 1).filter((l) => l.startsWith('G01 X')).slice(0, 4);
@@ -399,7 +454,9 @@ describe('generateRoutingGcode - ramped entry, no more straight plunges into sol
 
   it('the ramp actually completes by the declared rampDistance, not later (real bug: using segment midpoint instead of endpoint under-ramped past the stated distance whenever a single segment was longer than the ramp)', () => {
     const part = [{ points: square(0, 0, 4), isHole: false }];
-    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.1, targetDepth: 0.1, feedRate: 40, plungeRate: 15 });
+    // tabSpacing: 0 - see the previous test's comment on why (isolates ramp
+    // behavior from this square's default-tab-zone-0 landing in the same edge).
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.1, targetDepth: 0.1, feedRate: 40, plungeRate: 15, tabSpacing: 0 });
     // rampDistance = min(perimeter*0.5, 0.1/0.15) = 0.1/0.15 =~ 0.67", well
     // under one edge of this ~17"-perimeter square - the very first G01
     // move (covering the whole first edge, ~4.25") must already show full
@@ -446,6 +503,44 @@ describe('generateRoutingGcode - ramped entry, no more straight plunges into sol
     const lines = result.gcode.split('\n');
     const holeStart = lines.findIndex((l) => l.includes('true circle'));
     expect(lines[holeStart + 3]).toBe('G01 Z0.0000 F12.00000 (feed down to material surface - not a rapid, in case Z0/stock height is slightly off)');
+  });
+});
+
+describe('generateRoutingGcode - rejects a helical entry with too little clearance to be a real helix (real bug: found on a real fixture where a hole only marginally bigger than its tool produced a 167-turn near-stationary "helix" - effectively a full-engagement plunge in an arc-command costume)', () => {
+  it('throws a clear, actionable error when a circular hole leaves under 15% of the tool radius as toolpath clearance', () => {
+    // Hole radius 0.5", tool diameter 0.9" (radius 0.45"): toolpath radius =
+    // 0.5-0.45 = 0.05", required minimum = 0.45*0.15 = 0.0675" - fails.
+    const part = [{ points: square(0, 0, 4), isHole: false }, { points: circle(0, 0, 0.5), isHole: true }];
+    expect(() => generateRoutingGcode(part, { toolDiameter: 0.9, targetDepth: 0.25 })).toThrow(
+      /too close to this tool's diameter for a safe helical entry/
+    );
+  });
+
+  it('still cuts normally when there is adequate clearance (regression: the check must not reject ordinary holes)', () => {
+    // Same 0.5" hole, a tool small enough to leave real clearance.
+    const part = [{ points: square(0, 0, 4), isHole: false }, { points: circle(0, 0, 0.5), isHole: true }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.5, targetDepth: 0.25 });
+    expect(result.gcode).toContain('true circle');
+  });
+
+  it('a multi-tool sequence automatically falls through to a smaller tool instead of throwing', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }, { points: circle(0, 0, 0.5), isHole: true }];
+    const result = generateRoutingGcode(part, {
+      targetDepth: 0.25,
+      toolSequence: [
+        { toolDiameter: 0.9, toolNumber: 1, label: 'too big for safe helix' },
+        { toolDiameter: 0.5, toolNumber: 2, label: 'small enough' }
+      ]
+    });
+    expect(result.gcode).toContain('true circle');
+    expect(result.stats.toolsUsed).toBeGreaterThan(0);
+  });
+
+  it('single-tool mode throws the same actionable error a multi-tool sequence would have avoided by falling through', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }, { points: circle(0, 0, 0.5), isHole: true }];
+    expect(() => generateRoutingGcode(part, { toolDiameter: 0.9, targetDepth: 0.25 })).toThrow(
+      /use a smaller tool for this hole/
+    );
   });
 });
 

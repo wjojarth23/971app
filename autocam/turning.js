@@ -72,6 +72,37 @@ function fmt(n, decimals = 4) {
   return Number(n).toFixed(decimals);
 }
 
+// Length-to-diameter ratio above which an unsupported (no tailstock/steady
+// rest) cantilevered cut is a real deflection/whip/chatter risk, checked
+// against the part's SMALLEST working diameter (the most vulnerable point
+// along the profile - a shaft that necks down partway through is only as
+// rigid as its thinnest section, not its average). 8:1 is a conservative
+// shop-floor rule of thumb, not this generator's own invention - real bug
+// this guards against: setupMode defaults to 'single' with zero automatic
+// detection of "this part probably needs support," found on a real fixture
+// (lead-screw.step: ~15" long, necking down to ~0.34" diameter, an
+// unsupported ratio over 40:1) that generated a full cantilevered program
+// with no warning at all. This doesn't block generation or silently switch
+// setupMode - the operator may have a good reason (rigid material, light
+// cuts) - it just makes the risk impossible to miss in the header, the same
+// way 'tailstock' mode's own note already does for a part built that way on
+// purpose.
+const UNSUPPORTED_LENGTH_TO_DIAMETER_WARNING_RATIO = 8;
+
+function warnIfUnsupportedLengthToDiameter(lines, profile) {
+  const length = Math.abs(profile[profile.length - 1].z - profile[0].z);
+  const minDiameter = Math.min(...profile.map((p) => p.x)) * 2;
+  if (minDiameter <= 0) return; // degenerate profile (touches the centerline) - not this check's problem to diagnose
+  const ratio = length / minDiameter;
+  if (ratio < UNSUPPORTED_LENGTH_TO_DIAMETER_WARNING_RATIO) return;
+  lines.push('(*** WARNING: LONG/THIN PART, UNSUPPORTED - CONSIDER TAILSTOCK OR FLIP SETUP ***)');
+  lines.push(`(This part is ${fmt(length, 3)}" long and necks down to ${fmt(minDiameter, 3)}" diameter - an unsupported)`);
+  lines.push(`(length-to-diameter ratio of ${fmt(ratio, 1)}:1, cantilevered from the chuck alone (setupMode: 'single').)`);
+  lines.push('(Real risk of deflection, chatter, or the part whipping/bending during the cut.)');
+  lines.push("(Consider setupMode: 'tailstock' (adds a supporting live center) or 'flip' (splits)");
+  lines.push('(into two shorter, re-chucked setups) instead, if this was not a deliberate choice.)');
+}
+
 // Line-line intersection of two infinite lines in the Z-X plane, each
 // defined by a point + direction [dz, dx]. Mirrors routing.js's
 // intersectLines (kept local/duplicated rather than shared - different
@@ -324,6 +355,8 @@ export function generateTurningGcode(profile, params = {}) {
     lines.push(`(This part is ${fmt(length, 3)}" long with a max diameter of ${fmt(maxProfileRadius * 2, 3)}" - too long/thin to safely)`);
     lines.push('(cantilever from the chuck alone. Bring up a live center in the tailstock to)');
     lines.push('(support the far end BEFORE starting the cut below.)');
+  } else if (setupMode === 'single') {
+    warnIfUnsupportedLengthToDiameter(lines, profile);
   }
 
   const { passCount, toolChanged } = appendSetupBody(
