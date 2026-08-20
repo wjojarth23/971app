@@ -58,9 +58,17 @@ steps - come back to those once you have them.
 - Right-click the `cammed` folder → **Share** → same email → set its role to
   **Editor** (it needs to create the dated subfolders and upload files) →
   Send.
-- **Note both folders' IDs** while you're there — the trailing segment of each
-  folder's URL (`drive.google.com/drive/folders/`**`THIS_PART`**). You'll need
-  both for step 6.
+- **Note both folders' IDs** while you're there — you'll need both for step 6.
+  Two ways to get a folder's ID:
+  - **From the address bar**: double-click to open the folder in Drive. The URL
+    looks like `https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz`
+    — everything after the last `/` is the folder ID (`1AbCdEfGhIjKlMnOpQrStUvWxYz`
+    in that example). Copy just that part, not the whole URL.
+  - **From the share dialog**: right-click the folder → **Share** → **Copy link**.
+    The copied link has the same `.../folders/<ID>` shape — paste it somewhere
+    and pull out the same trailing segment.
+  - Do this once for `cad` and once for `cammed` — you'll end up with two
+    different IDs, one per folder.
 
 ## 5. Create the Secret Manager secret from the downloaded key
 
