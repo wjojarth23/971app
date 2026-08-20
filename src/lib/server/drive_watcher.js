@@ -260,18 +260,6 @@ function getServiceSupabase() {
   return createClient(url, serviceKey);
 }
 
-async function notifyFailure(message) {
-  // Best-effort only - a Slack outage must never take down the sweep itself.
-  try {
-    const { postUserApprovalNeeded } = await import('$lib/server/971bot.js');
-    // Reuses the same approver-DM channel every other background failure in
-    // this app posts to - there's no separate "ops alerts" channel today.
-    await postUserApprovalNeeded(`[Drive Watcher] ${message}`);
-  } catch (e) {
-    console.warn('Drive watcher: Slack failure notification itself failed (non-fatal)', e?.message || e);
-  }
-}
-
 // Inserts the cam_jobs row for one newly-discovered file, using the
 // mapped machine's operation_type/defaults - the exact same mechanism the
 // manual "select a Machine Profile" dropdown already uses. Turning lands as
@@ -335,8 +323,10 @@ async function queueJobForDriveFile(supabase, machine, file, bytes, appOrigin) {
  * Runs one sweep across every cam_machines row with a drive_folder_id set.
  * Safe to call with zero configuration (returns a clear skip reason instead
  * of throwing). Never throws for a single bad file/machine - every failure
- * is caught, recorded in drive_watcher_files, and reported via Slack, so one
- * corrupt file can't take down the rest of the sweep.
+ * is caught, recorded in drive_watcher_files, and logged server-side, so one
+ * corrupt file can't take down the rest of the sweep. No Slack notification -
+ * check drive_watcher_files (or a completed job's own status/errors in
+ * /autocam) for failures.
  */
 export async function runDriveWatcherSweep({ appOrigin } = {}) {
   const serviceAccountJson = env.GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY;
@@ -392,7 +382,7 @@ export async function runDriveWatcherSweep({ appOrigin } = {}) {
         } catch (fileError) {
           const message = fileError?.message || String(fileError);
           await supabase.from('drive_watcher_files').insert({ drive_file_id: file.id, status: 'failed', error: message });
-          await notifyFailure(`"${file.name}" in folder mapped to "${machine.name}" failed to queue: ${message}`);
+          console.error(`Drive watcher: "${file.name}" in folder mapped to "${machine.name}" failed to queue`, message);
         }
       }
 
@@ -401,7 +391,6 @@ export async function runDriveWatcherSweep({ appOrigin } = {}) {
     } catch (machineError) {
       const message = machineError?.message || String(machineError);
       console.error(`Drive watcher: sweep failed for machine "${machine.name}"`, message);
-      await notifyFailure(`Sweep failed for machine "${machine.name}" (folder ${folderId}): ${message}`);
       results.push({ machineId: machine.id, machineName: machine.name, folderId, error: message });
     }
   }
@@ -446,7 +435,6 @@ export async function deliverJobToDrive(job, machine) {
   } catch (e) {
     const message = e?.message || String(e);
     console.error(`Drive watcher: delivery failed for job ${job.id} (machine "${machine.name}")`, message);
-    await notifyFailure(`Could not deliver "${job.gcode_file_name || job.id}" to Drive for machine "${machine.name}": ${message}`);
     return { delivered: false, reason: 'error', error: message };
   }
 }

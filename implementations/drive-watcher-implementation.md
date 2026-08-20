@@ -49,7 +49,7 @@ Sweep interval (`*/5 * * * *` above) is a starting guess, not a measured choice 
 
 ## Failure visibility
 
-Both directions post to Slack on failure, reusing `971bot.js`'s existing approver-DM channel (`postUserApprovalNeeded`, prefixed `[Drive Watcher]`) - there's no separate ops-alerts channel today. Every per-file/per-job failure is caught individually so one bad file can't take down the rest of a sweep, and is recorded in `drive_watcher_files` for later review.
+No Slack notification (removed 2026-08-20 - was posting to `971bot.js`'s approver-DM channel, prefixed `[Drive Watcher]`). Every per-file/per-job failure is still caught individually (one bad file can't take down the rest of a sweep) and still recorded: input-side failures land in `drive_watcher_files` with a real error message, output-delivery failures are logged server-side (`console.error`) and the job itself already carries its own `status`/`errors` from `/api/cam-generate` regardless of how it was queued - check either of those for what went wrong.
 
 ## Testing performed (and what could not be)
 
