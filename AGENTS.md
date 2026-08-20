@@ -18,13 +18,17 @@ This message disappears once the first observation lands.
 # Project instructions
 
 **Keep the repo-root `README.md` up to date.** It's a living whole-project
-overview (stack, module map, data layer, deployment, contribution workflow).
-Whenever a change adds a new top-level route, a new major `src/lib` module, a
-new external integration, or changes how the app is deployed, update that
-file as part of the same change - not as a separate follow-up. See its own
-header for the same instruction and for how it relates to feature-specific
-docs (`autocam/docs/` for AutoCAM specifically, `implementations/` for
-everything else).
+overview - scope/features, stack, module map, data layer, deployment,
+contribution workflow. It's also the **only** file allowed to be named
+`architecture.md`/`ARCHITECTURE.md` in this repo - a feature-specific doc
+that would otherwise want that name (see `autocam/docs/` for an example)
+needs a different, more specific name instead. Whenever a change adds or
+removes a user-facing feature, a new top-level route, a new major `src/lib`
+module, a new external integration, or changes how the app is deployed,
+update that file as part of the same change - not as a separate follow-up.
+See its own header for the same instruction and for how it relates to
+feature-specific docs (`autocam/docs/` for AutoCAM specifically,
+`implementations/` for everything else).
 
 **AutoCAM code lives in a dedicated top-level `autocam/` folder**, not under
 `src/lib/` - engine (`turning.js`/`routing.js`/`stepProfile.js`/
