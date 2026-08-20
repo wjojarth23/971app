@@ -1567,7 +1567,7 @@
 </script>
 
 <svelte:head>
-  <title>Planner - 971 Hub</title>
+  <title>Planner - Spartans Hub</title>
 </svelte:head>
 
 <div class="container planner-page planner-shell">

@@ -646,7 +646,7 @@
   }
 </script>
 
-<svelte:head><title>AutoCAM | 971 Hub</title></svelte:head>
+<svelte:head><title>AutoCAM | Spartans Hub</title></svelte:head>
 
 <div class="page-header">
   <h1><Cpu size={28} /> AutoCAM</h1>

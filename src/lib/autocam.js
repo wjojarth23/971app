@@ -1,5 +1,5 @@
 /**
- * Autocam utility functions for 971hub
+ * Autocam utility functions for Spartans Hub
  * Handles automatic CAM processing for sheet stock parts
  */
 

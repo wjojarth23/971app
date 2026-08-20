@@ -925,7 +925,7 @@
 </script>
 
 <svelte:head>
-  <title>Purchasing (COTS) - 971 Hub</title>
+  <title>Purchasing (COTS) - Spartans Hub</title>
 </svelte:head>
 
 {#if loading}

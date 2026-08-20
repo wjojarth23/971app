@@ -495,7 +495,7 @@
       <!-- Brand -->
       <a href="/" class="brand" on:click={closeDesktopFolders}>
         <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-name">971 Hub</span>
+        <span class="brand-name">Spartans Hub</span>
       </a>
 
       <!-- Desktop Nav -->

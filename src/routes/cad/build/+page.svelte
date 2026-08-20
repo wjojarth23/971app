@@ -417,7 +417,7 @@
 </script>
 
 <svelte:head>
-  <title>Build Center - 971 Hub</title>
+  <title>Build Center - Spartans Hub</title>
 </svelte:head>
 
 {#if loading}

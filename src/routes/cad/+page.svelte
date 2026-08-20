@@ -983,7 +983,7 @@
 </script>
 
 <svelte:head>
-  <title>CAD Subsystems - 971 Hub</title>
+  <title>CAD Subsystems - Spartans Hub</title>
 </svelte:head>
 
 {#if loading}

@@ -203,7 +203,7 @@
   $: unconfiguredStocks = sheetStocks.filter(s => !getProfileForStock(s));
 </script>
 
-<svelte:head><title>Autocam Settings | 971 Hub</title></svelte:head>
+<svelte:head><title>Autocam Settings | Spartans Hub</title></svelte:head>
 
 <div class="page-header">
   <h1><Settings size={28} /> Autocam Settings</h1>
