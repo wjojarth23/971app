@@ -121,7 +121,18 @@ steps:
       # yet) — add to both Secret Manager and this line once a real value is
       # available (see docs/deployment/google-cloud-run.md).
       - '--set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,TBA_API_KEY=TBA_API_KEY:latest,CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest'
-      - '--set-env-vars=SUPABASE_URL=${_PUBLIC_SUPABASE_URL},SENTRY_DSN=${_PUBLIC_SENTRY_DSN},DRIVE_API=${_DRIVE_API},DRIVE_UPLOAD_API=${_DRIVE_UPLOAD_API},DRIVE_SCOPE=${_DRIVE_SCOPE},DRIVE_PRACTICE_CATEGORY=${_DRIVE_PRACTICE_CATEGORY},SLACK_ALERT_CHANNEL_ID=${_SLACK_ALERT_CHANNEL_ID}'
+      # ORIGIN is adapter-node's own documented fix for a real gap: "HTTP
+      # doesn't give SvelteKit a reliable way to know the URL that is
+      # currently being requested" behind a reverse proxy that terminates
+      # TLS (exactly Cloud Run's setup - it forwards to the container over
+      # plain HTTP). Without this, `url.origin` inside a request handler can
+      # resolve with the wrong scheme (http instead of https), which
+      # src/routes/api/cam-generate/+server.js's getWasmBinary() actually
+      # depends on to self-fetch occt-import-js's WASM binary - a wrong
+      # origin there would silently break every AutoCAM generation on this
+      # deployment. Reuses the same real public URL already baked into the
+      # client bundle as PUBLIC_APP_ORIGIN/PUBLIC_SITE_URL above.
+      - '--set-env-vars=ORIGIN=${_PUBLIC_APP_ORIGIN},SUPABASE_URL=${_PUBLIC_SUPABASE_URL},SENTRY_DSN=${_PUBLIC_SENTRY_DSN},DRIVE_API=${_DRIVE_API},DRIVE_UPLOAD_API=${_DRIVE_UPLOAD_API},DRIVE_SCOPE=${_DRIVE_SCOPE},DRIVE_PRACTICE_CATEGORY=${_DRIVE_PRACTICE_CATEGORY},SLACK_ALERT_CHANNEL_ID=${_SLACK_ALERT_CHANNEL_ID}'
 
 images:
   - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
