@@ -923,6 +923,17 @@ export function generateRoutingGcode(contours, params = {}) {
     lines.push('(this program can select for you; it has to be set interactively, right before.)');
   } else {
     lines.push('G54 (work offset - verify before running)');
+    // Defensive only - this program never activates a canned cycle, cutter
+    // compensation, or a tool length offset, so these cancels are a no-op
+    // for anything IT does. The real reason to still emit them: a shared
+    // shop router runs more than just this app's output over its lifetime,
+    // and a DIFFERENT prior program leaving one of these modes active is a
+    // real, documented cause of a next program misbehaving - cheap
+    // insurance against inherited state this program doesn't control.
+    // LinuxCNC only - not added for WinCNC, since (like G17 and M30
+    // elsewhere in this file) these aren't confirmed against WinCNC's own
+    // manual and this file only emits WinCNC codes it has actually verified.
+    lines.push('G80 G40 G49 (cancel canned cycle / cutter comp / tool length offset - defensive, in case a prior program on this machine left one active)');
   }
 
   const hasSequence = Array.isArray(params.toolSequence) && params.toolSequence.length > 0;
