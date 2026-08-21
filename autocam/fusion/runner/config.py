@@ -43,6 +43,16 @@ BASE_URL = _read_env_value("BASE_URL") or "http://localhost:3000"
 import socket
 RUNNER_ID = _read_env_value("RUNNER_ID") or socket.gethostname() or "fusion-runner"
 
+# Which cam_machines row this physical install actually is (a UUID - look it
+# up with `select id, name from cam_machines;` in the Supabase SQL editor).
+# Sent as `machineId` on every claim request so /api/fusion-runner only
+# hands this Runner jobs meant for THIS machine (or jobs with no specific
+# machine assigned) - required once more than one physical machine is
+# polling at the same time, or a router could grab a job queued for the
+# mill. Optional/blank is fine for a single-machine setup - claiming then
+# falls back to "any queued milling job," same as before this existed.
+RUNNER_MACHINE_ID = _read_env_value("RUNNER_MACHINE_ID") or None
+
 # .overridepath is how this add-in finds a `pip install --target=...`'d
 # copy of `requests` (Fusion's bundled Python has no third-party packages) -
 # see valor6800-autocam-runner-setup.md (repo root), Step 4, for the real

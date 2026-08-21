@@ -299,7 +299,7 @@ def handleServer(temp_dir: str, stop_event: threading.Event):
             response = session.post(
                 f"{BASE_URL}/api/fusion-runner",
                 params={"action": "claim"},
-                json={"runnerId": RUNNER_ID},
+                json={"runnerId": RUNNER_ID, "machineId": RUNNER_MACHINE_ID},
                 timeout=30,
             )
             if stop_event.is_set():
