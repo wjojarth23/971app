@@ -56,17 +56,17 @@ The add-in runs a background polling thread that claims queued `cam_jobs` rows (
 
 ## Installation
 
-Place this folder in Fusion 360's add-in directory:
+Copy this folder into Fusion 360's add-in directory, **renamed to `SpartanRoboticsAutoCAM`** (Fusion requires the folder name, the entry `.py` file, and the `.manifest` file to all match exactly - they're named `SpartanRoboticsAutoCAM.py`/`SpartanRoboticsAutoCAM.manifest`, so the folder has to match or Fusion won't list it as an add-in at all):
 
 ```text
 # macOS
-~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/
+~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/SpartanRoboticsAutoCAM/
 
 # Windows
-%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\
+%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\SpartanRoboticsAutoCAM\
 ```
 
-Then open Fusion 360 → **Utilities → Scripts and Add-Ins → Add-Ins**, select **test**, and click **Run** (enable *Run on Startup* to launch it automatically).
+Then open Fusion 360 → **Utilities → Scripts and Add-Ins → Add-Ins**, select **SpartanRoboticsAutoCAM**, and click **Run** (enable *Run on Startup* to launch it automatically).
 
 ## Configuration
 
@@ -91,7 +91,7 @@ cp .env.example .env
 
 | Path | Purpose |
 | --- | --- |
-| `test.py` | Add-in entry point — API auth, job polling, event dispatch |
+| `SpartanRoboticsAutoCAM.py` | Add-in entry point — API auth, job polling, event dispatch |
 | `config.py` | Global settings (paths, base URL, runner ID, debug mode) |
 | `commands/` | Fusion 360 UI commands / utility operations |
 | `workflows/` | CAM job-processing pipelines |
