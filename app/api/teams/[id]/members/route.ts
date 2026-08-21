@@ -1,0 +1,1 @@
+export { GET, PATCH, DELETE } from "@/lib/api/teams/members";

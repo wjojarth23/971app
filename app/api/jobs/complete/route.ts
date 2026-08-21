@@ -1,0 +1,1 @@
+export { Complete as POST } from "@/lib/api/jobs";
