@@ -26,19 +26,36 @@ function getServiceSupabase() {
   return createClient(url, serviceKey);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Claims the oldest queued milling job for this runner. Two-step: find a
 // candidate, then CAS it - a plain "UPDATE ... ORDER BY ... LIMIT 1" isn't
 // expressible via PostgREST, so this accepts a narrow, harmless race (two
 // runners might both pick the SAME candidate id) that the CAS below always
 // resolves correctly (only one caller's conditional UPDATE ever matches).
-async function claimNextJob(supabase, runnerId) {
-  const { data: candidates, error: findError } = await supabase
+//
+// machineId (optional): a Runner that declares which cam_machines row it
+// physically is (autocam/fusion/runner/config.py's RUNNER_MACHINE_ID) only
+// claims jobs that are either unassigned to a specific machine
+// (cam_jobs.machine_id IS NULL) or assigned to its own - so a router's
+// Runner can't accidentally grab a job queued for the mill, and vice versa,
+// once multiple physical machines are polling at once. A Runner that
+// doesn't declare a machineId (not yet configured, or a genuinely
+// single-machine deployment) falls back to the original claim-anything
+// behavior, so this stays backward compatible rather than a breaking
+// requirement.
+async function claimNextJob(supabase, runnerId, machineId) {
+  let query = supabase
     .from('cam_jobs')
     .select('id')
     .eq('status', 'queued')
     .eq('operation_type', 'milling')
     .order('created_at', { ascending: true })
     .limit(5);
+  if (machineId) {
+    query = query.or(`machine_id.is.null,machine_id.eq.${machineId}`);
+  }
+  const { data: candidates, error: findError } = await query;
   if (findError) throw new Error(`Could not look up queued milling jobs: ${findError.message}`);
   if (!candidates?.length) return null;
 
@@ -75,7 +92,12 @@ export async function POST({ request, url }) {
     if (action === 'claim') {
       const runnerId = String(body?.runnerId || '').trim();
       if (!runnerId) return json({ error: 'runnerId is required' }, { status: 400 });
-      const job = await claimNextJob(supabase, runnerId);
+      // Only trusted as a raw PostgREST .or() filter fragment once validated
+      // as a real UUID shape - unlike .eq(), .or() takes a raw string, so an
+      // unvalidated value here would be a filter-injection risk.
+      const rawMachineId = body?.machineId;
+      const machineId = typeof rawMachineId === 'string' && UUID_RE.test(rawMachineId) ? rawMachineId : null;
+      const job = await claimNextJob(supabase, runnerId, machineId);
       if (!job) return json({ job: null });
       return json({ job });
     }

@@ -79,8 +79,11 @@ cp .env.example .env
 | `API_KEY` | Bearer token matching Spartans Hub's `FUSION_RUNNER_TOKEN` | _(required)_ |
 | `BASE_URL` | Spartans Hub deployment base URL | `http://localhost:3000` |
 | `RUNNER_ID` | Stable identifier for this Runner install, sent on every claim | machine hostname |
+| `RUNNER_MACHINE_ID` | The `cam_machines` row (a UUID) this physical machine is - look it up with `select id, name from cam_machines;` in the Supabase SQL editor | _(blank)_ |
 
 `API_KEY` is stored locally in `.env` (git-ignored). The add-in can also prompt for the key on startup and write it to `.env` for you.
+
+**Running more than one physical machine at once?** Set `RUNNER_MACHINE_ID` on every install. Without it, a Runner claims *any* queued milling job regardless of which machine it was queued for - fine for a single machine, but a router's Runner could grab a job meant for the mill once two machines are polling at the same time. With `RUNNER_MACHINE_ID` set, a Runner only claims jobs that either target its own machine or don't target a specific machine at all.
 
 ## Project Structure
 
