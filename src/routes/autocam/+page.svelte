@@ -578,6 +578,20 @@
     return MACHINE_TYPE_LABEL[operationType] || operationType || '—';
   }
 
+  // Milling jobs are Fusion CAM jobs (autocam/fusion/) - they land in this
+  // same cam_jobs table/list (loadJobs() has no operation_type filter) but
+  // get their own label/color here rather than the raw "milling" string, so
+  // it's clear at a glance which ones went through the external Fusion 360
+  // Runner instead of this app's own in-process turning/routing math.
+  const OPERATION_LABEL = { turning: 'Turning', routing: 'Routing', milling: 'Fusion' };
+  function operationLabel(operationType) {
+    return OPERATION_LABEL[operationType] || operationType || '—';
+  }
+  const OPERATION_TAG_CLASS = { turning: 'tag-season', milling: 'tag-mentor' };
+  function operationTagClass(operationType) {
+    return OPERATION_TAG_CLASS[operationType] || 'tag-971';
+  }
+
   async function addMaterial() {
     if (!newMaterialName.trim()) return;
     const { error } = await supabase.from('cam_materials').insert({ name: newMaterialName.trim() });
@@ -824,7 +838,7 @@
           <option value="">All Operations</option>
           <option value="turning">Turning</option>
           <option value="routing">Routing</option>
-          <option value="milling">Milling</option>
+          <option value="milling">Fusion</option>
         </select>
       </div>
       <div class="form-group">
@@ -933,13 +947,13 @@
               {/if}
             </td>
             <td>
-              <span class="tag {job.operation_type === 'turning' ? 'tag-season' : 'tag-971'}">{job.operation_type}</span>
+              <span class="tag {operationTagClass(job.operation_type)}">{operationLabel(job.operation_type)}</span>
             </td>
             <td>{job.cam_materials?.name || '—'}</td>
             <td>{job.cam_tools?.name || '—'}</td>
             <td>{job.cam_machines?.name || '—'}</td>
             <td>
-              <span class="tag {job.operation_type === 'turning' ? 'tag-season' : 'tag-971'}">{machineTypeLabel(job.operation_type)}</span>
+              <span class="tag {operationTagClass(job.operation_type)}">{machineTypeLabel(job.operation_type)}</span>
             </td>
             <td>
               <span class="status-badge {jobStatusClass(job)}">{camJobStatusLabel(job.status)}</span>
