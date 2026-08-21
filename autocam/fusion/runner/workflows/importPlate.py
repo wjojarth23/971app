@@ -11,8 +11,6 @@ import time
 sys.path.append(OVERRIDE_PATH)
 
 import os
-import requests
-from typing import Optional
 
 
 def _delete_all(coll):
@@ -69,19 +67,6 @@ def _normalize_quantity(value) -> int:
         return 1
 
 
-def _fetch_plate_data(session: requests.Session, plate_id: int) -> Optional[dict]:
-    """Fetch plate data from API and return plate info with length, width, and true_depth."""
-    try:
-        resp = session.get(f"{BASE_URL}/api/plates/{plate_id}", timeout=30)
-        resp.raise_for_status()
-        plate_data = resp.json()
-        if not isinstance(plate_data, dict):
-            return None
-        return plate_data
-    except Exception:
-        return None
-
-
 def start(data, session):
     app = adsk.core.Application.get()
     ui = app.userInterface
@@ -109,23 +94,14 @@ def start(data, session):
         for occ in comp.allOccurrences:
             res = orient_plate_pocket_side_up(occ)
 
-        # Fetch plate data from API to get actual length and width
-        plate_id_raw = data["payload"].get("plate_id") or data["payload"].get("plateId")
-        plate_data = None
-        if plate_id_raw is not None:
-            try:
-                plate_id_int = int(plate_id_raw)
-                plate_data = _fetch_plate_data(session, plate_id_int)
-            except Exception:
-                pass
-
-        
-        if plate_data and isinstance(plate_data, dict):
-            length = float(plate_data.get("length", data["payload"].get("length", 24)))
-            width = float(plate_data.get("width", data["payload"].get("width", 48)))
-        else:
-            length = float(data["payload"].get("length", 24))
-            width = float(data["payload"].get("width", 48))
+        # Plate length/width: /api/fusion-runner's claim response already
+        # resolves these server-side from fusion_plates and embeds them
+        # flat in payload (see buildJobPayload() in
+        # src/routes/api/fusion-runner/+server.js) - no separate
+        # /api/plates/{id} fetch needed (that endpoint never existed on
+        # this app).
+        length = float(data["payload"].get("length", 24))
+        width = float(data["payload"].get("width", 48))
 
         # Get all occurrences before arranging to track what gets placed
         all_occurrences = list(comp.allOccurrences)

@@ -15,15 +15,22 @@ def setupTempDir():
 
 
 def downloadFiles(temp_dir, data, session):
-    for part in data["payload"]["assignments"]:
-        partsData = session.get(f"{BASE_URL}/api/parts/{part['part_id']}")
-        if partsData.status_code != 200:
-            app = adsk.core.Application.get()
-            app.log("Error fetching part data: " + str(partsData.json()))
+    """Downloads every assigned part's STEP file into initial/{part_id}.step.
+
+    /api/fusion-runner's claim response already resolves each assignment's
+    signed download URL server-side (src/routes/api/fusion-runner/+server.js's
+    buildJobPayload()) - no separate /api/parts/{id} lookup needed (that
+    endpoint never existed on this app; Valor's original did the same thing
+    the other way around, fetching each part's URL individually here).
+    """
+    app = adsk.core.Application.get()
+    for part in data.get("payload", {}).get("assignments", []):
+        step_file_url = part.get("step_file_url")
+        if not step_file_url:
+            app.log(f"Skipping part {part.get('part_id')}: no step_file_url in payload")
             continue
-        app = adsk.core.Application.get()
-        app.log(str(partsData.json()))
+        content = requests.get(step_file_url, timeout=30).content
         with open(
             os.path.join(temp_dir, "initial", f"{part['part_id']}.step"), "wb"
         ) as f:
-            f.write(requests.get(partsData.json()["file"]).content)
+            f.write(content)

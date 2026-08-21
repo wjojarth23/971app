@@ -65,12 +65,104 @@ async function claimNextJob(supabase, runnerId, machineId) {
       .update({ status: 'claimed', claimed_by: runnerId, claimed_at: new Date().toISOString() })
       .eq('id', candidate.id)
       .eq('status', 'queued') // compare-and-swap: only one runner can ever win this specific job
-      .select('*, cam_tools(nose_radius, diameter), cam_machines(name, controller, post_processor)')
+      .select('*, cam_tools(nose_radius, diameter), cam_machines(name, controller, post_processor), cam_materials(name)')
       .single();
     if (claimError) continue; // lost the race on this one (or a real error) - try the next candidate
     if (claimed) return claimed;
   }
   return null; // every candidate got claimed by someone else between the select and our CAS attempts
+}
+
+// Assembles the flat `payload` shape autocam/fusion/runner/workflows/*.py
+// already parses (data["payload"][...]) - camPlate.py/camTube.py/
+// importPlate.py were written expecting Valor's original API responses
+// nested this way; matching that shape here means the Python side needed
+// only small, targeted edits instead of a full rewrite. Resolves
+// everything server-side (plate/box-tube dimensions, part STEP file signed
+// URLs) so the Runner never needs a second round-trip to a lookup endpoint
+// that doesn't exist on this app - see autocam/fusion/README.md and the
+// plan this was built from for why those endpoints (`/api/plates/{id}`,
+// `/api/boxTubes/{id}`, `/api/parts/{id}`) were never ported.
+//
+// Returns null (not a thrown error) on any resolution failure - a bad or
+// incomplete plate/box-tube shouldn't break claiming for other jobs. The
+// Runner already treats a missing/empty payload as a normal (if
+// unactionable) job and reports a clear error back via send_job_error()
+// rather than crashing silently.
+async function buildJobPayload(supabase, claimedJob) {
+  const params = claimedJob.params || {};
+  const machineId = claimedJob.machine_id || null;
+  const toolId = claimedJob.tool_id || null;
+
+  if (params.fusionJobKind === 'plate:cam' || params.fusionJobKind === 'plate:arrange') {
+    const plateId = params.plateId;
+    if (!plateId) return null;
+
+    const { data: plate, error: plateError } = await supabase
+      .from('fusion_plates')
+      .select('*, fusion_part_categories(thickness, cam_materials(name))')
+      .eq('id', plateId)
+      .single();
+    if (plateError || !plate) return null;
+
+    const { data: assignments } = await supabase
+      .from('fusion_part_category_assignments')
+      .select('quantity, fusion_parts(id, step_file_name)')
+      .eq('plate_id', plateId);
+
+    const resolvedAssignments = [];
+    for (const assignment of assignments || []) {
+      const part = assignment.fusion_parts;
+      if (!part?.step_file_name) continue;
+      const { data: signed } = await supabase.storage
+        .from('manufacturing-files')
+        .createSignedUrl(part.step_file_name, 300);
+      if (!signed?.signedUrl) continue;
+      resolvedAssignments.push({
+        part_id: part.id,
+        quantity: assignment.quantity ?? 1,
+        step_file_url: signed.signedUrl
+      });
+    }
+
+    return {
+      plate_id: plateId,
+      machine_id: machineId,
+      tool_id: toolId,
+      length: plate.length,
+      width: plate.width,
+      true_depth: plate.true_depth,
+      thickness: plate.fusion_part_categories?.thickness ?? null,
+      material: plate.fusion_part_categories?.cam_materials?.name ?? null,
+      assignments: resolvedAssignments
+    };
+  }
+
+  if (params.fusionJobKind === 'box_tube') {
+    const boxTubeId = params.boxTubeId;
+    if (!boxTubeId) return null;
+
+    const { data: boxTube, error: boxTubeError } = await supabase
+      .from('fusion_box_tubes')
+      .select('*')
+      .eq('id', boxTubeId)
+      .single();
+    if (boxTubeError || !boxTube?.step_file_name) return null;
+
+    const { data: signed } = await supabase.storage
+      .from('manufacturing-files')
+      .createSignedUrl(boxTube.step_file_name, 300);
+    if (!signed?.signedUrl) return null;
+
+    return {
+      box_tube_id: boxTubeId,
+      machine_id: machineId,
+      tool_id: toolId,
+      step_file_url: signed.signedUrl
+    };
+  }
+
+  return null;
 }
 
 export async function POST({ request, url }) {
@@ -99,7 +191,8 @@ export async function POST({ request, url }) {
       const machineId = typeof rawMachineId === 'string' && UUID_RE.test(rawMachineId) ? rawMachineId : null;
       const job = await claimNextJob(supabase, runnerId, machineId);
       if (!job) return json({ job: null });
-      return json({ job });
+      const payload = await buildJobPayload(supabase, job);
+      return json({ job: { ...job, payload } });
     }
 
     const jobId = body?.jobId;

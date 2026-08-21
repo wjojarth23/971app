@@ -141,32 +141,6 @@ def _first_material_name(session: requests.Session, material_ids) -> Optional[st
     return None
 
 
-def _machine_name(session: requests.Session, machine_id) -> Optional[str]:
-    if machine_id is None:
-        return None
-    try:
-        machine_id_int = int(machine_id)
-    except Exception:
-        return None
-
-    resp = session.get(f"{BASE_URL}/api/machines", timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    if not isinstance(data, list):
-        return None
-    for machine in data:
-        if not isinstance(machine, dict):
-            continue
-        try:
-            if int(machine.get("id")) != machine_id_int:
-                continue
-        except Exception:
-            continue
-        name = machine.get("name")
-        return str(name) if name else None
-    return None
-
-
 def _download_machine_post_processor(
     session: requests.Session, machine_id: int, dest_dir: str
 ) -> tuple[dict, str]:
@@ -193,23 +167,20 @@ def _download_machine_post_processor(
 
 
 def _download_box_tube_file(
-    session: requests.Session, tube_id: int, dest_dir: str
+    session: requests.Session, tube_id: int, step_file_url: str, dest_dir: str
 ) -> str:
-    """Download a box tube STEP file from the API and save it locally."""
+    """Download a box tube's STEP file and save it locally.
+
+    step_file_url comes straight from the claim response's payload
+    (/api/fusion-runner's buildJobPayload() already generated a signed
+    Supabase Storage URL server-side) - no /api/boxTubes/{id} lookup, that
+    endpoint never existed on this app.
+    """
     os.makedirs(dest_dir, exist_ok=True)
     app = adsk.core.Application.get()
-    resp = session.get(f"{BASE_URL}/api/boxTubes/{tube_id}", timeout=30)
-    resp.raise_for_status()
-    info = resp.json()
-    if not isinstance(info, dict):
-        raise TypeError(f"Unexpected box tube response: {type(info)}")
-
-    url = info.get("file")
-    if not url:
-        raise ValueError("Box tube response missing 'file' signed URL")
-    app.log(f"Downloading box tube STEP file from URL: {url}")
+    app.log(f"Downloading box tube STEP file from URL: {step_file_url}")
     out_path = os.path.join(dest_dir, f"{tube_id}.step")
-    content = requests.get(url, timeout=30).content
+    content = requests.get(step_file_url, timeout=30).content
     with open(out_path, "wb") as f:
         f.write(content)
 
@@ -261,9 +232,13 @@ def start(data, session):
         except Exception:
             raise ValueError(f"Invalid box_tube_id: {box_tube_id}")
 
-        # Download STEP file from API
+        # Download STEP file - URL already resolved server-side, see
+        # _download_box_tube_file's docstring.
+        step_file_url = _get(payload, "step_file_url")
+        if not step_file_url:
+            raise ValueError("Payload missing required 'step_file_url'")
         try:
-            _download_box_tube_file(session, box_tube_id_int, INITIAL_PATH)
+            _download_box_tube_file(session, box_tube_id_int, step_file_url, INITIAL_PATH)
         except Exception:
             app.log("Failed to download box tube file:\n{}".format(traceback.format_exc()))
             raise
@@ -398,14 +373,12 @@ def start(data, session):
                     )
                 )
 
-        # Fetch machine name if not already set
-        if machine_name is None and machine_id is not None:
-            try:
-                machine_name = _machine_name(session, machine_id)
-            except Exception:
-                app.log(
-                    "Failed to fetch machine name:\n{}".format(traceback.format_exc())
-                )
+        # Machine name, if not already resolved via the post-processor
+        # download above: already present in the claim response's existing
+        # cam_machines join (see /api/fusion-runner's claimNextJob select) -
+        # no separate lookup needed.
+        if machine_name is None:
+            machine_name = (data.get("cam_machines") or {}).get("name")
 
         if tool_library_paths:
             try:
@@ -436,7 +409,14 @@ def start(data, session):
                     "Failed to patch CAM template:\n{}".format(traceback.format_exc())
                 )
 
-        handleTube(patched_template, orientation)
+        # Bug fix: this used to reference `patched_template` directly, a
+        # name only ever assigned inside the `if tool_library_paths:` block
+        # above - a NameError whenever that block was skipped (which was
+        # always, before this Phase A pass, since tool-library downloads
+        # always failed). `template_path` is the variable that's actually
+        # guaranteed to be defined either way (reassigned on success, left
+        # as the base template on failure).
+        handleTube(template_path, orientation)
         DeleteToolpaths()
 
         total_machining_time = None

@@ -12,6 +12,8 @@ Pairs with Spartans Hub's `/autocam/fusion` section and its `/api/fusion-runner`
 
 ---
 
+**Setting this up on your own machine?** [`docs/team-setup-guide.md`](docs/team-setup-guide.md) is the actual step-by-step walkthrough (including a few real gotchas not covered below). **Building real CAM templates for a machine?** [`docs/cam-engineering-plan.md`](docs/cam-engineering-plan.md) covers what's needed and why.
+
 ## Overview
 
 This is Team 971's fork of FRC Team Valor 6800's open-source [AutoCAM Runner](https://github.com/AutoCAM-FRC/Runner), adapted to run against **Spartans Hub** (this repo) instead of the original AutoCAM WebUI. It's the Fusion 360 side of Spartans Hub's **Fusion CAM** section (`/autocam/fusion`) — the real-milling counterpart to the existing pure-JS turning/routing pipeline documented in the repo root's `README.md`.
