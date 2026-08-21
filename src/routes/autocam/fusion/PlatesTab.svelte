@@ -14,12 +14,19 @@
   let loading = true;
   let showAddForm = false;
   let newPlate = { name: '', width: '', length: '', trueDepth: '', categoryId: '' };
+  // Which router each plate's "Queue CAM Job" is currently set to send the
+  // job to - keyed by plate id, one router picked per row. No default: with
+  // more than one real router now eligible (can_run_plates), silently
+  // picking machines[0] means whichever router happens to sort first gets
+  // every job regardless of which one it was actually meant for - a human
+  // has to choose explicitly.
+  let plateMachineSelections = {};
 
   async function load() {
     loading = true;
     try {
       [plates, categories] = await Promise.all([fetchPlates(), fetchPartCategories()]);
-      const { data: machineRows } = await supabase.from('cam_machines').select('*').eq('can_run_plates', true).eq('enabled', true);
+      const { data: machineRows } = await supabase.from('cam_machines').select('*').eq('can_run_plates', true).eq('enabled', true).order('name');
       machines = machineRows || [];
     } catch (e) {
       toastActions.show(e.message || 'Failed to load plates');
@@ -63,7 +70,11 @@
   }
 
   async function handleQueue(plate) {
-    const machineId = machines[0]?.id || null;
+    const machineId = plateMachineSelections[plate.id];
+    if (!machineId) {
+      toastActions.show('Choose a router before queueing');
+      return;
+    }
     try {
       await queueFusionJob({
         fusionJobKind: 'plate:cam',
@@ -148,7 +159,13 @@
             <p class="cam-form-hint">Nested parts: {plate.fusion_part_category_assignments.map((a) => `${a.quantity}x ${a.fusion_parts?.name || 'part'}`).join(', ')}</p>
           {/if}
           <div class="cam-list-actions">
-            <button class="btn btn-secondary btn-sm" on:click={() => handleQueue(plate)}>
+            <select class="form-select router-select" bind:value={plateMachineSelections[plate.id]} aria-label="Router for {plate.name}">
+              <option value={undefined}>Choose a router...</option>
+              {#each machines as m}
+                <option value={m.id}>{m.name}</option>
+              {/each}
+            </select>
+            <button class="btn btn-secondary btn-sm" disabled={!plateMachineSelections[plate.id]} on:click={() => handleQueue(plate)}>
               <Send size={14} /> Queue CAM Job
             </button>
             {#if canManage}
@@ -170,7 +187,8 @@
   .cam-list { display: flex; flex-direction: column; gap: 0.75rem; }
   .cam-list-item { padding: 1rem; }
   .cam-list-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-  .cam-list-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+  .cam-list-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  .router-select { width: auto; min-width: 160px; height: var(--control-height, 2.25rem); }
   .empty-state { color: var(--text-muted, #888); padding: 2rem 0; text-align: center; }
   .cam-form-hint { color: var(--text-muted, #888); font-size: 0.85rem; margin: 0.25rem 0 0; }
 </style>

@@ -15,12 +15,17 @@
   let newBoxTube = { name: '', epic: '', ticket: '', quantity: 1 };
   let stepFile = null;
   let submitting = false;
+  // Which router each box tube's "Queue CAM Job" currently targets - keyed
+  // by box tube id. No default - see the matching comment in
+  // PlatesTab.svelte for why silently picking machines[0] is wrong once
+  // more than one real router is eligible.
+  let boxTubeMachineSelections = {};
 
   async function load() {
     loading = true;
     try {
       boxTubes = await fetchBoxTubes();
-      const { data: machineRows } = await supabase.from('cam_machines').select('*').eq('can_run_box_tubes', true).eq('enabled', true);
+      const { data: machineRows } = await supabase.from('cam_machines').select('*').eq('can_run_box_tubes', true).eq('enabled', true).order('name');
       machines = machineRows || [];
     } catch (e) {
       toastActions.show(e.message || 'Failed to load box tubes');
@@ -77,11 +82,16 @@
       toastActions.show('This box tube has no STEP file attached - add one before queuing');
       return;
     }
+    const machineId = boxTubeMachineSelections[boxTube.id];
+    if (!machineId) {
+      toastActions.show('Choose a router before queueing');
+      return;
+    }
     try {
       await queueFusionJob({
         fusionJobKind: 'box_tube',
         boxTubeId: boxTube.id,
-        machineId: machines[0]?.id || null,
+        machineId,
         requestedBy: user?.id,
         name: `Box Tube CAM: ${boxTube.name}`
       });
@@ -148,7 +158,13 @@
             {#if !boxTube.step_file_name} - <em>no STEP file attached</em>{/if}
           </p>
           <div class="cam-list-actions">
-            <button class="btn btn-secondary btn-sm" on:click={() => handleQueue(boxTube)}>
+            <select class="form-select router-select" bind:value={boxTubeMachineSelections[boxTube.id]} aria-label="Router for {boxTube.name}">
+              <option value={undefined}>Choose a router...</option>
+              {#each machines as m}
+                <option value={m.id}>{m.name}</option>
+              {/each}
+            </select>
+            <button class="btn btn-secondary btn-sm" disabled={!boxTubeMachineSelections[boxTube.id]} on:click={() => handleQueue(boxTube)}>
               <Send size={14} /> Queue CAM Job
             </button>
             {#if canManage}
@@ -170,7 +186,8 @@
   .cam-list { display: flex; flex-direction: column; gap: 0.75rem; }
   .cam-list-item { padding: 1rem; }
   .cam-list-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-  .cam-list-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+  .cam-list-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  .router-select { width: auto; min-width: 160px; height: var(--control-height, 2.25rem); }
   .empty-state { color: var(--text-muted, #888); padding: 2rem 0; text-align: center; }
   .cam-form-hint { color: var(--text-muted, #888); font-size: 0.85rem; margin: 0.25rem 0 0; }
 </style>
