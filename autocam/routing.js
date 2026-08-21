@@ -127,6 +127,7 @@
  */
 
 import { HEADER_WARNING } from './turning.js';
+import { recommendTabCount } from './tabPlanner.js';
 
 function fmt(n, decimals = 4) {
   return Number(n).toFixed(decimals);
@@ -431,7 +432,13 @@ function pathLength(path) {
 }
 
 // Evenly spaces tab zones (as [startDist, endDist] along the path) every
-// `spacing` inches of perimeter, each `width` inches wide.
+// `spacing` inches of perimeter, each `width` inches wide - count comes from
+// recommendTabCount (tabPlanner.js), not a bare floor(perimeter/spacing):
+// that alone can degenerate to a single tab for a perfectly normal-sized
+// part (found on a real ~3"x2.2" plate, perimeter ~10.5", default 6"
+// spacing - floor gives exactly 1), and a single tab is a pivot point, not
+// real holding - see tabPlanner.js's file header for the full reasoning and
+// the matching upper bound (not too many tabs either).
 //
 // The path is a closed loop, so distance 0 and distance `perimeter` are the
 // SAME physical point (the seam). `i === 0` always puts a zone's center
@@ -445,9 +452,9 @@ function pathLength(path) {
 // workholding weak point, not cosmetic. Same wraparound applies (in theory)
 // if a zone's high end overshoots `perimeter`, though centers are spaced
 // starting from 0 so in practice only the first zone ever needs it.
-function buildTabZones(perimeter, width, spacing) {
+function buildTabZones(perimeter, width, spacing, thickness) {
   if (perimeter <= 0) return [];
-  const count = Math.max(1, Math.floor(perimeter / spacing));
+  const count = recommendTabCount(perimeter, { spacing, thickness });
   const zones = [];
   for (let i = 0; i < count; i += 1) {
     const center = (perimeter / count) * i;
@@ -705,7 +712,10 @@ function cutContour(lines, contour, toolRadius, toolParams, safeZ) {
   // contour is relative to tabWidth/tabSpacing - so a small hole's final
   // pass could spend most of its perimeter clamped to targetDepth-tabHeight
   // instead of cutting a clean through-hole.)
-  const tabZones = (!contour.isHole && tabSpacing > 0) ? buildTabZones(perimeter, tabWidth, tabSpacing) : [];
+  // targetDepth doubles as the thickness hint here - for a single-tool
+  // through-cut routing job (the only kind that gets tabs at all - see
+  // above), the outer profile's cut depth IS the material thickness.
+  const tabZones = (!contour.isHole && tabSpacing > 0) ? buildTabZones(perimeter, tabWidth, tabSpacing, targetDepth) : [];
 
   const circle = fitCircle(path);
   const isCircular = circle.maxDeviation <= CIRCLE_FIT_TOLERANCE;
