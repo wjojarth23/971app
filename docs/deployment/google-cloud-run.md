@@ -93,7 +93,24 @@ Done and verified live:
   `PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle today (on Vercel too —
   `src/lib/onshape.js` is imported by three client-side `.svelte` pages). Worth a
   follow-up to proxy Onshape calls server-side and rotate both Onshape keys.
-- Trigger branch pattern still needs to move to `^main$` (see above).
+- **Trigger branch pattern still needs to move to `^main$` (see above) — now confirmed
+  to actually be biting.** Checked directly on 2026-08-21: `spartanshub/main` has had
+  many PRs merged since the `migrate/gcp-cloud-run` branch this trigger still watches
+  (`^migrate/gcp-cloud-run$`), including one adding a whole new route
+  (`/autocam/fusion`, `/api/fusion-runner`). Live site returns 404 for both — `curl -o
+  /dev/null -w '%{http_code}'` against `spartanshub.spartanrobotics.org/autocam/fusion`
+  and `/api/fusion-runner` both give `404`, while `/autocam` (pre-existing route) gives
+  `200`. That's consistent with **no build has fired off a `main` merge since the
+  migration branch itself merged** — every PR merged since then may be sitting unbuilt
+  on the live service. Fix:
+  ```bash
+  gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"
+  ```
+  Then trigger a build for everything that's merged since, either by pushing a new
+  commit to `main` or running the trigger manually:
+  ```bash
+  gcloud builds triggers run rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch=main
+  ```
 - Recommended: turn on GitHub branch protection requiring this Cloud Build check to
   pass before merge.
 

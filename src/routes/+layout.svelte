@@ -651,7 +651,7 @@
   <main class="container page-container auth-loading-shell" aria-busy="true">
     <div class="auth-loading-card">
       <div class="loading-spinner"></div>
-      <p>Checking your session...</p>
+      <p>Loading...</p>
     </div>
   </main>
 {:else}
