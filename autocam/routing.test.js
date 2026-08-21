@@ -476,10 +476,11 @@ describe('generateRoutingGcode - tab zones are never silently dropped when they 
 });
 
 describe('generateRoutingGcode - seam tab is not silently cut to half width (real bug: the first tab zone always centers exactly at path distance 0 - the closed contour\'s seam - so clamping the low end away with no wraparound piece at the other end left that one tab at half its configured width, every job, with no error)', () => {
-  it('a single-tab contour (perimeter/spacing rounds down to 1 zone) still gets tabWidth of material at the seam, split across both ends of the path', () => {
+  it('a low-zone-count contour (perimeter/spacing rounds down near 1) still gets tabWidth of material at the seam, split across both ends of the path', () => {
     const part = [{ points: square(0, 0, 4), isHole: false }];
-    // perimeter ~16" (after tool-radius offset) / spacing 20 -> floor = 0,
-    // clamped to 1 zone, centered at distance 0 - the exact seam case.
+    // perimeter ~16" (after tool-radius offset) / spacing 20 -> round ~= 1,
+    // clamped up to recommendTabCount's minimum of 2 zones - i=0 is always
+    // at distance 0, the exact seam case, regardless of the total count.
     const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.25, tabHeight: 0.06, tabWidth: 0.25, tabSpacing: 20 });
     const tabDepthStr = 'Z-0.1900'; // targetDepth(0.25) - tabHeight(0.06)
     const finalPassStart = result.gcode.split('\n').findIndex((l) => l.includes('pass at Z-0.2500'));
@@ -490,10 +491,14 @@ describe('generateRoutingGcode - seam tab is not silently cut to half width (rea
     expect(tabLines.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('buildTabZones\' wraparound reports 2 zone pieces (not 1) for a seam-centered tab, and cutContour\'s tabZoneCount reflects it', () => {
+  it('buildTabZones\' wraparound reports 2 zone pieces for the seam-centered zone, on top of recommendTabCount\'s minimum-2 floor', () => {
     const part = [{ points: square(0, 0, 4), isHole: false }];
+    // tabSpacing 20 alone would round to 1 zone; recommendTabCount's floor
+    // bumps that to 2 real zones (i=0 seam, i=1 normal) - i=0 then wraps
+    // into 2 pieces, i=1 stays 1 piece, so stats.tabZones (which counts
+    // pieces, not configured zones) reports 3.
     const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.25, tabHeight: 0.06, tabWidth: 0.25, tabSpacing: 20 });
-    expect(result.stats.tabZones).toBe(2);
+    expect(result.stats.tabZones).toBe(3);
   });
 
   it('a non-seam tab (i=1, center away from distance 0) is unaffected - only the seam tab (i=0) splits into 2 pieces', () => {
@@ -816,7 +821,11 @@ describe('cornerFeedScale (corner feed-rate slowdown)', () => {
 
   it('end to end: a right-angle rectangle contour shows both the plunge-rate and cutting-feed corner scaling in the emitted G-code', () => {
     const part = [{ points: square(0, 0, 4), isHole: false }];
-    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.05, targetDepth: 0.05, feedRate: 40, plungeRate: 7 });
+    // tabSpacing: 0 - this test is isolating corner-feed math, not tab
+    // placement; without it, targetDepth 0.05" counts as thin stock to
+    // recommendTabCount's thickness heuristic, which changes zone
+    // placement enough to shift where this specific corner point lands.
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, stepDown: 0.05, targetDepth: 0.05, feedRate: 40, plungeRate: 7, tabSpacing: 0 });
     // Ramp-portion move landing on a 90deg corner: 7 * 0.6 = 4.2
     expect(result.gcode).toContain('F4.20000');
     // Flat cutting-feed move landing on a 90deg corner: 40 * 0.6 = 24
