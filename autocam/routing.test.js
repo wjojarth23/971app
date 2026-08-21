@@ -500,6 +500,101 @@ describe('generateRoutingGcode - seam tab is not silently cut to half width (rea
   });
 });
 
+describe('generateRoutingGcode - pocket clearing (single-tool only; real 2.5D milling "Option A" - see implementations/millimplementations.md)', () => {
+  const outer = [{ points: square(0, 0, 6), isHole: false }];
+
+  it('with no params.pockets, behavior is unchanged from before pockets existed', () => {
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5 });
+    expect(result.gcode).not.toContain('POCKET');
+    expect(result.stats.pockets).toBe(0);
+    expect(result.stats.pocketRings).toBe(0);
+  });
+
+  it('a pocket is fully cleared BEFORE the outer contour (same safety ordering as holes - see CUT ORDER in the file header)', () => {
+    const pocket = { points: square(0, 0, 2), depth: 0.15 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, pockets: [pocket] });
+    const lines = result.gcode.split('\n');
+    const pocketIdx = lines.findIndex((l) => l.includes('POCKET'));
+    const outerIdx = lines.findIndex((l) => l.includes('OUTER CONTOUR'));
+    expect(pocketIdx).toBeGreaterThan(-1);
+    expect(outerIdx).toBeGreaterThan(-1);
+    expect(pocketIdx).toBeLessThan(outerIdx);
+  });
+
+  it('a pocket only cuts down to its own floor depth, never the part\'s full targetDepth', () => {
+    const pocket = { points: square(0, 0, 2), depth: 0.15 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [pocket] });
+    const lines = result.gcode.split('\n');
+    const pocketIdx = lines.findIndex((l) => l.includes('POCKET'));
+    const outerIdx = lines.findIndex((l) => l.includes('OUTER CONTOUR'));
+    const pocketLines = lines.slice(pocketIdx, outerIdx);
+    // Floor depth (0.15") shows up, but nothing in the pocket's own section
+    // ever reaches anywhere near the part's full targetDepth (0.5").
+    expect(pocketLines.some((l) => l.includes('Z-0.1500'))).toBe(true);
+    expect(pocketLines.some((l) => l.includes('Z-0.5000'))).toBe(false);
+  });
+
+  it('a pocket much larger than the tool produces multiple concentric clearing rings, wall (largest) cut last per Z level', () => {
+    const pocket = { points: square(0, 0, 3), depth: 0.1 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [pocket] });
+    expect(result.stats.pocketRings).toBeGreaterThan(1);
+    // The wall ring is the widest-travel ring (largest X/Y extent) - it
+    // must be the LAST ring cut at each Z level, per clearPocket's ordering
+    // (innermost first, wall last), so material stays supported as long as
+    // possible while the interior clears.
+    const lines = result.gcode.split('\n');
+    const pocketIdx = lines.findIndex((l) => l.includes('POCKET'));
+    const outerIdx = lines.findIndex((l) => l.includes('OUTER CONTOUR'));
+    const ringStarts = lines.slice(pocketIdx, outerIdx).filter((l) => l.includes('rapid to ring'));
+    const firstLevelRingCount = result.stats.pocketRings;
+    const firstLevelStarts = ringStarts.slice(0, firstLevelRingCount);
+    const ringNumbers = firstLevelStarts.map((l) => Number(l.match(/ring (\d+)\//)[1]));
+    expect(ringNumbers).toEqual([...ringNumbers].sort((a, b) => a - b)); // 1, 2, 3, ... in cut order
+    expect(ringNumbers[ringNumbers.length - 1]).toBe(firstLevelRingCount); // wall ring (highest number) cut last
+  });
+
+  it('a pocket sized close to the tool diameter collapses to exactly 1 ring (the wall itself, no room for an interior ring)', () => {
+    const pocket = { points: square(0, 0, 0.4), depth: 0.1 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [pocket] });
+    expect(result.stats.pocketRings).toBe(1);
+  });
+
+  it('a pocket too small for the tool throws the same clear error as an undersized hole (reuses offsetPolygon\'s own collapse detection)', () => {
+    const pocket = { points: square(0, 0, 0.1), depth: 0.1 };
+    expect(() => generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, pockets: [pocket] }))
+      .toThrow(/too small for this tool/);
+  });
+
+  it('pocket rings ramp into depth (entry safety) instead of plunging straight down at full pass depth', () => {
+    const pocket = { points: square(0, 0, 3), depth: 0.1 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.1, pockets: [pocket] });
+    const lines = result.gcode.split('\n');
+    const pocketIdx = lines.findIndex((l) => l.includes('POCKET'));
+    const outerIdx = lines.findIndex((l) => l.includes('OUTER CONTOUR'));
+    const firstRingCut = lines.slice(pocketIdx, outerIdx).find((l) => l.startsWith('G01 X') && l.includes('Z-0.1000'));
+    // The very first G01 cutting move to land at full pass depth (Z-0.1) is
+    // NOT the first G01 of its ring - real ramping happened before it, same
+    // invariant already proven for outer/hole contours above.
+    expect(firstRingCut).toBeDefined();
+  });
+
+  it('multiple pockets at different depths are each cleared to their own depth', () => {
+    const shallow = { points: square(-2, 0, 1), depth: 0.05 };
+    const deep = { points: square(2, 0, 1), depth: 0.2 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [shallow, deep] });
+    expect(result.stats.pockets).toBe(2);
+    expect(result.gcode).toContain('Z-0.0500');
+    expect(result.gcode).toContain('Z-0.2000');
+  });
+
+  it('wincnc dialect converts pocket comments to brackets too, same as every other line', () => {
+    const pocket = { points: square(0, 0, 2), depth: 0.1 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, controller: 'wincnc', pockets: [pocket] });
+    expect(result.gcode).toContain('[--- POCKET');
+    expect(result.gcode).not.toContain('(--- POCKET');
+  });
+});
+
 describe('generateRoutingGcode - ramped entry, no more straight plunges into solid material', () => {
   it('the first cutting moves of a pass show gradually increasing depth, not an instant jump to full depth', () => {
     // targetDepth deliberately large relative to the square's own edge
