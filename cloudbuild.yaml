@@ -98,29 +98,28 @@ steps:
       - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
       - '--region=${_REGION}'
       - '--platform=managed'
-      # CRON_NOTIFICATION_TOKEN closes a real fail-open gap:
-      # src/lib/server/cron_auth.js's isAuthorizedCronRequest() returns true
-      # (accepts ANY request) when none of
-      # CRON_SECRET/CRON_TOKEN/CRON_NOTIFICATION_TOKEN are set - without this,
-      # /api/planner/notifications (hit every 15 min by the one active
-      # pg_cron job) and /api/drive-watcher accept unauthenticated requests on
-      # the live service. MUST be the SAME value already stored in the
-      # Supabase Vault secret `planner_notifications_cron_token` (that's what
-      # the live pg_cron job actually sends) - a mismatched or freshly
-      # generated value here would authenticate this endpoint while breaking
-      # the real cron job's own requests. See docs/deployment/google-cloud-run.md
-      # for how to retrieve that exact value and create this secret from it -
-      # deliberately not done as part of this commit (requires reading a
-      # decrypted Vault secret, a real human-in-the-loop step, not something
-      # to automate blindly). Requires the CRON_NOTIFICATION_TOKEN secret to
-      # actually exist in Secret Manager BEFORE this deploys, or this step
-      # fails outright.
+      # CRON_NOTIFICATION_TOKEN TEMPORARILY REMOVED from --set-secrets below
+      # (2026-08-21) to unblock deploys. The secret exists in Secret Manager
+      # now, but the Cloud Run revision service account
+      # (819718873862-compute@developer.gserviceaccount.com) doesn't have
+      # roles/secretmanager.secretAccessor on it yet, so every deploy was
+      # failing with "Permission denied on secret ... CRON_NOTIFICATION_TOKEN".
+      # Re-add `CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest` to
+      # --set-secrets once that's granted:
+      #   gcloud secrets add-iam-policy-binding CRON_NOTIFICATION_TOKEN \
+      #     --member="serviceAccount:819718873862-compute@developer.gserviceaccount.com" \
+      #     --role="roles/secretmanager.secretAccessor"
+      # Until it's back, /api/planner/notifications and /api/drive-watcher are
+      # fail-open (unauthenticated) again - see src/lib/server/cron_auth.js's
+      # isAuthorizedCronRequest() and frc971/spartanshub issue #5. The value
+      # must match Supabase Vault's `planner_notifications_cron_token` (the
+      # real pg_cron job's own token) - see docs/deployment/google-cloud-run.md.
       #
       # Still missing: GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY (low priority - the
       # Drive watcher degrades gracefully without it and nothing schedules it
       # yet) — add to both Secret Manager and this line once a real value is
       # available (see docs/deployment/google-cloud-run.md).
-      - '--set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,TBA_API_KEY=TBA_API_KEY:latest,CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest'
+      - '--set-secrets=SUPABASE_SERVICE_KEY=SUPABASE_SERVICE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,TBA_API_KEY=TBA_API_KEY:latest'
       # ORIGIN is adapter-node's own documented fix for a real gap: "HTTP
       # doesn't give SvelteKit a reliable way to know the URL that is
       # currently being requested" behind a reverse proxy that terminates
