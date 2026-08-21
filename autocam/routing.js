@@ -730,6 +730,86 @@ function cutContour(lines, contour, toolRadius, toolParams, safeZ) {
   return { perimeter, tabZoneCount: tabZones.length };
 }
 
+// 50% of tool diameter - a conservative, common roughing stepover for
+// pocket clearing. A real per-material/per-tool tuning value belongs in
+// job params eventually (same as feedRate/plungeRate today); hardcoded for
+// this first pocket-clearing pass rather than adding an unused knob no UI
+// sets yet.
+const POCKET_STEPOVER_FRACTION = 0.5;
+
+// Concentric inward offsets of `wallPath` (itself already the tool-center
+// path around the pocket's true floor boundary - see clearPocket), each
+// `stepover` closer to the center, until offsetPolygon collapses (throws -
+// same collapse detection checkHoleFits/assignContoursToTools already rely
+// on). rings[0] is the outermost (the wall itself); the last entry is
+// whatever's left nearest the center.
+function buildOffsetRings(wallPath, stepover) {
+  const rings = [wallPath];
+  let current = wallPath;
+  for (;;) {
+    let next;
+    try {
+      next = offsetPolygon(current, -stepover);
+    } catch {
+      break; // no more room for another ring - the rest is cleared by the innermost ring's own tool diameter
+    }
+    rings.push(next);
+    current = next;
+  }
+  return rings;
+}
+
+// Clears the interior of a pocket floor down to `pocket.depth`, leaving the
+// true wall boundary for last. Real 2.5D pocket clearing (FRC AutoCAM
+// milling "Option A" - see implementations/millimplementations.md): the
+// pocket boundary offset inward by tool radius (offsetPolygon, same
+// convention as a HOLE - the tool stays inside the true wall so its edge
+// touches it) is repeatedly re-offset inward by a stepover to build a set
+// of concentric rings (buildOffsetRings). Cut order per Z level is
+// INNERMOST ring first, wall ring LAST - by the time the tool reaches the
+// full-size wall ring, everything inside it is already open air, so that
+// pass is a normal single-stepover-width cut instead of one still carrying
+// the whole pocket's interior load.
+//
+// Reuses emitContourPass for each ring's actual cut - the same linear
+// Z-ramp used for the outer/hole contours in cutContour, which is what
+// keeps this ENTRY-SAFE (see file header): a pocket has no existing open
+// edge to enter from the way an outer profile's perimeter sometimes does,
+// so every single ring, at every Z level, ramps into depth while traveling
+// its own path instead of plunging straight down at a fixed XY point.
+// tabZones is always [] here - tabs are a final-outer-profile workholding
+// concept (see buildTabZones), not applicable to an interior pocket floor.
+//
+// KNOWN LIMITATION: no islands (a boss standing up inside a pocket) - each
+// pocket is treated as one simply-connected floor. Matches
+// millimplementations.md's "Option A: simplest, buildable" scope; revisit
+// if a real part needs one.
+function clearPocket(lines, pocket, toolRadius, params, safeZ) {
+  const { stepDown, feedRate, plungeRate } = params;
+  const wallPath = offsetPolygon(pocket.points, -toolRadius);
+  const rings = buildOffsetRings(wallPath, toolRadius * 2 * POCKET_STEPOVER_FRACTION);
+
+  lines.push(`(--- POCKET, floor depth ${fmt(pocket.depth)}", ${rings.length} clearing ring${rings.length === 1 ? '' : 's'} ---)`);
+
+  let depth = 0;
+  while (depth < pocket.depth - DEPTH_EPSILON) {
+    const prevDepth = depth;
+    depth = Math.min(depth + stepDown, pocket.depth);
+    lines.push(`(-- pocket pass at Z-${fmt(depth)} --)`);
+    for (let i = rings.length - 1; i >= 0; i -= 1) {
+      const ring = rings[i];
+      const ringNumber = rings.length - i; // 1 = innermost (cut first), rings.length = the wall (cut last)
+      lines.push(`G00 X${fmt(ring[0].x)} Y${fmt(ring[0].y)} (rapid to ring ${ringNumber}/${rings.length} start)`);
+      lines.push(`G00 Z${fmt(APPROACH_CLEARANCE)} (rapid to just above material surface)`);
+      lines.push(`G01 Z${fmt(-prevDepth)} F${fmt(plungeRate, 5)} (feed down to this level's starting depth - already-cleared air below the first Z level)`);
+      const rampDistance = Math.min(pathLength(ring) * 0.5, (depth - prevDepth) / MAX_RAMP_SLOPE);
+      emitContourPass(lines, ring, prevDepth, depth, pocket.depth, [], 0, feedRate, plungeRate, rampDistance);
+      lines.push(`G00 Z${fmt(safeZ)} (retract clear before next ring)`);
+    }
+  }
+  return { ringCount: rings.length };
+}
+
 const TOOL_STEP_DEFAULTS = { stepDown: 0.1, tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000 };
 
 /**
@@ -810,6 +890,14 @@ function dwellLine(isWinCNC, seconds, comment) {
  *     spindle start and every mid-program tool-change restart) to let the
  *     spindle actually reach commanded RPM before the first cutting move -
  *     see dwellLine's doc comment.
+ *   Single-tool mode only: params.pockets = [{ points: Array<{x,y}>, depth }, ...]
+ *     - interior floor features (see clearPocket) cleared with the same
+ *     tool, same coordinate space as `contours`, BEFORE any contour is cut
+ *     (same "internal features before the outer profile" safety rule this
+ *     file already applies to holes - see CUT ORDER in the file header).
+ *     Real 2.5D milling ("Option A" - implementations/millimplementations.md):
+ *     the outer profile still comes from `contours` exactly as today: this
+ *     only adds pocket floors at a shallower depth than the through-cut.
  */
 export function generateRoutingGcode(contours, params = {}) {
   if (!Array.isArray(contours) || contours.length === 0) {
@@ -850,6 +938,18 @@ export function generateRoutingGcode(contours, params = {}) {
     if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
     lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
 
+    // Pockets clear first - same "internal features before the outer
+    // profile" reasoning as the hole-before-outer ordering just below, one
+    // step earlier: a pocket floor is an interior feature too, and cutting
+    // it after the outer profile is through risks doing so on a part that's
+    // no longer solidly attached to the stock.
+    const pockets = Array.isArray(params.pockets) ? params.pockets : [];
+    let totalPocketRings = 0;
+    for (const pocket of pockets) {
+      const { ringCount } = clearPocket(lines, pocket, toolDiameter / 2, { stepDown, feedRate, plungeRate }, safeZ);
+      totalPocketRings += ringCount;
+    }
+
     // Real CAM safety practice: internal features (holes/pockets) must be
     // fully machined BEFORE the final outer-profile cut, not after. Once the
     // outer boundary is cut through, the part is only still connected to the
@@ -867,7 +967,7 @@ export function generateRoutingGcode(contours, params = {}) {
     lines.push('M05 (spindle off)');
     lines.push(isWinCNC ? '(PROGRAM END)' : 'M30 (program end)'); // M30 is not a documented WinCNC code - omitted rather than guessed
     gcode = lines.join('\n');
-    stats = { contours: contours.length, tabZones: totalTabZones, targetDepth, toolChanges: 0 };
+    stats = { contours: contours.length, tabZones: totalTabZones, pockets: pockets.length, pocketRings: totalPocketRings, targetDepth, toolChanges: 0 };
   } else {
     // Multi-tool path.
     const toolSequence = params.toolSequence.map((t) => ({ ...TOOL_STEP_DEFAULTS, ...t }));
