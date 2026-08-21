@@ -466,6 +466,40 @@ describe('generateRoutingGcode - tab zones are never silently dropped when they 
   });
 });
 
+describe('generateRoutingGcode - seam tab is not silently cut to half width (real bug: the first tab zone always centers exactly at path distance 0 - the closed contour\'s seam - so clamping the low end away with no wraparound piece at the other end left that one tab at half its configured width, every job, with no error)', () => {
+  it('a single-tab contour (perimeter/spacing rounds down to 1 zone) still gets tabWidth of material at the seam, split across both ends of the path', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }];
+    // perimeter ~16" (after tool-radius offset) / spacing 20 -> floor = 0,
+    // clamped to 1 zone, centered at distance 0 - the exact seam case.
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.25, tabHeight: 0.06, tabWidth: 0.25, tabSpacing: 20 });
+    const tabDepthStr = 'Z-0.1900'; // targetDepth(0.25) - tabHeight(0.06)
+    const finalPassStart = result.gcode.split('\n').findIndex((l) => l.includes('pass at Z-0.2500'));
+    const finalPassLines = result.gcode.split('\n').slice(finalPassStart);
+    const tabLines = finalPassLines.filter((l) => l.includes(tabDepthStr));
+    // Pre-fix, only the [0, width/2] half existed - one clamp point. The
+    // wraparound half near the end of the path must show up too.
+    expect(tabLines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('buildTabZones\' wraparound reports 2 zone pieces (not 1) for a seam-centered tab, and cutContour\'s tabZoneCount reflects it', () => {
+    const part = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.25, tabHeight: 0.06, tabWidth: 0.25, tabSpacing: 20 });
+    expect(result.stats.tabZones).toBe(2);
+  });
+
+  it('a non-seam tab (i=1, center away from distance 0) is unaffected - only the seam tab (i=0) splits into 2 pieces', () => {
+    const rect = [{ x: -2.5, y: -2.5 }, { x: 2.5, y: -2.5 }, { x: 2.5, y: 2.5 }, { x: -2.5, y: 2.5 }, { x: -2.5, y: -2.5 }];
+    const part = [{ points: rect, isHole: false }];
+    // perimeter ~20.9" (after offset) / spacing 10 -> 2 zones: i=0 is
+    // always at the seam (center = (perimeter/count)*0 = 0, regardless of
+    // count) and wraps into 2 pieces; i=1 lands mid-edge and stays 1 piece.
+    // Total reported zones = 3, not 2 - the regression guard that only the
+    // seam-adjacent zone is affected by the wraparound fix.
+    const result = generateRoutingGcode(part, { toolDiameter: 0.25, targetDepth: 0.2, tabHeight: 0.05, tabWidth: 0.25, tabSpacing: 10 });
+    expect(result.stats.tabZones).toBe(3);
+  });
+});
+
 describe('generateRoutingGcode - ramped entry, no more straight plunges into solid material', () => {
   it('the first cutting moves of a pass show gradually increasing depth, not an instant jump to full depth', () => {
     // targetDepth deliberately large relative to the square's own edge
