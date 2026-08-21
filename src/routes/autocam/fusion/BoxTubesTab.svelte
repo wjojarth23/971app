@@ -107,25 +107,25 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="bt-name">Name</label>
-          <input id="bt-name" class="form-control" bind:value={newBoxTube.name} placeholder="e.g. Drivebase Rail" />
+          <input id="bt-name" class="form-input" bind:value={newBoxTube.name} placeholder="e.g. Drivebase Rail" />
         </div>
         <div class="form-group">
           <label class="form-label" for="bt-quantity">Quantity</label>
-          <input id="bt-quantity" type="number" min="1" class="form-control" bind:value={newBoxTube.quantity} />
+          <input id="bt-quantity" type="number" min="1" class="form-input" bind:value={newBoxTube.quantity} />
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="bt-epic">Epic (optional)</label>
-          <input id="bt-epic" class="form-control" bind:value={newBoxTube.epic} />
+          <input id="bt-epic" class="form-input" bind:value={newBoxTube.epic} />
         </div>
         <div class="form-group">
           <label class="form-label" for="bt-ticket">Ticket (optional)</label>
-          <input id="bt-ticket" class="form-control" bind:value={newBoxTube.ticket} />
+          <input id="bt-ticket" class="form-input" bind:value={newBoxTube.ticket} />
         </div>
         <div class="form-group">
           <label class="form-label" for="bt-step">STEP file</label>
-          <input id="bt-step" type="file" accept=".step,.stp" class="form-control" on:change={handleFileChange} />
+          <input id="bt-step" type="file" accept=".step,.stp" class="form-input" on:change={handleFileChange} />
         </div>
       </div>
       <button class="btn btn-primary" disabled={submitting} on:click={handleAdd}>{submitting ? 'Adding...' : 'Add Box Tube'}</button>
@@ -172,4 +172,5 @@
   .cam-list-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
   .cam-list-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .empty-state { color: var(--text-muted, #888); padding: 2rem 0; text-align: center; }
+  .cam-form-hint { color: var(--text-muted, #888); font-size: 0.85rem; margin: 0.25rem 0 0; }
 </style>

@@ -93,7 +93,7 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="part-name">Name</label>
-          <input id="part-name" class="form-control" bind:value={newPart.name} placeholder="e.g. Gearbox Side Plate" />
+          <input id="part-name" class="form-input" bind:value={newPart.name} placeholder="e.g. Gearbox Side Plate" />
         </div>
         <div class="form-group">
           <label class="form-label" for="part-category">Material / Thickness</label>
@@ -106,21 +106,21 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="part-quantity">Quantity</label>
-          <input id="part-quantity" type="number" min="1" class="form-control" bind:value={newPart.quantity} />
+          <input id="part-quantity" type="number" min="1" class="form-input" bind:value={newPart.quantity} />
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="part-epic">Epic (optional)</label>
-          <input id="part-epic" class="form-control" bind:value={newPart.epic} />
+          <input id="part-epic" class="form-input" bind:value={newPart.epic} />
         </div>
         <div class="form-group">
           <label class="form-label" for="part-ticket">Ticket (optional)</label>
-          <input id="part-ticket" class="form-control" bind:value={newPart.ticket} />
+          <input id="part-ticket" class="form-input" bind:value={newPart.ticket} />
         </div>
         <div class="form-group">
           <label class="form-label" for="part-step">STEP file (optional)</label>
-          <input id="part-step" type="file" accept=".step,.stp" class="form-control" on:change={handleFileChange} />
+          <input id="part-step" type="file" accept=".step,.stp" class="form-input" on:change={handleFileChange} />
         </div>
       </div>
       <button class="btn btn-primary" disabled={submitting} on:click={handleAdd}>{submitting ? 'Adding...' : 'Add Part'}</button>
@@ -164,4 +164,5 @@
   .cam-list-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
   .cam-list-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .empty-state { color: var(--text-muted, #888); padding: 2rem 0; text-align: center; }
+  .cam-form-hint { color: var(--text-muted, #888); font-size: 0.85rem; margin: 0.25rem 0 0; }
 </style>
