@@ -107,4 +107,16 @@
   .cam-list-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .empty-state { color: var(--text-muted, #888); padding: 2rem 0; text-align: center; }
   .error-text { color: var(--danger, #e05252); }
+  .cam-form-hint { color: var(--text-muted, #888); font-size: 0.85rem; margin: 0.25rem 0 0; }
+
+  /* Status tags were previously unstyled (no .status-* rule existed anywhere,
+     so every job looked identical regardless of state). Matches Valor's own
+     plate-ready/plate-cooking convention: green when done, gold while
+     actively running, red on failure. */
+  .status-queued { background: var(--muted-bg, #eee); color: var(--text-muted, #888); }
+  .status-claimed { background: rgba(47, 129, 247, 0.14); color: var(--accent, #2f81f7); }
+  .status-processing { background: rgba(230, 221, 94, 0.16); color: #b18f1d; }
+  .status-completed { background: rgba(46, 160, 67, 0.16); color: var(--success, #2ea043); }
+  .status-failed,
+  .status-rejected { background: rgba(248, 81, 73, 0.14); color: var(--danger, #f85149); }
 </style>

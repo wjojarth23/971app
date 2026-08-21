@@ -103,7 +103,7 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="plate-name">Name</label>
-          <input id="plate-name" class="form-control" bind:value={newPlate.name} placeholder="e.g. 12x24 Polycarb Sheet #3" />
+          <input id="plate-name" class="form-input" bind:value={newPlate.name} placeholder="e.g. 12x24 Polycarb Sheet #3" />
         </div>
         <div class="form-group">
           <label class="form-label" for="plate-category">Material / Thickness</label>
@@ -118,15 +118,15 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="plate-width">Width (in)</label>
-          <input id="plate-width" type="number" step="0.01" class="form-control" bind:value={newPlate.width} />
+          <input id="plate-width" type="number" step="0.01" class="form-input" bind:value={newPlate.width} />
         </div>
         <div class="form-group">
           <label class="form-label" for="plate-length">Length (in)</label>
-          <input id="plate-length" type="number" step="0.01" class="form-control" bind:value={newPlate.length} />
+          <input id="plate-length" type="number" step="0.01" class="form-input" bind:value={newPlate.length} />
         </div>
         <div class="form-group">
           <label class="form-label" for="plate-depth">True depth (in)</label>
-          <input id="plate-depth" type="number" step="0.001" class="form-control" bind:value={newPlate.trueDepth} />
+          <input id="plate-depth" type="number" step="0.001" class="form-input" bind:value={newPlate.trueDepth} />
         </div>
       </div>
       <button class="btn btn-primary" on:click={handleAdd}>Add Plate</button>
@@ -172,4 +172,5 @@
   .cam-list-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
   .cam-list-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .empty-state { color: var(--text-muted, #888); padding: 2rem 0; text-align: center; }
+  .cam-form-hint { color: var(--text-muted, #888); font-size: 0.85rem; margin: 0.25rem 0 0; }
 </style>
