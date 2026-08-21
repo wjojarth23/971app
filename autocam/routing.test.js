@@ -332,6 +332,46 @@ describe('generateRoutingGcode - controller dialect (default linuxcnc vs wincnc 
   });
 });
 
+describe('generateRoutingGcode - spindle spin-up dwell (real risk: engaging the cut before the spindle reaches commanded RPM is a stall/broken-tool risk, not theoretical)', () => {
+  const contour = [{ points: square(0, 0, 4), isHole: false }];
+
+  it('defaults to a 2-second dwell (G04 P, linuxcnc) right after the initial spindle-on', () => {
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25 });
+    const lines = result.gcode.split('\n');
+    const m03Index = lines.findIndex((l) => l.includes('M03'));
+    expect(m03Index).toBeGreaterThan(-1);
+    expect(lines[m03Index + 1]).toMatch(/^G04 P2\.0 /);
+  });
+
+  it('uses G04 X (not P) for wincnc - confirmed against WinCNC\'s own manual, P is not the duration word there', () => {
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, controller: 'wincnc' });
+    expect(result.gcode).not.toMatch(/G04 P/);
+    expect(result.gcode).toMatch(/G04 X2\.0 /);
+  });
+
+  it('spindleDwellSeconds: 0 omits the dwell line entirely', () => {
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, spindleDwellSeconds: 0 });
+    expect(result.gcode).not.toContain('G04');
+  });
+
+  it('respects a custom spindleDwellSeconds value', () => {
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, spindleDwellSeconds: 5 });
+    expect(result.gcode).toMatch(/G04 P5\.0 /);
+  });
+
+  it('multi-tool mode dwells after every M03, including mid-program tool-change restarts', () => {
+    const toolSequence = [
+      { toolDiameter: 0.25, toolNumber: 1, label: '1/4in roughing bit' },
+      { toolDiameter: 0.125, toolNumber: 2, label: '1/8in detail bit' }
+    ];
+    const result = generateRoutingGcode(partWithHoles(), { targetDepth: 0.25, toolSequence });
+    const m03Count = (result.gcode.match(/M03/g) || []).length;
+    const dwellCount = (result.gcode.match(/G04 P2\.0/g) || []).length;
+    expect(m03Count).toBeGreaterThan(1); // real tool change actually happened
+    expect(dwellCount).toBe(m03Count); // every spindle-on got its own dwell
+  });
+});
+
 describe('generateRoutingGcode - no duplicate final pass (real bug found in a live-generated file: floating-point drift when stepDown does not evenly divide targetDepth could leave depth a hair under target, running one redundant extra pass at the same printed depth)', () => {
   const outer = [{ points: square(0, 0, 4), isHole: false }];
 

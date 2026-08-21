@@ -283,3 +283,42 @@ describe('generateTurningGcode - flip-turning mode', () => {
     expect(result.gcode).not.toContain('FLIP SETUP');
   });
 });
+
+describe('generateTurningGcode - spindle spin-up dwell (real risk: engaging the cut before the spindle reaches commanded RPM is a stall/broken-tool risk, not theoretical)', () => {
+  it('defaults to a 2-second dwell (G04 P) right after the initial spindle-on', () => {
+    const result = generateTurningGcode(shaftProfile(), baseParams);
+    const lines = result.gcode.split('\n');
+    const m03Index = lines.findIndex((l) => l.includes('M03'));
+    expect(m03Index).toBeGreaterThan(-1);
+    expect(lines[m03Index + 1]).toMatch(/^G04 P2\.0 /);
+  });
+
+  it('spindleDwellSeconds: 0 omits the dwell line entirely', () => {
+    const result = generateTurningGcode(shaftProfile(), { ...baseParams, spindleDwellSeconds: 0 });
+    expect(result.gcode).not.toContain('G04');
+  });
+
+  it('respects a custom spindleDwellSeconds value', () => {
+    const result = generateTurningGcode(shaftProfile(), { ...baseParams, spindleDwellSeconds: 5 });
+    expect(result.gcode).toMatch(/G04 P5\.0 /);
+  });
+
+  it('dwells after the mid-program tool-change restart too (finishTool)', () => {
+    const result = generateTurningGcode(shaftProfile(), {
+      ...baseParams,
+      finishTool: { toolNumber: 2, label: 'finish insert', noseRadius: 0.015 }
+    });
+    const m03Count = (result.gcode.match(/M03/g) || []).length;
+    const dwellCount = (result.gcode.match(/G04 P2\.0/g) || []).length;
+    expect(m03Count).toBe(2); // initial + tool-change restart
+    expect(dwellCount).toBe(2);
+  });
+
+  it('dwells after both setups in flip mode', () => {
+    const result = generateTurningGcode(shaftProfile(), { ...baseParams, setupMode: 'flip', flipAt: 1.0 });
+    const m03Count = (result.gcode.match(/M03/g) || []).length;
+    const dwellCount = (result.gcode.match(/G04 P2\.0/g) || []).length;
+    expect(m03Count).toBe(2); // setup 1 start + setup 2 restart after re-chuck
+    expect(dwellCount).toBe(2);
+  });
+});

@@ -191,7 +191,7 @@ export function offsetTurningProfile(profile, distance) {
  *
  * Returns { passCount, toolChanged }.
  */
-function appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm }, finalLine = '(back to start clearance)') {
+function appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm, spindleDwellSeconds }, finalLine = '(back to start clearance)') {
   const safeDiameter = stockDiameter + 0.1;
   const startZ = profile[0].z + 0.1; // 0.1" of clearance in front of this setup's face
   lines.push(`G00 X${fmt(safeDiameter)} Z${fmt(startZ)} (rapid to start clearance)`);
@@ -229,6 +229,7 @@ function appendSetupBody(lines, profile, { stockDiameter, stepDown, finishAllowa
     if (finishTool.toolNumber) lines.push(`T0${finishTool.toolNumber}0${finishTool.toolNumber} (finish tool - verify tool/offset number)`);
     lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
     lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle back on)`);
+    if (spindleDwellSeconds > 0) lines.push(`G04 P${fmt(spindleDwellSeconds, 1)} (wait for spindle to reach speed)`);
     lines.push('G95 (feed per revolution)');
   }
 
@@ -279,6 +280,10 @@ function radiusAtZ(profile, z) {
  *   surfaceSpeed (SFM - surface feet per minute, Haas convention for G96 in G20/inch mode, default 150), maxRpm (default 2500)
  *   noseRadius (inches, optional), toolNumber (default 1), programNumber (default 1000)
  *   units: 'in' | 'mm' (default 'in')
+ *   spindleDwellSeconds (default 2) - pause after every M03 (initial start,
+ *     every finishTool mid-program restart, and both setups in flip mode)
+ *     to let the spindle actually reach commanded RPM before the first
+ *     cutting move - see the G04 P line this adds.
  *   setupMode: 'single' | 'tailstock' | 'flip' (default 'single')
  *   flipAt (required if setupMode='flip') - inches from the face where the
  *     part gets re-chucked; minGripLength (default 0.25") - safety floor,
@@ -311,7 +316,8 @@ export function generateTurningGcode(profile, params = {}) {
     programNumber = 1000,
     units = 'in',
     setupMode = 'single',
-    finishTool = null
+    finishTool = null,
+    spindleDwellSeconds = 2
   } = params;
 
   if (!stockDiameter || stockDiameter <= 0) throw new Error('stockDiameter is required and must be > 0');
@@ -335,7 +341,7 @@ export function generateTurningGcode(profile, params = {}) {
   profile = profile.map((p) => ({ x: p.x, z: zOrigin - p.z }));
 
   if (setupMode === 'flip') {
-    return generateFlipTurningGcode(profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, finishTool, flipAt: params.flipAt, minGripLength: params.minGripLength ?? 0.25 });
+    return generateFlipTurningGcode(profile, { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, finishTool, spindleDwellSeconds, flipAt: params.flipAt, minGripLength: params.minGripLength ?? 0.25 });
   }
 
   const lines = [...HEADER_WARNING, ''];
@@ -347,6 +353,7 @@ export function generateTurningGcode(profile, params = {}) {
   lines.push(`T0${toolNumber}0${toolNumber} (tool change - ${finishTool ? 'rough tool - ' : ''}verify tool/offset number)`);
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
   lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle on)`);
+  if (spindleDwellSeconds > 0) lines.push(`G04 P${fmt(spindleDwellSeconds, 1)} (wait for spindle to reach speed)`);
   lines.push('G95 (feed per revolution)');
 
   if (setupMode === 'tailstock') {
@@ -361,7 +368,7 @@ export function generateTurningGcode(profile, params = {}) {
 
   const { passCount, toolChanged } = appendSetupBody(
     lines, profile,
-    { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm },
+    { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm, spindleDwellSeconds },
     'M05 (back to start clearance, spindle off)'
   );
 
@@ -392,7 +399,7 @@ export function generateTurningGcode(profile, params = {}) {
  * original face) - see generateTurningGcode above.
  */
 function generateFlipTurningGcode(profile, params) {
-  const { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, finishTool, flipAt, minGripLength } = params;
+  const { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, surfaceSpeed, maxRpm, noseRadius, toolNumber, programNumber, units, finishTool, spindleDwellSeconds, flipAt, minGripLength } = params;
 
   if (!flipAt || flipAt <= 0) {
     throw new Error('flipAt (inches from the face, where the part gets re-chucked) is required for setupMode "flip"');
@@ -437,9 +444,10 @@ function generateFlipTurningGcode(profile, params) {
   lines.push(`T0${toolNumber}0${toolNumber} (tool change - ${finishTool ? 'rough tool - ' : ''}verify tool/offset number)`);
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
   lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle on)`);
+  if (spindleDwellSeconds > 0) lines.push(`G04 P${fmt(spindleDwellSeconds, 1)} (wait for spindle to reach speed)`);
   lines.push('G95 (feed per revolution)');
 
-  const bodyParams = { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm };
+  const bodyParams = { stockDiameter, stepDown, finishAllowance, feedRough, feedFinish, noseRadius, finishTool, surfaceSpeed, maxRpm, spindleDwellSeconds };
   const { passCount: pass1, toolChanged: toolChanged1 } = appendSetupBody(lines, setup1Profile, bodyParams);
 
   lines.push('M05 (spindle off)');
@@ -456,6 +464,7 @@ function generateFlipTurningGcode(profile, params) {
   lines.push(`T0${toolNumber}0${toolNumber} (tool change - ${finishTool ? 'rough tool - ' : ''}verify tool/offset number)`);
   lines.push(`G50 S${maxRpm} (clamp max spindle RPM for constant surface speed)`);
   lines.push(`G96 S${surfaceSpeed} M03 (constant surface speed, SFM, spindle back on)`);
+  if (spindleDwellSeconds > 0) lines.push(`G04 P${fmt(spindleDwellSeconds, 1)} (wait for spindle to reach speed)`);
   lines.push('G95 (feed per revolution)');
 
   const { passCount: pass2, toolChanged: toolChanged2 } = appendSetupBody(lines, setup2Profile, bodyParams, 'M05 (back to start clearance, spindle off)');
