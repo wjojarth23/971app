@@ -749,6 +749,26 @@ function pauseLine(isWinCNC, promptText) {
   return isWinCNC ? `G4 (${promptText})` : `M00 (${promptText})`;
 }
 
+// SPINDLE SPIN-UP DWELL - real bug this fixes: every M03 (spindle on) was
+// immediately followed by cutting/positioning moves with no wait at all,
+// trusting the spindle to already be at speed. A real spindle/VFD takes a
+// real, non-zero time to accelerate from stopped to its commanded RPM
+// (commonly a couple of seconds for router-class spindles) - engaging the
+// cut before that finishes is a genuine stall/broken-tool risk, not a
+// theoretical one. G04 is a real dwell command, universally supported, but
+// which WORD carries the duration is dialect-specific and NOT the same
+// letter as LinuxCNC's - confirmed against WinCNC's own manual (not
+// assumed, same standard as every other WinCNC quirk in this file):
+// LinuxCNC/Fanuc-style uses G04 P<seconds>; WinCNC uses G04 X<seconds> (P
+// isn't the duration argument there at all - see WinCNC's HD Series manual,
+// "Dwell - G4 X# ... stops movement for the time specified by the X value
+// in seconds"). Getting this backwards on a WinCNC machine wouldn't dwell
+// at all - it would likely be parsed as an unrecognized/no-op argument.
+function dwellLine(isWinCNC, seconds, comment) {
+  const word = isWinCNC ? 'X' : 'P';
+  return `G04 ${word}${fmt(seconds, 1)} (${comment})`;
+}
+
 /**
  * @param {Array<{points: Array<{x,y}>, isHole: boolean}>} contours
  * @param {Object} params
@@ -763,12 +783,16 @@ function pauseLine(isWinCNC, promptText) {
  *   Both modes: targetDepth (required), safeZ (default 0.25), units: 'in' | 'mm' (default 'in')
  *     controller: 'linuxcnc' (default) | 'wincnc' - see file header comment
  *     for the real dialect differences this switches between.
+ *     spindleDwellSeconds (default 2) - pause after every M03 (initial
+ *     spindle start and every mid-program tool-change restart) to let the
+ *     spindle actually reach commanded RPM before the first cutting move -
+ *     see dwellLine's doc comment.
  */
 export function generateRoutingGcode(contours, params = {}) {
   if (!Array.isArray(contours) || contours.length === 0) {
     throw new Error('Routing needs at least one closed contour');
   }
-  const { targetDepth, safeZ = 0.25, units = 'in', controller = 'linuxcnc' } = params;
+  const { targetDepth, safeZ = 0.25, units = 'in', controller = 'linuxcnc', spindleDwellSeconds = 2 } = params;
   if (!targetDepth || targetDepth <= 0) throw new Error('targetDepth is required and must be > 0');
   const isWinCNC = controller === 'wincnc';
 
@@ -800,6 +824,7 @@ export function generateRoutingGcode(contours, params = {}) {
     const { toolDiameter, stepDown = 0.1, tabWidth = 0.25, tabHeight = 0.06, tabSpacing = 6, feedRate = 40, plungeRate = 15, spindleSpeed = 16000 } = params;
     if (!toolDiameter || toolDiameter <= 0) throw new Error('toolDiameter is required and must be > 0');
     lines.push(`S${spindleSpeed} M03 (spindle on)`);
+    if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
     lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
 
     // Real CAM safety practice: internal features (holes/pockets) must be
@@ -864,6 +889,7 @@ export function generateRoutingGcode(contours, params = {}) {
           if (currentToolIndex === -1) {
             lines.push(`(--- TOOL 1: ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` (T${tool.toolNumber})` : ''} - load before starting ---)`);
             lines.push(`S${tool.spindleSpeed} M03 (spindle on)`);
+            if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
             lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
           } else {
             toolChanges += 1;
@@ -871,6 +897,7 @@ export function generateRoutingGcode(contours, params = {}) {
             lines.push('M05 (spindle off)');
             lines.push(pauseLine(isWinCNC, `TOOL CHANGE: load ${tool.label || `${fmt(tool.toolDiameter, 3)}" tool`}${tool.toolNumber ? ` - T${tool.toolNumber}` : ''}, then RE-TOUCH OFF Z0 before resuming - no automatic tool length compensation assumed`));
             lines.push(`S${tool.spindleSpeed} M03 (spindle back on)`);
+            if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
             lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
           }
           currentToolIndex = toolIndex;
