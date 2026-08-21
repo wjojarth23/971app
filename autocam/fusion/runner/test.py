@@ -89,6 +89,14 @@ def _process_job(job: dict, session: requests.Session) -> None:
     except Exception:
         _queue_log(f"Failed to mark job as processing:\n{traceback.format_exc()}")
 
+    if kind in ("plate:cam", "plate:arrange"):
+        # Both plate workflows import from payload["assignments"] before
+        # doing anything else - downloadFiles() has to run first, or
+        # importFiles() finds nothing at INITIAL_PATH/{part_id}.step.
+        # box_tube doesn't go through this path: camTube.py downloads its
+        # own single STEP file directly from payload["step_file_url"].
+        setupTemp.downloadFiles(TEMP_PATH, job, session)
+
     if kind == "plate:cam":
         camPlate.start(job, session)
     elif kind == "box_tube":

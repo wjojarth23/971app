@@ -204,32 +204,6 @@ def _first_material_name(session: requests.Session, material_ids) -> Optional[st
     return None
 
 
-def _machine_name(session: requests.Session, machine_id) -> Optional[str]:
-    if machine_id is None:
-        return None
-    try:
-        machine_id_int = int(machine_id)
-    except Exception:
-        return None
-
-    resp = session.get(f"{BASE_URL}/api/machines", timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    if not isinstance(data, list):
-        return None
-    for machine in data:
-        if not isinstance(machine, dict):
-            continue
-        try:
-            if int(machine.get("id")) != machine_id_int:
-                continue
-        except Exception:
-            continue
-        name = machine.get("name")
-        return str(name) if name else None
-    return None
-
-
 def _download_machine_post_processor(
     session: requests.Session, machine_id: int, dest_dir: str
 ) -> tuple[dict, str]:
@@ -257,19 +231,6 @@ def _download_machine_post_processor(
             f.write(content)
 
     return info, out_path
-
-
-def _fetch_plate_data(session: requests.Session, plate_id: int) -> Optional[dict]:
-    """Fetch plate data from API and return plate info with length, width, true_depth, and category."""
-    try:
-        resp = session.get(f"{BASE_URL}/api/plates/{plate_id}", timeout=30)
-        resp.raise_for_status()
-        plate_data = resp.json()
-        if not isinstance(plate_data, dict):
-            return None
-        return plate_data
-    except Exception:
-        return None
 
 
 def start(data, session):
@@ -317,25 +278,17 @@ def start(data, session):
             [child.get("quantity", 1) for child in assignments],
         )
 
-        # Fetch plate data from API to get actual length, width, and true_depth
-        plate_id_raw = _get(payload, "plate_id", "plateId")
-        plate_data = None
-        if plate_id_raw is not None:
-            try:
-                plate_id_int = int(plate_id_raw)
-                plate_data = _fetch_plate_data(session, plate_id_int)
-            except Exception:
-                pass
-
-        # Use plate data from API if available, otherwise fall back to payload or defaults
-        if plate_data and isinstance(plate_data, dict):
-            length = float(plate_data.get("length", _get(payload, "length", default=24)))
-            width = float(plate_data.get("width", _get(payload, "width", default=48)))
-            true_depth = float(plate_data.get("true_depth", _get(payload, "true_depth", "trueDepth", default=0.125)))
-        else:
-            length = float(_get(payload, "length", default=24))
-            width = float(_get(payload, "width", default=48))
-            true_depth = float(_get(payload, "true_depth", "trueDepth", default=0.125))
+        # Plate dimensions: /api/fusion-runner's claim response already
+        # resolves these server-side from fusion_plates (see
+        # buildJobPayload() in src/routes/api/fusion-runner/+server.js) and
+        # embeds them flat in payload - no separate /api/plates/{id} fetch
+        # needed (that endpoint never existed on this app). Falls back to
+        # payload-provided or default values only if the server genuinely
+        # couldn't resolve the plate (buildJobPayload() returns a payload
+        # missing these keys rather than failing the whole claim).
+        length = float(_get(payload, "length", default=24))
+        width = float(_get(payload, "width", default=48))
+        true_depth = float(_get(payload, "true_depth", "trueDepth", default=0.125))
 
         AutoArrange(length, width)
 
@@ -540,14 +493,12 @@ def start(data, session):
                     )
                 )
 
-        # Fetch machine name if not already set
-        if machine_name is None and machine_id is not None:
-            try:
-                machine_name = _machine_name(session, machine_id)
-            except Exception:
-                app.log(
-                    "Failed to fetch machine name:\n{}".format(traceback.format_exc())
-                )
+        # Machine name, if not already resolved via the post-processor
+        # download above: already present in the claim response's existing
+        # cam_machines join (see /api/fusion-runner's claimNextJob select) -
+        # no separate lookup needed.
+        if machine_name is None:
+            machine_name = (data.get("cam_machines") or {}).get("name")
 
         if tool_library_paths:
             try:
@@ -578,20 +529,16 @@ def start(data, session):
                     "Failed to patch CAM template:\n{}".format(traceback.format_exc())
                 )
 
-        # Use category thickness (nominal part thickness) from plate data for the depth parameter
-        # This allows the offset calculation (true_depth - thickness) to account for
-        # the difference between actual stock thickness and nominal part thickness
-        if plate_data:
-            category = plate_data.get("category", {})
-            thickness = float(category.get("thickness", true_depth))
-        else:
-            thickness = float(
-                _get(
-                    payload,
-                    "thickness",
-                    default=_get(payload, "true_depth", "trueDepth", default=0.125),
-                )
+        # Category thickness (nominal part thickness, for the offset
+        # calculation true_depth - thickness) - same server-resolved payload
+        # field as length/width/true_depth above.
+        thickness = float(
+            _get(
+                payload,
+                "thickness",
+                default=_get(payload, "true_depth", "trueDepth", default=0.125),
             )
+        )
 
         SetupGenerator(
             machine_name or _get(payload, "machine"),
