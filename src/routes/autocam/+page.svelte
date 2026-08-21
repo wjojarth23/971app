@@ -676,6 +676,9 @@
 <div class="page-header">
   <h1><Cpu size={28} /> AutoCAM</h1>
   <div class="page-actions">
+    <a class="btn btn-secondary" href="/autocam/fusion">
+      <Layers size={16} /> Fusion CAM
+    </a>
     {#if canManageProfiles}
       <button class="btn btn-secondary" on:click={() => (showProfilesPanel = !showProfilesPanel)}>
         <Settings size={16} /> {showProfilesPanel ? 'Hide' : 'Manage'} Profiles
@@ -689,7 +692,7 @@
     </button>
   </div>
 </div>
-<p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Milling isn't implemented yet (see autocam/docs/millimplementations.md).</p>
+<p class="page-subtitle">Upload a STEP file — or link an existing part that already has one — and get {CAM_GCODE_FORMAT.toUpperCase()} G-code back immediately for turning (lathe) or routing. Real 3-axis milling runs through a separate pipeline - see <a href="/autocam/fusion">Fusion CAM</a> above, which drives Fusion 360's own CAM engine via an external Runner.</p>
 
 {#if !loading && materials.length === 0 && tools.length === 0 && machines.length === 0}
   <div class="card setup-warning">
@@ -1021,7 +1024,7 @@
             <div class="source-toggle" id="job-operation">
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'turning'} class:btn-secondary={newJobOperation !== 'turning'} on:click={() => (newJobOperation = 'turning')}>Turning</button>
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'routing'} class:btn-secondary={newJobOperation !== 'routing'} on:click={() => (newJobOperation = 'routing')}>Routing</button>
-              <button class="btn btn-sm btn-secondary" disabled title="Not implemented yet - see autocam/docs/millimplementations.md">Milling</button>
+              <button class="btn btn-sm btn-secondary" disabled title="Not available in this synchronous flow - use Fusion CAM (top of this page) for real 3-axis milling via Fusion 360">Milling</button>
             </div>
           </div>
           <div class="form-group">

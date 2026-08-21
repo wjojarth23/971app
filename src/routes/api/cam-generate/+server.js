@@ -136,11 +136,18 @@ export async function POST({ request, url }) {
       return json({ success: false, error: `Job is already ${job.status}, not generating again` }, { status: 409 });
     }
     if (job.operation_type === 'milling') {
+      // Real milling now exists, just not through this synchronous
+      // turning/routing endpoint - see autocam/fusion/ (the Fusion-360-
+      // backed pipeline, /autocam/fusion in the UI). A milling job created
+      // through the old queueCamJobForPart/queueCamJobFromUpload flow was
+      // never routed to a Runner and never will be from here; reject
+      // loudly rather than leaving it stuck at "queued" forever - same
+      // reasoning as every other terminal-status write in this file.
       await supabase.from('cam_jobs').update({
         status: 'rejected',
-        errors: ['Milling is not implemented yet - see autocam/docs/millimplementations.md']
+        errors: ['Milling does not run through this endpoint - use Fusion CAM (/autocam/fusion) instead']
       }).eq('id', jobId);
-      return json({ success: false, error: 'Milling is not implemented yet' }, { status: 400 });
+      return json({ success: false, error: 'Milling does not run through this endpoint - use Fusion CAM instead' }, { status: 400 });
     }
     if (!job.step_file_name) {
       await markFailed(supabase, jobId, 'No STEP file attached to this job');
