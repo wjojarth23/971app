@@ -283,18 +283,52 @@
     showNewJobModal = false;
   }
 
+  // Selecting a material pulls in its conservative starting feeds/speeds
+  // (cam_materials.default_params, namespaced {turning: {...}, routing:
+  // {...}} since one material can apply to either operation and the two
+  // generators happen to share the param name `stepDown` for physically
+  // different quantities - see migrations/20260821_cam_material_defaults.sql).
+  // A material with nothing set for the current operation (e.g. plywood in
+  // turning mode - nobody turns plywood) is a silent no-op, same as picking
+  // a machine profile with an empty default_params already is.
+  function applyMaterialDefaults(materialId) {
+    const material = materials.find((m) => String(m.id) === String(materialId));
+    const defaults = material?.default_params?.[newJobOperation];
+    if (!defaults) return;
+    if (newJobOperation === 'turning') {
+      turningParams = { ...turningParams, ...defaults };
+    } else {
+      routingParams = { ...routingParams, ...defaults };
+    }
+  }
+
+  // Same as applyMaterialDefaults, for the separate edit-job modal's own
+  // params/operation-type state (editParams/editingJob.operation_type
+  // instead of turningParams|routingParams/newJobOperation).
+  function applyMaterialDefaultsToEdit(materialId) {
+    const material = materials.find((m) => String(m.id) === String(materialId));
+    const defaults = material?.default_params?.[editingJob?.operation_type];
+    if (!defaults) return;
+    editParams = { ...editParams, ...defaults };
+  }
+
   // Selecting a machine profile pulls in its saved defaults so settings
   // don't have to be re-entered every time - the whole point of profiles.
   function applyMachineDefaults(machineId) {
     const machine = machines.find((m) => String(m.id) === String(machineId));
     if (!machine) return;
     newJobOperation = machine.operation_type;
+    if (machine.default_material_id) selectedMaterialId = machine.default_material_id;
+    // Material's generic starting point first, then the machine profile's
+    // own saved defaults layered on top - a machine profile is a more
+    // specific, human-tuned setting than a generic material default, so it
+    // wins on any overlapping key.
+    applyMaterialDefaults(selectedMaterialId);
     if (machine.operation_type === 'turning') {
       turningParams = { ...turningParams, ...(machine.default_params || {}) };
     } else {
       routingParams = { ...routingParams, ...(machine.default_params || {}) };
     }
-    if (machine.default_material_id) selectedMaterialId = machine.default_material_id;
     if (machine.default_tool_id) selectedToolId = machine.default_tool_id;
   }
 
@@ -1151,12 +1185,13 @@
         <div class="form-row">
           <div class="form-group">
             <label class="form-label" for="job-material">Material</label>
-            <select id="job-material" class="form-select" bind:value={selectedMaterialId}>
+            <select id="job-material" class="form-select" bind:value={selectedMaterialId} on:change={() => applyMaterialDefaults(selectedMaterialId)}>
               <option value="">Unspecified</option>
               {#each materials.filter((m) => m.enabled) as m}
                 <option value={m.id}>{m.name}</option>
               {/each}
             </select>
+            <p class="text-muted">Fills in conservative starting feeds/speeds for this material below - still yours to tune.</p>
           </div>
           <div class="form-group">
             <label class="form-label" for="job-tool">Tool</label>
@@ -1270,7 +1305,7 @@
         <div class="form-row">
           <div class="form-group">
             <label class="form-label" for="edit-job-material">Material</label>
-            <select id="edit-job-material" class="form-select" bind:value={editMaterialId}>
+            <select id="edit-job-material" class="form-select" bind:value={editMaterialId} on:change={() => applyMaterialDefaultsToEdit(editMaterialId)}>
               <option value="">Unspecified</option>
               {#each materials.filter((m) => m.enabled) as m}
                 <option value={m.id}>{m.name}</option>
