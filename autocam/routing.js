@@ -432,13 +432,36 @@ function pathLength(path) {
 
 // Evenly spaces tab zones (as [startDist, endDist] along the path) every
 // `spacing` inches of perimeter, each `width` inches wide.
+//
+// The path is a closed loop, so distance 0 and distance `perimeter` are the
+// SAME physical point (the seam). `i === 0` always puts a zone's center
+// exactly there (center = (perimeter/count)*0 = 0) - every time tabs are on,
+// not a rare edge case. A zone centered at the seam needs half its width on
+// each side of it - i.e. split across the [0, w] start of the path AND the
+// [perimeter-w, perimeter] end of it. Previously this just clamped the
+// low side away (`Math.max(0, center - width/2)`) with no compensating
+// piece at the other end, so that first tab was silently cut at HALF its
+// configured width, every single job, with no error or warning - a real
+// workholding weak point, not cosmetic. Same wraparound applies (in theory)
+// if a zone's high end overshoots `perimeter`, though centers are spaced
+// starting from 0 so in practice only the first zone ever needs it.
 function buildTabZones(perimeter, width, spacing) {
   if (perimeter <= 0) return [];
   const count = Math.max(1, Math.floor(perimeter / spacing));
   const zones = [];
   for (let i = 0; i < count; i += 1) {
     const center = (perimeter / count) * i;
-    zones.push([Math.max(0, center - width / 2), Math.min(perimeter, center + width / 2)]);
+    const start = center - width / 2;
+    const end = center + width / 2;
+    if (start < 0) {
+      zones.push([0, Math.min(perimeter, end)]);
+      zones.push([Math.max(0, perimeter + start), perimeter]);
+    } else if (end > perimeter) {
+      zones.push([start, perimeter]);
+      zones.push([0, Math.min(perimeter, end - perimeter)]);
+    } else {
+      zones.push([start, end]);
+    }
   }
   return zones;
 }
