@@ -98,22 +98,27 @@ steps:
       - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$BUILD_ID'
       - '--region=${_REGION}'
       - '--platform=managed'
-      # CRON_NOTIFICATION_TOKEN TEMPORARILY REMOVED from --set-secrets below
-      # (2026-08-21) to unblock deploys. The secret exists in Secret Manager
-      # now, but the Cloud Run revision service account
-      # (819718873862-compute@developer.gserviceaccount.com) doesn't have
-      # roles/secretmanager.secretAccessor on it yet, so every deploy was
-      # failing with "Permission denied on secret ... CRON_NOTIFICATION_TOKEN".
-      # Re-add `CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest` to
-      # --set-secrets once that's granted:
+      # !!! REMINDER: RE-ADD CRON_NOTIFICATION_TOKEN TO --set-secrets BELOW !!!
+      # Commented out (not removed) 2026-08-21 to unblock deploys - the Cloud
+      # Run runtime service account (819718873862-compute@developer.gserviceaccount.com)
+      # does not currently have roles/secretmanager.secretAccessor on this
+      # secret, so including it fails every deploy with "Permission denied on
+      # secret ... CRON_NOTIFICATION_TOKEN". Once that IAM binding is granted:
       #   gcloud secrets add-iam-policy-binding CRON_NOTIFICATION_TOKEN \
       #     --member="serviceAccount:819718873862-compute@developer.gserviceaccount.com" \
       #     --role="roles/secretmanager.secretAccessor"
-      # Until it's back, /api/planner/notifications and /api/drive-watcher are
-      # fail-open (unauthenticated) again - see src/lib/server/cron_auth.js's
-      # isAuthorizedCronRequest() and frc971/spartanshub issue #5. The value
-      # must match Supabase Vault's `planner_notifications_cron_token` (the
-      # real pg_cron job's own token) - see docs/deployment/google-cloud-run.md.
+      # move CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest back into
+      # the --set-secrets line below (see git history for the exact string).
+      #
+      # What it's actually for: src/lib/server/cron_auth.js's
+      # isAuthorizedCronRequest() is fail-open - it accepts ANY request when
+      # none of CRON_SECRET/CRON_TOKEN/CRON_NOTIFICATION_TOKEN are set. Without
+      # it, /api/planner/notifications (hit every 15 min by the one active
+      # pg_cron job) and /api/drive-watcher accept unauthenticated requests on
+      # the live service - a real, currently-open security gap, tracked as
+      # frc971/spartanshub issue #5. The secret's value must match Supabase
+      # Vault's `planner_notifications_cron_token` (the real pg_cron job's own
+      # token), not a freshly generated one - see docs/deployment/google-cloud-run.md.
       #
       # Still missing: GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY (low priority - the
       # Drive watcher degrades gracefully without it and nothing schedules it
