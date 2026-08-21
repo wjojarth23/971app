@@ -1,0 +1,1 @@
+export { SingleGET as GET, DELETE } from "@/lib/api/jobs";
