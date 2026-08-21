@@ -330,6 +330,15 @@ describe('generateRoutingGcode - controller dialect (default linuxcnc vs wincnc 
     expect(wincnc.gcode).toContain('[PROGRAM END]');
     expect(linuxcnc.gcode).toContain('M30 (program end)');
   });
+
+  it('linuxcnc header defensively cancels canned cycle/cutter comp/tool length offset (in case a prior program on the shared machine left one active); wincnc omits it, unconfirmed against WinCNC\'s own manual', () => {
+    const linuxcnc = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25 });
+    expect(linuxcnc.gcode).toMatch(/^G80 G40 G49\b/m);
+    const wincnc = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, controller: 'wincnc' });
+    expect(wincnc.gcode).not.toContain('G80');
+    expect(wincnc.gcode).not.toContain('G40');
+    expect(wincnc.gcode).not.toContain('G49');
+  });
 });
 
 describe('generateRoutingGcode - spindle spin-up dwell (real risk: engaging the cut before the spindle reaches commanded RPM is a stall/broken-tool risk, not theoretical)', () => {
