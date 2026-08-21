@@ -19,9 +19,11 @@ reading code.
 - **AutoCAM**: automatic STEP → G-code generation for lathe turning and
   router routing jobs - either manually queued from `/autocam` or
   auto-triggered by dropping a CAD file into a machine's watched Google
-  Drive folder. No external CAM software involved (pure JS geometry math);
-  milling is a recognized job type but not yet implemented. See the
-  **AutoCAM** section below for the code-level detail.
+  Drive folder. No external CAM software involved (pure JS geometry math).
+  Real 3-axis milling (contoured toolpaths a flat 2.5D profile can't
+  represent) is a separate sub-section, **Fusion CAM** (`/autocam/fusion`),
+  backed by an actual Fusion 360 Runner rather than in-process math. See the
+  **AutoCAM** section below for the code-level detail on both.
 - **Scouting**: pit scouting forms, match/data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
@@ -122,13 +124,25 @@ own docs are all together in one place instead of scattered across
   not arbitrarily.
 - **`autocam/docs/`** - AutoCAM-specific planning/architecture docs
   (`drive-watcher-folder-layout.md`, `drive-watcher-implementation.md`, etc.).
-- **`autocam/runner/README.md`** - the still-deferred milling Runner concept
-  (turning/routing are synchronous in-process math; milling would need an
-  actual external Fusion 360 Runner, not built). See
-  `valor6800-autocam-runner-setup.md` (repo root) for a real, evaluated
-  candidate for that Runner - Team Valor 6800's open-source AutoCAM Fusion
-  360 add-in - including how it would (or wouldn't) connect to this app's
-  own `cam_jobs` schema.
+- **`autocam/runner/README.md`** - the milling Runner concept (turning/routing
+  are synchronous in-process math; milling needs an actual external Fusion
+  360 Runner) - now built as **Fusion CAM**, see the next bullet.
+- **`autocam/fusion/`** (reachable from `/autocam/fusion`) - **Fusion CAM**:
+  a native SvelteKit/Supabase port of Team Valor 6800's open-source AutoCAM
+  (`AutoCAM-FRC/Website` + `AutoCAM-FRC/Runner`, MIT licensed), fills the
+  milling gap the rest of AutoCAM deliberately doesn't solve (real 3-axis
+  contoured toolpaths via Fusion 360's own CAM engine, not flat 2.5D
+  profiles). Backed by new `fusion_parts`/`fusion_plates`/`fusion_box_tubes`/
+  `fusion_part_categories` tables plus the reused `cam_jobs`/`cam_machines`/
+  `cam_tools`/`cam_materials` tables and a claim/complete/fail endpoint at
+  `src/routes/api/fusion-runner/+server.js`. `autocam/fusion/runner/` is the
+  forked Fusion 360 add-in that actually runs CAM; unmodified copies of both
+  original repos are vendored at `autocam/fusion/_upstream/` and
+  `autocam/fusion/runner/_upstream/` for reference. No Teams/API-key-per-team
+  layer was ported - single shared-secret bearer token for the Runner,
+  Supabase Auth + `canManageCamProfiles` for humans, same as the rest of this
+  app. See `autocam/fusion/README.md` and `valor6800-autocam-runner-setup.md`
+  (repo root) for the full port writeup and the evaluation that led to it.
 - **Route files stay in `src/routes/`** regardless (`src/routes/autocam/+page.svelte`,
   `src/routes/api/cam-generate/+server.js`, `src/routes/api/drive-watcher/+server.js`)
   - SvelteKit determines a route's URL from its file location under
