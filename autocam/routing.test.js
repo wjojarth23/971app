@@ -617,6 +617,57 @@ describe('generateRoutingGcode - pocket clearing (single-tool only; real 2.5D mi
     expect(result.gcode).toContain('[--- POCKET');
     expect(result.gcode).not.toContain('(--- POCKET');
   });
+
+  it('a circular pocket clears with concentric rings too, not the true-arc helical path outer/hole contours get (pockets always ring-clear, by design)', () => {
+    const pocket = { points: circle(0, 0, 1.5), depth: 0.1 };
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [pocket] });
+    expect(result.stats.pocketRings).toBeGreaterThan(1);
+    expect(result.gcode).not.toContain('G02');
+    expect(result.gcode).not.toContain('G03');
+  });
+
+  it('a concave (L-shaped) pocket clears without collapsing or self-intersecting - the notch survives through every successive ring offset', () => {
+    const lShape = [
+      { x: -2, y: -2 }, { x: 2, y: -2 }, { x: 2, y: 0 },
+      { x: 0, y: 0 }, { x: 0, y: 2 }, { x: -2, y: 2 }, { x: -2, y: -2 }
+    ];
+    const result = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [{ points: lShape, depth: 0.15 }] });
+    expect(result.stats.pocketRings).toBeGreaterThan(1);
+    const lines = result.gcode.split('\n');
+    const pocketIdx = lines.findIndex((l) => l.includes('POCKET'));
+    const outerIdx = lines.findIndex((l) => l.includes('OUTER CONTOUR'));
+    // Every ring should still be a real 6-vertex L (5 distinct destination
+    // points + the closing move back to start) - if the notch had collapsed
+    // into a plain rectangle under repeated offsetting, the innermost rings
+    // would show fewer distinct X/Y destinations than the outer ones.
+    const ringStartIdxs = [];
+    for (let i = pocketIdx; i < outerIdx; i += 1) if (lines[i].includes('rapid to ring')) ringStartIdxs.push(i);
+    const firstRingLines = lines.slice(ringStartIdxs[0], ringStartIdxs[1]).filter((l) => l.startsWith('G01 X'));
+    expect(firstRingLines.length).toBe(6);
+  });
+
+  it('a too-narrow pocket for the tool throws the same error a too-small hole does, not a silent bad toolpath', () => {
+    const sliver = [{ x: -2, y: -0.05 }, { x: 2, y: -0.05 }, { x: 2, y: 0.05 }, { x: -2, y: 0.05 }, { x: -2, y: -0.05 }];
+    expect(() => generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, pockets: [{ points: sliver, depth: 0.1 }] }))
+      .toThrow(/too small for this tool/);
+  });
+
+  it('mixed pocket shapes (square, circle, concave L) in the same job all clear correctly together', () => {
+    const lShape = [
+      { x: -2, y: -2 }, { x: 2, y: -2 }, { x: 2, y: 0 },
+      { x: 0, y: 0 }, { x: 0, y: 2 }, { x: -2, y: 2 }, { x: -2, y: -2 }
+    ];
+    const result = generateRoutingGcode(outer, {
+      toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5,
+      pockets: [
+        { points: square(-3, 3, 1), depth: 0.1 },
+        { points: circle(3, 3, 0.8), depth: 0.2 },
+        { points: lShape, depth: 0.15 },
+      ],
+    });
+    expect(result.stats.pockets).toBe(3);
+    expect(result.stats.pocketRings).toBeGreaterThan(3);
+  });
 });
 
 describe('generateRoutingGcode - ramped entry, no more straight plunges into solid material', () => {
