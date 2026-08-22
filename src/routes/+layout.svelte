@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -240,6 +240,7 @@
     cad: '/cad',
     build: '/cad/build',
     purchasing: '/cad/purchasing',
+    docs: '/docs',
     planner: '/planner',
     notescout: '/notescout',
     tasks: '/tasks',
@@ -260,6 +261,7 @@
     cad: Move3d,
     build: Wrench,
     purchasing: Receipt,
+    docs: FileText,
     planner: CalendarDays,
     notescout: Coins,
     tasks: Briefcase,
@@ -280,6 +282,7 @@
     cad: 'CAD',
     build: 'Build',
     purchasing: 'Purchasing',
+    docs: 'Docs',
     planner: 'Planner',
     notescout: 'Note Scouting',
     tasks: 'Tasks',

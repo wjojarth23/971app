@@ -42,6 +42,13 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
+- **Docs** (`docs/`): browses every `*.md` file in the repo (a "finder" -
+  folder tree + search on the left, rendered markdown on the right).
+  Content is bundled at build time via Vite's `import.meta.glob` (raw
+  string import), not read from disk per-request - the production Docker
+  image never gets the raw source tree, only compiled `build/` output, so
+  a request-time `fs.readdir` would find nothing there. Excludes
+  `node_modules` and the vendored `autocam/fusion/**/_upstream` trees.
 - **Integrations**: Onshape (CAD source of truth for parts), Slack (bot
   notifications/DMs, `971bot`), The Blue Alliance (competition data),
   Google Drive (AutoCAM input/output watcher), Sentry (error monitoring),
@@ -172,6 +179,7 @@ own docs are all together in one place instead of scattered across
   scheduling-focused tasks.
 - **`admin/`, `profile/`** - user/permission administration, user profile
   settings.
+- **`docs/`** - repo-wide markdown file browser (see **Features** above).
 - **`api/`** - server endpoints backing the above, plus integration
   webhooks/crons: `api/cam-generate` (synchronous G-code generation),
   `api/drive-watcher` (Drive input-sweep, cron-gated), `api/planner`
