@@ -14,6 +14,7 @@ export function defaultHeaderTabs(navConfig = navigation) {
   if (navConfig?.tabs?.manufacture !== false) tabs.push({ type: 'tab', key: 'manufacture', label: 'Manufacture' });
   if (navConfig?.tabs?.autocam !== false) tabs.push({ type: 'tab', key: 'autocam', label: 'AutoCAM' });
   tabs.push({ type: 'tab', key: 'purchasing', label: 'Purchasing' });
+  tabs.push({ type: 'tab', key: 'docs', label: 'Docs' });
   if (navConfig?.tabs?.kitting !== false) tabs.push({ type: 'tab', key: 'kitting', label: 'Kitting' });
   tabs.push({ type: 'tab', key: 'cad', label: 'CAD' });
   if (navConfig?.tabs?.build !== false) tabs.push({ type: 'tab', key: 'build', label: 'Build' });
