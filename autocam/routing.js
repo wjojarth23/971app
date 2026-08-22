@@ -545,6 +545,20 @@ const MIN_HELIX_TURNS = 2;
 // a cheap way to reduce how bad it is if that assumption turns out wrong.
 const APPROACH_CLEARANCE = 0.02;
 
+// EDGE MARGIN - real shop constraint, not a geometry nicety: work zero
+// (X0 Y0) is set at a corner/edge of the raw stock, and the stock itself is
+// held down with nails/fasteners near that same edge. STEP-extracted part
+// geometry has no idea any of that exists - a part modeled right up against
+// its own local origin, once cut, can put the tool within a hair of X0/Y0 -
+// exactly where the hold-down hardware physically is. Real event: a
+// generated file's outer contour reached X-0.0788", a fraction of an inch
+// past zero, on a machine that zeros (and nails down) at the stock edge.
+// 0.5" is a conservative starting clearance, not a measured/calibrated
+// value for any specific hold-down pattern - real enough to clear a
+// typical nail/screw head with margin, adjustable per job via
+// params.edgeMargin (0 restores the old zero-offset behavior).
+const DEFAULT_EDGE_MARGIN = 0.5;
+
 // Real bug, found from an actual generated file: a roughing loop written as
 // `while (depth < targetDepth) { depth = Math.min(depth + stepDown,
 // targetDepth); ... }` looks like it always lands exactly on targetDepth
@@ -908,14 +922,48 @@ function dwellLine(isWinCNC, seconds, comment) {
  *     Real 2.5D milling ("Option A" - implementations/millimplementations.md):
  *     the outer profile still comes from `contours` exactly as today: this
  *     only adds pocket floors at a shallower depth than the through-cut.
+ *   edgeMargin (default 0.5") - shifts the entire toolpath (every contour
+ *     and pocket) so the closest any cutting move gets to X0/Y0 is this
+ *     far - see DEFAULT_EDGE_MARGIN's doc comment: work zero is set, and
+ *     stock is nailed down, right at that same X0/Y0 corner on a real
+ *     machine. Set to 0 to cut the geometry exactly as extracted, with no
+ *     shift (the old, pre-this-option behavior).
  */
 export function generateRoutingGcode(contours, params = {}) {
   if (!Array.isArray(contours) || contours.length === 0) {
     throw new Error('Routing needs at least one closed contour');
   }
-  const { targetDepth, safeZ = 0.25, units = 'in', controller = 'linuxcnc', spindleDwellSeconds = 2 } = params;
+  const { targetDepth, safeZ = 0.25, units = 'in', controller = 'linuxcnc', spindleDwellSeconds = 2, edgeMargin = DEFAULT_EDGE_MARGIN } = params;
   if (!targetDepth || targetDepth <= 0) throw new Error('targetDepth is required and must be > 0');
+  if (edgeMargin < 0) throw new Error('edgeMargin cannot be negative');
   const isWinCNC = controller === 'wincnc';
+  const hasSequence = Array.isArray(params.toolSequence) && params.toolSequence.length > 0;
+  let pockets = Array.isArray(params.pockets) ? params.pockets : [];
+
+  // Shift every contour and pocket so nothing cuts closer to X0/Y0 than
+  // edgeMargin (plus the tool's own outward reach, so the CUTTING PATH -
+  // not just the raw geometry - actually respects the margin). Uses the
+  // largest tool in play (multi-tool: the biggest diameter in the
+  // sequence) since that tool's reach sets the real worst case regardless
+  // of which one ends up cutting near a given corner.
+  if (edgeMargin > 0) {
+    const toolRadiusForMargin = (hasSequence
+      ? Math.max(...params.toolSequence.map((t) => t.toolDiameter || 0))
+      : (params.toolDiameter || 0)) / 2;
+    let minX = Infinity, minY = Infinity;
+    for (const c of contours) for (const p of c.points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); }
+    for (const pocket of pockets) for (const p of pocket.points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); }
+    if (Number.isFinite(minX) && Number.isFinite(minY)) {
+      const required = edgeMargin + toolRadiusForMargin;
+      const shiftX = required - minX;
+      const shiftY = required - minY;
+      if (shiftX !== 0 || shiftY !== 0) {
+        const shiftPoints = (points) => points.map((p) => ({ x: p.x + shiftX, y: p.y + shiftY }));
+        contours = contours.map((c) => ({ ...c, points: shiftPoints(c.points) }));
+        pockets = pockets.map((pocket) => ({ ...pocket, points: shiftPoints(pocket.points) }));
+      }
+    }
+  }
 
   const lines = [...HEADER_WARNING, ''];
   if (isWinCNC) {
@@ -945,8 +993,9 @@ export function generateRoutingGcode(contours, params = {}) {
     // manual and this file only emits WinCNC codes it has actually verified.
     lines.push('G80 G40 G49 (cancel canned cycle / cutter comp / tool length offset - defensive, in case a prior program on this machine left one active)');
   }
-
-  const hasSequence = Array.isArray(params.toolSequence) && params.toolSequence.length > 0;
+  if (edgeMargin > 0) {
+    lines.push(`(Part positioned ${fmt(edgeMargin, 2)}" clear of X0/Y0 - keep clamps/nails/fasteners outside that boundary)`);
+  }
 
   let gcode;
   let stats;
@@ -975,7 +1024,8 @@ export function generateRoutingGcode(contours, params = {}) {
     // step earlier: a pocket floor is an interior feature too, and cutting
     // it after the outer profile is through risks doing so on a part that's
     // no longer solidly attached to the stock.
-    const pockets = Array.isArray(params.pockets) ? params.pockets : [];
+    // (pockets here is the already-edge-margin-shifted array from above,
+    // not a fresh read of params.pockets.)
     let totalPocketRings = 0;
     for (const pocket of pockets) {
       const { ringCount } = clearPocket(lines, pocket, toolDiameter / 2, { stepDown, feedRate, plungeRate }, safeZ);
