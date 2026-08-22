@@ -4,6 +4,8 @@ This repository is no longer in use. Spartan Robotics' team hub now lives at:
 
 **https://spartanshub.spartanrobotics.org**
 
-This repo now contains a single static `index.html` page that redirects
-visitors to that URL (meta refresh + JS fallback) - no build step, no
-framework, nothing else. Everything else has been removed.
+This repo now contains a minimal SvelteKit app whose only page redirects
+visitors to that URL (meta refresh + JS fallback) - `@sveltejs/adapter-vercel`
+with an explicit `nodejs20.x` runtime (see `svelte.config.js`'s comment for
+why that's pinned explicitly rather than left to auto-detection). Everything
+else has been removed.

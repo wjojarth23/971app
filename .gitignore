@@ -2,12 +2,11 @@
 .DS_Store
 Thumbs.db
 
-# Leftover build artifacts from before this became a plain static page -
-# this repo has no build step now, but keep these ignored in case anything
-# ever gets run here again.
+# Build artifacts
 node_modules
 .svelte-kit
 .vite
+.vercel
 build
 
 # Env / secrets - never commit these regardless of what the site is
