@@ -42,10 +42,17 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
-- **Scouting** (`scouting/`): placeholder for a new, unified scouting app -
-  currently a blank page, default-on next to Purchasing. Distinct from the
-  existing pit/data/note scouting tools under **Scouting** (competition
-  scouting, below) until scoped further.
+- **Scouting** (`scouting/`): a team-comparison / pick-list view for the
+  active event - default-on next to Purchasing. Fuses three sources into one
+  sortable table: The Blue Alliance's real team roster (authoritative -
+  Statbotics/local data only ever annotate it), [Statbotics](https://www.statbotics.io)
+  EPA ratings (`api/statbotics/team-epas`, with auto/teleop/endgame
+  breakdown), and this team's own local scouting coverage (reuses
+  `datascout`'s existing `?list_teams=1&event_key=` public-read endpoint - no
+  new scouting-data infrastructure). Degrades gracefully if Statbotics'
+  public API is unavailable (roster + local coverage still render). Distinct
+  from the existing pit/data/note scouting *collection* tools below, which
+  this reads from rather than replaces.
 - **Docs** (`docs/`): browses every `*.md` file in the repo (a "finder" -
   folder tree + search on the left, rendered markdown on the right).
   Content is bundled at build time via Vite's `import.meta.glob` (raw
