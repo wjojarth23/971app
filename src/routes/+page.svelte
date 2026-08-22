@@ -1,73 +1,130 @@
 <script>
   const NEW_URL = 'https://spartanshub.spartanrobotics.org';
-
-  if (typeof window !== 'undefined') {
-    setTimeout(() => window.location.replace(NEW_URL), 3000);
-  }
 </script>
 
 <svelte:head>
-  <title>We've moved - Spartan Robotics</title>
-  <meta http-equiv="refresh" content="3;url={NEW_URL}" />
+  <title>Spartans Hub has moved</title>
 </svelte:head>
 
-<div class="moved-container">
-  <div class="moved-card">
-    <h1>This site has moved</h1>
-    <p>
-      Spartan Robotics' team hub is now at
-      <a href={NEW_URL}>spartanshub.spartanrobotics.org</a>.
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <h1>Spartans Hub</h1>
+      </div>
+      <p class="subtitle">Spartan Robotics</p>
+    </div>
+
+    <p class="moved-message">This site has moved</p>
+    <p class="moved-detail">
+      Continue to <span class="url">spartanshub.spartanrobotics.org</span>
     </p>
-    <p class="redirect-note">Redirecting you there automatically...</p>
-    <a class="moved-button" href={NEW_URL}>Go to Spartans Hub</a>
+
+    <a class="continue-btn" href={NEW_URL}>Continue to Spartans Hub</a>
   </div>
 </div>
 
 <style>
-  .moved-container {
+  :global(html, body) {
+    margin: 0;
+    padding: 0;
+    background: #131109;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  .auth-container {
+    max-width: 500px;
     min-height: 100vh;
+    margin: 0 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0 1rem;
+  }
+
+  .auth-card {
+    background: #1c1913;
+    border: 1px solid #373226;
+    border-radius: 8px;
+    padding: 2rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .auth-header {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  .brand {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2rem;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0a0a0a;
-    color: #f5f5f5;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
   }
 
-  .moved-card {
-    max-width: 32rem;
-    text-align: center;
-  }
-
-  h1 {
-    font-size: 1.75rem;
-    margin: 0 0 1rem 0;
-  }
-
-  p {
-    line-height: 1.6;
-    margin: 0 0 1rem 0;
-    color: #c9c9c9;
-  }
-
-  a {
-    color: #4da3ff;
-  }
-
-  .redirect-note {
-    font-size: 0.85rem;
-    color: #888;
-  }
-
-  .moved-button {
+  .brand-mark {
     display: inline-block;
-    margin-top: 1rem;
-    padding: 0.75rem 1.5rem;
-    background: #4da3ff;
-    color: #0a0a0a;
-    border-radius: 0.5rem;
-    text-decoration: none;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    background-image: url('/spartan-helmet-dark.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #ece7db;
+  }
+
+  .subtitle {
+    color: #a49c8a;
+    margin: 0;
+    font-size: 0.75rem;
+  }
+
+  .moved-message {
+    text-align: center;
+    color: #e9b830;
+    font-size: 1.15rem;
     font-weight: 600;
+    margin: 0 0 0.75rem 0;
+  }
+
+  .moved-detail {
+    text-align: center;
+    color: #a49c8a;
+    font-size: 0.85rem;
+    margin: 0 0 2rem 0;
+    line-height: 1.5;
+  }
+
+  .moved-detail .url {
+    color: #ece7db;
+  }
+
+  .continue-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.85rem 1.5rem;
+    background: #e9b830;
+    color: #1c1913;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1rem;
+  }
+
+  .continue-btn:hover {
+    background: #f0cd6a;
   }
 </style>
