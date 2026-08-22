@@ -42,6 +42,10 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
+- **Scouting** (`scouting/`): placeholder for a new, unified scouting app -
+  currently a blank page, default-on next to Purchasing. Distinct from the
+  existing pit/data/note scouting tools under **Scouting** (competition
+  scouting, below) until scoped further.
 - **Docs** (`docs/`): browses every `*.md` file in the repo (a "finder" -
   folder tree + search on the left, rendered markdown on the right).
   Content is bundled at build time via Vite's `import.meta.glob` (raw
@@ -180,6 +184,7 @@ own docs are all together in one place instead of scattered across
 - **`admin/`, `profile/`** - user/permission administration, user profile
   settings.
 - **`docs/`** - repo-wide markdown file browser (see **Features** above).
+- **`scouting/`** - new unified scouting app, currently blank (see **Features** above).
 - **`api/`** - server endpoints backing the above, plus integration
   webhooks/crons: `api/cam-generate` (synchronous G-code generation),
   `api/drive-watcher` (Drive input-sweep, cron-gated), `api/planner`
