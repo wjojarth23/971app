@@ -955,6 +955,17 @@ export function generateRoutingGcode(contours, params = {}) {
     // Single-tool path, unchanged from before multi-tool support existed.
     const { toolDiameter, stepDown = 0.1, tabWidth = 0.25, tabHeight = 0.06, tabSpacing = 6, feedRate = 40, plungeRate = 15, spindleSpeed = 16000 } = params;
     if (!toolDiameter || toolDiameter <= 0) throw new Error('toolDiameter is required and must be > 0');
+    // No T-code / M06 here on purpose - these routers have no automatic
+    // tool changer (see toolchange-gcode-plan.md: tool changes are
+    // operator-driven, an M00 pause with a load prompt, not automatic -
+    // multi-tool mode below already does exactly that between tool steps).
+    // A single-tool program has no change to prompt for, but was missing
+    // even a plain statement of what to load before pressing start at all -
+    // real gap, matching the "load before starting" comment multi-tool mode
+    // already gets. Every offset/fit calculation in this file already
+    // assumes this exact diameter; loading a different one silently throws
+    // off every dimension in the part, not just a tolerance nuance.
+    lines.push(`(--- TOOL: ${fmt(toolDiameter, 3)}" diameter - load before starting ---)`);
     lines.push(`S${spindleSpeed} M03 (spindle on)`);
     if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
     lines.push(`G00 Z${fmt(safeZ)} (safe height)`);
