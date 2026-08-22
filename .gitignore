@@ -1,40 +1,20 @@
-node_modules
-
-# logs
-*.log
-
-# Output
-.output
-.vercel
-.netlify
-.wrangler
-/.svelte-kit
-/build
-
 # OS
 .DS_Store
 Thumbs.db
 
-# Env
+# Leftover build artifacts from before this became a plain static page -
+# this repo has no build step now, but keep these ignored in case anything
+# ever gets run here again.
+node_modules
+.svelte-kit
+.vite
+build
+
+# Env / secrets - never commit these regardless of what the site is
 .env
 .env.*
-!.env.example
-!.env.test
-
-# Vite
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-
-/backup
-/docs/migrations
-/supabase
-/logs
-
-# Local MCP config (contains Supabase PAT)
 .mcp.json
+secrets.txt
 
 # Local Claude Code config
 .claude/
-
-# Local secrets file
-secrets.txt
