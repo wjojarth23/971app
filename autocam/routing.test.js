@@ -191,6 +191,16 @@ describe('generateRoutingGcode - single-tool (default)', () => {
     expect(withTabs.stats.tabZones).toBeGreaterThan(0);
     expect(noTabs.stats.tabZones).toBe(0);
   });
+
+  it('states the tool diameter to load before the spindle starts (no ATC on these routers - no T-code/M06 - but the operator still needs to know what to load)', () => {
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.1575, targetDepth: 0.25 });
+    const lines = result.gcode.split('\n');
+    const toolLineIdx = lines.findIndex((l) => l.includes('0.158" diameter - load before starting'));
+    const m03Idx = lines.findIndex((l) => l.includes('M03'));
+    expect(toolLineIdx).toBeGreaterThan(-1);
+    expect(toolLineIdx).toBeLessThan(m03Idx); // stated before the spindle ever starts, not after
+    expect(result.gcode).not.toMatch(/\bT\d+\s+M06\b/); // no ATC - never claim one
+  });
 });
 
 describe('generateRoutingGcode - cut order (real-world CAM safety practice: internal features before the outer profile, not after)', () => {
