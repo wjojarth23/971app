@@ -5,6 +5,7 @@
     "manufacture": true,
     "cad": true,
     "purchasing": true,
+    "docs": true,
     "planner": true,
     "tasks": true,
     "notescout": true,
