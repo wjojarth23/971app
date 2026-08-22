@@ -4,11 +4,4 @@ build
 .git
 .env
 .env.*
-!.env.example
-autocam
-autocam-runner
-implementations
-docs
-*.test.js
-.vscode
 .DS_Store
