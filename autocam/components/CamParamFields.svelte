@@ -103,6 +103,10 @@
           <label class="form-label" for="cf-r-step-down">Step-down (in)</label>
           <input id="cf-r-step-down" class="form-input" type="number" step="0.01" bind:value={params.stepDown} title="Z depth per pass" />
         </div>
+        <div class="form-group">
+          <label class="form-label" for="cf-edge-margin">Edge margin (in)</label>
+          <input id="cf-edge-margin" class="form-input" type="number" step="0.05" bind:value={params.edgeMargin} title="Keeps the whole toolpath this far clear of X0/Y0 - where work zero is set and stock is usually clamped/nailed down. 0 = cut the part exactly where it was modeled, no shift." />
+        </div>
       </div>
     </div>
     <div class="cam-param-section">

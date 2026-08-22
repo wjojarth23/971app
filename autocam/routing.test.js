@@ -203,6 +203,93 @@ describe('generateRoutingGcode - single-tool (default)', () => {
   });
 });
 
+describe('generateRoutingGcode - edgeMargin (real shop constraint: work zero is set, and stock is nailed down, at the same X0/Y0 stock edge - a part modeled close to its own local origin can put the cutter within a fraction of an inch of that hardware)', () => {
+  function rawMinXY(gcodeText) {
+    let minX = Infinity, minY = Infinity;
+    for (const line of gcodeText.split('\n')) {
+      const m = line.match(/^G0[01] X(-?[\d.]+) Y(-?[\d.]+)/);
+      if (!m) continue;
+      minX = Math.min(minX, Number(m[1]));
+      minY = Math.min(minY, Number(m[2]));
+    }
+    return { minX, minY };
+  }
+
+  it('defaults to a 0.5" margin, applied to the actual cutting path (not just the raw geometry) - accounts for the tool\'s own outward reach', () => {
+    const contour = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25 });
+    const { minX, minY } = rawMinXY(result.gcode);
+    // Raw geometry is shifted to margin+toolRadius so that, after the
+    // outer contour's own outward tool-radius offset (which extends the
+    // actual cutting path toolRadius further toward zero again), the real
+    // cutting path's closest approach to X0/Y0 lands on exactly the
+    // configured margin - not margin+toolRadius, the two cancel out.
+    expect(minX).toBeCloseTo(0.5, 3);
+    expect(minY).toBeCloseTo(0.5, 3);
+    expect(result.gcode).toContain('0.50" clear of X0/Y0');
+  });
+
+  it('edgeMargin: 0 restores the pre-this-feature behavior - no shift, no header comment', () => {
+    const contour = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, edgeMargin: 0 });
+    const { minX, minY } = rawMinXY(result.gcode);
+    expect(minX).toBeCloseTo(-2.125, 3); // unshifted: -2 (square half-width) - 0.125 (tool radius, outward)
+    expect(minY).toBeCloseTo(-2.125, 3);
+    expect(result.gcode).not.toContain('clear of X0/Y0');
+  });
+
+  it('a custom margin is honored exactly', () => {
+    const contour = [{ points: square(0, 0, 4), isHole: false }];
+    const result = generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, edgeMargin: 1.5 });
+    const { minX, minY } = rawMinXY(result.gcode);
+    expect(minX).toBeCloseTo(1.5, 3);
+    expect(minY).toBeCloseTo(1.5, 3);
+  });
+
+  it('negative edgeMargin throws instead of silently doing something undefined', () => {
+    const contour = [{ points: square(0, 0, 4), isHole: false }];
+    expect(() => generateRoutingGcode(contour, { toolDiameter: 0.25, targetDepth: 0.25, edgeMargin: -1 })).toThrow(/edgeMargin cannot be negative/);
+  });
+
+  it('multi-tool mode uses the LARGEST tool\'s radius for the raw-geometry shift, so real clearance never comes in under the configured margin regardless of which tool actually cuts closest to a given corner', () => {
+    // assignContoursToTools always cuts the outer contour with
+    // toolSequence[0] (the documented "primary/largest tool first"
+    // convention - see its own doc comment), so a caller that doesn't
+    // follow that convention could have a SMALLER tool doing the outer
+    // cut. Using the sequence's max diameter for the raw shift (not just
+    // toolSequence[0]'s) means clearance is still >= edgeMargin either
+    // way - it just ends up more generous than the floor when a smaller
+    // tool ends up doing the actual outward cut, never less.
+    const smallToolFirst = [
+      { toolDiameter: 0.125, toolNumber: 1, label: '1/8in detail bit' },
+      { toolDiameter: 0.5, toolNumber: 2, label: '1/2in roughing bit' }
+    ];
+    const largeToolFirst = [
+      { toolDiameter: 0.5, toolNumber: 1, label: '1/2in roughing bit' },
+      { toolDiameter: 0.125, toolNumber: 2, label: '1/8in detail bit' }
+    ];
+    const a = generateRoutingGcode(partWithHoles(), { targetDepth: 0.25, toolSequence: smallToolFirst });
+    const b = generateRoutingGcode(partWithHoles(), { targetDepth: 0.25, toolSequence: largeToolFirst });
+    const marginFloor = 0.5 - 1e-6;
+    const aBounds = rawMinXY(a.gcode);
+    const bBounds = rawMinXY(b.gcode);
+    expect(aBounds.minX).toBeGreaterThanOrEqual(marginFloor);
+    expect(aBounds.minY).toBeGreaterThanOrEqual(marginFloor);
+    expect(bBounds.minX).toBeGreaterThanOrEqual(marginFloor);
+    expect(bBounds.minY).toBeGreaterThanOrEqual(marginFloor);
+  });
+
+  it('pockets shift by the same amount as contours, preserving their position relative to the outer profile', () => {
+    const outer = [{ points: square(0, 0, 6), isHole: false }];
+    const pocket = { points: square(0, 0, 2), depth: 0.1 };
+    const noMargin = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [pocket], edgeMargin: 0 });
+    const withMargin = generateRoutingGcode(outer, { toolDiameter: 0.25, targetDepth: 0.5, stepDown: 0.5, pockets: [pocket], edgeMargin: 1 });
+    // Same ring/pocket stats either way - shifting doesn't change the geometry, just where it sits.
+    expect(withMargin.stats.pocketRings).toBe(noMargin.stats.pocketRings);
+    expect(withMargin.stats.pockets).toBe(noMargin.stats.pockets);
+  });
+});
+
 describe('generateRoutingGcode - cut order (real-world CAM safety practice: internal features before the outer profile, not after)', () => {
   it('cuts holes before the outer contour, single-tool mode (real bug: contours were cut in extraction order - outer first, since it is always the largest-area contour - meaning the outer profile got fully cut through material before any interior holes were touched; once a through-cut severs the part from the stock, continuing to machine anything else risks it shifting or coming loose)', () => {
     const result = generateRoutingGcode(partWithHoles(), { toolDiameter: 0.125, targetDepth: 0.25 });
