@@ -5,6 +5,7 @@
     "manufacture": true,
     "cad": true,
     "purchasing": true,
+    "scouting": true,
     "docs": true,
     "planner": true,
     "tasks": true,
