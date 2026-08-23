@@ -1,31 +1,39 @@
 <script>
   import { onMount } from 'svelte';
-  import { Binoculars, ArrowUpDown, RefreshCw } from 'lucide-svelte';
+  import {
+    Binoculars, ArrowUpDown, RefreshCw, Search, Download, Star, X,
+    ChevronDown, ChevronRight, ArrowUp, ArrowDown
+  } from 'lucide-svelte';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+  import { getAuthHeader } from '$lib/supabase.js';
+  import { summarizeTeamEvents } from '$lib/scoutingStats.js';
 
-  // Base pick-list / team-comparison view: fuses three sources into one
-  // sortable table, the same pattern the strongest researched FRC scouting
-  // tools (PitPilot, mindScout) converge on rather than any one of them
-  // being cloned outright:
+  // Team comparison / pick-list workspace: fuses four sources into one
+  // page, the same pattern the strongest researched FRC scouting tools
+  // (PitPilot, mindScout, Lovat Dashboard) converge on rather than any one
+  // of them being cloned outright:
   //   1. TBA - the real team roster for the active event (authoritative;
-  //      Statbotics/local data only ever narrow or annotate this list, never
-  //      define it).
-  //   2. Statbotics EPA - Expected Points Added, an Elo-derived per-match
-  //      scoring-contribution rating with auto/teleop/endgame components -
-  //      the metric most of the ecosystem has converged on for "how good is
-  //      this team, before you've scouted them yourself."
-  //   3. This team's own local scouting coverage (scout_data_events) - just
-  //      "have we actually scouted this team" for now; richer derived
-  //      per-team stats from the raw event stream are a real next step, not
-  //      in this base version.
+  //      everything else only narrows or annotates this list, never
+  //      defines it).
+  //   2. Statbotics EPA - per-match scoring-contribution rating with
+  //      auto/teleop/endgame components.
+  //   3. This team's own local scouting coverage (scout_data_events) +
+  //      derived summary stats (driving/accuracy/speed/climb) + free-text
+  //      notes (scout_notes) - reads from datascout/notescout, doesn't
+  //      duplicate their collection UI.
+  //   4. A shared, persisted pick list (scouting_picklist) - the actual
+  //      payoff: turning all of the above into a decision, visible to the
+  //      whole team, not just this one browser tab.
 
   let eventKey = '';
   let loadingEvent = true;
   let loadingTeams = false;
 
-  let teams = []; // merged rows: { key, team_number, nickname, epa, auto_epa, teleop_epa, endgame_epa, rank, wins, losses, ties, locallyScouted }
+  let teams = []; // merged rows
   let teamsError = '';
   let statboticsError = '';
+
+  let search = '';
 
   let sortKey = 'epa';
   let sortAsc = false; // EPA defaults high-to-low - that's the whole point of a pick list
@@ -35,14 +43,13 @@
       sortAsc = !sortAsc;
     } else {
       sortKey = key;
-      sortAsc = key === 'team_number'; // numeric team # makes more sense ascending by default
+      sortAsc = key === 'team_number';
     }
   }
 
   $: sortedTeams = [...teams].sort((a, b) => {
     const av = a[sortKey];
     const bv = b[sortKey];
-    // Nulls (e.g. no Statbotics data for a team) always sort last, regardless of direction.
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
@@ -51,9 +58,137 @@
     return 0;
   });
 
+  $: filteredTeams = search.trim()
+    ? sortedTeams.filter((t) => {
+        const q = search.trim().toLowerCase();
+        return String(t.team_number).includes(q) || (t.nickname || '').toLowerCase().includes(q);
+      })
+    : sortedTeams;
+
   function fmtEpa(v) {
     return v == null ? '—' : v.toFixed(1);
   }
+
+  // --- Pick list --------------------------------------------------------
+
+  let picklist = []; // ordered rows from scouting_picklist: { id, team_key, team_number, nickname, note, position }
+  let picklistError = '';
+  $: picklistTeamKeys = new Set(picklist.map((p) => p.team_key));
+
+  async function loadPicklist() {
+    if (!eventKey) return;
+    const res = await fetch(`/api/scouting-picklist?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null);
+    if (res?.success) {
+      picklist = res.data;
+      picklistError = '';
+    } else {
+      picklistError = res?.error || 'Could not load the pick list.';
+    }
+  }
+
+  async function addToPicklist(team) {
+    const headers = { 'Content-Type': 'application/json', ...(await getAuthHeader()) };
+    const res = await fetch('/api/scouting-picklist', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'add',
+        event_key: eventKey,
+        team_key: team.key,
+        team_number: team.team_number,
+        nickname: team.nickname
+      })
+    }).then((r) => r.json()).catch(() => null);
+    if (res?.success) await loadPicklist();
+  }
+
+  async function removeFromPicklist(id) {
+    const headers = { 'Content-Type': 'application/json', ...(await getAuthHeader()) };
+    const res = await fetch('/api/scouting-picklist', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'remove', id })
+    }).then((r) => r.json()).catch(() => null);
+    if (res?.success) await loadPicklist();
+  }
+
+  async function movePicklistItem(index, delta) {
+    const target = index + delta;
+    if (target < 0 || target >= picklist.length) return;
+    const reordered = [...picklist];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    picklist = reordered; // optimistic - reorder locally first, persist after
+    const headers = { 'Content-Type': 'application/json', ...(await getAuthHeader()) };
+    await fetch('/api/scouting-picklist', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'reorder', event_key: eventKey, ordered_ids: reordered.map((p) => p.id) })
+    }).catch(() => {});
+  }
+
+  let noteDrafts = {}; // id -> in-progress note text, so typing doesn't fight the loaded value
+  async function saveNote(id) {
+    const note = noteDrafts[id] ?? '';
+    const headers = { 'Content-Type': 'application/json', ...(await getAuthHeader()) };
+    await fetch('/api/scouting-picklist', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'note', id, note })
+    }).catch(() => {});
+    picklist = picklist.map((p) => (p.id === id ? { ...p, note } : p));
+  }
+
+  // --- Team detail expand -------------------------------------------------
+
+  let expandedTeamKey = null;
+  let teamDetails = {}; // team_key -> { loading, summary, notes }
+
+  async function toggleExpand(team) {
+    if (expandedTeamKey === team.key) {
+      expandedTeamKey = null;
+      return;
+    }
+    expandedTeamKey = team.key;
+    if (teamDetails[team.key]) return; // already loaded
+
+    teamDetails = { ...teamDetails, [team.key]: { loading: true, summary: null, notes: [] } };
+    const [eventsRes, notesRes] = await Promise.all([
+      fetch(`/datascout?team_key=${encodeURIComponent(team.key)}&event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
+      fetch(`/notescout?team_key=${encodeURIComponent(team.key)}&event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null)
+    ]);
+    teamDetails = {
+      ...teamDetails,
+      [team.key]: {
+        loading: false,
+        summary: eventsRes?.success ? summarizeTeamEvents(eventsRes.data) : null,
+        notes: notesRes?.success ? notesRes.data : []
+      }
+    };
+  }
+
+  // --- CSV export -----------------------------------------------------
+
+  function exportCsv() {
+    const header = ['Team', 'Name', 'EPA', 'Auto EPA', 'Teleop EPA', 'Endgame EPA', 'Rank', 'Wins', 'Losses', 'Ties', 'Scouted'];
+    const rows = filteredTeams.map((t) => [
+      t.team_number, t.nickname, t.epa ?? '', t.auto_epa ?? '', t.teleop_epa ?? '', t.endgame_epa ?? '',
+      t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '', t.locallyScouted ? 'yes' : 'no'
+    ]);
+    const escapeCell = (c) => {
+      const s = String(c);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [header, ...rows].map((r) => r.map(escapeCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${eventKey || 'scouting'}-teams.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // --- Load ---------------------------------------------------------------
 
   async function loadTeams() {
     if (!eventKey) return;
@@ -109,7 +244,9 @@
   onMount(async () => {
     eventKey = await fetchActiveScoutingEventKey();
     loadingEvent = false;
-    if (eventKey) await loadTeams();
+    if (eventKey) {
+      await Promise.all([loadTeams(), loadPicklist()]);
+    }
   });
 </script>
 
@@ -122,13 +259,18 @@
     <h1><Binoculars size={22} style="vertical-align:-3px; margin-right:6px" /> Scouting</h1>
     <p>
       Team comparison / pick list{eventKey ? ` for ${eventKey}` : ''} - The Blue Alliance roster,
-      Statbotics EPA, and your team's own scouting coverage in one sortable table.
+      Statbotics EPA, your team's own scouting coverage, and a shared pick list in one workspace.
     </p>
   </div>
   {#if eventKey}
-    <button class="btn btn-sm" on:click={loadTeams} disabled={loadingTeams} title="Refresh">
-      <RefreshCw size={14} /> Refresh
-    </button>
+    <div class="actions">
+      <button class="btn btn-sm" on:click={exportCsv} title="Export the visible table as CSV">
+        <Download size={14} /> Export CSV
+      </button>
+      <button class="btn btn-sm" on:click={loadTeams} disabled={loadingTeams} title="Refresh">
+        <RefreshCw size={14} /> Refresh
+      </button>
+    </div>
   {/if}
 </div>
 
@@ -150,23 +292,70 @@
   {:else}
     {#if statboticsError}
       <p class="text-muted" style="margin-bottom: var(--space-3)">
-        ⚠ {statboticsError} Showing the team roster and local scouting coverage without EPA for now.
+        ⚠ {statboticsError} Showing the team roster, local scouting coverage, and pick list without EPA for now.
       </p>
     {/if}
 
+    <!-- Pick list -->
+    <div class="surface-card picklist-card">
+      <div class="flex-row-between">
+        <h3 style="margin:0">Pick List{picklist.length ? ` (${picklist.length})` : ''}</h3>
+      </div>
+      {#if picklistError}
+        <p class="text-error">{picklistError}</p>
+      {:else if picklist.length === 0}
+        <p class="text-muted">No teams picked yet - use the star on any row below to add one.</p>
+      {:else}
+        <ol class="picklist">
+          {#each picklist as p, i (p.id)}
+            <li class="picklist-item">
+              <span class="picklist-rank mono">{i + 1}</span>
+              <span class="picklist-team">
+                <span class="mono">#{p.team_number}</span> {p.nickname}
+              </span>
+              <input
+                class="form-input picklist-note"
+                placeholder="Note..."
+                value={p.note || ''}
+                on:input={(e) => (noteDrafts[p.id] = e.currentTarget.value)}
+                on:blur={() => saveNote(p.id)}
+              />
+              <span class="picklist-controls">
+                <button class="icon-btn" on:click={() => movePicklistItem(i, -1)} disabled={i === 0} title="Move up">
+                  <ArrowUp size={14} />
+                </button>
+                <button class="icon-btn" on:click={() => movePicklistItem(i, 1)} disabled={i === picklist.length - 1} title="Move down">
+                  <ArrowDown size={14} />
+                </button>
+                <button class="icon-btn" on:click={() => removeFromPicklist(p.id)} title="Remove from pick list">
+                  <X size={14} />
+                </button>
+              </span>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </div>
+
+    <div class="docs-search" style="margin: var(--space-4) 0 var(--space-3) 0">
+      <Search size={16} />
+      <input class="form-input" type="text" placeholder="Filter by team number or name..." bind:value={search} />
+    </div>
+
     {#if loadingTeams}
       <p class="text-muted">Loading teams...</p>
-    {:else if sortedTeams.length === 0}
+    {:else if filteredTeams.length === 0}
       <div class="empty-state">
         <Binoculars size={40} />
         <h3>No teams found</h3>
-        <p>The Blue Alliance has no team list yet for {eventKey}.</p>
+        <p>{search.trim() ? `No teams match "${search}".` : `The Blue Alliance has no team list yet for ${eventKey}.`}</p>
       </div>
     {:else}
       <div class="bom-table-container">
         <table class="bom-table">
           <thead>
             <tr>
+              <th></th>
               <th><button class="sort-th" on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
               <th>Name</th>
               <th><button class="sort-th" on:click={() => sortBy('epa')}>EPA <ArrowUpDown size={11} /></button></th>
@@ -176,11 +365,15 @@
               <th><button class="sort-th" on:click={() => sortBy('rank')}>Rank <ArrowUpDown size={11} /></button></th>
               <th>Record</th>
               <th>Scouted</th>
+              <th>Pick</th>
             </tr>
           </thead>
           <tbody>
-            {#each sortedTeams as t (t.key)}
-              <tr>
+            {#each filteredTeams as t (t.key)}
+              <tr class="team-row" on:click={() => toggleExpand(t)}>
+                <td class="expand-cell">
+                  {#if expandedTeamKey === t.key}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
+                </td>
                 <td class="mono">{t.team_number}</td>
                 <td>{t.nickname}</td>
                 <td class="strong">{fmtEpa(t.epa)}</td>
@@ -190,7 +383,50 @@
                 <td>{t.rank ?? '—'}</td>
                 <td class="mono">{t.wins == null ? '—' : `${t.wins}-${t.losses}-${t.ties}`}</td>
                 <td>{t.locallyScouted ? '✓' : ''}</td>
+                <td>
+                  <button
+                    class="icon-btn"
+                    class:picked={picklistTeamKeys.has(t.key)}
+                    on:click|stopPropagation={() => addToPicklist(t)}
+                    disabled={picklistTeamKeys.has(t.key)}
+                    title={picklistTeamKeys.has(t.key) ? 'Already on pick list' : 'Add to pick list'}
+                  >
+                    <Star size={14} fill={picklistTeamKeys.has(t.key) ? 'currentColor' : 'none'} />
+                  </button>
+                </td>
               </tr>
+              {#if expandedTeamKey === t.key}
+                <tr class="detail-row">
+                  <td colspan="11">
+                    {#if teamDetails[t.key]?.loading}
+                      <p class="text-muted">Loading team detail...</p>
+                    {:else if teamDetails[t.key]}
+                      {@const s = teamDetails[t.key].summary}
+                      <div class="team-detail">
+                        <div class="team-detail-stats">
+                          <div><span class="text-muted">Matches scouted:</span> {s?.matchesScouted ?? 0}</div>
+                          <div><span class="text-muted">Avg driving (1-3):</span> {s?.avgDrivingRank != null ? s.avgDrivingRank.toFixed(1) : '—'}</div>
+                          <div><span class="text-muted">Avg accuracy (1-5):</span> {s?.avgAccuracy != null ? s.avgAccuracy.toFixed(1) : '—'}</div>
+                          <div><span class="text-muted">Avg speed:</span> {s?.avgSpeed != null ? s.avgSpeed.toFixed(2) : '—'}</div>
+                          <div><span class="text-muted">Most common climb:</span> {s?.mostCommonClimb ?? '—'}</div>
+                        </div>
+                        {#if teamDetails[t.key].notes.length > 0}
+                          <div class="team-detail-notes">
+                            <span class="text-muted">Scout notes:</span>
+                            <ul>
+                              {#each teamDetails[t.key].notes as n}
+                                <li>{n.notes}</li>
+                              {/each}
+                            </ul>
+                          </div>
+                        {:else}
+                          <p class="text-muted" style="margin: var(--space-2) 0 0 0">No scout notes for this team yet.</p>
+                        {/if}
+                      </div>
+                    {/if}
+                  </td>
+                </tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -215,5 +451,112 @@
   }
   .sort-th:hover {
     color: var(--text);
+  }
+
+  .docs-search {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-2);
+    color: var(--text-muted);
+  }
+  .docs-search .form-input {
+    flex: 1;
+  }
+
+  .team-row {
+    cursor: pointer;
+  }
+
+  .expand-cell {
+    color: var(--text-muted);
+    width: 1.5em;
+  }
+
+  .detail-row td {
+    background: var(--surface-1);
+    padding: var(--space-3) var(--space-4) !important;
+  }
+
+  .team-detail-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-4);
+    font-size: 0.85rem;
+    margin-bottom: var(--space-2);
+  }
+
+  .team-detail-notes ul {
+    margin: var(--space-1) 0 0 0;
+    padding-left: var(--space-5);
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .icon-btn:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .icon-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .icon-btn.picked {
+    color: var(--brand-gold-base, #d9a413);
+  }
+
+  .picklist-card {
+    padding: var(--space-4);
+    margin-bottom: var(--space-2);
+  }
+
+  .picklist {
+    list-style: none;
+    margin: var(--space-2) 0 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .picklist-item {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .picklist-item:last-child {
+    border-bottom: none;
+  }
+
+  .picklist-rank {
+    color: var(--text-muted);
+    width: 1.5em;
+    flex-shrink: 0;
+  }
+
+  .picklist-team {
+    flex-shrink: 0;
+    min-width: 12em;
+  }
+
+  .picklist-note {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .picklist-controls {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
   }
 </style>

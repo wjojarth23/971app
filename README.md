@@ -42,17 +42,27 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
-- **Scouting** (`scouting/`): a team-comparison / pick-list view for the
-  active event - default-on next to Purchasing. Fuses three sources into one
-  sortable table: The Blue Alliance's real team roster (authoritative -
-  Statbotics/local data only ever annotate it), [Statbotics](https://www.statbotics.io)
-  EPA ratings (`api/statbotics/team-epas`, with auto/teleop/endgame
-  breakdown), and this team's own local scouting coverage (reuses
-  `datascout`'s existing `?list_teams=1&event_key=` public-read endpoint - no
-  new scouting-data infrastructure). Degrades gracefully if Statbotics'
-  public API is unavailable (roster + local coverage still render). Distinct
-  from the existing pit/data/note scouting *collection* tools below, which
-  this reads from rather than replaces.
+- **Scouting** (`scouting/`): a team-comparison / pick-list workspace for the
+  active event - default-on next to Purchasing. Distinct from the existing
+  pit/data/note scouting *collection* tools below, which this reads from
+  rather than replaces:
+  - Sortable comparison table fusing The Blue Alliance's real team roster
+    (authoritative - nothing else here ever narrows or redefines it),
+    [Statbotics](https://www.statbotics.io) EPA ratings (`api/statbotics/team-epas`,
+    auto/teleop/endgame breakdown - degrades gracefully if Statbotics' public
+    API is down), and a "scouted?" flag from `datascout`'s existing
+    `?list_teams=1&event_key=` endpoint.
+  - Search/filter by team number or name; CSV export of the visible table.
+  - Click any team row to expand a detail panel: derived summary stats
+    (avg driving/accuracy/speed rank, most common climb position) computed
+    from that team's real `scout_data_events` rows by `src/lib/scoutingStats.js`
+    (unit-tested), plus their free-text `scout_notes`.
+  - A shared, persisted **pick list** (`scouting_picklist` table,
+    `api/scouting-picklist`) - star a team to add it, drag-free up/down
+    reordering, per-team notes. Any approved user can add/reorder/annotate
+    any entry (deliberately more open than `scout_notes`' creator-only
+    edit rule - a pick list is one document the whole strategy group edits
+    together, and per-row ownership would break group reordering).
 - **Docs** (`docs/`): browses every `*.md` file in the repo (a "finder" -
   folder tree + search on the left, rendered markdown on the right).
   Content is bundled at build time via Vite's `import.meta.glob` (raw
