@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
@@ -11,6 +12,17 @@ export default defineConfig({
 	// instead so optimization happens once, before any request is served.
 	optimizeDeps: {
 		include: ['@sentry/sveltekit']
+	},
+	server: {
+		fs: {
+			// SvelteKit's own Vite plugin sets server.fs.allow to just
+			// src/, node_modules/, and the .svelte-kit outDir - it has no
+			// idea the $autocam alias (svelte.config.js) points at a
+			// sibling top-level autocam/ folder. Vite's fs.strict check
+			// runs against that allowlist regardless of alias resolution,
+			// so every $autocam/* import 403s in dev without this entry.
+			allow: [path.resolve('autocam')]
+		}
 	},
 	test: {
 		// autocam/fusion/_upstream/ and autocam/fusion/runner/_upstream/ are

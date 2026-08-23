@@ -84,10 +84,36 @@
     openDesktopFolder = -1;
   }
 
+  // Real bug this works around: .desktop-nav scrolls horizontally
+  // (overflow-x: auto) so a long tab list never wraps. Per the CSS overflow
+  // spec, a container with overflow-x set to anything but `visible` also
+  // computes overflow-y as non-visible (`auto`), even if overflow-y is
+  // explicitly set to `visible` - browsers force both axes to agree, they
+  // can't be mixed. That silently clips .dropdown-menu (a position:
+  // absolute child extending below the nav bar's own box) - confirmed via a
+  // real logged-in click-through: the folder's caret flips open correctly,
+  // the menu element itself has correct computed geometry/opacity/
+  // background, it's just invisible on screen because its scrolling
+  // ancestor crops it away. Folders were fully implemented but never
+  // exercised by the *default* nav before now (the original flat tab list
+  // had none), so this never surfaced.
+  //
+  // position: fixed (computed here from the trigger button's own
+  // viewport-relative rect, applied inline in the template) escapes ALL
+  // ancestor overflow clipping - the standard, correct fix for "dropdown
+  // must escape a scrolling container," not a workaround.
+  let desktopFolderPosition = { top: 0, left: 0 };
+
   function toggleDesktopFolder(event, idx) {
     event.preventDefault();
     event.stopPropagation();
-    openDesktopFolder = openDesktopFolder === idx ? -1 : idx;
+    if (openDesktopFolder === idx) {
+      openDesktopFolder = -1;
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    desktopFolderPosition = { top: rect.bottom + 6, left: rect.left };
+    openDesktopFolder = idx;
   }
 
   function toggleMobileFolder(idx) {
@@ -145,7 +171,10 @@
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshOwnProfile();
     };
-    const onResize = () => updateUnderline();
+    const onResize = () => {
+      updateUnderline();
+      closeDesktopFolders(); // its position: fixed coords were computed for the old layout
+    };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('visibilitychange', onVisibility);
@@ -544,7 +573,10 @@
                   <span>{item.label}</span>
                   <ChevronDown size={14} class="caret" />
                 </button>
-                <div class="dropdown-menu">
+                <div
+                  class="dropdown-menu"
+                  style={openDesktopFolder === idx ? `top: ${desktopFolderPosition.top}px; left: ${desktopFolderPosition.left}px;` : ''}
+                >
                   {#each item.children as child}
                     <a href={child.href} class="dropdown-link" class:active={isActive(child.href)} on:click={closeDesktopFolders}>
                       <svelte:component this={child.icon} size={16} />
@@ -833,9 +865,16 @@
   }
 
   .dropdown-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
+    /* position: fixed, not absolute - .desktop-nav scrolls horizontally
+       (overflow-x: auto), which per the CSS overflow spec forces overflow-y
+       to also compute as non-visible, clipping an absolutely-positioned
+       child that extends past the bar's own height. Real top/left values
+       are computed from the trigger button's own getBoundingClientRect() in
+       toggleDesktopFolder() and applied as an inline style below - fixed
+       positioning is relative to the viewport, so it isn't affected by any
+       ancestor's overflow either way. See toggleDesktopFolder's comment for
+       the full story. */
+    position: fixed;
     min-width: 200px;
     background: var(--card);
     border: 1px solid var(--border);

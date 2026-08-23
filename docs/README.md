@@ -23,6 +23,7 @@ changed and why; they are **not** kept up to date afterward.
 
 | Doc | Date | Covers |
 |---|---|---|
+| [AUG_2026_NAV_REORG.md](changes/AUG_2026_NAV_REORG.md) | Aug 2026 | Nav regrouped into Purchasing/Manufacturing/Competition/CAD folders, dropdown-clipping fix, AutoCAM dev-server 403 fix |
 | [JULY_2026_UPDATES.md](changes/JULY_2026_UPDATES.md) | Jul 2026 | Purchasing roles/permissions rework, offseason budget, request-flood fixes, Modern theme |
 | [PURCHASING_ADMIN_README.md](changes/PURCHASING_ADMIN_README.md) | — | Purchasing admin subtab, vendors table, analytics |
 | [PROFILE_UI_IMPROVEMENTS.md](changes/PROFILE_UI_IMPROVEMENTS.md) | — | Profile header customization, drag-and-drop nav, live preview |
