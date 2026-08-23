@@ -7,8 +7,8 @@
 // Grouped into three real sections (folders - a fully-supported existing nav
 // concept, see buildNavItems/toLinkItem in +layout.svelte, not new UI) per
 // direct feedback that a flat list of ~10 top-level tabs read as clutter for
-// anyone not touching most of them day to day. Order (Home, Manufacturing,
-// CAD, Competition, Purchasing, Docs, Admin) is also per direct feedback:
+// anyone not touching most of them day to day. Order (Home, Purchasing,
+// Manufacturing, CAD, Competition, Docs, Admin) is also per direct feedback:
 //   - Manufacturing: the shop-floor tools (manufacture tracking, AutoCAM,
 //     Kitting, COTS Stocking) - "whatever else we add" here later just needs
 //     a new entry in manufacturingChildren below.
@@ -37,6 +37,8 @@ import navigation from '$lib/navigation.json';
 export function defaultHeaderTabs(navConfig = navigation) {
   const tabs = [];
 
+  tabs.push({ type: 'tab', key: 'purchasing', label: 'Purchasing' });
+
   const manufacturingChildren = [];
   if (navConfig?.tabs?.manufacture !== false) manufacturingChildren.push({ key: 'manufacture', label: 'Manufacture' });
   if (navConfig?.tabs?.autocam !== false) manufacturingChildren.push({ key: 'autocam', label: 'AutoCAM' });
@@ -62,8 +64,6 @@ export function defaultHeaderTabs(navConfig = navigation) {
       { key: 'scouting-admin', label: 'Scouting Admin' }
     ]
   });
-
-  tabs.push({ type: 'tab', key: 'purchasing', label: 'Purchasing' });
 
   tabs.push({ type: 'tab', key: 'docs', label: 'Docs' });
 
