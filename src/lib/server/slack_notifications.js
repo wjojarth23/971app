@@ -361,7 +361,7 @@ export async function notifyManufacturingRequestById(partId) {
   const supa = getSupabase();
   const { data: part } = await supa
     .from('parts')
-    .select('id, name, workflow, project_id, requester, created_at')
+    .select('id, name, workflow, project_id, requester, created_at, quantity, material, notes')
     .eq('id', partId)
     .maybeSingle();
   if (!part) {
@@ -376,7 +376,21 @@ export async function notifyManufacturingRequestById(partId) {
   const workflowLabel = WORKFLOW_LABELS[part.workflow] || part.workflow;
   const requesterLabel = part.requester || 'Someone';
   const dateLabel = formatPacificDate(part.created_at) || formatPacificDate(new Date());
-  const text = `${requesterLabel} has requested to ${workflowLabel} ${part.name || 'Unnamed part'}, on ${dateLabel}.`;
+  const lines = [`${requesterLabel} has requested to ${workflowLabel} ${part.name || 'Unnamed part'}, on ${dateLabel}.`];
+
+  // Quantity/material only ever appear if actually present - quantity is
+  // usually set (form-required) but material isn't collected on every
+  // creation path (only Quick Print Add and the CAD BOM insert set it;
+  // manufacture/create's 3 forms don't), so this line is skipped rather
+  // than showing a blank "Material: " when it was never typed.
+  const details = [];
+  if (part.quantity) details.push(`Quantity: ${part.quantity}`);
+  if (part.material) details.push(`Material: ${part.material}`);
+  if (details.length) lines.push(details.join(' · '));
+
+  if (part.notes) lines.push(`Note: ${part.notes}`);
+
+  const text = lines.join('\n');
 
   const results = [];
   for (const email of leadEmails) {

@@ -17,6 +17,7 @@
   let uploadedFile = null;
   let uploadedStepFile = null;
   let camJobName = ''; // optional AutoCAM job name for router/lathe
+  let notes = '';
   let isSubmitting = false;
   let user = null;
 
@@ -221,6 +222,7 @@
           file_name: fileName,
           file_url: fileName,
           status: 'pending',
+          notes: notes.trim() || null,
           frc_team: user?.frc_team || null
         }])
         .select('id')
@@ -240,6 +242,7 @@
   customStock = '';
       uploadedFile = null;
       camJobName = '';
+      notes = '';
 
       goto('/manufacture');
     } catch (error) {
@@ -291,6 +294,7 @@
           file_name: stepName, // keep for backward compat
           file_url: JSON.stringify(fileMeta),
           status: 'pending',
+          notes: notes.trim() || null,
           frc_team: user?.frc_team || null
         }])
         .select('id')
@@ -313,6 +317,7 @@
       uploadedStepFile = null;
       uploadedFile = null;
       camJobName = '';
+      notes = '';
 
       goto('/manufacture');
     } catch (error) {
@@ -377,6 +382,7 @@
           file_name: pdfName,
           file_url: JSON.stringify(fileMeta),
           status: 'pending',
+          notes: notes.trim() || null,
           frc_team: user?.frc_team || null
         }])
         .select('id')
@@ -399,6 +405,7 @@
       uploadedFile = null;
       uploadedStepFile = null;
       camJobName = '';
+      notes = '';
 
       goto('/manufacture');
     } catch (error) {
@@ -426,7 +433,7 @@
 
 <div class="container">
   <div class="header">
-    <h1>971 Manufacturing Request</h1>
+    <h1>Manufacturing Request</h1>
     <p>Submit your manufacturing requests for processing</p>
   </div>
 
@@ -690,11 +697,19 @@
         </div>
       {/if}
 
+      <!-- Notes (optional) -->
+      <div class="form-section">
+        <div class="form-group">
+          <label for="notes">Notes <span class="optional-label">(optional)</span></label>
+          <textarea id="notes" bind:value={notes} rows="4" placeholder="Anything the manufacturing lead should know about this request..."></textarea>
+        </div>
+      </div>
+
       <!-- Submit Button -->
       <div class="form-actions">
-        <button 
-          type="submit" 
-          class="submit-btn" 
+        <button
+          type="submit"
+          class="submit-btn"
           disabled={isSubmitting || !partName || !requesterName || !workflow || !hasRequiredFiles || !quantity || quantity < 1}
         >
           {#if isSubmitting}
@@ -738,8 +753,19 @@
   .file-name { font-weight: 600; color: var(--success); }
   .file-size { font-size: 0.875rem; color: var(--neutral-500); }
   .form-actions { margin-top: 2rem; text-align: center; }
-  .submit-btn { background: var(--accent); color: var(--secondary); border: none; font-weight: 600; cursor: pointer; }
+  .submit-btn {
+    background: var(--accent);
+    color: var(--secondary);
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 1.05rem;
+    padding: 1rem 2.75rem;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.05s ease;
+  }
   .submit-btn:hover:not(:disabled) { opacity: 0.9; }
+  .submit-btn:active:not(:disabled) { transform: scale(0.99); }
   .submit-btn:disabled { background: var(--neutral-300); cursor: not-allowed; }
   @media (max-width: 640px) { .workflow-grid { grid-template-columns: 1fr; } }
 </style>
