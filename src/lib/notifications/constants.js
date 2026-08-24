@@ -8,7 +8,10 @@ export const NOTIFICATION_KEYS = {
   TASK_REVIEW_REQUESTED: 'task_review_requested',
   TASK_STATUS_CHANGED: 'task_status_changed',
   TASK_DEADLINE: 'task_deadline',
-  MANUFACTURING_REQUEST: 'manufacturing_request'
+  MANUFACTURING_REQUEST: 'manufacturing_request',
+  MANUFACTURING_REQUEST_STARTED: 'manufacturing_request_started',
+  MANUFACTURING_REQUEST_READY: 'manufacturing_request_ready',
+  MANUFACTURING_REQUEST_STALE: 'manufacturing_request_stale'
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS = {
@@ -21,7 +24,10 @@ export const DEFAULT_NOTIFICATION_SETTINGS = {
   [NOTIFICATION_KEYS.TASK_REVIEW_REQUESTED]: true,
   [NOTIFICATION_KEYS.TASK_STATUS_CHANGED]: true,
   [NOTIFICATION_KEYS.TASK_DEADLINE]: true,
-  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST]: true
+  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST]: true,
+  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STARTED]: true,
+  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_READY]: true,
+  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STALE]: true
 };
 
 export const NOTIFICATION_UI_OPTIONS = [
@@ -74,5 +80,20 @@ export const NOTIFICATION_UI_OPTIONS = [
     key: NOTIFICATION_KEYS.MANUFACTURING_REQUEST,
     label: 'Manufacturing requests (lead)',
     description: 'DM when a new manufacturing request is created for a process you lead (e.g. 3D printing).'
+  },
+  {
+    key: NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STALE,
+    label: 'Manufacturing request reminders (lead)',
+    description: 'Follow-up DM if a request you lead has sat untouched for a few days (up to 2 reminders).'
+  },
+  {
+    key: NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STARTED,
+    label: 'Your request started',
+    description: 'DM when work begins on a manufacturing request you made.'
+  },
+  {
+    key: NOTIFICATION_KEYS.MANUFACTURING_REQUEST_READY,
+    label: 'Your request is ready',
+    description: 'DM when a manufacturing request you made is marked complete.'
   }
 ];
