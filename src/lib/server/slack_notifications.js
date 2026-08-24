@@ -1,7 +1,7 @@
 import { getSupabase, getSlackClient, slackUserIdForEmail } from '$lib/server/971bot';
 import { NOTIFICATION_KEYS } from '$lib/notifications/constants.js';
 import { mergeNotificationSettings } from '$lib/notifications/settings.js';
-import { formatPacificDateTimeWithZone, formatPacificTimeWithZone } from '$lib/timezone.js';
+import { formatPacificDateTimeWithZone, formatPacificTimeWithZone, formatPacificDate } from '$lib/timezone.js';
 
 function formatMatchLabel(matchKey = '') {
   if (!matchKey) return 'match';
@@ -326,4 +326,77 @@ export async function notifyTaskStatusChanged({
 export async function notifyTaskDeadlineById(taskId) {
   void taskId;
   return { ok: false, reason: 'deadlines-removed' };
+}
+
+// Manufacturing leads-per-workflow, by email. No dedicated leads table/role
+// exists yet (team_role only has a single flat 'Manufacturing Lead', not
+// per-process) - this is the placeholder until that's built out. Workflow
+// values are the real, verbatim strings used by parts.workflow throughout
+// manufacture/create/+page.svelte and manufacture/+page.svelte - not an
+// enum, just free text, so keep these in sync if a new workflow is added.
+// Empty arrays are fine (and expected for now): no leads configured means
+// notifyManufacturingRequestById() below is a no-op for that workflow.
+//
+// yuvan262626@gmail.com (Yuvan Shankar) is intentionally always included
+// here, permanently, for oversight/testing of this feature - not a
+// temporary testing-phase placeholder to be removed later. Real 3D print
+// leads are Anton Strougo and Sahil Rajput.
+export const MANUFACTURING_WORKFLOW_LEAD_EMAILS = {
+  'router': [],
+  'lathe': [],
+  'mill': [],
+  'laser-cut': [],
+  '3d-print': ['sahilshethrajput@gmail.com', 'antonstrougo@gmail.com', 'yuvan262626@gmail.com']
+};
+
+const WORKFLOW_LABELS = {
+  'router': 'Router',
+  'lathe': 'Lathe',
+  'mill': 'Mill',
+  'laser-cut': 'Laser Cut',
+  '3d-print': '3D Print'
+};
+
+export async function notifyManufacturingRequestById(partId) {
+  const supa = getSupabase();
+  const { data: part } = await supa
+    .from('parts')
+    .select('id, name, workflow, project_id, requester, created_at')
+    .eq('id', partId)
+    .maybeSingle();
+  if (!part) {
+    return { ok: false, reason: 'no-part' };
+  }
+
+  const leadEmails = MANUFACTURING_WORKFLOW_LEAD_EMAILS[part.workflow] || [];
+  if (!leadEmails.length) {
+    return { ok: false, reason: 'no-leads-configured' };
+  }
+
+  const workflowLabel = WORKFLOW_LABELS[part.workflow] || part.workflow;
+  const requesterLabel = part.requester || 'Someone';
+  const dateLabel = formatPacificDate(part.created_at) || formatPacificDate(new Date());
+  const text = `${requesterLabel} has requested to ${workflowLabel} ${part.name || 'Unnamed part'}, on ${dateLabel}.`;
+
+  const results = [];
+  for (const email of leadEmails) {
+    const { data: leadUser } = await supa
+      .from('user_profiles')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+    if (!leadUser?.id) {
+      results.push({ ok: false, reason: 'lead-not-found', email });
+      continue;
+    }
+    const entityKey = part.created_at ? `${part.id}:${leadUser.id}:${part.created_at}` : `${part.id}:${leadUser.id}`;
+    const res = await dispatchNotification({
+      userId: leadUser.id,
+      notificationKey: NOTIFICATION_KEYS.MANUFACTURING_REQUEST,
+      entityKey,
+      text
+    });
+    results.push({ ...res, email });
+  }
+  return { ok: true, sent: results };
 }

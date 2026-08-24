@@ -51,6 +51,25 @@
     return () => unsubscribe();
   });
 
+  // Same helper/endpoint as manufacture/+page.svelte's sendNotification -
+  // notifies workflow leads (e.g. 3D print leads) that a new request came in.
+  async function sendNotification(type, payload = {}) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ type, ...payload })
+      });
+    } catch (err) {
+      console.warn('Notification request failed', err);
+    }
+  }
+
   // Router: needs STEP. Lathe: needs both the PDF print AND a STEP (for AutoCAM).
   // Everything else: needs the one workflow-appropriate file.
   $: hasRequiredFiles = workflow === 'router'
@@ -207,6 +226,9 @@
         .select('id')
         .single();
       if (insertError) throw insertError;
+      if (insertedPart?.id) {
+        await sendNotification('manufacturing-request', { part_id: insertedPart.id });
+      }
 
       // Reset
       partName = '';
@@ -276,6 +298,9 @@
       if (insertError) throw insertError;
 
       await triggerAutocamFromStep(insertedPart.id, stepName);
+      if (insertedPart?.id) {
+        await sendNotification('manufacturing-request', { part_id: insertedPart.id });
+      }
 
       // Reset
       partName = '';
@@ -359,6 +384,9 @@
       if (insertError) throw insertError;
 
       await triggerAutocamFromStep(insertedPart.id, stepName);
+      if (insertedPart?.id) {
+        await sendNotification('manufacturing-request', { part_id: insertedPart.id });
+      }
 
       // Reset
       partName = '';

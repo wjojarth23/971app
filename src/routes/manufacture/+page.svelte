@@ -395,7 +395,7 @@
         .upload(fileName, quickPrintFile, { cacheControl: '3600', upsert: false });
       if (uploadError) throw uploadError;
 
-      const { error: insertError } = await supabase
+      const { data: insertedPart, error: insertError } = await supabase
         .from('parts')
         .insert([{
           name: quickPrintPartName.trim(),
@@ -409,8 +409,13 @@
           file_url: fileName,
           status: 'pending',
           frc_team: user?.frc_team || null
-        }]);
+        }])
+        .select('id')
+        .single();
       if (insertError) throw insertError;
+      if (insertedPart?.id) {
+        await sendNotification('manufacturing-request', { part_id: insertedPart.id });
+      }
 
       persistLastSubsystem(selectedSubsystem);
       await loadParts();

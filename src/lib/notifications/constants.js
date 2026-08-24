@@ -7,7 +7,8 @@ export const NOTIFICATION_KEYS = {
   TASK_ASSIGNED: 'task_assigned',
   TASK_REVIEW_REQUESTED: 'task_review_requested',
   TASK_STATUS_CHANGED: 'task_status_changed',
-  TASK_DEADLINE: 'task_deadline'
+  TASK_DEADLINE: 'task_deadline',
+  MANUFACTURING_REQUEST: 'manufacturing_request'
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS = {
@@ -19,7 +20,8 @@ export const DEFAULT_NOTIFICATION_SETTINGS = {
   [NOTIFICATION_KEYS.TASK_ASSIGNED]: true,
   [NOTIFICATION_KEYS.TASK_REVIEW_REQUESTED]: true,
   [NOTIFICATION_KEYS.TASK_STATUS_CHANGED]: true,
-  [NOTIFICATION_KEYS.TASK_DEADLINE]: true
+  [NOTIFICATION_KEYS.TASK_DEADLINE]: true,
+  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST]: true
 };
 
 export const NOTIFICATION_UI_OPTIONS = [
@@ -67,5 +69,10 @@ export const NOTIFICATION_UI_OPTIONS = [
     key: NOTIFICATION_KEYS.TASK_DEADLINE,
     label: 'Task deadline alerts',
     description: 'Remind you when a task deadline has passed and the task is not finished.'
+  },
+  {
+    key: NOTIFICATION_KEYS.MANUFACTURING_REQUEST,
+    label: 'Manufacturing requests (lead)',
+    description: 'DM when a new manufacturing request is created for a process you lead (e.g. 3D printing).'
   }
 ];
