@@ -13,9 +13,12 @@ reading code.
 
 - **Manufacturing/CAM**: part tracking through the manufacturing pipeline
   (queued → in-progress → completed), STEP file 3D viewing, BOM and build
-  tracking, kitting, bins, post-processing, router-specific workflows. See
-  the **AutoCAM** section below for automatic G-code generation
-  specifically.
+  tracking, kitting, bins, post-processing, router-specific workflows,
+  optional notes on a request (visible/editable both at creation and from
+  the manufacture list). Slack-DMs the relevant lead(s) when a new request
+  is created for a workflow they're assigned to (admin-configurable per
+  user, per workflow - see **Admin & permissions** below). See the
+  **AutoCAM** section below for automatic G-code generation specifically.
 - **AutoCAM**: automatic STEP → G-code generation for lathe turning and
   router routing jobs - either manually queued from `/autocam` or
   auto-triggered by dropping a CAD file into a machine's watched Google
@@ -36,8 +39,10 @@ reading code.
 - **Tasks**: general task tracking separate from the planner's
   scheduling-focused tasks, including a dedicated P0 (priority-zero issue)
   report view.
-- **Admin & permissions**: user/role/permission management, an activity
-  log, attendance location/schedule configuration.
+- **Admin & permissions**: user/role/permission management (including a
+  per-workflow "Notifications" role controlling who gets Slack-DMed for
+  new manufacturing requests), an activity log, attendance
+  location/schedule configuration.
 - **Attendance**: attendance logging against configured locations/schedules,
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
