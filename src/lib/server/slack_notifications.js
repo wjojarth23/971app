@@ -362,11 +362,11 @@ const WORKFLOW_LABELS = {
 // Storage path (generic/3D-print forms - file_name and file_url are the
 // same value) or a JSON blob { step_file, pdf_file, step_valid } (router/
 // lathe, which can have both a STEP and a PDF attached to one part).
-// Onshape-sourced parts (source_type === 'onshape_api') have no static
-// Storage file at all - their STEP is translated on demand via the
-// Onshape API - so there's nothing to link and this returns [].
+// Onshape-sourced parts (is_onshape_part) have no static Storage file at
+// all - their STEP is translated on demand via the Onshape API - so
+// there's nothing to link and this returns [].
 function resolvePartFiles(part) {
-  if (part.source_type === 'onshape_api') return [];
+  if (part.is_onshape_part) return [];
   let meta = {};
   try {
     meta = JSON.parse(part.file_url || '') || {};
@@ -407,11 +407,12 @@ async function partFileLinks(supa, part) {
 
 export async function notifyManufacturingRequestById(partId) {
   const supa = getSupabase();
-  const { data: part } = await supa
+  const { data: part, error: partError } = await supa
     .from('parts')
-    .select('id, name, workflow, project_id, requester, created_at, quantity, material, notes, file_name, file_url, source_type')
+    .select('id, name, workflow, project_id, requester, created_at, quantity, material, notes, file_name, file_url, is_onshape_part')
     .eq('id', partId)
     .maybeSingle();
+  if (partError) console.error('notifyManufacturingRequestById: parts query failed', partError);
   if (!part) {
     return { ok: false, reason: 'no-part' };
   }
@@ -480,11 +481,12 @@ async function findUserIdByFullName(supa, name) {
 export async function notifyPartRequesterStatusById(partId, newStatus) {
   if (!partId || !newStatus) return { ok: false, reason: 'invalid-input' };
   const supa = getSupabase();
-  const { data: part } = await supa
+  const { data: part, error: partError } = await supa
     .from('parts')
     .select('id, name, requester, workflow')
     .eq('id', partId)
     .maybeSingle();
+  if (partError) console.error('notifyPartRequesterStatusById: parts query failed', partError);
   if (!part?.requester) return { ok: false, reason: 'no-requester' };
 
   const requesterId = await findUserIdByFullName(supa, part.requester);
