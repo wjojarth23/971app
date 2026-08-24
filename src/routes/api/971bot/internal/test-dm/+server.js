@@ -27,7 +27,7 @@ export async function POST({ request }) {
   const body = await request.json().catch(() => ({}));
   const email = body?.email;
   const text = body?.text;
-  if (!email || !text) return json({ error: 'email and text required' }, { status: 400 });
+  const identityOnly = !!body?.identity_only;
 
   try {
     const slack = getSlackClient();
@@ -36,6 +36,21 @@ export async function POST({ request }) {
     if (!authCheck.ok) {
       return json({ ok: false, step: 'auth.test', error: authCheck.error }, { status: 502 });
     }
+
+    // identity_only: confirm which bot/app this token belongs to (name,
+    // bot user id, workspace) without actually sending a message.
+    if (identityOnly) {
+      return json({
+        ok: true,
+        team: authCheck.team,
+        teamId: authCheck.team_id,
+        botUserName: authCheck.user,
+        botUserId: authCheck.user_id,
+        botId: authCheck.bot_id
+      });
+    }
+
+    if (!email || !text) return json({ error: 'email and text required' }, { status: 400 });
 
     let slackUserId = await slackUserIdForEmail(email);
     if (!slackUserId) {
