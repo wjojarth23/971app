@@ -4,7 +4,8 @@ import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/publi
 import {
   notifyPartAssignmentById,
   notifyPartCompletedById,
-  notifyPurchaseApprovedById
+  notifyPurchaseApprovedById,
+  notifyManufacturingRequestById
 } from '$lib/server/slack_notifications.js';
 
 function getClientFromRequest(request) {
@@ -41,6 +42,11 @@ export async function POST({ request }) {
     if (type === 'purchase-approved') {
       if (!body.purchase_id) return json({ error: 'purchase_id required' }, { status: 400 });
       const result = await notifyPurchaseApprovedById(body.purchase_id);
+      return json({ ok: true, result });
+    }
+    if (type === 'manufacturing-request') {
+      if (!body.part_id) return json({ error: 'part_id required' }, { status: 400 });
+      const result = await notifyManufacturingRequestById(body.part_id);
       return json({ ok: true, result });
     }
     return json({ error: 'Unknown notification type' }, { status: 400 });

@@ -28,6 +28,25 @@
     }
   }
 
+  // Same helper/endpoint as manufacture/+page.svelte's sendNotification -
+  // notifies workflow leads (e.g. 3D print leads) that a new request came in.
+  async function sendNotification(type, payload = {}) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ type, ...payload })
+      });
+    } catch (err) {
+      console.warn('Notification request failed', err);
+    }
+  }
+
   let subsystemId = $page.params.id;
   let user = null;
   let loading = true;
@@ -1390,6 +1409,9 @@
       console.log('Part added to manufacturing queue:', partData);
 
   const createdPart = Array.isArray(partData) ? partData[0] : partData;
+  if (createdPart?.id) {
+    sendNotification('manufacturing-request', { part_id: createdPart.id });
+  }
 
       // Create or find existing build for this subsystem (version-independent for rollup)
       let buildId = null;
