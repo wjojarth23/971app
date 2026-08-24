@@ -164,6 +164,22 @@
   const teamRoleOptions = Array.from(new Set(Object.values(TEAM_ROLES)));
   const frcTeamOptions = Object.values(FRC_TEAMS);
 
+  // Manufacturing lead notification categories. Matches parts.workflow
+  // values / WORKFLOW_LABELS in src/lib/server/slack_notifications.js -
+  // keep in sync if a new workflow's notifications get wired up.
+  const manufacturingNotifyOptions = [
+    { value: '3d-print', label: '3D Print' },
+    { value: 'router', label: 'Router' }
+  ];
+
+  function toggleManufacturingNotify(user, workflow, checked) {
+    const current = Array.isArray(user.manufacturing_lead_workflows) ? user.manufacturing_lead_workflows : [];
+    const next = checked
+      ? Array.from(new Set([...current, workflow]))
+      : current.filter((w) => w !== workflow);
+    updateUserRoles(user, { manufacturing_lead_workflows: next });
+  }
+
   function formatRoleLabel(value) {
     if (!value) return 'Unassigned';
     return value
@@ -1609,6 +1625,27 @@
                   </select>
                 </div>
 
+                <div class="user-card-role">
+                  <span class="role-label">Notifications</span>
+                  {#if user.is_dev}
+                    <span class="chip chip-pill status-chip status-chip--dev">All (Dev)</span>
+                  {:else}
+                    <div class="notify-checkboxes">
+                      {#each manufacturingNotifyOptions as opt}
+                        <label class="notify-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={(user.manufacturing_lead_workflows || []).includes(opt.value)}
+                            disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                            on:change={(e) => toggleManufacturingNotify(user, opt.value, e.target.checked)}
+                          />
+                          {opt.label}
+                        </label>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+
                 {#if user.is_dev}
                   <div class="user-card-role">
                     <span class="role-label">Permissions</span>
@@ -1649,6 +1686,7 @@
                 <th>General Role</th>
                 <th>Purchasing Role</th>
                 <th>Team Role</th>
+                <th>Notifications</th>
                 <th>Permissions</th>
                 {#if showUserActions}<th>Actions</th>{/if}
               </tr>
@@ -1737,6 +1775,25 @@
                         <option value={roleValue}>{formatRoleLabel(roleValue)}</option>
                       {/each}
                     </select>
+                  </td>
+                  <td>
+                    {#if user.is_dev}
+                      <span class="chip chip-pill status-chip status-chip--dev">All (Dev)</span>
+                    {:else}
+                      <div class="notify-checkboxes">
+                        {#each manufacturingNotifyOptions as opt}
+                          <label class="notify-checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={(user.manufacturing_lead_workflows || []).includes(opt.value)}
+                              disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                              on:change={(e) => toggleManufacturingNotify(user, opt.value, e.target.checked)}
+                            />
+                            {opt.label}
+                          </label>
+                        {/each}
+                      </div>
+                    {/if}
                   </td>
                   <td class="all-permissions-cell">
                     {#if user.is_dev}
@@ -2898,6 +2955,26 @@
   .user-card-role .form-select {
     font-size: 0.8rem;
     padding: var(--space-2);
+  }
+
+  .notify-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .notify-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .notify-checkbox-label input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
   }
 
   /* Mobile Responsive - Tablet */

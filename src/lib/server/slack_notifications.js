@@ -328,26 +328,22 @@ export async function notifyTaskDeadlineById(taskId) {
   return { ok: false, reason: 'deadlines-removed' };
 }
 
-// Manufacturing leads-per-workflow, by email. No dedicated leads table/role
-// exists yet (team_role only has a single flat 'Manufacturing Lead', not
-// per-process) - this is the placeholder until that's built out. Workflow
-// values are the real, verbatim strings used by parts.workflow throughout
-// manufacture/create/+page.svelte and manufacture/+page.svelte - not an
-// enum, just free text, so keep these in sync if a new workflow is added.
-// Empty arrays are fine (and expected for now): no leads configured means
-// notifyManufacturingRequestById() below is a no-op for that workflow.
-//
-// yuvan262626@gmail.com (Yuvan Shankar) is intentionally always included
-// here, permanently, for oversight/testing of this feature - not a
-// temporary testing-phase placeholder to be removed later. Real 3D print
-// leads are Anton Strougo and Sahil Rajput.
-export const MANUFACTURING_WORKFLOW_LEAD_EMAILS = {
-  'router': [],
-  'lathe': [],
-  'mill': [],
-  'laser-cut': [],
-  '3d-print': ['sahilshethrajput@gmail.com', 'antonstrougo@gmail.com', 'yuvan262626@gmail.com']
-};
+// Manufacturing leads-per-workflow now live in the DB
+// (user_profiles.manufacturing_lead_workflows, a text[] of workflow
+// values), editable from the admin panel's "Notifications" role field -
+// not a hardcoded map anymore. Any user with is_dev=true always receives
+// every workflow's notifications regardless of that list (Yuvan Shankar is
+// the current case: permanent oversight of this feature, not a temporary
+// testing placeholder). Workflow values are the real, verbatim strings
+// used by parts.workflow throughout manufacture/create/+page.svelte and
+// manufacture/+page.svelte - not an enum, just free text.
+async function manufacturingLeadsForWorkflow(supa, workflow) {
+  const { data, error } = await supa
+    .from('user_profiles')
+    .select('id, email, is_dev, manufacturing_lead_workflows');
+  if (error || !data) return [];
+  return data.filter((u) => u.is_dev || (u.manufacturing_lead_workflows || []).includes(workflow));
+}
 
 const WORKFLOW_LABELS = {
   'router': 'Router',
@@ -368,8 +364,8 @@ export async function notifyManufacturingRequestById(partId) {
     return { ok: false, reason: 'no-part' };
   }
 
-  const leadEmails = MANUFACTURING_WORKFLOW_LEAD_EMAILS[part.workflow] || [];
-  if (!leadEmails.length) {
+  const leads = await manufacturingLeadsForWorkflow(supa, part.workflow);
+  if (!leads.length) {
     return { ok: false, reason: 'no-leads-configured' };
   }
 
@@ -393,24 +389,15 @@ export async function notifyManufacturingRequestById(partId) {
   const text = lines.join('\n');
 
   const results = [];
-  for (const email of leadEmails) {
-    const { data: leadUser } = await supa
-      .from('user_profiles')
-      .select('id')
-      .eq('email', email)
-      .maybeSingle();
-    if (!leadUser?.id) {
-      results.push({ ok: false, reason: 'lead-not-found', email });
-      continue;
-    }
-    const entityKey = part.created_at ? `${part.id}:${leadUser.id}:${part.created_at}` : `${part.id}:${leadUser.id}`;
+  for (const lead of leads) {
+    const entityKey = part.created_at ? `${part.id}:${lead.id}:${part.created_at}` : `${part.id}:${lead.id}`;
     const res = await dispatchNotification({
-      userId: leadUser.id,
+      userId: lead.id,
       notificationKey: NOTIFICATION_KEYS.MANUFACTURING_REQUEST,
       entityKey,
       text
     });
-    results.push({ ...res, email });
+    results.push({ ...res, email: lead.email });
   }
   return { ok: true, sent: results };
 }

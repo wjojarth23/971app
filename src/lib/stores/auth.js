@@ -24,7 +24,7 @@ export async function fetchUserProfile(userId) {
   try {
     const { data, error } = await supabase
       .from('user_profiles')
-      .select('id, email, full_name, role, is_dev, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel')
+      .select('id, email, full_name, role, is_dev, permissions, header_tabs, dashboard_layout, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel, manufacturing_lead_workflows')
       .eq('id', userId)
       .single();
 
@@ -62,6 +62,7 @@ export async function fetchUserProfile(userId) {
       purchasing_role: data.purchasing_role || 'basic',
       team_role: data.team_role || 'other',
       frc_team: data.frc_team || null,
+      is_dev: !!data.is_dev,
       // new customization fields
       header_tabs: headerTabs,
       dashboard_layout: data.dashboard_layout || 'grid',
@@ -70,7 +71,8 @@ export async function fetchUserProfile(userId) {
   banned: !!data.banned,
   notification_settings: data.notification_settings || null,
   slack_user_id: data.slack_user_id || null,
-  slack_dm_channel: data.slack_dm_channel || null
+  slack_dm_channel: data.slack_dm_channel || null,
+  manufacturing_lead_workflows: Array.isArray(data.manufacturing_lead_workflows) ? data.manufacturing_lead_workflows : []
     };
 
     userProfile.set(profile);

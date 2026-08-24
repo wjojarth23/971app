@@ -43,6 +43,23 @@
     return `Team ${value}`;
   }
 
+  // Matches WORKFLOW_LABELS in src/lib/server/slack_notifications.js - keep
+  // in sync if a new manufacturing workflow notification category is added.
+  const MANUFACTURING_WORKFLOW_LABELS = {
+    'router': 'Router',
+    'lathe': 'Lathe',
+    'mill': 'Mill',
+    'laser-cut': 'Laser Cut',
+    '3d-print': '3D Print'
+  };
+
+  function formatNotificationRoleLabel(u) {
+    if (u?.is_dev) return 'All (Dev)';
+    const workflows = Array.isArray(u?.manufacturing_lead_workflows) ? u.manufacturing_lead_workflows : [];
+    if (!workflows.length) return 'Unassigned';
+    return workflows.map((w) => MANUFACTURING_WORKFLOW_LABELS[w] || w).join(', ');
+  }
+
   async function logout() {
     if (loggingOut) return;
     loggingOut = true;
@@ -348,6 +365,10 @@
         <div class="role-box">
           <div class="role-label">Team / Other Role</div>
           <div class="role-value">{formatRoleLabel(user.team_role || (Array.isArray(user.roster_keys) && user.roster_keys[0]) || 'Unassigned')}</div>
+        </div>
+        <div class="role-box">
+          <div class="role-label">Notification Role</div>
+          <div class="role-value">{formatNotificationRoleLabel(user)}</div>
         </div>
       </div>
     </section>
