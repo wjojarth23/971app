@@ -328,21 +328,24 @@ export async function notifyTaskDeadlineById(taskId) {
   return { ok: false, reason: 'deadlines-removed' };
 }
 
-// Manufacturing leads-per-workflow now live in the DB
+// Manufacturing leads-per-workflow live in the DB
 // (user_profiles.manufacturing_lead_workflows, a text[] of workflow
 // values), editable from the admin panel's "Notifications" role field -
-// not a hardcoded map anymore. Any user with is_dev=true always receives
-// every workflow's notifications regardless of that list (Yuvan Shankar is
-// the current case: permanent oversight of this feature, not a temporary
-// testing placeholder). Workflow values are the real, verbatim strings
-// used by parts.workflow throughout manufacture/create/+page.svelte and
-// manufacture/+page.svelte - not an enum, just free text.
+// not a hardcoded map anymore. Deliberately NOT tied to is_dev: an earlier
+// version auto-included every is_dev account (meant to cover Yuvan Shankar
+// for oversight), but that also silently pulled in other unrelated dev
+// accounts (e.g. William Jojarth) who shouldn't get these pings. Anyone who
+// needs to see everything - Yuvan included - is just assigned every current
+// workflow explicitly, the same as any other lead. Workflow values are the
+// real, verbatim strings used by parts.workflow throughout
+// manufacture/create/+page.svelte and manufacture/+page.svelte - not an
+// enum, just free text.
 async function manufacturingLeadsForWorkflow(supa, workflow) {
   const { data, error } = await supa
     .from('user_profiles')
-    .select('id, email, is_dev, manufacturing_lead_workflows');
+    .select('id, email, manufacturing_lead_workflows');
   if (error || !data) return [];
-  return data.filter((u) => u.is_dev || (u.manufacturing_lead_workflows || []).includes(workflow));
+  return data.filter((u) => (u.manufacturing_lead_workflows || []).includes(workflow));
 }
 
 const WORKFLOW_LABELS = {
