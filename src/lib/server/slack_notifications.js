@@ -349,8 +349,8 @@ async function manufacturingLeadsForWorkflow(supa, workflow) {
 }
 
 const WORKFLOW_LABELS = {
-  'router': 'Router',
-  'lathe': 'Lathe',
+  'router': 'Router Cut',
+  'lathe': 'Lathe Turn',
   'mill': 'Mill',
   'laser-cut': 'Laser Cut',
   '3d-print': '3D Print'
