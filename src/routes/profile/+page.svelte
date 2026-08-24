@@ -54,7 +54,6 @@
   };
 
   function formatNotificationRoleLabel(u) {
-    if (u?.is_dev) return 'All (Dev)';
     const workflows = Array.isArray(u?.manufacturing_lead_workflows) ? u.manufacturing_lead_workflows : [];
     if (!workflows.length) return 'Unassigned';
     return workflows.map((w) => MANUFACTURING_WORKFLOW_LABELS[w] || w).join(', ');

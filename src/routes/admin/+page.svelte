@@ -1627,23 +1627,19 @@
 
                 <div class="user-card-role">
                   <span class="role-label">Notifications</span>
-                  {#if user.is_dev}
-                    <span class="chip chip-pill status-chip status-chip--dev">All (Dev)</span>
-                  {:else}
-                    <div class="notify-checkboxes">
-                      {#each manufacturingNotifyOptions as opt}
-                        <label class="notify-checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={(user.manufacturing_lead_workflows || []).includes(opt.value)}
-                            disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
-                            on:change={(e) => toggleManufacturingNotify(user, opt.value, e.target.checked)}
-                          />
-                          {opt.label}
-                        </label>
-                      {/each}
-                    </div>
-                  {/if}
+                  <div class="notify-checkboxes">
+                    {#each manufacturingNotifyOptions as opt}
+                      <label class="notify-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={(user.manufacturing_lead_workflows || []).includes(opt.value)}
+                          disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                          on:change={(e) => toggleManufacturingNotify(user, opt.value, e.target.checked)}
+                        />
+                        {opt.label}
+                      </label>
+                    {/each}
+                  </div>
                 </div>
 
                 {#if user.is_dev}
@@ -1777,23 +1773,19 @@
                     </select>
                   </td>
                   <td>
-                    {#if user.is_dev}
-                      <span class="chip chip-pill status-chip status-chip--dev">All (Dev)</span>
-                    {:else}
-                      <div class="notify-checkboxes">
-                        {#each manufacturingNotifyOptions as opt}
-                          <label class="notify-checkbox-label">
-                            <input
-                              type="checkbox"
-                              checked={(user.manufacturing_lead_workflows || []).includes(opt.value)}
-                              disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
-                              on:change={(e) => toggleManufacturingNotify(user, opt.value, e.target.checked)}
-                            />
-                            {opt.label}
-                          </label>
-                        {/each}
-                      </div>
-                    {/if}
+                    <div class="notify-checkboxes">
+                      {#each manufacturingNotifyOptions as opt}
+                        <label class="notify-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={(user.manufacturing_lead_workflows || []).includes(opt.value)}
+                            disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                            on:change={(e) => toggleManufacturingNotify(user, opt.value, e.target.checked)}
+                          />
+                          {opt.label}
+                        </label>
+                      {/each}
+                    </div>
                   </td>
                   <td class="all-permissions-cell">
                     {#if user.is_dev}
