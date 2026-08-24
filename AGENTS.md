@@ -52,3 +52,23 @@ gets a plain direct push to `main` afterward, never a branch/PR. See
 the repo-root `README.md`'s "Contribution workflow" section for the full
 rule set (including: never add a Claude/AI co-author trailer on commits in
 this repo).
+
+**Testing the manufacturing-request Slack notification pipeline**: don't
+trigger `notifyManufacturingRequestById` (or `POST /api/notifications`
+with `type: 'manufacturing-request'`) end-to-end using a real workflow
+value (`3d-print`, `router`, `lathe`, `mill`, `laser-cut`) - those have
+real subscribed leads (currently Sahil Rajput and Anton Strougo on
+`3d-print`) who should never receive test traffic. Use `workflow: 'test'`
+for any test part instead - it's a reserved value no real creation form
+ever produces, and only Yuvan Shankar (`yuvan262626@gmail.com`) is
+subscribed to it in `user_profiles.manufacturing_lead_workflows`. For
+testing message *wording* specifically (not the DB-driven recipient
+resolution), prefer `scripts/send-slack-test.mjs` instead - it hits an
+already-deployed admin-only endpoint with an arbitrary recipient/text pair
+and needs no local build or the reserved test workflow at all:
+```
+node --env-file=.env scripts/send-slack-test.mjs <email> "<message text>"
+```
+Requires `DEV_TOOLS_EMAIL`/`DEV_TOOLS_PASSWORD` in `.env` (a persistent
+admin test account - gitignored, not committed; see the comment above
+those vars in `.env`).

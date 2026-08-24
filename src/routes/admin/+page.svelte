@@ -169,7 +169,8 @@
   // keep in sync if a new workflow's notifications get wired up.
   const manufacturingNotifyOptions = [
     { value: '3d-print', label: '3D Print' },
-    { value: 'router', label: 'Router' }
+    { value: 'router', label: 'Router' },
+    { value: 'lathe', label: 'Lathe' }
   ];
 
   function toggleManufacturingNotify(user, workflow, checked) {
