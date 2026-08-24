@@ -868,6 +868,7 @@
       if (newStatus === 'complete') {
         await sendNotification('part-complete', { part_id: partId });
       }
+      await sendNotification('manufacturing-request-status', { part_id: partId, status: newStatus });
       // NOTE: no loadParts() here — callers use setLocalStatus for an optimistic update
       // so the hub doesn't flash/reload on every button click.
     } catch (error) {
@@ -907,8 +908,13 @@
         .from('parts')
         .update(updateData)
         .eq('id', partId);
-      
+
       if (error) throw error;
+      // This path sets status: 'complete' directly (not via updatePartStatus
+      // above), so it needs its own copies of both notification calls -
+      // previously missing the subsystem one entirely, a pre-existing gap.
+      await sendNotification('part-complete', { part_id: partId });
+      await sendNotification('manufacturing-request-status', { part_id: partId, status: 'complete' });
       await loadParts();
     } catch (error) {
       console.error('Error completing part:', error);

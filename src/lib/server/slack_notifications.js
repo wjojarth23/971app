@@ -356,11 +356,60 @@ const WORKFLOW_LABELS = {
   '3d-print': '3D Print'
 };
 
+// Resolves the real downloadable file(s) attached to a part. Mirrors the
+// exact parsing logic manufacture/+page.svelte's getFileMeta()/
+// getStepFileName() already use client-side: file_url is either a plain
+// Storage path (generic/3D-print forms - file_name and file_url are the
+// same value) or a JSON blob { step_file, pdf_file, step_valid } (router/
+// lathe, which can have both a STEP and a PDF attached to one part).
+// Onshape-sourced parts (source_type === 'onshape_api') have no static
+// Storage file at all - their STEP is translated on demand via the
+// Onshape API - so there's nothing to link and this returns [].
+function resolvePartFiles(part) {
+  if (part.source_type === 'onshape_api') return [];
+  let meta = {};
+  try {
+    meta = JSON.parse(part.file_url || '') || {};
+  } catch {
+    meta = {};
+  }
+  const files = [];
+  if (meta.step_file) files.push({ label: 'STEP file', path: meta.step_file });
+  if (meta.pdf_file) files.push({ label: 'PDF drawing', path: meta.pdf_file });
+  if (!files.length && part.file_url) {
+    const ext = (part.file_name || part.file_url).split('.').pop()?.toLowerCase();
+    const label = ext === 'pdf' ? 'PDF drawing' : /^(step|stp)$/.test(ext || '') ? 'STEP file' : 'File';
+    files.push({ label, path: part.file_url });
+  }
+  return files;
+}
+
+// A week is deliberately much longer than every other signed URL already
+// in this codebase (60s-3600s elsewhere) - those are all "generate right
+// before an immediate click" download buttons. This is a link sitting in a
+// Slack DM that might not get opened same-day, so it needs to survive
+// longer than a typical in-app download link does.
+const NOTIFICATION_FILE_LINK_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+async function partFileLinks(supa, part) {
+  const files = resolvePartFiles(part);
+  const lines = [];
+  for (const file of files) {
+    const { data, error } = await supa.storage
+      .from('manufacturing-files')
+      .createSignedUrl(file.path, NOTIFICATION_FILE_LINK_TTL_SECONDS);
+    if (!error && data?.signedUrl) {
+      lines.push(`<${data.signedUrl}|Download ${file.label}>`);
+    }
+  }
+  return lines;
+}
+
 export async function notifyManufacturingRequestById(partId) {
   const supa = getSupabase();
   const { data: part } = await supa
     .from('parts')
-    .select('id, name, workflow, project_id, requester, created_at, quantity, material, notes')
+    .select('id, name, workflow, project_id, requester, created_at, quantity, material, notes, file_name, file_url, source_type')
     .eq('id', partId)
     .maybeSingle();
   if (!part) {
@@ -389,6 +438,8 @@ export async function notifyManufacturingRequestById(partId) {
 
   if (part.notes) lines.push(`Note: ${part.notes}`);
 
+  lines.push(...(await partFileLinks(supa, part)));
+
   const text = lines.join('\n');
 
   const results = [];
@@ -401,6 +452,63 @@ export async function notifyManufacturingRequestById(partId) {
       text
     });
     results.push({ ...res, email: lead.email });
+  }
+  return { ok: true, sent: results };
+}
+
+// parts.requester is free-text (no FK to user_profiles - see the
+// RosterManager plan doc for why), so this is a best-effort
+// case-insensitive full_name match, not a reliable join. Silently no-ops
+// if nothing matches (typo, nickname, requester never made an account,
+// etc.) rather than erroring - same "skip gracefully" pattern used
+// throughout this file for missing Slack users/channels.
+async function findUserIdByFullName(supa, name) {
+  if (!name) return null;
+  const { data } = await supa
+    .from('user_profiles')
+    .select('id')
+    .ilike('full_name', name.trim())
+    .maybeSingle();
+  return data?.id || null;
+}
+
+// Called on every status update, unconditionally - relies entirely on
+// dispatchNotification's own dedup (entityKey with no timestamp/counter
+// suffix) to make repeat calls a no-op after the first real "started"/
+// "ready" transition, rather than the caller having to know the
+// before/after status to detect a real transition itself.
+export async function notifyPartRequesterStatusById(partId, newStatus) {
+  if (!partId || !newStatus) return { ok: false, reason: 'invalid-input' };
+  const supa = getSupabase();
+  const { data: part } = await supa
+    .from('parts')
+    .select('id, name, requester, workflow')
+    .eq('id', partId)
+    .maybeSingle();
+  if (!part?.requester) return { ok: false, reason: 'no-requester' };
+
+  const requesterId = await findUserIdByFullName(supa, part.requester);
+  if (!requesterId) return { ok: false, reason: 'requester-not-found' };
+
+  const workflowLabel = WORKFLOW_LABELS[part.workflow] || part.workflow;
+  const partName = part.name || 'Unnamed part';
+  const results = [];
+
+  if (newStatus !== 'pending') {
+    results.push(await dispatchNotification({
+      userId: requesterId,
+      notificationKey: NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STARTED,
+      entityKey: `${part.id}:started`,
+      text: `Work has started on your ${workflowLabel} request: ${partName}.`
+    }));
+  }
+  if (newStatus === 'complete' || newStatus === 'kitted') {
+    results.push(await dispatchNotification({
+      userId: requesterId,
+      notificationKey: NOTIFICATION_KEYS.MANUFACTURING_REQUEST_READY,
+      entityKey: `${part.id}:ready`,
+      text: `Your ${workflowLabel} request is ready: ${partName}.`
+    }));
   }
   return { ok: true, sent: results };
 }
