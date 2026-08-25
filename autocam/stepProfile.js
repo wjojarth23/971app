@@ -540,5 +540,69 @@ export function extractRoutingContoursFromMeshes(meshes) {
   }
   const thickness = Number.isFinite(minD) && Number.isFinite(maxD) ? maxD - minD : null;
 
+  // Sanity check: minD/maxD is only real material thickness if the far
+  // extreme is the depth of a genuine, roughly-parallel "bottom" face - not
+  // just the farthest point some unrelated, non-parallel wall happens to
+  // reach. Real bug found against mounting-bracket-bent.step (REV-41-1623,
+  // an already-bent/formed sheet metal bracket, not a flat pattern): its
+  // base flange's real bottom face sits at ~20% of the measured range (true
+  // thickness ~0.118", matching its flat sibling mounting-bracket-flat.step
+  // almost exactly) - but a bent-up wall (normal roughly PERPENDICULAR to
+  // best.normal, not parallel) reaches further, to 100% of the range,
+  // pulling the far extreme out to 0.591" with no real face backing it -
+  // would have told the router to cut ~5x deeper than the actual material.
+  //
+  // Checked by looking for a second large B-rep face whose normal is
+  // roughly ANTI-PARALLEL to best.normal (a genuine opposite/parallel face,
+  // not a perpendicular wall) sitting near either extreme - best.mesh's own
+  // winning face sits at depth 0 by construction (origin = best.point, a
+  // point ON that face), so whichever of minD/maxD isn't ~0 is the "far"
+  // side, and which one that is depends on which way best.normal happens to
+  // point; checking both bands is simplest and safe, since the winning face
+  // itself (alignment +1) can never satisfy the anti-parallel test. A plain
+  // "is there area at an intermediate depth" check isn't enough here - it
+  // falsely flagged every multi-hole plate on hand (flat-plate.step,
+  // multibody-bracket.step, etc.): even a genuinely flat part's own outer
+  // perimeter and hole walls are thin strips spanning the *entire* 0..
+  // thickness range by construction, averaging to the middle depth same as
+  // a real bent wall would - that signal can't tell them apart. Checking
+  // face *orientation* at the extremes can: a real bottom face is
+  // anti-parallel to the top; a bent wall's face is perpendicular to it.
+  if (thickness !== null && thickness > 0) {
+    const band = thickness * 0.15;
+    let hasParallelFarFace = false;
+    for (const brepFace of best.mesh.brep_faces || []) {
+      const tris = faceTriangleRange(best.mesh, brepFace);
+      if (tris.length === 0) continue;
+      let faceArea = 0;
+      let refNormal = null;
+      let planar = true;
+      let depthSum = 0;
+      for (const [a, b, c] of tris) {
+        const { normal, area: triArea } = triangleNormalAndArea(a, b, c);
+        if (normal.x === 0 && normal.y === 0 && normal.z === 0) continue;
+        if (!refNormal) refNormal = normal;
+        else if (normal.x * refNormal.x + normal.y * refNormal.y + normal.z * refNormal.z < 0.999) planar = false;
+        faceArea += triArea;
+        for (const p of [a, b, c]) {
+          depthSum += (p.x - origin.x) * best.normal.x + (p.y - origin.y) * best.normal.y + (p.z - origin.z) * best.normal.z;
+        }
+      }
+      if (!planar || !refNormal || faceArea < best.area * 0.2) continue;
+      const avgDepth = depthSum / (tris.length * 3);
+      const alignment = refNormal.x * best.normal.x + refNormal.y * best.normal.y + refNormal.z * best.normal.z;
+      const nearMin = avgDepth <= minD + band;
+      const nearMax = avgDepth >= maxD - band;
+      if ((nearMin || nearMax) && alignment < -0.9) { hasParallelFarFace = true; break; }
+    }
+    if (!hasParallelFarFace) {
+      throw new Error(
+        `This part has no face parallel to its flat face at the far end of the measured thickness ` +
+        `(${thickness.toFixed(3)}") - likely a bent flange or wall being measured as material thickness, not a ` +
+        `genuine opposite face. Check this is a flat pattern, not an already-formed/bent part.`
+      );
+    }
+  }
+
   return { contours, thickness };
 }
