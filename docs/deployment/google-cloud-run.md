@@ -4,113 +4,107 @@ This app moved from Vercel to Cloud Run. This doc covers the actual GCP setup an
 day-to-day workflow, split so a GitHub-only maintainer never needs GCP access for
 normal updates.
 
-**Target**: project `geminiapi-469220`, region `us-west1`, Cloud Run service and
-Artifact Registry repo both named `spartanshub`, domain `spartanshub.spartanrobotics.org`.
+**Target**: project `spartanshub` (project number `536793099017`), region `us-west1`,
+Cloud Run service and Artifact Registry repo both named `spartanshub`, domain
+`spartanshub.spartanrobotics.org`.
 
-## Current status (as of this migration)
+**Note on project history**: this app originally deployed into `geminiapi-469220` by
+accident (that project's real purpose is unrelated — it holds a "Generative Language
+API Key" and other infrastructure this app never used). It was moved to the correct
+`spartanshub` project on 2026-08-25. `geminiapi-469220` has been fully cleaned of every
+app-related resource (Cloud Run service, Artifact Registry repos, secrets, Cloud Build
+trigger) and is no longer relevant to this app at all.
+
+## Current status
 
 Done and verified live:
-- Artifact Registry repo `spartanshub` created in `us-west1`.
-- `cloudbuild.yaml` builds, pushes, and deploys successfully end-to-end (two real bugs
-  found and fixed by actually running it: `$SHORT_SHA` is unset on manual submits —
-  switched to `$BUILD_ID` — and `gcr.io/google-cloud-sdk/slim` isn't a real image —
-  switched to `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`).
-- The pre-existing Cloud Build GitHub trigger (`rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi`,
-  connected to `frc971/spartanshub` — created outside this migration's own work,
-  likely via the Cloud Run Console's "set up continuous deployment" wizard) **fired on
-  a real push and passed** (`gh pr checks 1` → `pass`), building and deploying with
-  real config. Its branch pattern is currently `^migrate/gcp-cloud-run$` — still needs
-  moving to `^main$` once this branch merges:
-  `gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"`.
+- Artifact Registry repo `spartanshub` in `us-west1`.
+- `cloudbuild.yaml` builds, pushes, and deploys successfully end-to-end. It needs no
+  project-specific values — everything resolves via Cloud Build's built-in `$PROJECT_ID`
+  substitution, which is exactly what made the project move require zero code changes.
+- Cloud Build GitHub trigger `spartanshub-main-deploy` (global region), connected to
+  `frc971/spartanshub`, watching `^main$` — confirmed firing and succeeding on real
+  pushes to `main`.
 - **`https://spartanshub.spartanrobotics.org/` is live** with real `PUBLIC_*` config
-  (real Supabase project, real Onshape base URL), replacing both the original
-  `gcr.io/cloudrun/placeholder` revision and the earlier placeholder-config smoke test.
-  Domain mapping and DNS were already set up.
-- 7 Secret Manager secrets created and wired to the Cloud Run runtime service account
-  (`819718873862-compute@developer.gserviceaccount.com`) via `roles/secretmanager.secretAccessor`,
-  scoped per-secret: `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `SLACK_BOT_TOKEN`,
-  `SLACK_SIGNING_SECRET`, `TBA_API_KEY`, `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY`.
-  The Onshape pair is deliberately pulled into the *build* step via Cloud Build's
-  `availableSecrets`/`secretEnv` (not a plain `cloudbuild.yaml` substitution) so the
-  raw values never sit in git history — see the comment block in `cloudbuild.yaml`.
+  (real Supabase project, real Onshape base URL). Domain mapping was moved from the old
+  project to this one on 2026-08-25 — real but brief downtime during cutover (roughly
+  15-20 minutes): Google's control-plane API reported the mapping fully `Ready` several
+  minutes before the certificate actually finished propagating to all edge nodes, so
+  status-checking alone wasn't a reliable signal that it was safe to consider done.
+  Worth remembering for any future domain-mapping move.
+- 8 Secret Manager secrets created and wired to the Cloud Run runtime service account
+  (`536793099017-compute@developer.gserviceaccount.com`) via
+  `roles/secretmanager.secretAccessor`, scoped per-secret: `SUPABASE_SERVICE_KEY`,
+  `SUPABASE_ANON_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_USER_TOKEN`,
+  `TBA_API_KEY`, `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY`. The Onshape pair is
+  deliberately pulled into the *build* step via Cloud Build's `availableSecrets`/
+  `secretEnv` (not a plain `cloudbuild.yaml` substitution) so the raw values never sit
+  in git history — see the comment block in `cloudbuild.yaml`.
+- **This is a newer GCP project than the old one, and it does not carry the legacy
+  broad "Editor" role the old project's default service account had** — four IAM grants
+  had to be added explicitly that the old project never needed, discovered by actually
+  running a real build/deploy and reading each failure:
+  - `roles/logging.logWriter` (build step failed writing logs — required whenever a
+    build uses `availableSecrets`/non-default logging, which this one does)
+  - `roles/artifactregistry.writer` (image push failed:
+    `artifactregistry.repositories.uploadArtifacts` denied)
+  - `roles/run.admin` + `roles/iam.serviceAccountUser` (needed for the deploy step's
+    own `gcloud run deploy` call)
+  - `allUsers` granted `roles/run.invoker` directly on the Cloud Run service (the old
+    project's service used `run.googleapis.com/invoker-iam-disabled: true`, a
+    different mechanism Cloud Run falls back to under certain org policies; a normal
+    `allUsers` invoker binding worked fine here)
+  All four are one-time, project-level setup — not something a future redeploy needs to
+  repeat.
 
-**Still open, split by actual urgency — checked the code rather than assuming:**
+**Still open — unrelated to the project move, carried over unchanged:**
 
-- **`CRON_NOTIFICATION_TOKEN` — higher priority, a live security gap, not just a
-  missing feature. `cloudbuild.yaml`'s `--set-secrets` now references it (deploys will
-  FAIL until the secret below actually exists), but the secret itself still needs to
-  be created with the correct value — deliberately left as a manual step.**
-  `src/lib/server/cron_auth.js`'s `isAuthorizedCronRequest()` is **fail-open**: `if
-  (!expectedSecrets.length) return true` — when none of
-  `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` are set, the check accepts *any*
-  request as authorized. None are in Secret Manager yet, so on the current live
-  deployment, `/api/planner/notifications` (hit by the one genuinely active `pg_cron`
-  job, every 15 minutes, per `autocam/docs/drive-watcher-cron-plan.md`) and
-  `/api/drive-watcher` both currently accept unauthenticated requests.
+- **`CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` — a live security gap, not
+  just a missing feature.** `src/lib/server/cron_auth.js`'s `isAuthorizedCronRequest()`
+  is **fail-open**: `if (!expectedSecrets.length) return true` — with none of these set,
+  the check accepts *any* request as authorized. None exist in Secret Manager yet
+  (deliberately left out of `cloudbuild.yaml`'s `--set-secrets`, with a comment block
+  explaining why), so `/api/planner/notifications` (hit by the one genuinely active
+  `pg_cron` job, every 15 minutes) and `/api/drive-watcher` both currently accept
+  unauthenticated requests. Tracked as
+  [issue #5](https://github.com/frc971/spartanshub/issues/5) — still open.
 
-  **This must be the exact same value already stored in the Supabase Vault secret
+  **The value must match what's already stored in the Supabase Vault secret
   `planner_notifications_cron_token`** — that's what the live `pg_cron` job actually
-  sends today. Setting a different (e.g. freshly generated) value here would
-  authenticate *this* endpoint while breaking the real cron job's own requests, a
-  worse outcome than the current fail-open state. Retrieve the real value yourself
-  (requires reading a decrypted Vault secret — a real credential, not something to
-  paste into a chat or automate blindly) via the Supabase SQL editor:
+  sends. A freshly generated value would authenticate this endpoint while breaking the
+  real cron job's own requests. Retrieve the real value via the Supabase SQL editor:
 
   ```sql
   select decrypted_secret from vault.decrypted_secrets
   where name = 'planner_notifications_cron_token';
   ```
 
-  Then create the GCP secret from that exact value and grant access:
+  Then create the secret and wire it in:
 
   ```bash
-  gcloud secrets create CRON_NOTIFICATION_TOKEN --data-file=-   # paste the value above, then Ctrl-D
-  gcloud secrets add-iam-policy-binding CRON_NOTIFICATION_TOKEN \
-    --member="serviceAccount:RUNTIME_SA" \
+  gcloud secrets create CRON_NOTIFICATION_TOKEN --project=spartanshub --data-file=-
+  gcloud secrets add-iam-policy-binding CRON_NOTIFICATION_TOKEN --project=spartanshub \
+    --member="serviceAccount:536793099017-compute@developer.gserviceaccount.com" \
     --role="roles/secretmanager.secretAccessor"
   ```
 
-  Until this secret exists, the Cloud Build deploy step will fail (by design — better
-  a loud build failure than a silent auth bypass shipping unnoticed).
+  Then add `CRON_NOTIFICATION_TOKEN=CRON_NOTIFICATION_TOKEN:latest` back into
+  `cloudbuild.yaml`'s `--set-secrets` line (see its comment block for the exact spot).
 - **`GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY` — genuinely low priority, not stale, just never
-  activated.** Checked `src/lib/server/drive_watcher.js:284-286`: the sweep degrades
-  gracefully without this key (`{ ok: true, skipped: true, reason: 'not_configured'
-  }`), not a crash. Checked `migrations/20260817_cam_studio_system.sql:319,364-374`:
-  the migration adds the schema (`cam_machines.drive_folder_id`,
-  `drive_watcher_state`, `drive_watcher_files`) but explicitly documents — as a
-  comment, never executed — the `pg_cron` schedule that *would* activate it. No such
-  schedule exists. Nothing calls `/api/drive-watcher` automatically today. Safe to
-  defer indefinitely; only worth doing when the Drive-triggered CAM feature is
-  actually wanted, matching `autocam/docs/drive-watcher-cron-plan.md`'s own
-  phased rollout (Google Cloud service-account setup was always its own separate,
-  later step).
+  activated.** `src/lib/server/drive_watcher.js:284-286`: the sweep degrades gracefully
+  without this key (`{ ok: true, skipped: true, reason: 'not_configured' }`), not a
+  crash. `migrations/20260817_cam_studio_system.sql:319,364-374`: the migration adds
+  the schema but explicitly documents — as a comment, never executed — the `pg_cron`
+  schedule that *would* activate it. No such schedule exists. Nothing calls
+  `/api/drive-watcher` automatically today. Safe to defer indefinitely.
 - `PUBLIC_SENTRY_DSN`, `PUBLIC_AUTOCAM_API_URL`, `PUBLIC_ROUTES`, `PUBLIC_TBA_API_KEY`,
   and the Drive/Slack-channel runtime env vars (`DRIVE_API`, `DRIVE_UPLOAD_API`,
   `DRIVE_SCOPE`, `DRIVE_PRACTICE_CATEGORY`, `SLACK_ALERT_CHANNEL_ID`) — still empty
-  placeholders in `cloudbuild.yaml`. `DRIVE_*` only matter once the Drive watcher
-  above is actually being activated.
+  placeholders in `cloudbuild.yaml`.
 - **Known pre-existing issue, not introduced by this migration**:
-  `PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle today (on Vercel too —
-  `src/lib/onshape.js` is imported by three client-side `.svelte` pages). Worth a
+  `PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle today —
+  `src/lib/onshape.js` is imported by three client-side `.svelte` pages. Worth a
   follow-up to proxy Onshape calls server-side and rotate both Onshape keys.
-- **Trigger branch pattern still needs to move to `^main$` (see above) — now confirmed
-  to actually be biting.** Checked directly on 2026-08-21: `spartanshub/main` has had
-  many PRs merged since the `migrate/gcp-cloud-run` branch this trigger still watches
-  (`^migrate/gcp-cloud-run$`), including one adding a whole new route
-  (`/autocam/fusion`, `/api/fusion-runner`). Live site returns 404 for both — `curl -o
-  /dev/null -w '%{http_code}'` against `spartanshub.spartanrobotics.org/autocam/fusion`
-  and `/api/fusion-runner` both give `404`, while `/autocam` (pre-existing route) gives
-  `200`. That's consistent with **no build has fired off a `main` merge since the
-  migration branch itself merged** — every PR merged since then may be sitting unbuilt
-  on the live service. Fix:
-  ```bash
-  gcloud builds triggers update rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch-pattern="^main$"
-  ```
-  Then trigger a build for everything that's merged since, either by pushing a new
-  commit to `main` or running the trigger manually:
-  ```bash
-  gcloud builds triggers run rmgpgab-spartanshub-us-west1-frc971-spartanshub--mazvi --branch=main
-  ```
 - Recommended: turn on GitHub branch protection requiring this Cloud Build check to
   pass before merge.
 
@@ -151,7 +145,9 @@ this constraint — see **Secrets** below.
 ## One-time GCP setup (admin only)
 
 Run these yourself once `gcloud` is authenticated (`gcloud auth login`,
-`gcloud config set project geminiapi-469220`):
+`gcloud config set project spartanshub`). This section is a from-scratch walkthrough
+(useful for disaster recovery or standing up a second environment) — the actual
+`spartanshub` project has already had all of this done; see **Current status** above.
 
 ### 1. Enable required APIs
 
@@ -182,10 +178,10 @@ gcloud secrets create TBA_API_KEY --data-file=-
 gcloud secrets create CRON_NOTIFICATION_TOKEN --data-file=-
 ```
 
-Grant the Cloud Run runtime service account access to just these secrets (replace
-`RUNTIME_SA` with the service account Cloud Run actually runs as — by default the
-Compute Engine default service account unless you create a dedicated one, which is
-the better long-term choice):
+Grant the Cloud Run runtime service account access to just these secrets (Compute
+Engine default SA unless you create a dedicated one, which is the better long-term
+choice — for `spartanshub` this is `536793099017-compute@developer.gserviceaccount.com`,
+project-number-specific, so it'll differ in any other project):
 
 ```bash
 for SECRET in SUPABASE_SERVICE_KEY SLACK_BOT_TOKEN SLACK_SIGNING_SECRET \
@@ -193,6 +189,19 @@ for SECRET in SUPABASE_SERVICE_KEY SLACK_BOT_TOKEN SLACK_SIGNING_SECRET \
   gcloud secrets add-iam-policy-binding "$SECRET" \
     --member="serviceAccount:RUNTIME_SA" \
     --role="roles/secretmanager.secretAccessor"
+done
+```
+
+**A newer GCP project won't have the legacy broad "Editor" role a project's default
+service account used to get automatically.** Also grant, once, at the project level —
+found by actually running a real build/deploy against `spartanshub` and reading each
+failure, not assumed in advance:
+
+```bash
+for ROLE in roles/logging.logWriter roles/artifactregistry.writer \
+            roles/run.admin roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding spartanshub \
+    --member="serviceAccount:RUNTIME_SA" --role="$ROLE"
 done
 ```
 
@@ -206,6 +215,14 @@ until you do, so this is a deliberate cutover step, not automatic.
 gcloud builds submit \
   --substitutions=_PUBLIC_SUPABASE_URL="...",_PUBLIC_SUPABASE_ANON_KEY="...",... \
   --config=cloudbuild.yaml
+```
+
+A fresh Cloud Run service also requires an explicit public-access grant — it defaults
+to requiring authentication:
+
+```bash
+gcloud run services add-iam-policy-binding spartanshub \
+  --region=us-west1 --member="allUsers" --role="roles/run.invoker"
 ```
 
 Then confirm the service responds:
@@ -236,26 +253,35 @@ gcloud run domain-mappings create \
   --region=us-west1
 ```
 
-This prints the DNS records (a CNAME or A/AAAA set) to add — add them, then wait for
-the managed TLS cert to provision (can take up to ~24h on a fresh mapping).
+This prints the DNS records (a CNAME or A/AAAA set) to add. **Real experience moving
+this exact domain between projects**: Google's own `domain-mappings describe` status
+can report `Ready: True` / `CertificateProvisioned: True` several minutes *before* that
+actually propagates to every edge node — don't treat the API status alone as proof the
+domain is reachable. Verify with real `curl`/browser checks, from more than one
+location if possible, before declaring a cutover done.
 
 ### 6. Connect Cloud Build to GitHub (this is what makes merges auto-deploy)
 
 Via Cloud Console: **Cloud Build → Triggers → Connect Repository**, authorize the
-Cloud Build GitHub App for this repo, then create a trigger:
+Cloud Build GitHub App for this repo, then create a trigger. **Use the Console, not
+`gcloud`** — `gcloud builds triggers create github` (and `update github`) both failed
+with an opaque `INVALID_ARGUMENT` in this exact setup even after the GitHub connection
+existed and the repo was selectable in the Console's own picker; the Console flow
+itself worked without issue both times (initial creation and later editing the branch
+pattern). If you do want to try the CLI first:
 
 ```bash
 gcloud builds triggers create github \
   --repo-name=spartanshub \
   --repo-owner=<github-org-or-user> \
   --branch-pattern="^main$" \
-  --build-config=cloudbuild.yaml \
-  --substitutions=_PUBLIC_SUPABASE_URL="...",_PUBLIC_SUPABASE_ANON_KEY="...",...
+  --build-config=cloudbuild.yaml
 ```
 
-(Non-secret `PUBLIC_*` substitutions can live directly on the trigger config in Cloud
-Console/`gcloud`; they're not sensitive by definition — they end up in the public
-client bundle either way.)
+Non-secret `PUBLIC_*` substitutions don't need to be passed at trigger-creation time —
+`cloudbuild.yaml` already carries real defaults for them in its `substitutions:` block
+(safe to commit, since they end up in the public client bundle either way regardless of
+where they're stored).
 
 **Recommended**: turn on GitHub branch protection on `main` requiring the Cloud Build
 check to pass before merge is allowed, so a broken build never reaches `main`.
