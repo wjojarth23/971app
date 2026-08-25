@@ -56,63 +56,27 @@
  * the input sweep to see anything happening inside a Shared Drive at all.
  */
 
-import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/private';
 import { gcodeFileNameFor } from './camJobs.js';
 import { PACIFIC_TIME_ZONE } from '$lib/timezone.js';
+import { getServiceAccountAccessToken as getScopedAccessToken } from '$lib/server/google_service_account.js';
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3/files';
 const MAX_FILES_PER_SWEEP_PER_MACHINE = 10;
 const STEP_NAME_RE = /\.(step|stp)$/i;
 
-function base64url(buf) {
-  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-// Signs and exchanges a service-account JWT for a short-lived Drive API
-// access token (standard Google OAuth2 "JWT Bearer" flow - RFC 7523). Not
-// cached across invocations - this runs in a serverless function with no
-// guaranteed warm state between sweeps, and a token exchange is cheap
-// (one extra request every ~5 minutes at most). Exported so cam-generate's
-// completion path can get its own token for deliverJobToDrive without
-// duplicating the JWT-signing logic.
+// Thin Drive-scoped wrapper around the generic (JWT-signing moved to
+// $lib/server/google_service_account.js so the Sheets sync can mint its
+// own differently-scoped token from the same credentials without
+// duplicating this logic or importing from autocam/). Kept exported under
+// its original name - cam-generate's completion path reaches this
+// indirectly via deliverJobToDrive, not directly, but this preserves the
+// same public shape either way.
 export async function getServiceAccountAccessToken(serviceAccountJson) {
-  let key;
-  try {
-    key = JSON.parse(serviceAccountJson);
-  } catch {
-    throw new Error('GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY is not valid JSON');
-  }
-  if (!key.client_email || !key.private_key) {
-    throw new Error('GOOGLE_DRIVE_SERVICE_ACCOUNT_KEY is missing client_email/private_key');
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const claims = base64url(JSON.stringify({
-    iss: key.client_email,
-    scope: DRIVE_SCOPE,
-    aud: TOKEN_URL,
-    iat: now,
-    exp: now + 3600
-  }));
-  const signature = base64url(crypto.sign('RSA-SHA256', Buffer.from(`${header}.${claims}`), key.private_key));
-  const assertion = `${header}.${claims}.${signature}`;
-
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion })
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || !body.access_token) {
-    throw new Error(`Google OAuth2 token exchange failed: ${body.error_description || body.error || res.status}`);
-  }
-  return body.access_token;
+  return getScopedAccessToken(serviceAccountJson, DRIVE_SCOPE);
 }
 
 // supportsAllDrives=true is appended to every call here - without it, the
