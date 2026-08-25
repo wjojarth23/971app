@@ -6,6 +6,7 @@ import notescoutConfig from '$lib/notescout.json';
 import { FRC_TEAMS, TEAM_ROLES } from '$lib/permissions.js';
 import { getSupabase } from '$lib/server/971bot.js';
 import { selectPitScoutEntries } from '$lib/server/pitScoutingSchema.js';
+import { syncScoutingDataToSheet } from '$lib/server/google_sheets_sync.js';
 
 const COMPETITION_LEAD = String(TEAM_ROLES.COMPETITION_LEAD || 'Competition Lead');
 const ALL_FRC_TEAMS = new Set(Object.values(FRC_TEAMS).map(String));
@@ -413,19 +414,25 @@ async function fetchActorProfile(authSupa) {
 async function getScoutingSettings(db) {
   const emptySettings = {
     event_key: fallbackEventKey(),
-    smart_fuel_algorithm_enabled: false
+    smart_fuel_algorithm_enabled: false,
+    google_sheet_id: null,
+    google_sheet_last_synced_at: null,
+    google_sheet_last_sync_error: null
   };
 
   const primary = await db
     .from('scouting_settings')
-    .select('event_key, smart_fuel_algorithm_enabled')
+    .select('event_key, smart_fuel_algorithm_enabled, google_sheet_id, google_sheet_last_synced_at, google_sheet_last_sync_error')
     .eq('id', 1)
     .maybeSingle();
 
   if (!primary.error) {
     return {
       event_key: String(primary.data?.event_key || '').trim() || fallbackEventKey(),
-      smart_fuel_algorithm_enabled: !!primary.data?.smart_fuel_algorithm_enabled
+      smart_fuel_algorithm_enabled: !!primary.data?.smart_fuel_algorithm_enabled,
+      google_sheet_id: primary.data?.google_sheet_id || null,
+      google_sheet_last_synced_at: primary.data?.google_sheet_last_synced_at || null,
+      google_sheet_last_sync_error: primary.data?.google_sheet_last_sync_error || null
     };
   }
 
@@ -439,7 +446,10 @@ async function getScoutingSettings(db) {
   if (fallback.error) return emptySettings;
   return {
     event_key: String(fallback.data?.event_key || '').trim() || fallbackEventKey(),
-    smart_fuel_algorithm_enabled: false
+    smart_fuel_algorithm_enabled: false,
+    google_sheet_id: null,
+    google_sheet_last_synced_at: null,
+    google_sheet_last_sync_error: null
   };
 }
 
@@ -1104,6 +1114,9 @@ export async function GET({ request }) {
       data: {
         event_key: eventKey || null,
         smart_fuel_algorithm_enabled: smartFuelEnabled,
+        google_sheet_id: settings.google_sheet_id,
+        google_sheet_last_synced_at: settings.google_sheet_last_synced_at,
+        google_sheet_last_sync_error: settings.google_sheet_last_sync_error,
         upcoming_events: upcomingRes.events || [],
         warning,
         competition_role_options: competitionRoleOptions,
@@ -1218,6 +1231,29 @@ export async function POST({ request }) {
           smart_fuel_algorithm_enabled: !!update.data?.smart_fuel_algorithm_enabled
         }
       });
+    }
+
+    if (action === 'update-google-sheet-id') {
+      // Empty string is valid input here - clears the configured sheet
+      // (turns the sync back off) rather than being rejected like a blank
+      // event_key is above, since "no sheet configured" is this feature's
+      // normal off state, not an error condition.
+      const sheetId = String(body?.google_sheet_id ?? '').trim();
+      const { data, error } = await db
+        .from('scouting_settings')
+        .upsert(
+          { id: 1, google_sheet_id: sheetId || null, updated_by: actorId, updated_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        )
+        .select('google_sheet_id')
+        .single();
+      if (error) return json({ error: error.message }, { status: 500 });
+      return json({ success: true, data: { google_sheet_id: data?.google_sheet_id || null } });
+    }
+
+    if (action === 'sync-scouting-sheet') {
+      const result = await syncScoutingDataToSheet();
+      return json({ success: result.ok, data: result });
     }
 
     if (action === 'delete-all-scouting-data') {
