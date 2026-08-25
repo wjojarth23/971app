@@ -17,6 +17,15 @@
   let savingEvent = false;
   let deletingAllScoutingData = false;
 
+  // Google Sheets batch sync - see docs/plans for design context. Not
+  // real-time: this is either the daily-ish cron or a manual "Sync Now".
+  let googleSheetId = '';
+  let googleSheetIdInput = '';
+  let googleSheetLastSyncedAt = null;
+  let googleSheetLastSyncError = '';
+  let savingGoogleSheetId = false;
+  let syncingSheet = false;
+
   let metrics = {
     pit: { percent: 0, scouted_teams: 0, pending_teams: 0, needs_photo_teams: 0, completed_teams: 0, total_teams: 0 },
     data: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0, missed_shifts: 0, assigned_matches: 0, scouted_matches: 0, total_matches: 0 },
@@ -108,6 +117,10 @@
       users = data.data?.users || [];
       missedMatches = data.data?.missed_matches || [];
       smartFuelModel = data.data?.smart_fuel_model || smartFuelModel;
+      googleSheetId = data.data?.google_sheet_id || '';
+      googleSheetIdInput = googleSheetId;
+      googleSheetLastSyncedAt = data.data?.google_sheet_last_synced_at || null;
+      googleSheetLastSyncError = data.data?.google_sheet_last_sync_error || '';
       initDrafts(users);
     } catch (e) {
       errorMsg = e.message || 'Failed to load scouting admin dashboard.';
@@ -239,6 +252,56 @@
     }
   }
 
+  async function saveGoogleSheetId() {
+    savingGoogleSheetId = true;
+    errorMsg = '';
+    successMsg = '';
+    try {
+      const res = await authFetch('/api/scouting-admin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update-google-sheet-id',
+          google_sheet_id: googleSheetIdInput.trim()
+        })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `Failed to save Google Sheet ID (${res.status})`);
+      }
+      googleSheetId = data.data?.google_sheet_id || '';
+      googleSheetIdInput = googleSheetId;
+      successMsg = googleSheetId ? 'Google Sheet configured.' : 'Google Sheet sync disabled.';
+    } catch (e) {
+      errorMsg = e.message || 'Failed to update Google Sheet ID.';
+    } finally {
+      savingGoogleSheetId = false;
+    }
+  }
+
+  async function syncSheetNow() {
+    syncingSheet = true;
+    errorMsg = '';
+    successMsg = '';
+    try {
+      const res = await authFetch('/api/scouting-admin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'sync-scouting-sheet' })
+      });
+      const data = await res.json().catch(() => null);
+      if (!data?.data?.ok) {
+        throw new Error(data?.data?.error || `Sync failed (${data?.data?.reason || res.status})`);
+      }
+      successMsg = `Synced ${data.data.rows} row${data.data.rows === 1 ? '' : 's'} to the Google Sheet.`;
+      await loadDashboard({ silent: true });
+    } catch (e) {
+      errorMsg = e.message || 'Failed to sync Google Sheet.';
+    } finally {
+      syncingSheet = false;
+    }
+  }
+
   function buildDeleteSummary(deleted = {}) {
     const segments = [
       `${deleted.data_events || 0} data events`,
@@ -365,6 +428,45 @@
             <div class="status-message status-success">{successMsg}</div>
           {/if}
         </div>
+      {/if}
+    </div>
+
+    <div class="card event-card">
+      <div class="event-controls">
+        <div class="form-group event-control">
+          <label class="form-label" for="googleSheetId">Google Sheet ID</label>
+          <input
+            id="googleSheetId"
+            class="form-input"
+            type="text"
+            placeholder="Paste the Sheet ID from its URL (blank disables sync)"
+            bind:value={googleSheetIdInput}
+          />
+        </div>
+        <button
+          class="btn btn-primary btn-nowrap"
+          disabled={savingGoogleSheetId || googleSheetIdInput.trim() === googleSheetId}
+          on:click={saveGoogleSheetId}
+        >
+          {savingGoogleSheetId ? 'Saving...' : 'Save'}
+        </button>
+        <button
+          class="btn btn-secondary btn-nowrap"
+          disabled={!googleSheetId || syncingSheet}
+          on:click={syncSheetNow}
+        >
+          {syncingSheet ? 'Syncing...' : 'Sync Now'}
+        </button>
+      </div>
+      <p class="event-hint">
+        Batch-exports every scouted match to one shared Google Sheet. Share the sheet
+        (Editor access) with the AutoCAM service account before syncing.
+        {#if googleSheetLastSyncedAt}
+          Last synced {new Date(googleSheetLastSyncedAt).toLocaleString()}.
+        {/if}
+      </p>
+      {#if googleSheetLastSyncError}
+        <div class="status-message status-error">{googleSheetLastSyncError}</div>
       {/if}
     </div>
 
@@ -713,6 +815,13 @@
     flex: 1;
     min-width: min(100%, 420px);
     margin: 0;
+  }
+
+  .event-hint {
+    margin: 0;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    line-height: 1.5;
   }
 
   /* Status messages */
