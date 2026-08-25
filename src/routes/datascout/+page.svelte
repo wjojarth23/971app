@@ -20,6 +20,20 @@
   let loadingMatches = false;
   let eventKey = "";
 
+  // Power ranking (Statbotics EPA) - fetched once per event alongside
+  // matches, same endpoint /scouting already uses for the team-comparison
+  // table. Keyed by team NUMBER (Statbotics' own key shape), not "frcNNNN".
+  let teamEPAs = new Map();
+  $: selectedTeamEPA = selectedTeam
+    ? teamEPAs.get(parseInt(String(selectedTeam).replace(/^frc/i, ""), 10))
+    : null;
+  // Manual matches (buildManualMatch) have a synthetic key that doesn't
+  // exist on TBA - only real, TBA-sourced matches get a link.
+  $: tbaMatchUrl =
+    selectedMatch && !selectedMatch.manual
+      ? `https://www.thebluealliance.com/match/${selectedMatch.key}`
+      : null;
+
   // Session State
   let phase = "pre"; // pre, auto, teleop, endgame, finished
   let startPosition = ""; // left trench, left mound, center, right mound, right trench
@@ -257,10 +271,29 @@
           ]),
         ),
       ].sort(teamSort);
+      fetchTeamEPAs();
     } catch (e) {
       loadNote = e.message || "Load error";
     } finally {
       loadingMatches = false;
+    }
+  }
+
+  // Non-fatal: EPA is a nice-to-have while scouting, not required to keep
+  // working - a Statbotics outage (it's had real ones - see /scouting's own
+  // handling of this same endpoint) shouldn't block match loading above.
+  async function fetchTeamEPAs() {
+    if (!eventKey) return;
+    try {
+      const res = await fetch(
+        `/api/statbotics/team-epas?event_key=${encodeURIComponent(eventKey)}`,
+      );
+      const js = await res.json().catch(() => null);
+      if (js?.success && Array.isArray(js.data)) {
+        teamEPAs = new Map(js.data.map((row) => [row.team, row]));
+      }
+    } catch (e) {
+      // silent - EPA display just stays empty
     }
   }
 
@@ -445,6 +478,44 @@
   function recordPushing() {
     record("pushing", "outpost");
   }
+
+  // Fuel counters (Shuttle / Hub): precise tap-counted scores, separate from
+  // the existing shooting_start/shooting_end hold-duration estimate above -
+  // that stays as-is (avoid two features fighting over one derived number).
+  // Counts are derived from the session's own event log, same "aggregate
+  // from discrete events" philosophy as everywhere else in this file, not a
+  // separately-tracked running total. A "*_fuel_override" event lets a scout
+  // type an exact count (e.g. after losing count, or correcting after the
+  // fact); the derived value is the override's number plus any taps that
+  // came after it, so older taps stay in the log for audit/undo purposes
+  // instead of being deleted.
+  function recordFuelScore(location) {
+    record(`${location}_fuel`, "1");
+  }
+  function recordFuelOverride(location, rawValue) {
+    const num = Math.round(Number(rawValue));
+    if (!Number.isFinite(num) || num < 0) return;
+    record(`${location}_fuel_override`, String(num));
+  }
+  function fuelCount(events, location) {
+    const tapType = `${location}_fuel`;
+    const overrideType = `${location}_fuel_override`;
+    let baseline = 0;
+    let taps = 0;
+    for (const e of events) {
+      if (e.event_type === overrideType) {
+        baseline = Math.max(0, Math.round(Number(e.event_value)) || 0);
+        taps = 0;
+      } else if (e.event_type === tapType) {
+        taps += 1;
+      }
+    }
+    return baseline + taps;
+  }
+  let shuttleFuelOverrideInput = "";
+  let hubFuelOverrideInput = "";
+  $: shuttleFuelCount = fuelCount(scoutingEvents, "shuttle");
+  $: hubFuelCount = fuelCount(scoutingEvents, "hub");
   // Phase transitions
   function chooseStart(pos) {
     startPosition = pos;
@@ -1679,7 +1750,18 @@
       <div class="console-header">
         <div class="info-block">
           <span class="label">Match</span>
-          <div class="val">{formatMatchLabel(selectedMatch)}</div>
+          <div class="val">
+            {formatMatchLabel(selectedMatch)}
+            {#if tbaMatchUrl}
+              <a
+                href={tbaMatchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="tba-link"
+                title="View this match on The Blue Alliance"
+              >TBA ↗</a>
+            {/if}
+          </div>
         </div>
         <div class="info-block" style="flex-grow:1">
           <span class="label" for="teamScout">Team</span>
@@ -1703,6 +1785,12 @@
             </select>
           {/if}
         </div>
+        {#if selectedTeamEPA}
+          <div class="info-block" title="Statbotics EPA - overall power ranking">
+            <span class="label">EPA (Rank {selectedTeamEPA.rank ?? "—"})</span>
+            <div class="val">{selectedTeamEPA.epa?.toFixed(1) ?? "—"}</div>
+          </div>
+        {/if}
         <div class="info-block">
           <span class="label">Phase</span>
           <div class="phase-badge {phase}">{phase.toUpperCase()}</div>
@@ -2011,6 +2099,72 @@
               </div>
             </div>
 
+            <div class="teleop-live-middle">
+              <span class="label">Fuel Scored (Tap)</span>
+              <div class="btn-grid teleop-action-grid teleop-panel">
+                <button
+                  class="btn btn-outline big-btn fuel-count-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    recordFuelScore("shuttle");
+                  }}
+                >
+                  Shuttle
+                  <span class="fuel-count-badge">{shuttleFuelCount}</span>
+                </button>
+                <button
+                  class="btn btn-outline big-btn fuel-count-btn"
+                  on:click={(e) => {
+                    handleButtonClick(e);
+                    recordFuelScore("hub");
+                  }}
+                >
+                  Hub
+                  <span class="fuel-count-badge">{hubFuelCount}</span>
+                </button>
+              </div>
+              <div class="fuel-override-row">
+                <div class="fuel-override-input">
+                  <label for="shuttleFuelOverride">Shuttle count</label>
+                  <input
+                    id="shuttleFuelOverride"
+                    type="number"
+                    min="0"
+                    inputmode="numeric"
+                    bind:value={shuttleFuelOverrideInput}
+                    placeholder={String(shuttleFuelCount)}
+                  />
+                  <button
+                    class="btn btn-sm btn-outline"
+                    disabled={shuttleFuelOverrideInput === ""}
+                    on:click={() => {
+                      recordFuelOverride("shuttle", shuttleFuelOverrideInput);
+                      shuttleFuelOverrideInput = "";
+                    }}>Set</button
+                  >
+                </div>
+                <div class="fuel-override-input">
+                  <label for="hubFuelOverride">Hub count</label>
+                  <input
+                    id="hubFuelOverride"
+                    type="number"
+                    min="0"
+                    inputmode="numeric"
+                    bind:value={hubFuelOverrideInput}
+                    placeholder={String(hubFuelCount)}
+                  />
+                  <button
+                    class="btn btn-sm btn-outline"
+                    disabled={hubFuelOverrideInput === ""}
+                    on:click={() => {
+                      recordFuelOverride("hub", hubFuelOverrideInput);
+                      hubFuelOverrideInput = "";
+                    }}>Set</button
+                  >
+                </div>
+              </div>
+            </div>
+
             <div class="teleop-live-bottom">
               <span class="label">Climbing (Hold)</span>
               <button
@@ -2307,6 +2461,17 @@
   .info-block .val {
     font-size: 1rem;
     font-weight: bold;
+  }
+  .tba-link {
+    margin-left: 0.4rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--scout-primary);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .tba-link:hover {
+    text-decoration: underline;
   }
   .undo-btn {
     padding: 0.8rem 0.6rem;
@@ -2633,6 +2798,36 @@
   }
   .teleop-action-wide {
     grid-column: 1 / -1;
+  }
+  .fuel-count-btn {
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .fuel-count-badge {
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .fuel-override-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.6rem;
+  }
+  .fuel-override-input {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .fuel-override-input label {
+    font-size: 0.72rem;
+    color: var(--text-muted, #6b7280);
+    white-space: nowrap;
+  }
+  .fuel-override-input input {
+    width: 3.5rem;
+    padding: 0.3rem;
+    font-size: 0.85rem;
   }
   .teleop-climb-grid {
     grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
