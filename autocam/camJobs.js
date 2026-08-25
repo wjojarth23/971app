@@ -243,7 +243,7 @@ export async function queueCamJobsForParts(parts, options = {}) {
  * @param {Object} options - { operationType (required), materialId, toolId, machineId, params, userId, baseName, notes, onProgress, onQueued, gcodeExtension }
  */
 export async function queueCamJobFromUpload(profileFile, options = {}) {
-  if (!options.operationType) return { success: false, error: 'operationType is required (turning or routing)' };
+  if (!options.operationType) return { success: false, error: 'operationType is required (turning, routing, or tubestock)' };
 
   const upload = await uploadStepFile(profileFile);
   if (upload.error) return { success: false, error: upload.error };

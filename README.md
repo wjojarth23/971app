@@ -19,14 +19,16 @@ reading code.
   is created for a workflow they're assigned to (admin-configurable per
   user, per workflow - see **Admin & permissions** below). See the
   **AutoCAM** section below for automatic G-code generation specifically.
-- **AutoCAM**: automatic STEP → G-code generation for lathe turning and
-  router routing jobs - either manually queued from `/autocam` or
-  auto-triggered by dropping a CAD file into a machine's watched Google
-  Drive folder. No external CAM software involved (pure JS geometry math).
-  Real 3-axis milling (contoured toolpaths a flat 2.5D profile can't
-  represent) is a separate sub-section, **Fusion CAM** (`/autocam/fusion`),
-  backed by an actual Fusion 360 Runner rather than in-process math. See the
-  **AutoCAM** section below for the code-level detail on both.
+- **AutoCAM**: automatic STEP → G-code generation for lathe turning, router
+  routing, and rotary-4th-axis indexed tube-stock drilling jobs - either
+  manually queued from `/autocam` or auto-triggered by dropping a CAD file
+  into a machine's watched Google Drive folder (turning/routing only; tube
+  stock is standalone-upload only, no manufacturing-request workflow maps to
+  it yet). No external CAM software involved (pure JS geometry math). Real
+  3-axis milling (contoured toolpaths a flat 2.5D profile can't represent)
+  is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
+  an actual Fusion 360 Runner rather than in-process math. See the
+  **AutoCAM** section below for the code-level detail on all three.
 - **Scouting**: pit scouting forms, match/data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
@@ -123,19 +125,24 @@ than duplicating that detail.
 
 ## AutoCAM (`autocam/`, top-level - not under `src/lib/`)
 
-STEP → G-code generation for turning/routing: pure JS geometry math, no
-external CAM software, no DXF. Deliberately lives outside `src/lib/` in its
-own top-level folder, imported via the `$autocam` alias
+STEP → G-code generation for turning/routing/tube stock: pure JS geometry
+math, no external CAM software, no DXF. Deliberately lives outside
+`src/lib/` in its own top-level folder, imported via the `$autocam` alias
 (`svelte.config.js`) - the whole engine, the Google Drive watcher, shared
 job-queue helpers, AutoCAM-specific components, its CLI test script, and its
 own docs are all together in one place instead of scattered across
 `src/lib/cam/`, `src/lib/server/`, `src/lib/components/`, and
 `implementations/`.
 
-- **`autocam/stepProfile.js`** - extracts 2D profiles directly from a STEP
-  file's triangulated mesh (via `occt-import-js`).
-- **`autocam/turning.js`** / **`autocam/routing.js`** - generate the actual
-  G-code from that profile.
+- **`autocam/stepProfile.js`** - extracts 2D profiles (turning/routing) or
+  tube-wall hole geometry (`extractTubeFeaturesFromMeshes`) directly from a
+  STEP file's triangulated mesh (via `occt-import-js`).
+- **`autocam/turning.js`** / **`autocam/routing.js`** / **`autocam/tubestock.js`**
+  - generate the actual G-code from that profile/geometry. Tube stock
+  targets a router with an added rotary 4th axis (indexed drilling, round
+  holes only) - see `autocam/docs/tubestock-feature.md` for the full design
+  and real-fixture validation, including the one real bug it caught
+  (`lateralOffset`) that a synthetic test alone never would have.
 - **`autocam/toolpathPreview.js`** - parses generated G-code back into a
   toolpath for preview (`autocam/components/ToolpathViewer.svelte`).
 - **`autocam/drive_watcher.js`** - Google Drive input-sweep (`cad` →

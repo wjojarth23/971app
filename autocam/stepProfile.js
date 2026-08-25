@@ -606,3 +606,184 @@ export function extractRoutingContoursFromMeshes(meshes) {
 
   return { contours, thickness };
 }
+
+// Minimum face area, as a fraction of the largest wall candidate found, to
+// count as a real tube wall rather than a small chamfer/fillet/machining
+// relief sliver that happens to be flat and roughly the right orientation.
+const MIN_TUBE_WALL_AREA_FRACTION = 0.3;
+// How aligned a face's normal must be with a cross-section axis (dot
+// product, 1.0 = perfect) to count as that axis's wall - generous enough for
+// real STEP tessellation noise, tight enough to reject anything not close to
+// axis-aligned.
+const TUBE_WALL_ALIGNMENT_THRESHOLD = 0.9;
+// Real drilled holes tessellate as a clean circle - each boundary point sits
+// within this fraction of the mean radius from center. A slot, keyway, or
+// other non-round feature would read well outside this and must be rejected
+// rather than silently treated as "a hole of the average radius," which
+// would program the wrong tool/position for indexed drilling.
+const MAX_HOLE_RADIUS_VARIATION = 0.15;
+
+/**
+ * Tube stock (rectangular/square tube): finds the tube's long axis and
+ * outer cross-section, then the up to 4 flat side walls (faces whose normal
+ * is perpendicular to the long axis), and traces each wall's own hole
+ * pattern the same way extractRoutingContoursFromMeshes traces a flat
+ * plate's holes (a hole is just an inner boundary loop of the wall's own
+ * face tessellation - no separate cylindrical-surface detection needed).
+ *
+ * Scope, deliberately: axis-aligned rectangular/square tube only (the STEP
+ * file's own X/Y/Z, not an arbitrary rotation - matches how turning's axis
+ * detection also tries X/Y/Z directly rather than solving for an arbitrary
+ * orientation), round holes only (see MAX_HOLE_RADIUS_VARIATION), drilled
+ * straight through a single wall (not through both walls of the tube at
+ * once, not angled). Round tube and non-round hole features are rejected,
+ * not guessed at - this feeds indexed-drilling G-code for a real machine,
+ * same reasoning as every other rejection-over-guessing check in this file.
+ *
+ * Returns { lengthAxis, tubeLength, crossSection: {a, b} (outer width along
+ * the two cross-section axes), walls: [{ angleDeg, holes: [{position,
+ * diameter}, ...] }, ...] } - walls sorted by angleDeg ascending, holes
+ * within a wall sorted by position ascending. angleDeg is a rotary-axis
+ * angle around lengthAxis (0/90/180/270 for a square tube's 4 faces,
+ * measured so the two cross-section axes are 0deg and 90deg respectively -
+ * ready to feed straight into tubestock.js's indexed drilling without the
+ * caller needing to know which world axis was which.
+ */
+export function extractTubeFeaturesFromMeshes(meshes) {
+  const bbox = meshesBoundingBox(meshes);
+  const spans = {
+    x: bbox.maxX - bbox.minX,
+    y: bbox.maxY - bbox.minY,
+    z: bbox.maxZ - bbox.minZ
+  };
+  const axes = ['x', 'y', 'z'];
+  const lengthAxis = axes.reduce((a, b) => (spans[b] > spans[a] ? b : a));
+  const [axisA, axisB] = axes.filter((a) => a !== lengthAxis);
+  const li = AXIS_INDEX[lengthAxis], ai = AXIS_INDEX[axisA], bi = AXIS_INDEX[axisB];
+  const lengthMinByAxis = { x: bbox.minX, y: bbox.minY, z: bbox.minZ };
+  const tubeLength = spans[lengthAxis];
+  if (!Number.isFinite(tubeLength) || tubeLength <= 0) {
+    throw new Error('STEP geometry has no usable extent for tube stock');
+  }
+
+  // Work on the single largest mesh by vertex count - same reasoning as
+  // extractRoutingContoursFromMeshes scoping thickness to best.mesh: a real
+  // STEP export can legitimately bundle small unrelated hardware (fasteners)
+  // alongside the actual tube body in separate meshes.
+  let tubeMesh = null;
+  for (const mesh of meshes) {
+    const count = mesh.attributes.position.array.length;
+    if (!tubeMesh || count > tubeMesh.attributes.position.array.length) tubeMesh = mesh;
+  }
+  if (!tubeMesh) throw new Error('No geometry found');
+
+  const unitAxis = (axis) => ({ x: axis === 'x' ? 1 : 0, y: axis === 'y' ? 1 : 0, z: axis === 'z' ? 1 : 0 });
+  const normalA = unitAxis(axisA), normalB = unitAxis(axisB);
+
+  // Collect every planar face whose normal is dominated by +-axisA or
+  // +-axisB (a side wall), keeping only the largest-area candidate per
+  // direction - a chamfer or machining relief along an edge can also be
+  // flat and axis-aligned but is never the real wall.
+  const wallByDirection = new Map(); // key: 'A+'|'A-'|'B+'|'B-' -> { area, tris, normal }
+  for (const brepFace of tubeMesh.brep_faces || []) {
+    const tris = faceTriangleRange(tubeMesh, brepFace);
+    if (tris.length === 0) continue;
+    let area = 0;
+    let refNormal = null;
+    let planar = true;
+    for (const [a, b, c] of tris) {
+      const { normal, area: triArea } = triangleNormalAndArea(a, b, c);
+      if (normal.x === 0 && normal.y === 0 && normal.z === 0) continue;
+      if (!refNormal) refNormal = normal;
+      else if (normal.x * refNormal.x + normal.y * refNormal.y + normal.z * refNormal.z < 0.999) { planar = false; break; }
+      area += triArea;
+    }
+    if (!planar || !refNormal) continue;
+
+    const alongA = refNormal.x * normalA.x + refNormal.y * normalA.y + refNormal.z * normalA.z;
+    const alongB = refNormal.x * normalB.x + refNormal.y * normalB.y + refNormal.z * normalB.z;
+    let key = null;
+    if (Math.abs(alongA) >= TUBE_WALL_ALIGNMENT_THRESHOLD) key = alongA > 0 ? 'A+' : 'A-';
+    else if (Math.abs(alongB) >= TUBE_WALL_ALIGNMENT_THRESHOLD) key = alongB > 0 ? 'B+' : 'B-';
+    if (!key) continue; // end cap (aligned with lengthAxis) or an odd-angled face - not a side wall
+
+    const existing = wallByDirection.get(key);
+    if (!existing || area > existing.area) wallByDirection.set(key, { area, tris, normal: refNormal });
+  }
+
+  const maxWallArea = Math.max(0, ...[...wallByDirection.values()].map((w) => w.area));
+  const walls = [];
+  for (const [key, wall] of wallByDirection.entries()) {
+    if (wall.area < maxWallArea * MIN_TUBE_WALL_AREA_FRACTION) continue;
+
+    const origin = { x: bbox.minX, y: bbox.minY, z: bbox.minZ };
+    // Wall-local 2D basis: u = along tube length, v = across the wall's own
+    // width (the OTHER cross-section axis, not the one this wall's normal
+    // points along).
+    const isAWall = key[0] === 'A';
+    const uAxis = unitAxis(lengthAxis);
+    const vAxis = isAWall ? normalB : normalA;
+    const wallWidth = isAWall ? spans[axisB] : spans[axisA];
+    const loops = traceBoundaryLoops(wall.tris, (pt) => project(pt, origin, uAxis, vAxis));
+    if (loops.length === 0) continue;
+
+    const withArea = loops.map((points) => ({ points, area: Math.abs(signedArea(points)) }));
+    withArea.sort((a, b) => b.area - a.area);
+    // First (largest) loop is the wall's own outer rectangle - not a hole.
+    const holeLoops = withArea.slice(1);
+
+    const holes = holeLoops.map(({ points }) => {
+      let cu = 0, cv = 0;
+      for (const p of points) { cu += p.x; cv += p.y; }
+      cu /= points.length; cv /= points.length;
+      const radii = points.map((p) => Math.hypot(p.x - cu, p.y - cv));
+      const meanRadius = radii.reduce((s, r) => s + r, 0) / radii.length;
+      const maxDeviation = Math.max(...radii.map((r) => Math.abs(r - meanRadius) / meanRadius));
+      if (maxDeviation > MAX_HOLE_RADIUS_VARIATION) {
+        throw new Error(
+          `A feature on this tube isn't round (radius varies ${(maxDeviation * 100).toFixed(0)}% around its boundary) - ` +
+          `likely a slot, keyway, or other non-circular cutout that indexed round-hole drilling can't represent. ` +
+          `Check this part only has round holes through its walls.`
+        );
+      }
+      return {
+        position: cu - lengthMinByAxis[lengthAxis],
+        // Signed offset from the WALL's own centerline (not the loop's raw
+        // v-coordinate) - real bug found against a real AndyMark 2"x1" tube
+        // fixture (am-5180): the wide (2") face has multiple holes at the
+        // SAME position along the tube but different lateral offsets across
+        // its width (a real side-by-side hole pair, not a duplicate) - a
+        // narrower fixture built by hand never exercised more than one hole
+        // per position and never caught that this field was being computed
+        // (cv) and then silently dropped, which would have driven every
+        // hole on a wide face to the exact same G-code XY, redrilling one
+        // spot instead of drilling each real hole.
+        lateralOffset: cv - wallWidth / 2,
+        diameter: meanRadius * 2
+      };
+    });
+    holes.sort((a, b) => (a.position - b.position) || (a.lateralOffset - b.lateralOffset));
+
+    const angleRad = Math.atan2(
+      isAWall ? 0 : (key[1] === '+' ? 1 : -1),
+      isAWall ? (key[1] === '+' ? 1 : -1) : 0
+    );
+    const angleDeg = ((angleRad * 180) / Math.PI + 360) % 360;
+    walls.push({ angleDeg, holes });
+  }
+
+  if (walls.length === 0) {
+    throw new Error(
+      `No flat side walls found along this part's length axis - is this round tube, or a cross-section this ` +
+      `axis-aligned rectangular-tube extractor can't handle?`
+    );
+  }
+  walls.sort((a, b) => a.angleDeg - b.angleDeg);
+
+  return {
+    lengthAxis,
+    tubeLength,
+    crossSection: { a: spans[axisA], b: spans[axisB] },
+    walls
+  };
+}

@@ -11,12 +11,44 @@
   // every time is tucked behind "Advanced Settings" (closed by default) -
   // same pattern as the old /manufacture/autocam settings page - since a
   // selected Machine Profile already fills sensible values for all of it.
-  export let operation = 'routing'; // 'turning' | 'routing'
+  export let operation = 'routing'; // 'turning' | 'routing' | 'tubestock'
   export let params = {};
   export let mode = 'job';
 </script>
 
-{#if operation === 'turning'}
+{#if operation === 'tubestock'}
+  <div class="form-row">
+    {#if mode === 'job'}
+      <div class="form-group">
+        <label class="form-label" for="cf-hole-depth">Hole depth (in)</label>
+        <input id="cf-hole-depth" class="form-input" type="number" step="0.01" bind:value={params.holeDepth} placeholder="Required" />
+        <p class="text-muted">How deep to plunge past the wall's outer surface - verify against the real tube gauge before running. Too shallow won't clear the wall.</p>
+      </div>
+    {/if}
+    <div class="form-group">
+      <label class="form-label" for="cf-safe-z">Safe height (in)</label>
+      <input id="cf-safe-z" class="form-input" type="number" step="0.05" bind:value={params.safeZ} title="Retract clearance above the wall's outer surface" />
+    </div>
+  </div>
+
+  <details class="advanced-settings">
+    <summary>Advanced settings</summary>
+    <div class="cam-param-section">
+      <h4>Feeds &amp; Speed</h4>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="cf-tube-feed">Feed rate (in/min)</label>
+          <input id="cf-tube-feed" class="form-input" type="number" bind:value={params.feedRate} title="A straight drilling plunge - much slower than a routing contour pass" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cf-tube-spindle">Spindle speed (RPM)</label>
+          <input id="cf-tube-spindle" class="form-input" type="number" bind:value={params.spindleSpeed} />
+        </div>
+      </div>
+    </div>
+  </details>
+  <p class="text-muted">Rotary 4th-axis indexed drilling - no specific real machine has been confirmed against this yet. Verify the A-axis direction, rotary-center offset, and Z=0 reference before running on material.</p>
+{:else if operation === 'turning'}
   <div class="form-group">
     <label class="form-label" for="cf-setup-mode">Setup</label>
     <select id="cf-setup-mode" class="form-select" bind:value={params.setupMode}>
