@@ -3,6 +3,7 @@
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
   import { fetchActiveScoutingEventKey } from "$lib/scoutingEvent.js";
+  import { fuelCountFromEvents } from "$lib/scoutingStats.js";
 
   let user;
   userStore.subscribe((v) => (user = v));
@@ -497,25 +498,10 @@
     if (!Number.isFinite(num) || num < 0) return;
     record(`${location}_fuel_override`, String(num));
   }
-  function fuelCount(events, location) {
-    const tapType = `${location}_fuel`;
-    const overrideType = `${location}_fuel_override`;
-    let baseline = 0;
-    let taps = 0;
-    for (const e of events) {
-      if (e.event_type === overrideType) {
-        baseline = Math.max(0, Math.round(Number(e.event_value)) || 0);
-        taps = 0;
-      } else if (e.event_type === tapType) {
-        taps += 1;
-      }
-    }
-    return baseline + taps;
-  }
   let shuttleFuelOverrideInput = "";
   let hubFuelOverrideInput = "";
-  $: shuttleFuelCount = fuelCount(scoutingEvents, "shuttle");
-  $: hubFuelCount = fuelCount(scoutingEvents, "hub");
+  $: shuttleFuelCount = fuelCountFromEvents(scoutingEvents, "shuttle");
+  $: hubFuelCount = fuelCountFromEvents(scoutingEvents, "hub");
   // Phase transitions
   function chooseStart(pos) {
     startPosition = pos;
