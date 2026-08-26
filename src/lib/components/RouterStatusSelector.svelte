@@ -228,8 +228,8 @@
 
   /* Ensure options are readable */
   option {
-    background-color: white;
-    color: #1f2933;
+    background-color: var(--color-white);
+    color: var(--neutral-800);
     font-weight: 500;
   }
 
@@ -264,6 +264,6 @@
 
   .btn-autocam:hover {
     background-color: var(--brand-gold-strong, #d4a817);
-    color: white;
+    color: var(--color-white);
   }
 </style>
