@@ -206,8 +206,8 @@
     min-width: 54px;
     text-align: center;
   }
-  .op-insert { background: #dcfce7; color: #166534; }
-  .op-update { background: #dbeafe; color: #1e40af; }
+  .op-insert { background: #dcfce7; color: var(--green-strong); }
+  .op-update { background: var(--blue-soft); color: #1e40af; }
   .op-delete { background: #fee2e2; color: #991b1b; }
 
   .activity-main { min-width: 0; flex: 1; }

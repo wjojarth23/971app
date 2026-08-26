@@ -2690,9 +2690,9 @@
   }
 
   .btn-danger {
-    background: var(--red-base, #dc3545);
+    background: var(--red-base);
     color: white;
-    border: 1px solid var(--red-base, #dc3545);
+    border: 1px solid var(--red-base);
   }
 
   .btn-danger:hover:not(:disabled) {
