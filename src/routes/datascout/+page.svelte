@@ -2331,10 +2331,10 @@
 
   /* Reuse main variables from global css if available, else standard fallback */
   :root {
-    --scout-primary: #0d6efd;
-    --scout-secondary: #6c757d;
-    --scout-success: #198754;
-    --scout-danger: #dc3545;
+    --scout-primary: var(--chart-primary);
+    --scout-secondary: var(--chart-secondary);
+    --scout-success: var(--chart-success);
+    --scout-danger: var(--chart-danger);
     --scout-dark: #212529;
     --scout-light: #f8f9fa;
     --scout-border: #dee2e6;
@@ -2342,11 +2342,11 @@
        the block above (a local, page-scoped token set instead of raw hex
        repeated dozens of times), extended to cover the colors this page's
        charts actually use that the original --scout-* set didn't. */
-    --scout-purple: #6f42c1;
-    --scout-orange: #fd7e14;
-    --scout-pink: #e83e8c;
-    --scout-info: #17a2b8;
-    --scout-teal: #20c997;
+    --scout-purple: var(--chart-purple);
+    --scout-orange: var(--chart-orange);
+    --scout-pink: var(--chart-pink);
+    --scout-info: var(--chart-info);
+    --scout-teal: var(--chart-teal);
     --stage-height: 450px;
     --stage-width: 450px; /* Half of 900px */
     --full-travel: 900px;

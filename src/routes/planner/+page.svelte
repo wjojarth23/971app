@@ -2816,7 +2816,7 @@
   .planner-count-pill--alert {
     background: rgba(255, 237, 213, 0.82);
     border-color: rgba(180, 83, 9, 0.18);
-    color: #9a3412;
+    color: var(--orange-strong);
   }
 
   .planner-kind-chip--task {
@@ -2900,13 +2900,13 @@
   .planner-rule-chip--blocked {
     background: rgba(255, 237, 213, 0.82);
     border-color: rgba(180, 83, 9, 0.18);
-    color: #9a3412;
+    color: var(--orange-strong);
   }
 
   .planner-rule-chip--oneoff {
     background: rgba(254, 249, 195, 0.82);
     border-color: rgba(161, 98, 7, 0.18);
-    color: #854d0e;
+    color: var(--status-pending-text);
   }
 
   .planner-rule-chip--recurring {
@@ -2930,7 +2930,7 @@
   .status-chip--pending {
     background: rgba(254, 249, 195, 0.92);
     border-color: rgba(161, 98, 7, 0.16);
-    color: #854d0e;
+    color: var(--status-pending-text);
   }
 
   .status-chip--progress {
