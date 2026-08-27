@@ -1,0 +1,207 @@
+/**
+ * Tube stock G-code generator - indexed drilling for rectangular/square
+ * tube (round holes only, straight through one wall at a time - see
+ * extractTubeFeaturesFromMeshes in stepProfile.js for the geometry this
+ * consumes: { walls: [{ angleDeg, holes: [{ position, lateralOffset,
+ * diameter }, ...] }, ...] }).
+ *
+ * Targets a router-class machine with an added rotary 4th axis (A, rotating
+ * about the tube's own long axis, which is programmed as machine X) - a
+ * common way to add tube-stock capability to an existing CNC router rather
+ * than needing a dedicated tube notcher. UNLIKE turning.js (a real Haas
+ * TL-1) and routing.js (a real ShopSabre Pro 408), there is no specific
+ * real machine this has been confirmed against - no such machine exists yet
+ * in this app's cam_machines data. The axis convention here - X = along
+ * tube length, A = rotary index about X (0/90/180/270deg matching
+ * extractTubeFeaturesFromMeshes' wall angles), Z = spindle plunge, Y = the
+ * hole's lateralOffset (signed distance from the currently-indexed wall's
+ * own centerline, assuming the tube's centerline sits on the rotary axis
+ * and the spindle's Y=0 line) - is a reasonable, common setup, not a
+ * verified one. Y matters, not just a convenience default: a real AndyMark
+ * 2"x1" predrilled tube fixture (am-5180) has multiple holes at the same
+ * length position but different lateral offsets on its wide face - a real
+ * side-by-side hole pair, not a duplicate; drilling all of them at Y0 would
+ * redrill one spot instead of the real holes. CONFIRM the real machine's
+ * rotary center offset, A-axis direction, and Z=0 reference before running
+ * on material.
+ *
+ * Reuses routing.js's linuxcnc/wincnc dialect conventions (comments,
+ * spindle codes, tool-change pause) since this targets the same class of
+ * machine (a router with an add-on axis), not the lathe - see routing.js's
+ * own file header for the real, manual-confirmed differences between the
+ * two dialects this switches between.
+ */
+import { HEADER_WARNING } from './turning.js';
+
+function fmt(n, decimals = 4) {
+  return Number(n).toFixed(decimals);
+}
+
+function pauseLine(isWinCNC, promptText) {
+  return isWinCNC ? `G4 (${promptText})` : `M00 (${promptText})`;
+}
+
+function dwellLine(isWinCNC, seconds, comment) {
+  const word = isWinCNC ? 'X' : 'P';
+  return `G04 ${word}${fmt(seconds, 1)} (${comment})`;
+}
+
+/**
+ * Groups every hole across every wall by drill diameter (largest first,
+ * matching routing.js's multi-tool convention: primary/most-common tool
+ * first, detail tools after), keeping each diameter's holes ordered by
+ * wall angle then position - so the program indexes A once per wall per
+ * tool rather than bouncing back and forth.
+ */
+function groupHolesByDiameter(walls) {
+  const byDiameter = new Map(); // diameter (rounded) -> [{ angleDeg, position, lateralOffset, diameter }, ...]
+  for (const wall of walls) {
+    for (const hole of wall.holes) {
+      const key = Math.round(hole.diameter * 10000) / 10000;
+      if (!byDiameter.has(key)) byDiameter.set(key, []);
+      byDiameter.get(key).push({
+        angleDeg: wall.angleDeg,
+        position: hole.position,
+        // Wide faces can have more than one hole at the same position but
+        // different lateral offsets across the wall's width (a real
+        // side-by-side hole pair, not a duplicate) - see
+        // extractTubeFeaturesFromMeshes' own comment on lateralOffset.
+        // Defaults to 0 for hand-built tubeFeatures that predate this field.
+        lateralOffset: hole.lateralOffset ?? 0,
+        diameter: hole.diameter
+      });
+    }
+  }
+  return [...byDiameter.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([diameter, holes]) => ({
+      diameter,
+      holes: [...holes].sort((a, b) => (a.angleDeg - b.angleDeg) || (a.position - b.position) || (a.lateralOffset - b.lateralOffset))
+    }));
+}
+
+/**
+ * @param {{ tubeLength: number, walls: Array<{angleDeg, holes: Array<{position, lateralOffset, diameter}>}> }} tubeFeatures
+ *   Shape matches extractTubeFeaturesFromMeshes' return value directly -
+ *   tubeLength isn't actually used for toolpath generation (every hole
+ *   already carries its own absolute position), only echoed into stats.
+ * @param {Object} params
+ *   holeDepth (required, inches) - how deep to plunge past the wall's
+ *     outer surface. No auto-detection from geometry (this generator has
+ *     no wall-thickness measurement) - same "the operator must state a
+ *     real number, not get a guessed default" posture as routing.js's
+ *     targetDepth. Too shallow won't clear the wall; too deep on a
+ *     through-both-walls hole risks the far wall or a fixture behind it -
+ *     verify against the real tube gauge before running.
+ *   safeZ (default 0.25) - retract height above the wall's outer surface.
+ *   feedRate (in/min, default 8) - conservative default for drilling
+ *     (much slower than routing.js's contour-following feedRate default of
+ *     40; a straight plunge into solid material, not a light profile pass).
+ *   spindleSpeed (rpm, default 8000), spindleDwellSeconds (default 2).
+ *   controller: 'linuxcnc' (default) | 'wincnc', units: 'in' | 'mm' (default 'in')
+ *   programNumber (default 1002 - 1000/1001 already used by turning.js/
+ *     routing.js's own conventions elsewhere in this app, kept distinct)
+ */
+export function generateTubestockGcode(tubeFeatures, params = {}) {
+  const walls = tubeFeatures?.walls;
+  if (!Array.isArray(walls) || walls.length === 0) {
+    throw new Error('Tube stock needs at least one wall with hole data');
+  }
+  const totalHoles = walls.reduce((sum, w) => sum + w.holes.length, 0);
+  if (totalHoles === 0) {
+    throw new Error('No holes found across any wall - nothing to drill');
+  }
+
+  const {
+    holeDepth,
+    safeZ = 0.25,
+    feedRate = 8,
+    spindleSpeed = 8000,
+    spindleDwellSeconds = 2,
+    controller = 'linuxcnc',
+    units = 'in',
+    programNumber = 1002
+  } = params;
+  if (!holeDepth || holeDepth <= 0) throw new Error('holeDepth is required and must be > 0');
+  if (safeZ <= 0) throw new Error('safeZ must be > 0');
+
+  const isWinCNC = controller === 'wincnc';
+  const groups = groupHolesByDiameter(walls);
+
+  const lines = [...HEADER_WARNING, ''];
+  lines.push('(*** TUBE STOCK: rotary 4th-axis indexed drilling - verify A-axis ***)');
+  lines.push('(direction/rotary-center offset and Z=0 reference against the real machine)');
+  lines.push('(before running - see tubestock.js file header. Round holes only, each)');
+  lines.push('(drilled straight in from whichever wall it is on.)');
+  lines.push('%');
+  lines.push(`O${programNumber} (AUTOCAM TUBE STOCK)`);
+  if (isWinCNC) {
+    lines.push(units === 'mm' ? 'G22 (metric - mm; NOTE: G21 means cm on WinCNC, G22 is used for mm here)' : 'G20 (inch)');
+  } else {
+    lines.push(units === 'mm' ? 'G21 (metric)' : 'G20 (inch)');
+  }
+  lines.push('G90 (absolute)');
+  lines.push('G94 (feed per minute)');
+  if (isWinCNC) {
+    lines.push('(*** VERIFY MACHINE ZERO BEFORE RUNNING ***)');
+    lines.push('(Jog to the tube face/rotary-center origin and zero the controller (G92) BEFORE)');
+    lines.push('(running this file - WinCNC has no G54-style stored work offset this program)');
+    lines.push('(can select for you; it has to be set interactively, right before.)');
+  } else {
+    lines.push('G54 (work offset - verify before running)');
+    lines.push('G80 G40 G49 (cancel canned cycle / cutter comp / tool length offset - defensive, in case a prior program on this machine left one active)');
+  }
+
+  lines.push('(--- TOOL PLAN - stage these before starting ---)');
+  groups.forEach((g, i) => {
+    lines.push(`(  ${i + 1}. ${fmt(g.diameter, 3)}" drill (T${i + 1}) - ${g.holes.length} hole${g.holes.length === 1 ? '' : 's'} )`);
+  });
+
+  let toolChanges = 0;
+  groups.forEach((group, toolIndex) => {
+    if (toolIndex === 0) {
+      lines.push(`(--- TOOL 1: ${fmt(group.diameter, 3)}" drill (T1) - load before starting ---)`);
+      lines.push(`S${spindleSpeed} M03 (spindle on)`);
+      if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
+    } else {
+      toolChanges += 1;
+      lines.push('G00 Z' + fmt(safeZ) + ' (retract clear before tool change)');
+      lines.push('M05 (spindle off)');
+      lines.push(pauseLine(isWinCNC, `TOOL CHANGE: load ${fmt(group.diameter, 3)}" drill - T${toolIndex + 1}, then RE-TOUCH OFF Z0 before resuming - no automatic tool length compensation assumed`));
+      lines.push(`S${spindleSpeed} M03 (spindle back on)`);
+      if (spindleDwellSeconds > 0) lines.push(dwellLine(isWinCNC, spindleDwellSeconds, 'wait for spindle to reach speed'));
+    }
+
+    let currentAngle = null;
+    for (const hole of group.holes) {
+      if (hole.angleDeg !== currentAngle) {
+        lines.push(`G00 Z${fmt(safeZ)} (retract clear before indexing)`);
+        lines.push(`G00 A${fmt(hole.angleDeg, 1)} (index rotary axis to this wall)`);
+        currentAngle = hole.angleDeg;
+      }
+      lines.push(`G00 X${fmt(hole.position)} Y${fmt(hole.lateralOffset)} (rapid to hole position)`);
+      lines.push(`G00 Z${fmt(safeZ)} (rapid to clearance above wall)`);
+      lines.push(`G01 Z${fmt(-holeDepth)} F${fmt(feedRate, 2)} (drill)`);
+      lines.push(`G00 Z${fmt(safeZ)} (retract)`);
+    }
+  });
+
+  lines.push(`G00 Z${fmt(safeZ)} (final retract)`);
+  lines.push('M05 (spindle off)');
+  lines.push(isWinCNC ? '(PROGRAM END)' : 'M30 (program end)');
+  if (!isWinCNC) lines.push('%');
+
+  let gcode = lines.join('\n');
+  if (isWinCNC) gcode = gcode.replace(/\(/g, '[').replace(/\)/g, ']');
+
+  return {
+    gcode,
+    stats: {
+      tubeLength: tubeFeatures.tubeLength ?? null,
+      wallsUsed: [...new Set(groups.flatMap((g) => g.holes.map((h) => h.angleDeg)))].length,
+      totalHoles,
+      toolsUsed: groups.length,
+      toolChanges
+    }
+  };
+}

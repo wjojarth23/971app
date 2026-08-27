@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes, pickLengthAxis } from './stepProfile.js';
+import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes, extractTubeFeaturesFromMeshes, pickLengthAxis } from './stepProfile.js';
 import { generateTurningGcode } from './turning.js';
 import { generateRoutingGcode } from './routing.js';
+import { generateTubestockGcode } from './tubestock.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HEX_SHAFT = path.join(__dirname, '__fixtures__', 'hex-shaft.step');
@@ -31,6 +32,17 @@ const TOUGHBOX_MOTOR_PLATE = path.join(__dirname, '__fixtures__', 'toughbox-moto
 // length is the SHORTEST span - see pickLengthAxis in stepProfile.js.
 const SET_SCREW_HUB = path.join(__dirname, '__fixtures__', 'set-screw-hub.step');
 const V_BELT_PULLEY = path.join(__dirname, '__fixtures__', 'v-belt-pulley.step');
+// Real STEP files downloaded directly from vendor sites (AndyMark's public
+// S3-hosted CAD downloads, REV Robotics' content/cad/ endpoint), not
+// synthetic - see autocam/tubestock-validation-*.md for the full download
+// provenance. Tube fixtures specifically stress-test extractTubeFeaturesFromMeshes/
+// tubestock.js against real, densely-drilled predrilled tube stock.
+const TUBE_05X05_SQUARE = path.join(__dirname, '__fixtures__', 'tube-05x05-square.step'); // am-5001-4700, 0.5"x0.5" tube, 4 walls each with a #10 clearance grid
+const TUBE_2X1_WIDE_FACE = path.join(__dirname, '__fixtures__', 'tube-2x1-wide-face.step'); // am-5180, 2"x1" tube - the wide face has side-by-side hole pairs, the file behind the lateralOffset bug fix
+const TUBE_2X1_TWO_WALLS = path.join(__dirname, '__fixtures__', 'tube-2x1-two-walls.step'); // am-5644, 2"x1" tube, only 2 of 4 walls drilled
+const UNIVERSAL_MOTOR_BRACKET = path.join(__dirname, '__fixtures__', 'universal-motor-bracket.step'); // REV-21-2804
+const MOTOR_PLATE_550 = path.join(__dirname, '__fixtures__', '550-motor-plate.step'); // REV-41-1607 - the real file behind the synthetic "550 Motor Plate" regression test above (pickLengthAxis describe block)
+const GEARBOX_MOTION_BRACKET_15MM = path.join(__dirname, '__fixtures__', '15mm-gearbox-motion-bracket.step'); // REV-41-1315 - a real bent/formed bracket (15mm wall height matches its own product name), the second real file (after mounting-bracket-bent.step) confirming the bent-part thickness rejection generalizes
 
 // Real STEP files, committed as fixtures - these previously caught a real
 // bug (both extractors silently assumed the STEP file's Z axis was the
@@ -376,6 +388,81 @@ describe('extractRoutingContoursFromMeshes (real STEP file: mounting-bracket-ben
   });
 });
 
+describe('extractRoutingContoursFromMeshes (real STEP file: universal-motor-bracket.step - REV-21-2804, a genuinely complex multi-hole bracket)', () => {
+  it('generates G-code end to end with a multi-tool sequence', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(UNIVERSAL_MOTOR_BRACKET));
+    const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
+    expect(contours.length).toBeGreaterThan(5);
+    const toolSequence = [0.375, 0.25, 0.1875, 0.125, 0.0625].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP file: 550-motor-plate.step - REV-41-1607, the real file behind the synthetic "550 Motor Plate" flat-plate rejection test in the pickLengthAxis-adjacent turning tests above)', () => {
+  it('generates G-code end to end via routing (the correct path for this part, unlike turning)', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(MOTOR_PLATE_550));
+    const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
+    const toolSequence = [0.375, 0.25, 0.1875, 0.125, 0.0625].map((d, i) => ({ toolDiameter: d, toolNumber: i + 1 }));
+    const result = generateRoutingGcode(contours, { stepDown: 0.1, targetDepth: thickness, toolSequence });
+    expect(result.gcode).toContain('M30');
+  });
+
+  it('is correctly rejected by the turning path (real bug this part originally caught, now confirmed against the real file, not just a synthetic proxy)', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(MOTOR_PLATE_550));
+    expect(() => extractTurningProfileFromMeshes(meshes)).toThrow(/doesn't look like a turned part|too flat\/rectangular for bar stock/);
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (real STEP file: 15mm-gearbox-motion-bracket.step - REV-41-1315, a real bent/formed bracket)', () => {
+  it('rejects it as a bent part (a second real file, independent of mounting-bracket-bent.step, confirming the fix generalizes - its 0.591" bounding-box depth matches its own "15mm" product name, not a measurement bug)', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(GEARBOX_MOTION_BRACKET_15MM));
+    expect(() => extractRoutingContoursFromMeshes(meshes)).toThrow(/no face parallel to its flat face/);
+  });
+});
+
+describe('extractTubeFeaturesFromMeshes (real STEP file: tube-05x05-square.step - am-5001-4700, a real AndyMark 0.5"x0.5" predrilled tube)', () => {
+  it('finds a #10 clearance-hole grid on all 4 walls and generates tubestock G-code end to end', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(TUBE_05X05_SQUARE));
+    const features = extractTubeFeaturesFromMeshes(meshes);
+    expect(features.tubeLength).toBeCloseTo(47, 0);
+    expect(features.walls.length).toBe(4);
+    for (const wall of features.walls) {
+      expect(wall.holes.length).toBeGreaterThan(50); // a 47" tube on a 0.5" grid is ~94 holes/wall
+      for (const hole of wall.holes) expect(hole.diameter).toBeCloseTo(0.201, 1); // AndyMark's documented #10 clearance grid
+    }
+    const result = generateTubestockGcode(features, { holeDepth: 0.15 });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
+describe('extractTubeFeaturesFromMeshes (real STEP file: tube-2x1-wide-face.step - am-5180, a real AndyMark 2"x1" predrilled tube - the file behind the lateralOffset bug fix)', () => {
+  it('finds side-by-side hole pairs on the wide (2") face at distinct, non-zero lateral offsets - not collapsed onto the same Y (real bug: lateralOffset used to be computed and silently dropped, which would have driven every hole on this wall to the same G-code Y)', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(TUBE_2X1_WIDE_FACE));
+    const features = extractTubeFeaturesFromMeshes(meshes);
+    const wideWall = features.walls.find((w) => w.holes.length > 100); // the 2"-wide faces have ~279 holes vs ~93 on the narrow faces
+    expect(wideWall).toBeDefined();
+    const distinctOffsets = new Set(wideWall.holes.map((h) => Math.round(h.lateralOffset * 100) / 100));
+    expect(distinctOffsets.size).toBeGreaterThan(1);
+    const result = generateTubestockGcode(features, { holeDepth: 0.2 });
+    expect(result.gcode).toContain('M30');
+    expect(result.stats.totalHoles).toBeGreaterThan(700);
+  });
+});
+
+describe('extractTubeFeaturesFromMeshes (real STEP file: tube-2x1-two-walls.step - am-5644, a real AndyMark 2"x1" tube with only 2 of 4 walls drilled)', () => {
+  it('correctly leaves the 2 undrilled walls empty rather than inventing holes, and generates G-code end to end', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(TUBE_2X1_TWO_WALLS));
+    const features = extractTubeFeaturesFromMeshes(meshes);
+    const drilledWalls = features.walls.filter((w) => w.holes.length > 0);
+    const blankWalls = features.walls.filter((w) => w.holes.length === 0);
+    expect(drilledWalls.length).toBe(2);
+    expect(blankWalls.length).toBe(2);
+    const result = generateTubestockGcode(features, { holeDepth: 0.15 });
+    expect(result.gcode).toContain('M30');
+  });
+});
+
 describe('readStepMeshes', () => {
   it('loads real geometry with vertices, triangle indices, and named faces', async () => {
     const meshes = await readStepMeshes(fs.readFileSync(HEX_SHAFT));
@@ -434,5 +521,178 @@ describe('pickLengthAxis (synthetic bounding-box spans - the length-axis auto-de
     const picked = pickLengthAxis({ x: 1, y: 1, z: 1 });
     expect(picked).not.toBeNull();
     expect(['x', 'y', 'z']).toContain(picked.lengthAxis);
+  });
+});
+
+// --- Synthetic rectangular tube mesh builder, for extractTubeFeaturesFromMeshes ---
+//
+// Builds a real, topologically valid triangle mesh (not a shortcut/mock) for
+// a rectangular tube: 4 side walls + 2 end caps, with genuine round holes
+// tessellated directly into a wall's own triangulation (a hole is a real
+// inner boundary loop of that wall's mesh - exactly how a real STEP export
+// represents it, and exactly what extractTubeFeaturesFromMeshes expects -
+// not a cylindrical "hole surface" needing separate detection). Holes are
+// built via plain grid-cell inclusion/exclusion (not a bridge/keyhole
+// polygon triangulation) specifically because a naive bridge triangulation
+// leaves the bridge's own edges on the mesh boundary instead of interior,
+// splitting what should be one clean hole loop into a corrupted multi-loop
+// mess - grid cells sharing vertices between neighbors sidesteps that
+// entirely and is what a real CAD kernel's tessellation topologically
+// resembles anyway.
+// excludedFn(u, v) -> true skips that grid cell entirely, leaving a gap in
+// the tessellation that traces out as an inner boundary loop - a round hole
+// (circle predicate) or a non-round feature (any other predicate, e.g. a
+// slot, used to exercise the roundness-rejection path) are built exactly
+// the same way.
+function buildGridWithCutouts(width, height, excludedFn, cellSize) {
+  const nu = Math.max(4, Math.round(width / cellSize));
+  const nv = Math.max(4, Math.round(height / cellSize));
+  const points = [];
+  const idOf = (i, j) => j * (nu + 1) + i;
+  for (let j = 0; j <= nv; j += 1) {
+    for (let i = 0; i <= nu; i += 1) points.push({ u: (i / nu) * width, v: (j / nv) * height });
+  }
+  const triangles = [];
+  for (let j = 0; j < nv; j += 1) {
+    for (let i = 0; i < nu; i += 1) {
+      const cu = ((i + 0.5) / nu) * width, cv = ((j + 0.5) / nv) * height;
+      if (excludedFn(cu, cv)) continue;
+      const a = idOf(i, j), b = idOf(i + 1, j), c = idOf(i + 1, j + 1), d = idOf(i, j + 1);
+      triangles.push([a, b, c], [a, c, d]);
+    }
+  }
+  return { points, triangles };
+}
+
+function circleHoles(holes) {
+  return (u, v) => holes.some((h) => Math.hypot(u - h.cu, v - h.cv) < h.r);
+}
+
+// embed(u,v) maps this wall's local 2D grid into 3D; flip controls winding
+// so the resulting face normal points the intended outward direction
+// (verified numerically while building this fixture, not just assumed).
+function wallFace(uSpan, vSpan, excludedFn, cellSize, embed, flip) {
+  const { points, triangles } = buildGridWithCutouts(uSpan, vSpan, excludedFn, cellSize);
+  const verts3d = points.map((p) => embed(p.u, p.v));
+  const tris = flip ? triangles.map(([a, b, c]) => [a, c, b]) : triangles;
+  return { verts3d, tris };
+}
+
+function simpleRectFace(uSpan, vSpan, embed, flip) {
+  const points = [{ u: 0, v: 0 }, { u: uSpan, v: 0 }, { u: uSpan, v: vSpan }, { u: 0, v: vSpan }];
+  const verts3d = points.map((p) => embed(p.u, p.v));
+  const tris = flip ? [[0, 2, 1], [0, 3, 2]] : [[0, 1, 2], [0, 2, 3]];
+  return { verts3d, tris };
+}
+
+function assembleTubeMesh(faces) {
+  const positions = [];
+  const indices = [];
+  const brepFaces = [];
+  for (const { verts3d, tris } of faces) {
+    const base = positions.length / 3;
+    for (const v of verts3d) positions.push(v.x, v.y, v.z);
+    const firstTri = indices.length / 3;
+    for (const [a, b, c] of tris) indices.push(base + a, base + b, base + c);
+    brepFaces.push({ first: firstTri, last: indices.length / 3 - 1 });
+  }
+  return {
+    attributes: { position: { array: new Float32Array(positions) } },
+    index: { array: new Uint32Array(indices) },
+    brep_faces: brepFaces
+  };
+}
+
+// A 6" x 1.5" x 1.0" rectangular tube: 2 round holes (0.3" dia) on the +Y
+// wall at X=1.5"/4.5", 1 round hole (0.25" dia) on the +Z wall at X=3", the
+// other two walls blank, both end caps present (and must be excluded from
+// the result - they're not side walls).
+function buildTestTube({ slotInsteadOfSecondHole = false } = {}) {
+  const LEN = 6, WY = 1.5, HZ = 1.0;
+  // Non-round feature (an elongated slot, not a circle) on the +Y wall in
+  // place of its second hole, to exercise the roundness-rejection path.
+  const wallAplusCutouts = slotInsteadOfSecondHole
+    ? (u, v) => Math.hypot(u - 1.5, v - 0.5) < 0.15 || (Math.abs(u - 4.5) < 0.6 && Math.abs(v - 0.5) < 0.12)
+    : circleHoles([{ cu: 1.5, cv: 0.5, r: 0.15 }, { cu: 4.5, cv: 0.5, r: 0.15 }]);
+  const wallAplus = wallFace(LEN, HZ, wallAplusCutouts, 0.025, (u, v) => ({ x: u, y: WY, z: v }), true);
+  const wallBplus = wallFace(LEN, WY, circleHoles([{ cu: 3.0, cv: 0.75, r: 0.125 }]), 0.025, (u, v) => ({ x: u, y: v, z: HZ }), false);
+  const wallAminus = simpleRectFace(LEN, HZ, (u, v) => ({ x: u, y: 0, z: v }), false);
+  const wallBminus = simpleRectFace(LEN, WY, (u, v) => ({ x: u, y: v, z: 0 }), true);
+  const capStart = simpleRectFace(WY, HZ, (u, v) => ({ x: 0, y: u, z: v }), true);
+  const capEnd = simpleRectFace(WY, HZ, (u, v) => ({ x: LEN, y: u, z: v }), false);
+  return assembleTubeMesh([wallAplus, wallBplus, wallAminus, wallBminus, capStart, capEnd]);
+}
+
+describe('extractTubeFeaturesFromMeshes (synthetic rectangular tube: 6"x1.5"x1.0", 2 holes on one wall, 1 on another, 2 blank walls, 2 end caps)', () => {
+  it('finds the tube\'s long axis, outer cross-section, and all 4 side walls at 0/90/180/270 degrees', () => {
+    const result = extractTubeFeaturesFromMeshes([buildTestTube()]);
+    expect(result.lengthAxis).toBe('x');
+    expect(result.tubeLength).toBeCloseTo(6, 3);
+    expect(result.crossSection.a).toBeCloseTo(1.5, 3);
+    expect(result.crossSection.b).toBeCloseTo(1.0, 3);
+    expect(result.walls.map((w) => w.angleDeg)).toEqual([0, 90, 180, 270]);
+  });
+
+  it('excludes the end caps entirely - only 4 side walls, never 6 faces', () => {
+    const result = extractTubeFeaturesFromMeshes([buildTestTube()]);
+    expect(result.walls.length).toBe(4);
+  });
+
+  it('finds both holes on the same wall, sorted by position along the tube, with correct diameters', () => {
+    const result = extractTubeFeaturesFromMeshes([buildTestTube()]);
+    const wall0 = result.walls.find((w) => w.angleDeg === 0);
+    expect(wall0.holes.length).toBe(2);
+    expect(wall0.holes[0].position).toBeCloseTo(1.5, 1);
+    expect(wall0.holes[0].diameter).toBeCloseTo(0.3, 1);
+    expect(wall0.holes[1].position).toBeCloseTo(4.5, 1);
+    expect(wall0.holes[1].diameter).toBeCloseTo(0.3, 1);
+  });
+
+  it('finds the single hole on the second wall and leaves the two blank walls empty', () => {
+    const result = extractTubeFeaturesFromMeshes([buildTestTube()]);
+    const wall90 = result.walls.find((w) => w.angleDeg === 90);
+    expect(wall90.holes.length).toBe(1);
+    expect(wall90.holes[0].position).toBeCloseTo(3, 1);
+    expect(wall90.holes[0].diameter).toBeCloseTo(0.25, 1);
+    expect(result.walls.find((w) => w.angleDeg === 180).holes).toEqual([]);
+    expect(result.walls.find((w) => w.angleDeg === 270).holes).toEqual([]);
+  });
+
+  it('rejects a non-round feature (a slot) instead of treating it as a round hole of some averaged diameter', () => {
+    expect(() => extractTubeFeaturesFromMeshes([buildTestTube({ slotInsteadOfSecondHole: true })]))
+      .toThrow(/isn't round/);
+  });
+
+  it('reports lateralOffset as a signed distance from the wall\'s own centerline, not just the position along the tube - real bug found against a real AndyMark 2"x1" tube fixture: this field used to be computed and silently dropped, which would have driven multiple holes on a wide face to the same G-code Y (see tubestock.test.js)', () => {
+    // Two holes on the +Y wall (spans Z in [0,1.0]) at the same X position
+    // but offset +/-0.3" from the wall's own center (0.5) - a real
+    // side-by-side hole pair on a wide face, not a duplicate.
+    const LEN = 6, WY = 1.5, HZ = 1.0;
+    const wallAplus = wallFace(
+      LEN, HZ,
+      circleHoles([{ cu: 3, cv: 0.2, r: 0.1 }, { cu: 3, cv: 0.8, r: 0.1 }]),
+      0.02, (u, v) => ({ x: u, y: WY, z: v }), true
+    );
+    const wallBplus = simpleRectFace(LEN, WY, (u, v) => ({ x: u, y: v, z: HZ }), false);
+    const wallAminus = simpleRectFace(LEN, HZ, (u, v) => ({ x: u, y: 0, z: v }), false);
+    const wallBminus = simpleRectFace(LEN, WY, (u, v) => ({ x: u, y: v, z: 0 }), true);
+    const capStart = simpleRectFace(WY, HZ, (u, v) => ({ x: 0, y: u, z: v }), true);
+    const capEnd = simpleRectFace(WY, HZ, (u, v) => ({ x: LEN, y: u, z: v }), false);
+    const mesh = assembleTubeMesh([wallAplus, wallBplus, wallAminus, wallBminus, capStart, capEnd]);
+
+    const result = extractTubeFeaturesFromMeshes([mesh]);
+    const wall0 = result.walls.find((w) => w.angleDeg === 0);
+    expect(wall0.holes.length).toBe(2);
+    // Wall center is at v=0.5 (HZ/2); holes at v=0.2 and v=0.8 -> offsets -0.3 and +0.3.
+    const offsets = wall0.holes.map((h) => h.lateralOffset).sort((a, b) => a - b);
+    expect(offsets[0]).toBeCloseTo(-0.3, 1);
+    expect(offsets[1]).toBeCloseTo(0.3, 1);
+  });
+
+  it('generates G-code end to end through generateTubestockGcode', () => {
+    const features = extractTubeFeaturesFromMeshes([buildTestTube()]);
+    const result = generateTubestockGcode(features, { holeDepth: 0.15 });
+    expect(result.gcode).toContain('M30');
+    expect(result.stats.totalHoles).toBe(3);
   });
 });

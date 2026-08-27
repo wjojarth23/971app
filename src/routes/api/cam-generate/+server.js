@@ -1,9 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL, PUBLIC_APP_ORIGIN, PUBLIC_SITE_URL } from '$env/static/public';
-import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes } from '$autocam/stepProfile.js';
+import { readStepMeshes, extractTurningProfileFromMeshes, extractRoutingContoursFromMeshes, extractTubeFeaturesFromMeshes } from '$autocam/stepProfile.js';
 import { generateTurningGcode } from '$autocam/turning.js';
 import { generateRoutingGcode } from '$autocam/routing.js';
+import { generateTubestockGcode } from '$autocam/tubestock.js';
 import { deliverJobToDrive } from '$autocam/drive_watcher.js';
 // Vite-built asset URL for occt-import-js's WASM binary - the same one
 // CadViewer.svelte already fetches successfully client-side. Fetching it
@@ -190,6 +191,10 @@ export async function POST({ request, url }) {
       const profile = extractTurningProfileFromMeshes(meshes);
       await setProgress(supabase, jobId, 80, 'Generating turning G-code...');
       result = generateTurningGcode(profile, params);
+    } else if (job.operation_type === 'tubestock') {
+      const features = extractTubeFeaturesFromMeshes(meshes);
+      await setProgress(supabase, jobId, 80, 'Generating tube stock G-code...');
+      result = generateTubestockGcode(features, params);
     } else {
       const { contours, thickness } = extractRoutingContoursFromMeshes(meshes);
       if (params.targetDepth === undefined && thickness) params.targetDepth = thickness;

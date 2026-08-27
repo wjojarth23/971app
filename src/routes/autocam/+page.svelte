@@ -99,11 +99,19 @@
   function emptyRoutingParams() {
     return { toolDiameter: 0.25, stepDown: 0.1, targetDepth: '', tabWidth: 0.25, tabHeight: 0.06, tabSpacing: 6, feedRate: 40, plungeRate: 15, spindleSpeed: 16000, edgeMargin: 0.5, toolSequence: [] };
   }
+  function emptyTubestockParams() {
+    return { holeDepth: '', safeZ: 0.25, feedRate: 8, spindleSpeed: 8000 };
+  }
+  function emptyParamsFor(operationType) {
+    if (operationType === 'turning') return emptyTurningParams();
+    if (operationType === 'tubestock') return emptyTubestockParams();
+    return emptyRoutingParams();
+  }
 
   let showNewJobModal = false;
   let newJobName = '';
   let newJobNotes = '';
-  let newJobOperation = 'routing'; // 'turning' | 'routing' - milling has no generator yet
+  let newJobOperation = 'routing'; // 'turning' | 'routing' | 'tubestock' - milling has no generator yet
   let newJobSource = 'upload';
   let newJobFile = null;
   let partSearchTerm = '';
@@ -148,6 +156,7 @@
   // Parameter form fields - only the fields relevant to newJobOperation get sent.
   let turningParams = emptyTurningParams();
   let routingParams = emptyRoutingParams();
+  let tubestockParams = emptyTubestockParams();
 
   let showProfilesPanel = false;
   let showToolsModal = false;
@@ -265,6 +274,7 @@
     selectedMachineId = '';
     turningParams = emptyTurningParams();
     routingParams = emptyRoutingParams();
+    tubestockParams = emptyTubestockParams();
     partSearchTerm = '';
     partFilterStatus = '';
     partFilterProject = '';
@@ -297,6 +307,8 @@
     if (!defaults) return;
     if (newJobOperation === 'turning') {
       turningParams = { ...turningParams, ...defaults };
+    } else if (newJobOperation === 'tubestock') {
+      tubestockParams = { ...tubestockParams, ...defaults };
     } else {
       routingParams = { ...routingParams, ...defaults };
     }
@@ -326,6 +338,8 @@
     applyMaterialDefaults(selectedMaterialId);
     if (machine.operation_type === 'turning') {
       turningParams = { ...turningParams, ...(machine.default_params || {}) };
+    } else if (machine.operation_type === 'tubestock') {
+      tubestockParams = { ...tubestockParams, ...(machine.default_params || {}) };
     } else {
       routingParams = { ...routingParams, ...(machine.default_params || {}) };
     }
@@ -333,7 +347,7 @@
   }
 
   function buildParams() {
-    const raw = newJobOperation === 'turning' ? turningParams : routingParams;
+    const raw = newJobOperation === 'turning' ? turningParams : (newJobOperation === 'tubestock' ? tubestockParams : routingParams);
     return serializeParams(raw);
   }
 
@@ -462,7 +476,7 @@
     editToolId = job.tool_id || '';
     editMachineId = job.machine_id || '';
     editParams = {
-      ...(job.operation_type === 'turning' ? emptyTurningParams() : emptyRoutingParams()),
+      ...emptyParamsFor(job.operation_type),
       ...(job.params || {})
     };
     showJobDetailModal = true;
@@ -607,7 +621,7 @@
     return 'status-running';
   }
 
-  const MACHINE_TYPE_LABEL = { turning: 'Lathe', routing: 'Router', milling: 'Mill' };
+  const MACHINE_TYPE_LABEL = { turning: 'Lathe', routing: 'Router', milling: 'Mill', tubestock: 'Rotary Drill' };
   function machineTypeLabel(operationType) {
     return MACHINE_TYPE_LABEL[operationType] || operationType || '—';
   }
@@ -617,11 +631,11 @@
   // get their own label/color here rather than the raw "milling" string, so
   // it's clear at a glance which ones went through the external Fusion 360
   // Runner instead of this app's own in-process turning/routing math.
-  const OPERATION_LABEL = { turning: 'Turning', routing: 'Routing', milling: 'Fusion' };
+  const OPERATION_LABEL = { turning: 'Turning', routing: 'Routing', milling: 'Fusion', tubestock: 'Tube Stock' };
   function operationLabel(operationType) {
     return OPERATION_LABEL[operationType] || operationType || '—';
   }
-  const OPERATION_TAG_CLASS = { turning: 'tag-season', milling: 'tag-mentor' };
+  const OPERATION_TAG_CLASS = { turning: 'tag-season', milling: 'tag-mentor', tubestock: 'tag-9584' };
   function operationTagClass(operationType) {
     return OPERATION_TAG_CLASS[operationType] || 'tag-971';
   }
@@ -669,7 +683,7 @@
         drive_folder_id: machine.drive_folder_id || '',
         drive_output_folder_id: machine.drive_output_folder_id || '',
         params: {
-          ...(machine.operation_type === 'turning' ? emptyTurningParams() : emptyRoutingParams()),
+          ...emptyParamsFor(machine.operation_type),
           ...(machine.default_params || {})
         }
       };
@@ -687,7 +701,7 @@
 
   function setMachineFormOperation(op) {
     machineForm.operation_type = op;
-    machineForm.params = op === 'turning' ? emptyTurningParams() : emptyRoutingParams();
+    machineForm.params = emptyParamsFor(op);
   }
 
   async function saveMachine() {
@@ -701,7 +715,9 @@
         default_material_id: machineForm.default_material_id || null,
         default_tool_id: machineForm.default_tool_id || null,
         gcode_extension: machineForm.gcode_extension || 'ngc',
-        controller: machineForm.operation_type === 'routing' ? (machineForm.controller || 'linuxcnc') : 'linuxcnc',
+        // Tube stock reuses routing.js's linuxcnc/wincnc dialect conventions
+        // (see tubestock.js file header) - same controller choice as routing.
+        controller: (machineForm.operation_type === 'routing' || machineForm.operation_type === 'tubestock') ? (machineForm.controller || 'linuxcnc') : 'linuxcnc',
         drive_folder_id: machineForm.drive_folder_id?.trim() || null,
         drive_output_folder_id: machineForm.drive_output_folder_id?.trim() || null,
         default_params: serializeParams(machineForm.params)
@@ -788,7 +804,7 @@
           <div class="machine-profile-header">
             <div>
               <strong>{mc.name}</strong>
-              <span class="tag {mc.operation_type === 'turning' ? 'tag-season' : 'tag-971'}">{mc.operation_type}</span>
+              <span class="tag {operationTagClass(mc.operation_type)}">{mc.operation_type}</span>
             </div>
             <button class="btn btn-ghost btn-sm" on:click={() => toggleEnabled('cam_machines', mc)}>{mc.enabled ? 'Disable' : 'Enable'}</button>
           </div>
@@ -1072,6 +1088,7 @@
             <div class="source-toggle" id="job-operation">
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'turning'} class:btn-secondary={newJobOperation !== 'turning'} on:click={() => (newJobOperation = 'turning')}>Turning</button>
               <button class="btn btn-sm" class:btn-primary={newJobOperation === 'routing'} class:btn-secondary={newJobOperation !== 'routing'} on:click={() => (newJobOperation = 'routing')}>Routing</button>
+              <button class="btn btn-sm" class:btn-primary={newJobOperation === 'tubestock'} class:btn-secondary={newJobOperation !== 'tubestock'} on:click={() => { newJobOperation = 'tubestock'; newJobSource = 'upload'; }}>Tube Stock</button>
               <button class="btn btn-sm btn-secondary" disabled title="Not available in this synchronous flow - use Fusion CAM (top of this page) for real 3-axis milling via Fusion 360">Milling</button>
             </div>
           </div>
@@ -1079,7 +1096,7 @@
             <label class="form-label" for="job-source-toggle">Source</label>
             <div class="source-toggle" id="job-source-toggle">
               <button class="btn btn-sm" class:btn-primary={newJobSource === 'upload'} class:btn-secondary={newJobSource !== 'upload'} on:click={() => (newJobSource = 'upload')}>Standalone Upload</button>
-              <button class="btn btn-sm" class:btn-primary={newJobSource === 'part'} class:btn-secondary={newJobSource !== 'part'} on:click={() => (newJobSource = 'part')}>Link to Existing Part</button>
+              <button class="btn btn-sm" class:btn-primary={newJobSource === 'part'} class:btn-secondary={newJobSource !== 'part'} disabled={newJobOperation === 'tubestock'} title={newJobOperation === 'tubestock' ? 'Tube stock jobs are standalone-upload only - no manufacturing-request workflow maps to it yet' : ''} on:click={() => (newJobSource = 'part')}>Link to Existing Part</button>
             </div>
           </div>
         </div>
@@ -1164,6 +1181,10 @@
               {#if newJobOperation === 'turning'}
                 Modeled with the spindle axis along the STEP file's Z axis, centered at X=0, Y=0 (lathe parts are
                 physically solids of revolution, so the profile is read straight off the geometry).
+              {:else if newJobOperation === 'tubestock'}
+                Axis-aligned rectangular/square tube - the long axis is auto-detected (whichever bounding-box
+                dimension is largest), and round holes through any of its 4 side walls are read straight off the
+                model. Non-round features (slots, keyways) and already-bent/formed tube are rejected, not guessed at.
               {:else}
                 Modeled as a flat profile extruded along the STEP file's Z axis - the flat top/bottom face becomes
                 the outline, holes included, and material thickness is read straight off the model.
@@ -1177,6 +1198,8 @@
         {#if newJobOperation === 'turning'}
           <CamParamFields operation="turning" bind:params={turningParams} mode="job" />
           <TurningFinishTool {tools} bind:finishTool={turningParams.finishTool} />
+        {:else if newJobOperation === 'tubestock'}
+          <CamParamFields operation="tubestock" bind:params={tubestockParams} mode="job" />
         {:else}
           <CamParamFields operation="routing" bind:params={routingParams} mode="job" />
           <RoutingToolSequence {tools} bind:sequence={routingParams.toolSequence} />
@@ -1284,8 +1307,8 @@
           <button class="btn btn-secondary btn-sm" on:click={() => (showJobCadModal = true)} disabled={!editingJob.step_file_name}>
             <Box size={14} /> View CAD
           </button>
-          <button class="btn btn-secondary btn-sm" on:click={() => (showJobToolpathModal = true)} disabled={editingJob.status !== 'completed' || !editingJob.gcode} title={editingJob.status !== 'completed' ? 'Only available once the job has completed' : ''}>
-            <Route size={14} /> View {editingJob.operation_type === 'turning' ? 'Turning' : 'Routing'} Toolpath
+          <button class="btn btn-secondary btn-sm" on:click={() => (showJobToolpathModal = true)} disabled={editingJob.status !== 'completed' || !editingJob.gcode || editingJob.operation_type === 'tubestock'} title={editingJob.operation_type === 'tubestock' ? 'No 2D preview for tube stock - it moves in X/Y/Z plus a rotary axis the viewer doesn\'t track; use Open ncviewer.com or download the G-code instead' : (editingJob.status !== 'completed' ? 'Only available once the job has completed' : '')}>
+            <Route size={14} /> View {operationLabel(editingJob.operation_type)} Toolpath
           </button>
           {#if editingJob.status === 'completed' && editingJob.gcode}
             <button class="btn btn-secondary btn-sm" on:click={() => openNcviewer(editingJob)}>
@@ -1297,6 +1320,8 @@
         {#if editingJob.operation_type === 'turning'}
           <CamParamFields operation="turning" bind:params={editParams} mode="job" />
           <TurningFinishTool {tools} bind:finishTool={editParams.finishTool} />
+        {:else if editingJob.operation_type === 'tubestock'}
+          <CamParamFields operation="tubestock" bind:params={editParams} mode="job" />
         {:else}
           <CamParamFields operation="routing" bind:params={editParams} mode="job" />
           <RoutingToolSequence {tools} bind:sequence={editParams.toolSequence} />
@@ -1364,7 +1389,7 @@
   <div class="modal-backdrop" on:click|self={() => (showJobToolpathModal = false)} role="button" tabindex="0" on:keydown={(e) => { if (e.key === 'Escape') (showJobToolpathModal = false); }}>
     <div class="modal toolpath-modal" role="dialog" aria-modal="true">
       <div class="modal-header">
-        <h3>{editingJob.operation_type === 'turning' ? 'Turning' : 'Routing'} Toolpath - {jobDisplayName(editingJob)}</h3>
+        <h3>{operationLabel(editingJob.operation_type)} Toolpath - {jobDisplayName(editingJob)}</h3>
         <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showJobToolpathModal = false)}><X size={18} /></button>
       </div>
       <div class="modal-body">
@@ -1444,6 +1469,7 @@
           <div class="source-toggle" id="mp-operation">
             <button class="btn btn-sm" class:btn-primary={machineForm.operation_type === 'turning'} class:btn-secondary={machineForm.operation_type !== 'turning'} on:click={() => setMachineFormOperation('turning')}>Turning (Lathe)</button>
             <button class="btn btn-sm" class:btn-primary={machineForm.operation_type === 'routing'} class:btn-secondary={machineForm.operation_type !== 'routing'} on:click={() => setMachineFormOperation('routing')}>Routing (Router)</button>
+            <button class="btn btn-sm" class:btn-primary={machineForm.operation_type === 'tubestock'} class:btn-secondary={machineForm.operation_type !== 'tubestock'} on:click={() => setMachineFormOperation('tubestock')}>Tube Stock (Rotary Drill)</button>
           </div>
         </div>
 
@@ -1466,7 +1492,7 @@
               {/each}
             </select>
           </div>
-          {#if machineForm.operation_type === 'routing'}
+          {#if machineForm.operation_type === 'routing' || machineForm.operation_type === 'tubestock'}
             <div class="form-group">
               <label class="form-label" for="mp-gcode-ext">Output File Type</label>
               <select id="mp-gcode-ext" class="form-select" bind:value={machineForm.gcode_extension}>
