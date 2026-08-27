@@ -222,6 +222,12 @@
     margin-bottom: var(--space-4);
   }
   .hero-word {
+    /* Explicit color: h1 is targeted by the global `h1,h2,h3,h4 { color:
+       var(--secondary) }` rule in app.css, which would otherwise beat the
+       inherited light text color from .hero-brand-panel - since --secondary
+       is also this panel's own background, that bug made the wordmark
+       nearly invisible (same color as what's behind it). */
+    color: var(--primary);
     font-family: var(--font-display);
     font-weight: 800;
     font-size: clamp(3rem, 6.5vw, 5.25rem);

@@ -6,6 +6,7 @@
   import { toastActions } from '$lib/toast.js';
   import navigation from '$lib/navigation.json';
   import { theme, setTheme } from '$lib/stores/theme.js';
+  import { setLoginScreenStyle } from '$lib/stores/loginScreenPref.js';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
   import HeaderPreview from '$lib/components/HeaderPreview.svelte';
   import { NOTIFICATION_UI_OPTIONS } from '$lib/notifications/constants.js';
@@ -29,6 +30,7 @@
   // Appearance / customization
   let header_tabs = null; // array structure stored in DB
   let dashboard_layout = 'grid';
+  let login_screen_style = 'legacy';
   let newFolderName = '';
   let addTabKey = '';
   let targetFolderIdx = '';
@@ -201,6 +203,11 @@
         // load appearance settings if present
         header_tabs = user.header_tabs || null;
         dashboard_layout = user.dashboard_layout || 'grid';
+        login_screen_style = user.login_screen_style || 'legacy';
+        // Sync this browser's cache so the signed-out screen (which can't
+        // read user_profiles before auth) picks up the account's saved
+        // preference the next time this user logs out here.
+        setLoginScreenStyle(login_screen_style);
         notificationSettings = mergeNotificationSettings(user.notification_settings);
       }
     });
@@ -225,6 +232,7 @@
         frc_team: frc_team || null,
         dashboard_layout: dashboard_layout,
         header_tabs: header_tabs,
+        login_screen_style: login_screen_style,
         notification_settings: notificationSettings
       };
       console.log('saveProfile payload', payload);
@@ -238,12 +246,14 @@
 
       if (error) throw error;
   toastActions.show('Profile updated');
+      setLoginScreenStyle(login_screen_style);
       // Refresh profile from DB so we display the canonical saved manifest
       try {
         const refreshed = await fetchUserProfile(user.id);
         if (refreshed) {
           header_tabs = refreshed.header_tabs || null;
           dashboard_layout = refreshed.dashboard_layout || 'grid';
+          login_screen_style = refreshed.login_screen_style || 'legacy';
         }
       } catch (e) {
         console.warn('Failed to refresh profile after save', e);
@@ -339,6 +349,13 @@
           <option value="light">Legacy</option>
         </select>
         <small class="form-help">Applies instantly and is remembered on this device.</small>
+      </label>
+      <label class="form-label" for="login-screen-select">Login Screen
+        <select class="form-select" id="login-screen-select" bind:value={login_screen_style}>
+          <option value="legacy">Legacy Login</option>
+          <option value="modern">Modern Login</option>
+        </select>
+        <small class="form-help">Which sign-in screen you see when signed out. Saved to your account and remembered on this device.</small>
       </label>
       <div class="actions">
         <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save'}</button>
