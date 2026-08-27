@@ -193,6 +193,6 @@
   .note-actions .btn-primary {
     background: var(--accent-strong, #1d4ed8);
     border-color: var(--accent-strong, #1d4ed8);
-    color: #fff;
+    color: var(--color-white);
   }
 </style>

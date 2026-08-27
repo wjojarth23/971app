@@ -121,17 +121,17 @@
   const defaultFrcTeam = null; // No default FRC team
 
   const frcTeamThemes = {
-    '971': { bg: '#dbeafe', border: '#bfdbfe', text: '#1e3a8a' },
-    '9584': { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' },
+    '971': { bg: 'var(--blue-soft)', border: '#bfdbfe', text: '#1e3a8a' },
+    '9584': { bg: '#dcfce7', border: '#bbf7d0', text: 'var(--green-strong)' },
     'Mentor': { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
     null: { bg: 'var(--muted-bg)', border: '#e5e7eb', text: '#6b7280' }
   };
 
   const generalRoleThemes = {
     [GENERAL_ROLES.NONE]: { bg: 'var(--muted-bg)', border: '#e5e7eb', text: '#6b7280' },
-    [GENERAL_ROLES.MEMBER]: { bg: '#dbeafe', border: '#bfdbfe', text: '#1e3a8a' },
+    [GENERAL_ROLES.MEMBER]: { bg: 'var(--blue-soft)', border: '#bfdbfe', text: '#1e3a8a' },
     [GENERAL_ROLES.SUBSYSTEM_LEAD]: { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
-    [GENERAL_ROLES.LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' }
+    [GENERAL_ROLES.LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: 'var(--green-strong)' }
   };
 
   const purchasingRoleThemes = {
@@ -145,8 +145,8 @@
     [TEAM_ROLES.COMPETITION_LEAD]: { bg: '#e0e7ff', border: '#c7d2fe', text: '#3730a3' },
     [TEAM_ROLES.MECHANICAL_LEAD]: { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
     [TEAM_ROLES.SOFTWARE_LEAD]: { bg: '#ddd6fe', border: '#c4b5fd', text: '#5b21b6' },
-    [TEAM_ROLES.MANUFACTURING_LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: '#166534' },
-    [TEAM_ROLES.MANUFACTURING_MEMBER]: { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412' },
+    [TEAM_ROLES.MANUFACTURING_LEAD]: { bg: '#dcfce7', border: '#bbf7d0', text: 'var(--green-strong)' },
+    [TEAM_ROLES.MANUFACTURING_MEMBER]: { bg: '#fff7ed', border: '#fed7aa', text: 'var(--orange-strong)' },
     [TEAM_ROLES.PURCHASING_LEAD]: { bg: '#ccfbf1', border: '#99f6e4', text: '#115e59' },
     [TEAM_ROLES.CAD_MEMBER]: { bg: '#fef2f2', border: '#fee2e2', text: '#991b1b' },
     [TEAM_ROLES.SOFTWARE_MEMBER]: { bg: '#e0f2fe', border: '#bae6fd', text: '#075985' },
@@ -3086,7 +3086,7 @@
 
   .confirm-message {
     margin: 0 0 var(--space-4, 1rem);
-    color: var(--text, #1f2933);
+    color: var(--text, var(--neutral-800));
     line-height: 1.5;
   }
 

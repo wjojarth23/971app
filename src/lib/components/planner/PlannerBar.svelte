@@ -53,7 +53,7 @@
 
   .planner-task--green {
     background: var(--planner-green-solid, #15803d);
-    border-color: var(--planner-green-border, #166534);
+    border-color: var(--planner-green-border, var(--green-strong));
   }
 
   .planner-task--not_started {
@@ -68,7 +68,7 @@
 
   .planner-task--not_started.planner-task-tone--green {
     background-color: var(--planner-green-solid, #15803d);
-    border-color: var(--planner-green-border, #166534);
+    border-color: var(--planner-green-border, var(--green-strong));
   }
 
   .planner-task--not_started.planner-task-tone--yellow {
@@ -117,7 +117,7 @@
 
   .planner-milestone--green .planner-milestone-fill {
     background: var(--planner-green-solid, #15803d);
-    border-color: var(--planner-green-border, #166534);
+    border-color: var(--planner-green-border, var(--green-strong));
   }
 
   .planner-milestone--not_started .planner-milestone-fill {
@@ -132,7 +132,7 @@
 
   .planner-milestone--not_started.planner-milestone-tone--green .planner-milestone-fill {
     background-color: var(--planner-green-solid, #15803d);
-    border-color: var(--planner-green-border, #166534);
+    border-color: var(--planner-green-border, var(--green-strong));
   }
 
   .planner-milestone--not_started.planner-milestone-tone--yellow .planner-milestone-fill {

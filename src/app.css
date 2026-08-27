@@ -77,6 +77,44 @@
   --status-risk-border: var(--red-base);
   --status-risk-text: var(--red-strong);
 
+  /* Purchasing-specific statuses (cad/purchasing) - deliberately distinct
+     hues from the core red/blue/green/gold status family above, so
+     approved/ordered/pickup/delivered stay visually distinguishable from
+     each other and from pending/risk/progress/ready. Promoted from
+     component-local raw hex (previously repeated 3x per status across
+     option data-color attrs, status-select backgrounds, and dropdown
+     option backgrounds) to real tokens, same as every other status here -
+     see cad/purchasing/+page.svelte for the original per-color design
+     rationale comments (kept there, not duplicated here).
+     Approved: emerald-teal. Ordered: berry-plum. Pickup: terracotta.
+     Delivered/Picked Up/Kitted: forest green. */
+  --status-approved-bg: #d3ece5;
+  --status-approved-text: #0d7a68;
+  --status-ordered-bg: #f2dbe6;
+  --status-ordered-text: #9c2f5c;
+  --status-pickup-bg: #f6ddc0;
+  --status-pickup-text: #a34a12;
+  --status-delivered-bg: #dbe9c8;
+  --status-delivered-text: #4f7a2e;
+
+  /* Scouting chart categories (datascout, teamview) - qualitative/categorical
+     colors for match-role and climb-level charts, genuinely global (not
+     page-scoped) since both pages independently repeated the same raw hex
+     for the same categories - promoted here instead of duplicating a local
+     :root token block in each page. Names match the Bootstrap palette these
+     originated from (each page's chart legend was originally built against
+     it directly), not a new naming scheme. */
+  --chart-primary: #0d6efd;
+  --chart-secondary: #6c757d;
+  --chart-success: #198754;
+  --chart-danger: #dc3545;
+  --chart-purple: #6f42c1;
+  --chart-orange: #fd7e14;
+  --chart-pink: #e83e8c;
+  --chart-info: #17a2b8;
+  --chart-teal: #20c997;
+  --chart-blue: #1f6feb;
+
   --modal-overlay: rgba(3, 7, 18, 0.65);
   --overlay-soft: rgba(15, 23, 42, 0.08);
 
@@ -2153,6 +2191,15 @@ textarea:focus,
   --purple-base: #c084fc;
   --purple-strong: #d8b4fe;
   --orange-strong: #fdba74;
+
+  --status-approved-bg: rgba(60, 180, 155, 0.22);
+  --status-approved-text: #82dcc4;
+  --status-ordered-bg: rgba(199, 110, 150, 0.22);
+  --status-ordered-text: #edabc7;
+  --status-pickup-bg: rgba(224, 148, 92, 0.22);
+  --status-pickup-text: #f5c393;
+  --status-delivered-bg: rgba(130, 178, 80, 0.22);
+  --status-delivered-text: #b8d68f;
 
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
 

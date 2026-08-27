@@ -128,24 +128,24 @@
   }
 
   .due-badge.overdue {
-    background: #fee2e2;
-    color: #991b1b;
-    border: 1px solid #fca5a5;
+    background: var(--status-risk-bg);
+    color: var(--status-risk-text);
+    border: 1px solid var(--status-risk-border);
   }
 
   .due-badge.soon {
-    background: #fef3c7;
-    color: #92400e;
-    border: 1px solid #fde68a;
+    background: var(--status-pending-bg);
+    color: var(--status-pending-text);
+    border: 1px solid var(--status-pending-border);
   }
 
   .due-badge.ok {
-    background: #dcfce7;
-    color: #166534;
-    border: 1px solid #bbf7d0;
+    background: var(--status-ready-bg);
+    color: var(--status-ready-text);
+    border: 1px solid var(--status-ready-border);
   }
 
   /* subtle border accent on the wrapper for overdue/soon */
-  .due-date.overdue .due-input { border-color: #fca5a5; }
-  .due-date.soon .due-input { border-color: #fde68a; }
+  .due-date.overdue .due-input { border-color: var(--status-risk-border); }
+  .due-date.soon .due-input { border-color: var(--status-pending-border); }
 </style>

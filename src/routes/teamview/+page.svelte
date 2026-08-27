@@ -14,27 +14,27 @@
 
   const BREAKDOWN_KEYS = {
     shooting: [
-      { key: 'shuttling', label: 'Shuttling', color: '#fd7e14' },
-      { key: 'scoring', label: 'Scoring', color: '#1f6feb' }
+      { key: 'shuttling', label: 'Shuttling', color: 'var(--chart-orange)' },
+      { key: 'scoring', label: 'Scoring', color: 'var(--chart-blue)' }
     ],
     pickup: [
-      { key: 'ground', label: 'Ground', color: '#fd7e14' },
-      { key: 'outpost', label: 'Outpost', color: '#1f6feb' },
-      { key: 'depot', label: 'Depot', color: '#198754' }
+      { key: 'ground', label: 'Ground', color: 'var(--chart-orange)' },
+      { key: 'outpost', label: 'Outpost', color: 'var(--chart-blue)' },
+      { key: 'depot', label: 'Depot', color: 'var(--chart-success)' }
     ],
     climb: [
-      { key: 'none', label: 'None', color: '#6c757d' },
-      { key: 'L1', label: 'L1', color: '#17a2b8' },
-      { key: 'L2', label: 'L2', color: '#20c997' },
-      { key: 'L3', label: 'L3', color: '#1f6feb' },
-      { key: 'failed', label: 'Failed', color: '#dc3545' }
+      { key: 'none', label: 'None', color: 'var(--chart-secondary)' },
+      { key: 'L1', label: 'L1', color: 'var(--chart-info)' },
+      { key: 'L2', label: 'L2', color: 'var(--chart-teal)' },
+      { key: 'L3', label: 'L3', color: 'var(--chart-blue)' },
+      { key: 'failed', label: 'Failed', color: 'var(--chart-danger)' }
     ],
     role: [
-      { key: 'Scoring', label: 'Scoring', color: '#1f6feb' },
-      { key: 'Shuttling', label: 'Shuttling', color: '#fd7e14' },
-      { key: 'Defense', label: 'Defense', color: '#6f42c1' },
-      { key: 'Counter Defense', label: 'Counter Defense', color: '#20c997' },
-      { key: 'Dead', label: 'Dead', color: '#dc3545' }
+      { key: 'Scoring', label: 'Scoring', color: 'var(--chart-blue)' },
+      { key: 'Shuttling', label: 'Shuttling', color: 'var(--chart-orange)' },
+      { key: 'Defense', label: 'Defense', color: 'var(--chart-purple)' },
+      { key: 'Counter Defense', label: 'Counter Defense', color: 'var(--chart-teal)' },
+      { key: 'Dead', label: 'Dead', color: 'var(--chart-danger)' }
     ]
   };
   const TREND_CHART_HEIGHT = 240;
@@ -456,11 +456,11 @@
 
   $: lineDefs = viewStats
     ? [
-        { key: 'fuel', label: 'Total Fuel', color: '#1f6feb', value: Math.round(viewStats.avgFuel), fmt: (v) => String(Math.round(v)) },
-        { key: 'speed', label: 'Speed', color: '#0d6efd', value: viewStats.avgSpeed.toFixed(1), fmt: (v) => Number(v).toFixed(1) },
-        { key: 'accuracy', label: 'Accuracy', color: '#198754', value: viewStats.avgAccuracy.toFixed(1), fmt: (v) => Number(v).toFixed(1) },
-        { key: 'driving', label: 'Driving', color: '#fd7e14', value: viewStats.avgDriving.toFixed(1), fmt: (v) => Number(v).toFixed(1) },
-        { key: 'autoClimbRate', label: 'Auto Climb Rate', color: '#dc3545', value: viewStats.autoClimbRate.toFixed(2), fmt: (v) => Number(v).toFixed(2) }
+        { key: 'fuel', label: 'Total Fuel', color: 'var(--chart-blue)', value: Math.round(viewStats.avgFuel), fmt: (v) => String(Math.round(v)) },
+        { key: 'speed', label: 'Speed', color: 'var(--chart-primary)', value: viewStats.avgSpeed.toFixed(1), fmt: (v) => Number(v).toFixed(1) },
+        { key: 'accuracy', label: 'Accuracy', color: 'var(--chart-success)', value: viewStats.avgAccuracy.toFixed(1), fmt: (v) => Number(v).toFixed(1) },
+        { key: 'driving', label: 'Driving', color: 'var(--chart-orange)', value: viewStats.avgDriving.toFixed(1), fmt: (v) => Number(v).toFixed(1) },
+        { key: 'autoClimbRate', label: 'Auto Climb Rate', color: 'var(--chart-danger)', value: viewStats.autoClimbRate.toFixed(2), fmt: (v) => Number(v).toFixed(2) }
       ]
     : [];
 

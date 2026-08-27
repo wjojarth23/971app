@@ -1222,7 +1222,7 @@
                         <span class="approve-text">Approve</span>
                       </button>
                     {:else}
-                      <span style="color:#666; font-size:12px;">Needs approval</span>
+                      <span style="color:var(--text-muted); font-size:12px;">Needs approval</span>
                     {/if}
                   {/if}
                 </td>
@@ -1980,31 +1980,31 @@
   /* Approved: emerald-teal — a "verified/authorized" signal, distinct from
      the received-goods green used for delivered/kitted below */
   .status-select.colorful[data-status="approved"] {
-    background: #d3ece5;
-    color: #0d7a68;
-    border-color: color-mix(in srgb, #0d7a68 32%, transparent);
+    background: var(--status-approved-bg);
+    color: var(--status-approved-text);
+    border-color: color-mix(in srgb, var(--status-approved-text) 32%, transparent);
   }
   /* Ordered: berry-plum — in-transit, still a cool accent for variety but
      wine-toned rather than a bright stock violet */
   .status-select.colorful[data-status="ordered"] {
-    background: #f2dbe6;
-    color: #9c2f5c;
-    border-color: color-mix(in srgb, #9c2f5c 32%, transparent);
+    background: var(--status-ordered-bg);
+    color: var(--status-ordered-text);
+    border-color: color-mix(in srgb, var(--status-ordered-text) 32%, transparent);
   }
   /* Pickup: terracotta — a distinct "ready, take action" state, previously
      shared Ordered's exact color with no differentiation */
   .status-select.colorful[data-status="pickup"] {
-    background: #f6ddc0;
-    color: #a34a12;
-    border-color: color-mix(in srgb, #a34a12 32%, transparent);
+    background: var(--status-pickup-bg);
+    color: var(--status-pickup-text);
+    border-color: color-mix(in srgb, var(--status-pickup-text) 32%, transparent);
   }
   /* Delivered / Picked Up / Kitted: forest green — the "received" family */
   .status-select.colorful[data-status="delivered"],
   .status-select.colorful[data-status="picked_up"],
   .status-select.colorful[data-status="kitted"] {
-    background: #dbe9c8;
-    color: #4f7a2e;
-    border-color: color-mix(in srgb, #4f7a2e 32%, transparent);
+    background: var(--status-delivered-bg);
+    color: var(--status-delivered-text);
+    border-color: color-mix(in srgb, var(--status-delivered-text) 32%, transparent);
   }
   .status-select.colorful[data-status="rejected"] {
     background: var(--red-soft);
@@ -2013,36 +2013,36 @@
   }
 
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="approved"] {
-    background: rgba(60, 180, 155, 0.22);
-    color: #82dcc4;
-    border-color: rgba(60, 180, 155, 0.5);
+    background: var(--status-approved-bg);
+    color: var(--status-approved-text);
+    border-color: color-mix(in srgb, var(--status-approved-text) 50%, transparent);
   }
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="ordered"] {
-    background: rgba(199, 110, 150, 0.22);
-    color: #edabc7;
-    border-color: rgba(199, 110, 150, 0.5);
+    background: var(--status-ordered-bg);
+    color: var(--status-ordered-text);
+    border-color: color-mix(in srgb, var(--status-ordered-text) 50%, transparent);
   }
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="pickup"] {
-    background: rgba(224, 148, 92, 0.22);
-    color: #f5c393;
-    border-color: rgba(224, 148, 92, 0.5);
+    background: var(--status-pickup-bg);
+    color: var(--status-pickup-text);
+    border-color: color-mix(in srgb, var(--status-pickup-text) 50%, transparent);
   }
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="delivered"],
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="picked_up"],
   :global([data-theme="modern-dark"]) .status-select.colorful[data-status="kitted"] {
-    background: rgba(130, 178, 80, 0.22);
-    color: #b8d68f;
-    border-color: rgba(130, 178, 80, 0.5);
+    background: var(--status-delivered-bg);
+    color: var(--status-delivered-text);
+    border-color: color-mix(in srgb, var(--status-delivered-text) 50%, transparent);
   }
 
   .status-select.colorful option[value="pending"] { background: var(--brand-gold-soft); }
   .status-select.colorful option[value="rejected"] { background: var(--red-soft); }
-  .status-select.colorful option[value="approved"] { background: #d3ece5; }
-  .status-select.colorful option[value="ordered"] { background: #f2dbe6; }
-  .status-select.colorful option[value="pickup"] { background: #f6ddc0; }
-  .status-select.colorful option[value="delivered"] { background: #dbe9c8; }
-  .status-select.colorful option[value="picked_up"] { background: #dbe9c8; }
-  .status-select.colorful option[value="kitted"] { background: #dbe9c8; }
+  .status-select.colorful option[value="approved"] { background: var(--status-approved-bg); }
+  .status-select.colorful option[value="ordered"] { background: var(--status-ordered-bg); }
+  .status-select.colorful option[value="pickup"] { background: var(--status-pickup-bg); }
+  .status-select.colorful option[value="delivered"] { background: var(--status-delivered-bg); }
+  .status-select.colorful option[value="picked_up"] { background: var(--status-delivered-bg); }
+  .status-select.colorful option[value="kitted"] { background: var(--status-delivered-bg); }
 
   .kit-inline { display: flex; align-items: center; gap: 0.5rem; }
   .kit-input { min-width: 140px; }

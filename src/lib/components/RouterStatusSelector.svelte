@@ -191,7 +191,7 @@
   }
 
   select.status-select.status-progress {
-    background-color: var(--blue-soft, #dbeafe);
+    background-color: var(--blue-soft);
     color: var(--blue-base, #1d4ed8);
     border-color: var(--blue-base, #1d4ed8);
   }
@@ -204,7 +204,7 @@
 
   select.status-select.status-travis {
     background-color: var(--green-soft, #d1fae5);
-    color: var(--green-strong, #166534);
+    color: var(--green-strong);
     border-color: var(--green-base, #4ea953);
   }
 
@@ -222,14 +222,14 @@
 
   select.status-select.status-complete {
     background-color: var(--green-soft, #d1fae5);
-    color: var(--green-strong, #166534);
+    color: var(--green-strong);
     border-color: var(--green-base, #4ea953);
   }
 
   /* Ensure options are readable */
   option {
-    background-color: white;
-    color: #1f2933;
+    background-color: var(--color-white);
+    color: var(--neutral-800);
     font-weight: 500;
   }
 
@@ -264,6 +264,6 @@
 
   .btn-autocam:hover {
     background-color: var(--brand-gold-strong, #d4a817);
-    color: white;
+    color: var(--color-white);
   }
 </style>

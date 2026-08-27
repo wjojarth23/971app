@@ -1224,28 +1224,28 @@
         <div class="view-section">
           <span class="label">Role Distribution</span>
           <div class="legend-row">
-            <span class="legend-item"><span class="legend-dot" style="background:#6f42c1"></span>Scoring</span>
-            <span class="legend-item"><span class="legend-dot" style="background:#fd7e14"></span>Shuttling</span>
-            <span class="legend-item"><span class="legend-dot" style="background:#dc3545"></span>Defense</span>
-            <span class="legend-item"><span class="legend-dot" style="background:#198754"></span>Counter-Defense</span>
-            <span class="legend-item"><span class="legend-dot" style="background:#e83e8c"></span>Dead</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--scout-purple)"></span>Scoring</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--scout-orange)"></span>Shuttling</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--scout-danger)"></span>Defense</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--scout-success)"></span>Counter-Defense</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--scout-pink)"></span>Dead</span>
           </div>
           <div class="pickup-bar-row">
             <div class="stacked-bar pickup-bar" style="flex:1">
               {#if viewStats.roleTimes.Scoring > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Scoring / totalRoleTime * 100).toFixed(1)}%;background:#6f42c1" title="Scoring {(viewStats.roleTimes.Scoring / totalRoleTime * 100).toFixed(0)}%"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Scoring / totalRoleTime * 100).toFixed(1)}%;background:var(--scout-purple)" title="Scoring {(viewStats.roleTimes.Scoring / totalRoleTime * 100).toFixed(0)}%"></div>
               {/if}
               {#if viewStats.roleTimes.Shuttling > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Shuttling / totalRoleTime * 100).toFixed(1)}%;background:#fd7e14" title="Shuttling {(viewStats.roleTimes.Shuttling / totalRoleTime * 100).toFixed(0)}%"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Shuttling / totalRoleTime * 100).toFixed(1)}%;background:var(--scout-orange)" title="Shuttling {(viewStats.roleTimes.Shuttling / totalRoleTime * 100).toFixed(0)}%"></div>
               {/if}
               {#if viewStats.roleTimes.Defense > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Defense / totalRoleTime * 100).toFixed(1)}%;background:#dc3545" title="Defense {(viewStats.roleTimes.Defense / totalRoleTime * 100).toFixed(0)}%"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Defense / totalRoleTime * 100).toFixed(1)}%;background:var(--scout-danger)" title="Defense {(viewStats.roleTimes.Defense / totalRoleTime * 100).toFixed(0)}%"></div>
               {/if}
               {#if viewStats.roleTimes["Counter Defense"] > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes['Counter Defense'] / totalRoleTime * 100).toFixed(1)}%;background:#198754" title="Counter Defense {(viewStats.roleTimes['Counter Defense'] / totalRoleTime * 100).toFixed(0)}%"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes['Counter Defense'] / totalRoleTime * 100).toFixed(1)}%;background:var(--scout-success)" title="Counter Defense {(viewStats.roleTimes['Counter Defense'] / totalRoleTime * 100).toFixed(0)}%"></div>
               {/if}
               {#if viewStats.roleTimes.Dead > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Dead / totalRoleTime * 100).toFixed(1)}%;background:#e83e8c" title="Dead {(viewStats.roleTimes.Dead / totalRoleTime * 100).toFixed(0)}%"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.roleTimes.Dead / totalRoleTime * 100).toFixed(1)}%;background:var(--scout-pink)" title="Dead {(viewStats.roleTimes.Dead / totalRoleTime * 100).toFixed(0)}%"></div>
               {/if}
             </div>
             {#if viewFilterMatch === "all" && viewStats.matchCount > 1}
@@ -1264,19 +1264,19 @@
                     <div class="mini-bar-vertical">
                       {#if rt > 0}
                         {#if d.Scoring > 0}
-                          <div class="mini-bar-seg" style="flex:{d.Scoring};background:#6f42c1"></div>
+                          <div class="mini-bar-seg" style="flex:{d.Scoring};background:var(--scout-purple)"></div>
                         {/if}
                         {#if d.Shuttling > 0}
-                          <div class="mini-bar-seg" style="flex:{d.Shuttling};background:#fd7e14"></div>
+                          <div class="mini-bar-seg" style="flex:{d.Shuttling};background:var(--scout-orange)"></div>
                         {/if}
                         {#if d.Defense > 0}
-                          <div class="mini-bar-seg" style="flex:{d.Defense};background:#dc3545"></div>
+                          <div class="mini-bar-seg" style="flex:{d.Defense};background:var(--scout-danger)"></div>
                         {/if}
                         {#if (d["Counter Defense"]||0) > 0}
-                          <div class="mini-bar-seg" style="flex:{(d["Counter Defense"]||0)};background:#198754"></div>
+                          <div class="mini-bar-seg" style="flex:{(d["Counter Defense"]||0)};background:var(--scout-success)"></div>
                         {/if}
                         {#if d.Dead > 0}
-                          <div class="mini-bar-seg" style="flex:{d.Dead};background:#e83e8c"></div>
+                          <div class="mini-bar-seg" style="flex:{d.Dead};background:var(--scout-pink)"></div>
                         {/if}
                       {:else}
                         <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -1296,17 +1296,17 @@
       <div class="view-section">
         <span class="label">Shooting Distribution Auto (Fuel)</span>
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#fd7e14"></span>Shuttling</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#6f42c1"></span>Scoring</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-orange)"></span>Shuttling</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-purple)"></span>Scoring</span>
         </div>
         <div class="pickup-bar-row">
           <div class="stacked-bar pickup-bar">
             {#if autoShootTotal > 0}
               {#if viewStats.shootingDist.auto.shuttling > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.auto.shuttling / autoShootTotal * 100).toFixed(1)}%;background:#fd7e14" title="Shuttling {Math.round(viewStats.shootingDist.auto.shuttling)}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.auto.shuttling / autoShootTotal * 100).toFixed(1)}%;background:var(--scout-orange)" title="Shuttling {Math.round(viewStats.shootingDist.auto.shuttling)}"></div>
               {/if}
               {#if viewStats.shootingDist.auto.scoring > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.auto.scoring / autoShootTotal * 100).toFixed(1)}%;background:#6f42c1" title="Scoring {Math.round(viewStats.shootingDist.auto.scoring)}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.auto.scoring / autoShootTotal * 100).toFixed(1)}%;background:var(--scout-purple)" title="Scoring {Math.round(viewStats.shootingDist.auto.scoring)}"></div>
               {/if}
             {:else}
               <div class="bar-seg empty-bar" style="flex-basis:100%">No Data</div>
@@ -1330,10 +1330,10 @@
                   <div class="mini-bar-vertical">
                     {#if tot > 0}
                       {#if d.shuttling > 0}
-                        <div class="mini-bar-seg" style="flex:{d.shuttling};background:#fd7e14"></div>
+                        <div class="mini-bar-seg" style="flex:{d.shuttling};background:var(--scout-orange)"></div>
                       {/if}
                       {#if d.scoring > 0}
-                        <div class="mini-bar-seg" style="flex:{d.scoring};background:#6f42c1"></div>
+                        <div class="mini-bar-seg" style="flex:{d.scoring};background:var(--scout-purple)"></div>
                       {/if}
                     {:else}
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -1352,17 +1352,17 @@
       <div class="view-section">
         <span class="label">Shooting Distribution Teleop (Fuel)</span>
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#fd7e14"></span>Shuttling</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#6f42c1"></span>Scoring</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-orange)"></span>Shuttling</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-purple)"></span>Scoring</span>
         </div>
         <div class="pickup-bar-row">
           <div class="stacked-bar pickup-bar">
             {#if teleopShootTotal > 0}
               {#if viewStats.shootingDist.teleop.shuttling > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.teleop.shuttling / teleopShootTotal * 100).toFixed(1)}%;background:#fd7e14" title="Shuttling {Math.round(viewStats.shootingDist.teleop.shuttling)}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.teleop.shuttling / teleopShootTotal * 100).toFixed(1)}%;background:var(--scout-orange)" title="Shuttling {Math.round(viewStats.shootingDist.teleop.shuttling)}"></div>
               {/if}
               {#if viewStats.shootingDist.teleop.scoring > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.teleop.scoring / teleopShootTotal * 100).toFixed(1)}%;background:#6f42c1" title="Scoring {Math.round(viewStats.shootingDist.teleop.scoring)}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.shootingDist.teleop.scoring / teleopShootTotal * 100).toFixed(1)}%;background:var(--scout-purple)" title="Scoring {Math.round(viewStats.shootingDist.teleop.scoring)}"></div>
               {/if}
             {:else}
               <div class="bar-seg empty-bar" style="flex-basis:100%">No Data</div>
@@ -1386,10 +1386,10 @@
                   <div class="mini-bar-vertical">
                     {#if tot > 0}
                       {#if d.shuttling > 0}
-                        <div class="mini-bar-seg" style="flex:{d.shuttling};background:#fd7e14"></div>
+                        <div class="mini-bar-seg" style="flex:{d.shuttling};background:var(--scout-orange)"></div>
                       {/if}
                       {#if d.scoring > 0}
-                        <div class="mini-bar-seg" style="flex:{d.scoring};background:#6f42c1"></div>
+                        <div class="mini-bar-seg" style="flex:{d.scoring};background:var(--scout-purple)"></div>
                       {/if}
                     {:else}
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -1408,21 +1408,21 @@
       <div class="view-section">
         <span class="label">Pickup Auto</span>
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#fd7e14"></span>Ground</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#6f42c1"></span>Outpost</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#e83e8c"></span>Depot</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-orange)"></span>Ground</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-purple)"></span>Outpost</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-pink)"></span>Depot</span>
         </div>
         <div class="pickup-bar-row">
           <div class="stacked-bar pickup-bar">
             {#if autoTotal > 0}
               {#if viewStats.autoPickups.ground > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.autoPickups.ground / autoTotal * 100).toFixed(1)}%;background:#fd7e14" title="Ground {viewStats.autoPickups.ground}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.autoPickups.ground / autoTotal * 100).toFixed(1)}%;background:var(--scout-orange)" title="Ground {viewStats.autoPickups.ground}"></div>
               {/if}
               {#if viewStats.autoPickups.outpost > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.autoPickups.outpost / autoTotal * 100).toFixed(1)}%;background:#6f42c1" title="Outpost {viewStats.autoPickups.outpost}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.autoPickups.outpost / autoTotal * 100).toFixed(1)}%;background:var(--scout-purple)" title="Outpost {viewStats.autoPickups.outpost}"></div>
               {/if}
               {#if viewStats.autoPickups.depot > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.autoPickups.depot / autoTotal * 100).toFixed(1)}%;background:#e83e8c" title="Depot {viewStats.autoPickups.depot}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.autoPickups.depot / autoTotal * 100).toFixed(1)}%;background:var(--scout-pink)" title="Depot {viewStats.autoPickups.depot}"></div>
               {/if}
             {:else}
               <div class="bar-seg empty-bar" style="flex-basis:100%">No Data</div>
@@ -1446,13 +1446,13 @@
                   <div class="mini-bar-vertical">
                     {#if tot > 0}
                       {#if d.ground > 0}
-                        <div class="mini-bar-seg" style="flex:{d.ground};background:#fd7e14"></div>
+                        <div class="mini-bar-seg" style="flex:{d.ground};background:var(--scout-orange)"></div>
                       {/if}
                       {#if d.outpost > 0}
-                        <div class="mini-bar-seg" style="flex:{d.outpost};background:#6f42c1"></div>
+                        <div class="mini-bar-seg" style="flex:{d.outpost};background:var(--scout-purple)"></div>
                       {/if}
                       {#if d.depot > 0}
-                        <div class="mini-bar-seg" style="flex:{d.depot};background:#e83e8c"></div>
+                        <div class="mini-bar-seg" style="flex:{d.depot};background:var(--scout-pink)"></div>
                       {/if}
                     {:else}
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -1471,21 +1471,21 @@
       <div class="view-section">
         <span class="label">Pickup Teleop</span>
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#fd7e14"></span>Ground</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#6f42c1"></span>Outpost</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#e83e8c"></span>Depot</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-orange)"></span>Ground</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-purple)"></span>Outpost</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-pink)"></span>Depot</span>
         </div>
         <div class="pickup-bar-row">
           <div class="stacked-bar pickup-bar">
             {#if teleopTotal > 0}
               {#if viewStats.teleopPickups.ground > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopPickups.ground / teleopTotal * 100).toFixed(1)}%;background:#fd7e14" title="Ground {viewStats.teleopPickups.ground}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopPickups.ground / teleopTotal * 100).toFixed(1)}%;background:var(--scout-orange)" title="Ground {viewStats.teleopPickups.ground}"></div>
               {/if}
               {#if viewStats.teleopPickups.outpost > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopPickups.outpost / teleopTotal * 100).toFixed(1)}%;background:#6f42c1" title="Outpost {viewStats.teleopPickups.outpost}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopPickups.outpost / teleopTotal * 100).toFixed(1)}%;background:var(--scout-purple)" title="Outpost {viewStats.teleopPickups.outpost}"></div>
               {/if}
               {#if viewStats.teleopPickups.depot > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopPickups.depot / teleopTotal * 100).toFixed(1)}%;background:#e83e8c" title="Depot {viewStats.teleopPickups.depot}"></div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopPickups.depot / teleopTotal * 100).toFixed(1)}%;background:var(--scout-pink)" title="Depot {viewStats.teleopPickups.depot}"></div>
               {/if}
             {:else}
               <div class="bar-seg empty-bar" style="flex-basis:100%">No Data</div>
@@ -1509,13 +1509,13 @@
                   <div class="mini-bar-vertical">
                     {#if tot > 0}
                       {#if d.ground > 0}
-                        <div class="mini-bar-seg" style="flex:{d.ground};background:#fd7e14"></div>
+                        <div class="mini-bar-seg" style="flex:{d.ground};background:var(--scout-orange)"></div>
                       {/if}
                       {#if d.outpost > 0}
-                        <div class="mini-bar-seg" style="flex:{d.outpost};background:#6f42c1"></div>
+                        <div class="mini-bar-seg" style="flex:{d.outpost};background:var(--scout-purple)"></div>
                       {/if}
                       {#if d.depot > 0}
-                        <div class="mini-bar-seg" style="flex:{d.depot};background:#e83e8c"></div>
+                        <div class="mini-bar-seg" style="flex:{d.depot};background:var(--scout-pink)"></div>
                       {/if}
                     {:else}
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -1556,22 +1556,22 @@
       <div class="view-section">
         <span class="label">Climb Time Distribution Auto</span>
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#6c757d"></span>None</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#17a2b8"></span>L1</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#dc3545"></span>Failed</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-secondary)"></span>None</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-info)"></span>L1</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-danger)"></span>Failed</span>
         </div>
         <div class="pickup-bar-row">
           <div class="stacked-bar pickup-bar" style="flex:1">
             {#if autoClimbTotal > 0}
               {#if viewStats.autoClimbDist.none.count > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.autoClimbDist.none.count / autoClimbTotal * 100).toFixed(1)}%;background:#6c757d" title="None {viewStats.autoClimbDist.none.count} matches">None</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.autoClimbDist.none.count / autoClimbTotal * 100).toFixed(1)}%;background:var(--scout-secondary)" title="None {viewStats.autoClimbDist.none.count} matches">None</div>
               {/if}
               {#if viewStats.autoClimbDist.L1.count > 0}
                 {@const avgL1 = (viewStats.autoClimbDist.L1.totalTime / viewStats.autoClimbDist.L1.count).toFixed(1)}
-                <div class="bar-seg" style="flex-basis:{(viewStats.autoClimbDist.L1.count / autoClimbTotal * 100).toFixed(1)}%;background:#17a2b8" title="L1: {viewStats.autoClimbDist.L1.count} matches, avg {avgL1}s">{avgL1}s</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.autoClimbDist.L1.count / autoClimbTotal * 100).toFixed(1)}%;background:var(--scout-info)" title="L1: {viewStats.autoClimbDist.L1.count} matches, avg {avgL1}s">{avgL1}s</div>
               {/if}
               {#if viewStats.autoClimbDist.failed.count > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.autoClimbDist.failed.count / autoClimbTotal * 100).toFixed(1)}%;background:#dc3545" title="Failed {viewStats.autoClimbDist.failed.count} matches">Failed</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.autoClimbDist.failed.count / autoClimbTotal * 100).toFixed(1)}%;background:var(--scout-danger)" title="Failed {viewStats.autoClimbDist.failed.count} matches">Failed</div>
               {/if}
             {:else}
               <div class="bar-seg empty-bar" style="flex-basis:100%">—</div>
@@ -1593,13 +1593,13 @@
                   <div class="mini-bar-vertical">
                     {#if tot > 0}
                       {#if d.none > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#6c757d"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-secondary)"></div>
                       {/if}
                       {#if d.L1 > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#17a2b8"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-info)"></div>
                       {/if}
                       {#if d.failed > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#dc3545"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-danger)"></div>
                       {/if}
                     {:else}
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -1618,32 +1618,32 @@
       <div class="view-section">
         <span class="label">Climb Time Distribution Teleop</span>
         <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:#6c757d"></span>None</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#17a2b8"></span>L1</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#20c997"></span>L2</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#6f42c1"></span>L3</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#dc3545"></span>Failed</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-secondary)"></span>None</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-info)"></span>L1</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-teal)"></span>L2</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-purple)"></span>L3</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--scout-danger)"></span>Failed</span>
         </div>
         <div class="pickup-bar-row">
           <div class="stacked-bar pickup-bar" style="flex:1">
             {#if teleopClimbTotal > 0}
               {#if viewStats.teleopClimbDist.none.count > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.none.count / teleopClimbTotal * 100).toFixed(1)}%;background:#6c757d" title="None {viewStats.teleopClimbDist.none.count} matches">None</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.none.count / teleopClimbTotal * 100).toFixed(1)}%;background:var(--scout-secondary)" title="None {viewStats.teleopClimbDist.none.count} matches">None</div>
               {/if}
               {#if viewStats.teleopClimbDist.L1.count > 0}
                 {@const avgL1T = (viewStats.teleopClimbDist.L1.totalTime / viewStats.teleopClimbDist.L1.count).toFixed(1)}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.L1.count / teleopClimbTotal * 100).toFixed(1)}%;background:#17a2b8" title="L1: {viewStats.teleopClimbDist.L1.count} matches, avg {avgL1T}s">{avgL1T}s</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.L1.count / teleopClimbTotal * 100).toFixed(1)}%;background:var(--scout-info)" title="L1: {viewStats.teleopClimbDist.L1.count} matches, avg {avgL1T}s">{avgL1T}s</div>
               {/if}
               {#if viewStats.teleopClimbDist.L2.count > 0}
                 {@const avgL2T = (viewStats.teleopClimbDist.L2.totalTime / viewStats.teleopClimbDist.L2.count).toFixed(1)}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.L2.count / teleopClimbTotal * 100).toFixed(1)}%;background:#20c997" title="L2: {viewStats.teleopClimbDist.L2.count} matches, avg {avgL2T}s">{avgL2T}s</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.L2.count / teleopClimbTotal * 100).toFixed(1)}%;background:var(--scout-teal)" title="L2: {viewStats.teleopClimbDist.L2.count} matches, avg {avgL2T}s">{avgL2T}s</div>
               {/if}
               {#if viewStats.teleopClimbDist.L3.count > 0}
                 {@const avgL3T = (viewStats.teleopClimbDist.L3.totalTime / viewStats.teleopClimbDist.L3.count).toFixed(1)}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.L3.count / teleopClimbTotal * 100).toFixed(1)}%;background:#6f42c1" title="L3: {viewStats.teleopClimbDist.L3.count} matches, avg {avgL3T}s">{avgL3T}s</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.L3.count / teleopClimbTotal * 100).toFixed(1)}%;background:var(--scout-purple)" title="L3: {viewStats.teleopClimbDist.L3.count} matches, avg {avgL3T}s">{avgL3T}s</div>
               {/if}
               {#if viewStats.teleopClimbDist.failed.count > 0}
-                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.failed.count / teleopClimbTotal * 100).toFixed(1)}%;background:#dc3545" title="Failed {viewStats.teleopClimbDist.failed.count} matches">Failed</div>
+                <div class="bar-seg" style="flex-basis:{(viewStats.teleopClimbDist.failed.count / teleopClimbTotal * 100).toFixed(1)}%;background:var(--scout-danger)" title="Failed {viewStats.teleopClimbDist.failed.count} matches">Failed</div>
               {/if}
             {:else}
               <div class="bar-seg empty-bar" style="flex-basis:100%">—</div>
@@ -1665,19 +1665,19 @@
                   <div class="mini-bar-vertical">
                     {#if tot > 0}
                       {#if d.none > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#6c757d"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-secondary)"></div>
                       {/if}
                       {#if d.L1 > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#17a2b8"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-info)"></div>
                       {/if}
                       {#if d.L2 > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#20c997"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-teal)"></div>
                       {/if}
                       {#if d.L3 > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#6f42c1"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-purple)"></div>
                       {/if}
                       {#if d.failed > 0}
-                        <div class="mini-bar-seg" style="flex:1;background:#dc3545"></div>
+                        <div class="mini-bar-seg" style="flex:1;background:var(--scout-danger)"></div>
                       {/if}
                     {:else}
                       <div class="mini-bar-seg empty-bar" style="flex:1"></div>
@@ -2331,13 +2331,22 @@
 
   /* Reuse main variables from global css if available, else standard fallback */
   :root {
-    --scout-primary: #0d6efd;
-    --scout-secondary: #6c757d;
-    --scout-success: #198754;
-    --scout-danger: #dc3545;
+    --scout-primary: var(--chart-primary);
+    --scout-secondary: var(--chart-secondary);
+    --scout-success: var(--chart-success);
+    --scout-danger: var(--chart-danger);
     --scout-dark: #212529;
     --scout-light: #f8f9fa;
     --scout-border: #dee2e6;
+    /* Categorical chart colors (match role / climb level) - same idea as
+       the block above (a local, page-scoped token set instead of raw hex
+       repeated dozens of times), extended to cover the colors this page's
+       charts actually use that the original --scout-* set didn't. */
+    --scout-purple: var(--chart-purple);
+    --scout-orange: var(--chart-orange);
+    --scout-pink: var(--chart-pink);
+    --scout-info: var(--chart-info);
+    --scout-teal: var(--chart-teal);
     --stage-height: 450px;
     --stage-width: 450px; /* Half of 900px */
     --full-travel: 900px;
@@ -2480,7 +2489,7 @@
     min-width: 40px;
   }
   .undo-btn {
-    background: #dc3545; /* Match red */
+    background: var(--scout-danger); /* Match red */
     color: white;
   }
   .phase-badge {
@@ -2488,25 +2497,25 @@
     text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
   }
   .phase-badge.pre {
-    background: #6c757d; /* Grey */
+    background: var(--scout-secondary); /* Grey */
     border: 1px solid #495057;
   }
   .phase-badge.auto {
-    background: #0d6efd; /* Vibrant Blue */
+    background: var(--scout-primary); /* Vibrant Blue */
     border: 1px solid #004085;
   }
   .phase-badge.teleop {
-    background: #6f42c1; /* Deep Purple instead of Yellow/Orange */
+    background: var(--scout-purple); /* Deep Purple instead of Yellow/Orange */
     color: #fff;
     border: 1px solid #5a32a3;
     text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
   }
   .phase-badge.endgame {
-    background: #dc3545; /* Vibrant Red */
+    background: var(--scout-danger); /* Vibrant Red */
     border: 1px solid #721c24;
   }
   .phase-badge.finished {
-    background: #198754; /* Success Green */
+    background: var(--scout-success); /* Success Green */
     border: 1px solid #0f5132;
   }
 
@@ -2581,7 +2590,7 @@
     user-select: none;
   }
   .btn:active {
-    background: #6c757d !important;
+    background: var(--scout-secondary) !important;
     color: white !important;
     box-shadow: none !important;
     outline: none !important;
@@ -2599,9 +2608,9 @@
     box-shadow: none !important;
   }
   .btn-outline:hover {
-    background: #6c757d !important;
+    background: var(--scout-secondary) !important;
     color: white !important;
-    border-color: #6c757d !important;
+    border-color: var(--scout-secondary) !important;
   }
   .btn-outline:focus {
     background: white !important;
@@ -2624,9 +2633,9 @@
     color: white;
   }
   .btn-warning {
-    background: #f8f9fa;
-    color: #212529;
-    border: 1px solid #dee2e6;
+    background: var(--scout-light);
+    color: var(--scout-dark);
+    border: 1px solid var(--scout-border);
   }
   .btn-outline {
     background: white;
@@ -2646,7 +2655,7 @@
   }
 
   .btn-selected {
-    background: #6c757d !important;
+    background: var(--scout-secondary) !important;
     color: white !important;
   }
 
@@ -3288,7 +3297,7 @@
   .animation-stage {
     display: flex;
     align-items: flex-end; /* Align robot to bottom */
-    background: #f8f9fa;
+    background: var(--scout-light);
     border: 1px solid var(--scout-border);
     border-radius: 4px;
     height: var(--stage-height);
