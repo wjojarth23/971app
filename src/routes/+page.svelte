@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import { FRC_TEAMS, hasPermission } from '$lib/permissions.js';
   import { theme, setTheme } from '$lib/stores/theme.js';
+  import { loginScreenStyle, setLoginScreenStyle } from '$lib/stores/loginScreenPref.js';
   
   let user = null;
   let authUser = null;
@@ -283,6 +284,13 @@
     loadUserLists();
     loadScoutAssignments();
   }
+
+  // Keep this browser's login-screen cache in sync with the account's saved
+  // preference (set in the Profile page), so the next time this user signs
+  // out on this device, the signed-out screen matches without needing to be
+  // set again - the account preference is unreadable before auth, so this
+  // cache is what actually drives the pre-auth render.
+  $: if (user?.login_screen_style) setLoginScreenStyle(user.login_screen_style);
 
   async function handleAuth() {
     authLoading = true;
@@ -631,8 +639,142 @@
       </div>
     {/if}
   </div>
+{:else if $loginScreenStyle === 'modern'}
+  <!-- Authentication Forms: Modern (split-hero) -->
+  <div class="ml-hero-split">
+    <div class="ml-brand-panel">
+      <div class="ml-brand-inner">
+        <span class="ml-eyebrow">FRC Team 971 &amp; 9584</span>
+        <h1 class="ml-word">Spartans<br />Hub</h1>
+      </div>
+      <div class="ml-mesh" aria-hidden="true"></div>
+    </div>
+
+    <div class="ml-form-panel">
+      <div class="ml-form-card">
+        {#if authMode === 'forgot'}
+          <div class="forgot-header">
+            <h3>Reset your password</h3>
+            <p class="muted">Enter your email and we'll send you a reset link.</p>
+          </div>
+          <form on:submit|preventDefault={handleForgotPassword}>
+            <label class="ml-field">
+              <span><Mail size={15} /> Email</span>
+              <input type="email" bind:value={forgotEmail} placeholder="you@spartanrobotics.org" required />
+            </label>
+            {#if forgotError}
+              <div class="alert alert-error"><AlertCircle size={18} />{forgotError}</div>
+            {/if}
+            {#if forgotSuccess}
+              <div class="alert alert-success"><CheckCircle size={18} />{forgotSuccess}</div>
+            {/if}
+            <button type="submit" class="ml-btn" disabled={forgotLoading}>
+              {#if forgotLoading}
+                <div class="loading-spinner small"></div>
+              {:else}
+                <Mail size={18} />
+              {/if}
+              Send Reset Link
+            </button>
+          </form>
+          <p class="ml-footnote">
+            <button class="link-btn" on:click={() => { authMode = 'login'; resetForm(); }}>Back to Sign In</button>
+          </p>
+        {:else}
+          <div class="ml-tabs">
+            <button class:active={authMode === 'login'} on:click={() => { authMode = 'login'; resetForm(); }}>
+              <LogIn size={16} /> Sign In
+            </button>
+            <button class:active={authMode === 'register'} on:click={() => { authMode = 'register'; resetForm(); }}>
+              <UserPlus size={16} /> Register
+            </button>
+          </div>
+          <form on:submit|preventDefault={handleAuth}>
+            {#if authMode === 'register'}
+              <label class="ml-field">
+                <span><User size={15} /> Full Name</span>
+                <input type="text" bind:value={formData.name} placeholder="Enter your full name" required />
+              </label>
+              <label class="ml-field">
+                <span><Users size={15} /> Team Affiliation</span>
+                <select bind:value={formData.frc_team} required>
+                  <option value="" disabled>Select your team...</option>
+                  <option value={FRC_TEAMS.TEAM_971}>Team 971</option>
+                  <option value={FRC_TEAMS.TEAM_9584}>Team 9584</option>
+                  <option value={FRC_TEAMS.MENTOR}>Mentor</option>
+                </select>
+              </label>
+            {/if}
+            <label class="ml-field">
+              <span><Mail size={15} /> Email</span>
+              <input
+                type="email"
+                bind:value={formData.email}
+                autocomplete="username"
+                placeholder="you@spartanrobotics.org"
+                required
+              />
+            </label>
+            <label class="ml-field">
+              <span><Lock size={15} /> Password</span>
+              <input
+                type="password"
+                bind:value={formData.password}
+                autocomplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                placeholder="••••••••••"
+                required
+                minlength="6"
+              />
+              {#if authMode === 'register'}
+                <small class="ml-help">Password must be at least 6 characters long</small>
+              {:else}
+                <button type="button" class="ml-forgot-link" on:click={() => { forgotEmail = formData.email; authMode = 'forgot'; }}>
+                  Forgot password?
+                </button>
+              {/if}
+            </label>
+
+            {#if authError}
+              <div class="alert alert-error"><AlertCircle size={18} />{authError}</div>
+            {/if}
+            {#if authSuccess}
+              <div class="alert alert-success"><CheckCircle size={18} />{authSuccess}</div>
+            {/if}
+
+            <button type="submit" class="ml-btn" disabled={authLoading}>
+              {#if authLoading}
+                <div class="loading-spinner small"></div>
+              {:else if authMode === 'login'}
+                <LogIn size={18} />
+              {:else}
+                <UserPlus size={18} />
+              {/if}
+              {authMode === 'login' ? 'Sign In' : 'Create Account'}
+            </button>
+          </form>
+          <p class="ml-footnote">
+            {authMode === 'login' ? "Don't have an account?" : 'Already have an account?'}
+            <button class="link-btn" on:click={switchMode}>
+              {authMode === 'login' ? 'Register here' : 'Sign in here'}
+            </button>
+          </p>
+        {/if}
+
+        <div class="ml-bottom">
+          <div class="theme-picker">
+            <label for="login-theme-select-modern">Theme</label>
+            <select id="login-theme-select-modern" value={$theme} on:change={(e) => setTheme(e.target.value)}>
+              <option value="modern">Modern Light (default)</option>
+              <option value="modern-dark">Modern Dark</option>
+              <option value="light">Legacy</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 {:else}
-  <!-- Authentication Forms -->
+  <!-- Authentication Forms: Legacy -->
   <div class="auth-container" style="min-height:60vh">
     <div class="auth-card">      <div class="auth-header">
         <div class="brand">
@@ -844,6 +986,193 @@
 {/if}
 
 <style>
+  /* ===== Modern login screen (split-hero) — opt-in via profile's Login
+     Screen setting, see loginScreenPref.js. Reuses .alert/.link-btn/
+     .loading-spinner/.theme-picker/.forgot-header/.muted from the legacy
+     styles below (same component, so no scoping issue), and defines its
+     own ml-* classes for the layout so nothing collides. ===== */
+  .ml-hero-split {
+    max-width: 1040px;
+    margin: var(--space-8) auto;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    min-height: 560px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  @media (max-width: 900px) {
+    .ml-hero-split { grid-template-columns: 1fr; min-height: auto; margin: var(--space-4) auto; }
+  }
+
+  .ml-brand-panel {
+    position: relative;
+    background: var(--secondary);
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    padding: clamp(2.5rem, 6vw, 5rem);
+    overflow: hidden;
+  }
+  .ml-mesh {
+    position: absolute;
+    inset: -30%;
+    background:
+      radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 55%, transparent) 0%, transparent 45%),
+      radial-gradient(circle at 85% 75%, color-mix(in srgb, var(--accent) 35%, transparent) 0%, transparent 50%);
+    filter: blur(60px);
+    opacity: 0.55;
+    animation: mlDrift 16s ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes mlDrift {
+    from { transform: translate(0, 0) scale(1); }
+    to { transform: translate(3%, -3%) scale(1.08); }
+  }
+
+  .ml-brand-inner { position: relative; z-index: 1; max-width: 480px; }
+  .ml-eyebrow {
+    font-family: var(--font-mono-stack, monospace);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    display: block;
+    margin-bottom: var(--space-4);
+  }
+  .ml-word {
+    /* Explicit color: the global h1,h2,h3,h4 rule sets color:var(--secondary),
+       which is also this panel's own background - without overriding it here
+       the wordmark would be nearly invisible (same color as behind it). */
+    color: var(--primary);
+    font-family: var(--font-display, inherit);
+    font-weight: 800;
+    font-size: clamp(2.6rem, 5.5vw, 4.25rem);
+    line-height: 0.96;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+
+  .ml-form-panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(2rem, 4vw, 3.5rem);
+    background: var(--primary);
+  }
+  .ml-form-card { width: 100%; max-width: 360px; }
+
+  .ml-tabs {
+    display: flex;
+    gap: var(--space-6);
+    margin-bottom: var(--space-7);
+    border-bottom: 1px solid var(--border);
+  }
+  .ml-tabs button {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: none;
+    border: none;
+    padding: 0 0 0.85rem;
+    font-family: var(--font-display, inherit);
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--neutral-500);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .ml-tabs button.active {
+    color: var(--secondary);
+    border-bottom-color: var(--accent);
+  }
+
+  .ml-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: var(--space-6);
+  }
+  .ml-field span {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--neutral-500);
+    font-family: var(--font-mono-stack, monospace);
+  }
+  .ml-field input, .ml-field select {
+    border: none;
+    border-bottom: 1.5px solid var(--border);
+    background: transparent;
+    padding: 0.6rem 0.1rem;
+    font-size: 1rem;
+    font-family: inherit;
+    color: var(--secondary);
+    transition: border-color 0.15s ease;
+  }
+  .ml-field input:focus, .ml-field select:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .ml-help {
+    display: block;
+    margin-top: var(--space-1);
+    font-size: var(--font-xs);
+    color: var(--neutral-500);
+  }
+  .ml-forgot-link {
+    background: none;
+    border: none;
+    color: var(--neutral-500);
+    cursor: pointer;
+    font-size: var(--font-xs);
+    padding: var(--space-1) 0 0;
+    display: block;
+    text-decoration: underline;
+  }
+  .ml-forgot-link:hover { color: var(--accent); }
+
+  .ml-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: var(--secondary);
+    color: var(--primary);
+    border: none;
+    border-radius: 999px;
+    padding: 0.95rem;
+    font-family: var(--font-display, inherit);
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    margin-top: var(--space-4);
+    margin-bottom: var(--space-4);
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .ml-btn:hover { transform: translateY(-1px); opacity: 0.9; }
+  .ml-btn:disabled { cursor: default; transform: none; opacity: 0.7; }
+
+  .ml-footnote {
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--neutral-500);
+    margin: var(--space-6) 0 0;
+  }
+
+  .ml-bottom {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--space-6);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+  }
+
   .auth-container {
     /* Slightly softer than the app-wide sharp-corner default (--radius-lg),
        without going soft-card-AI-generic. Scoped to this page's own cards. */
