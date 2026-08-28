@@ -8,7 +8,25 @@ export async function GET({ url }) {
   if (!eventKey) return json({ success: false, error: 'event_key required' }, { status: 400 });
 
   const authKey = env.TBA_API_KEY || env.VITE_TBA_API_KEY || env.PUBLIC_TBA_API_KEY;
-  if (!authKey) return json({ success: false, error: 'Server missing TBA_API_KEY' }, { status: 500 });
+  if (!authKey) {
+    // Local development should not require copying the production TBA secret
+    // onto every laptop. The deployed endpoint already holds that credential
+    // server-side and exposes only the same public team roster returned here.
+    const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (isLocal) {
+      try {
+        const response = await fetch(
+          `https://spartanshub.spartanrobotics.org/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`
+        );
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload?.success) return json(payload);
+      } catch {
+        // Return the actionable configuration error below if the deployed
+        // proxy is unavailable too.
+      }
+    }
+    return json({ success: false, error: 'Server missing TBA_API_KEY' }, { status: 500 });
+  }
 
   try {
     const resp = await fetch(
