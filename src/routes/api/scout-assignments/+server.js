@@ -4,7 +4,7 @@ import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/publi
 import { getSupabase } from '$lib/server/971bot.js';
 import { notifyScoutAssignment } from '$lib/server/slack_notifications.js';
 
-const SCOUTING_TYPES = new Set(['data', 'note']);
+const SCOUTING_TYPES = new Set(['data', 'note', 'quick']);
 
 const getClientFromRequest = (request) => {
   const auth = request?.headers?.get('authorization') || '';
@@ -48,24 +48,39 @@ function computeScoutingAccess(profile, rosterKeys) {
 
   const canEditData = isAdmin || isCompetitionLead || perms.has('DATA_SCOUT_ADMIN') || hasDataLeadKey;
   const canEditNote = isAdmin || isCompetitionLead || perms.has('NOTE_SCOUT_ADMIN') || hasNoteLeadKey;
+  // Quick Scout is a lighter-weight mode of the same data-scouting role, not a
+  // separate team function - reuse Data Scout's eligibility/roster keys
+  // rather than inventing a new roster key. Easy to split out later if that
+  // turns out wrong.
+  const canEditQuick = canEditData;
 
   return {
     canEditData,
     canEditNote,
+    canEditQuick,
     canAssignData: canEditData || perms.has('DATA_SCOUT_MEMBER') || hasDataMemberKey,
     canAssignNote: canEditNote || perms.has('DATA_SCOUT_MEMBER') || hasNoteMemberKey,
+    canAssignQuick: canEditQuick || perms.has('DATA_SCOUT_MEMBER') || hasDataMemberKey,
     rosterKeys: [...keys]
   };
 }
 
 function canEditForType(access, scoutingType) {
-  return scoutingType === 'note' ? access.canEditNote : access.canEditData;
+  if (scoutingType === 'note') return access.canEditNote;
+  if (scoutingType === 'quick') return access.canEditQuick;
+  return access.canEditData;
+}
+
+function canAssignForType(access, scoutingType) {
+  if (scoutingType === 'note') return access.canAssignNote;
+  if (scoutingType === 'quick') return access.canAssignQuick;
+  return access.canAssignData;
 }
 
 function isEligibleKeyForType(scoutingType, keyName) {
   const key = normalizeKey(keyName);
   if (!key) return false;
-  if (scoutingType === 'data') {
+  if (scoutingType === 'data' || scoutingType === 'quick') {
     return key === 'data scout member' || key === 'data scout lead' || key === 'scouting lead';
   }
   return (
@@ -143,7 +158,7 @@ async function listEligibleUsersForType(db, scoutingType) {
 
 /*
   Scouting assignments API
-  GET /api/scout-assignments?scouting_type=data|note
+  GET /api/scout-assignments?scouting_type=data|note|quick
   GET /api/scout-assignments?scouting_type=..&user_id=..&mine=1
   GET /api/scout-assignments?scouting_type=..&capabilities=1
   GET /api/scout-assignments?scouting_type=..&eligible=1
@@ -159,7 +174,7 @@ export async function GET({ url, request }) {
   try {
     const scouting_type = String(url.searchParams.get('scouting_type') || '').toLowerCase();
     if (!SCOUTING_TYPES.has(scouting_type)) {
-      return json({ error: 'scouting_type required (data|note)' }, { status: 400 });
+      return json({ error: 'scouting_type required (data|note|quick)' }, { status: 400 });
     }
 
     const authSupa = getClientFromRequest(request);
@@ -180,7 +195,7 @@ export async function GET({ url, request }) {
         data: {
           can_view: true,
           can_edit: canEditForType(access, scouting_type),
-          can_be_assigned: scouting_type === 'note' ? access.canAssignNote : access.canAssignData,
+          can_be_assigned: canAssignForType(access, scouting_type),
           roster_keys: access.rosterKeys
         }
       });
@@ -253,7 +268,7 @@ export async function POST({ request, url }) {
     const action = body?.action;
     const scouting_type = String(body?.scouting_type || '').toLowerCase();
     if (!SCOUTING_TYPES.has(scouting_type)) {
-      return json({ error: 'scouting_type required (data|note)' }, { status: 400 });
+      return json({ error: 'scouting_type required (data|note|quick)' }, { status: 400 });
     }
 
     const authSupa = getClientFromRequest(request);

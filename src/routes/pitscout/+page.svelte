@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+  import { fetchActiveScoutingEventKey, fetchAvailableScoutingEvents } from '$lib/scoutingEvent.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
 
   const DRIVEBASE_OPTIONS = ['Mechanum', 'Swerve', 'Tank'];
   const SHOOTER_OPTIONS = ['Single Fixed', 'Multi Fixed', 'Wide', 'Turret', 'Double Turret'];
@@ -131,7 +132,16 @@
     overall_reliability_rating: undefined
   });
 
-  let eventKey = '';
+  let eventKey = ''; // globally active scouting event - writes always target this
+  let selectedEventKey = null; // event being browsed for reading, if different from active
+  let availableEvents = [];
+  let lastLoadedEventKeyForTeams = null;
+
+  // Reads (team roster, pit entries) use this so a lead can browse a past
+  // event's pit data. Saves intentionally keep targeting the active eventKey
+  // below, not this - see saveEntry().
+  $: resolvedEventKey = selectedEventKey || eventKey;
+  $: isViewingPastEvent = !!selectedEventKey && selectedEventKey !== eventKey;
 
   let loading = false;
   let saving = false;
@@ -374,13 +384,13 @@
   }
 
   async function loadTeams() {
-    if (!eventKey) {
+    if (!resolvedEventKey) {
       return [];
     }
 
     const [eventTeamsRes, eventMatchesRes] = await Promise.all([
-      fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
-      fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`).catch(() => null)
+      fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(resolvedEventKey)}`).catch(() => null),
+      fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(resolvedEventKey)}&comp_level=qm`).catch(() => null)
     ]);
 
     const [eventTeamsData, eventMatchesData] = await Promise.all([
@@ -408,12 +418,12 @@
   }
 
   async function loadEntries() {
-    if (!eventKey) {
+    if (!resolvedEventKey) {
       entriesByTeam = {};
       return {};
     }
 
-    const res = await authFetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}`);
+    const res = await authFetch(`/pitscout?event_key=${encodeURIComponent(resolvedEventKey)}`);
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.success) {
       throw new Error(data?.error || `Failed to load pit entries (${res.status})`);
@@ -433,13 +443,17 @@
     return next;
   }
 
+  async function loadEventOptions() {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    availableEvents = await fetchAvailableScoutingEvents();
+  }
+
   async function loadAll() {
     loading = true;
     apiNote = '';
 
     try {
-      eventKey = (await fetchActiveScoutingEventKey()) || '';
-      if (!eventKey) {
+      if (!resolvedEventKey) {
         teams = [];
         entriesByTeam = {};
         selectedTeam = '';
@@ -664,15 +678,25 @@
 
   onMount(() => {
     prefersCameraCapture = detectCameraCapturePreference();
-    loadAll();
+    loadEventOptions();
   });
+
+  // Re-fetch teams/entries whenever the resolved (browsed) event changes -
+  // covers both the initial async load of the active event key and the user
+  // switching the event dropdown afterward.
+  $: {
+    if (resolvedEventKey !== lastLoadedEventKeyForTeams) {
+      lastLoadedEventKeyForTeams = resolvedEventKey;
+      loadAll();
+    }
+  }
 </script>
 
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Pit Scouting</h2>
-    {#if eventKey}
-      <div class="form-label" style="margin-top:0.25rem">Event: {eventKey}</div>
+    {#if resolvedEventKey}
+      <div class="form-label" style="margin-top:0.25rem">Event: {resolvedEventKey}</div>
     {/if}
     {#if apiNote}
       <div class="note" style="margin-top:0.5rem">{apiNote}</div>
@@ -683,6 +707,11 @@
   </div>
 
   <div class="page-summary">
+    <SeasonFilter
+      options={availableEvents}
+      bind:value={selectedEventKey}
+      allLabel={`Current Event (${eventKey || 'none set'})`}
+    />
     <div class="summary-pill">
       <span>Pending</span>
       <strong>{pendingCount}</strong>
@@ -752,6 +781,14 @@
         </div>
       </div>
     </div>
+
+    {#if isViewingPastEvent}
+      <div class="note">
+        Viewing past event {selectedEventKey}. This form shows that event's pit data, but submitting will
+        save under the active event ({eventKey || 'none set'}) instead — switch back to "Current Event" to
+        edit this team's live pit entry.
+      </div>
+    {/if}
 
     <div class="form-group">
       <label class="form-label" for="drivebaseSelect">Drivebase Type</label>

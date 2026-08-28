@@ -1,8 +1,9 @@
 <script>
   import { onMount } from 'svelte';
   import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+  import { fetchActiveScoutingEventKey, fetchAvailableScoutingEvents } from '$lib/scoutingEvent.js';
   import { formatPacificDateTimeWithZone } from '$lib/timezone.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
 
   const SCOPE_OPTIONS = [
     { value: 'total', label: 'Total' },
@@ -39,10 +40,17 @@
   };
   const TREND_CHART_HEIGHT = 240;
 
-  let eventKey = '';
+  let eventKey = ''; // globally active scouting event
+  let selectedEventKey = null; // event being browsed, if different from active
+  let availableEvents = [];
+  let lastLoadedEventKeyForTeams = null;
   let loading = false;
   let loadingTeamData = false;
   let apiNote = '';
+
+  // Every downstream fetch should use this, not the raw active eventKey -
+  // blank selectedEventKey means "track whatever event is currently active."
+  $: resolvedEventKey = selectedEventKey || eventKey;
 
   let teams = [];
   let teamNames = {};
@@ -111,18 +119,18 @@
   }
 
   async function loadTeams() {
-    if (!eventKey) {
+    if (!resolvedEventKey) {
       teams = [];
       teamNames = {};
       return;
     }
 
     const [eventRes, eventTeamsRes, dataListRes, noteListRes, pitListRes] = await Promise.all([
-      fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=qm`).catch(() => null),
-      fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
-      authFetch(`/datascout?list_teams=1&event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
-      authFetch(`/notescout?list_teams=1&event_key=${encodeURIComponent(eventKey)}`).catch(() => null),
-      authFetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}`).catch(() => null)
+      fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(resolvedEventKey)}&comp_level=qm`).catch(() => null),
+      fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(resolvedEventKey)}`).catch(() => null),
+      authFetch(`/datascout?list_teams=1&event_key=${encodeURIComponent(resolvedEventKey)}`).catch(() => null),
+      authFetch(`/notescout?list_teams=1&event_key=${encodeURIComponent(resolvedEventKey)}`).catch(() => null),
+      authFetch(`/pitscout?event_key=${encodeURIComponent(resolvedEventKey)}`).catch(() => null)
     ]);
 
     const unique = new Map();
@@ -179,9 +187,9 @@
 
     try {
       const [eventsRes, pitRes, notesRes] = await Promise.all([
-        authFetch(`/datascout?team_key=${encodeURIComponent(selectedTeam)}&event_key=${encodeURIComponent(eventKey)}`),
-        authFetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}&team_key=${encodeURIComponent(selectedTeam)}`),
-        authFetch(`/notescout?team_key=${encodeURIComponent(selectedTeam)}&event_key=${encodeURIComponent(eventKey)}`)
+        authFetch(`/datascout?team_key=${encodeURIComponent(selectedTeam)}&event_key=${encodeURIComponent(resolvedEventKey)}`),
+        authFetch(`/pitscout?event_key=${encodeURIComponent(resolvedEventKey)}&team_key=${encodeURIComponent(selectedTeam)}`),
+        authFetch(`/notescout?team_key=${encodeURIComponent(selectedTeam)}&event_key=${encodeURIComponent(resolvedEventKey)}`)
       ]);
 
       const [eventsData, pitData, notesData] = await Promise.all([
@@ -209,12 +217,16 @@
     viewFilterScope = 'total';
   }
 
+  async function loadEventOptions() {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    availableEvents = await fetchAvailableScoutingEvents();
+  }
+
   async function loadPage() {
     loading = true;
     apiNote = '';
     try {
-      eventKey = (await fetchActiveScoutingEventKey()) || '';
-      if (!eventKey) {
+      if (!resolvedEventKey) {
         clearSelection();
         apiNote = 'No scouting event is configured.';
         return;
@@ -470,21 +482,36 @@
   $: roleTotal = viewStats ? viewStats.role.Scoring + viewStats.role.Shuttling + viewStats.role.Defense + viewStats.role['Counter Defense'] + viewStats.role.Dead : 0;
 
   onMount(() => {
-    loadPage();
+    loadEventOptions();
   });
+
+  // Re-load the team list whenever the resolved (browsed) event changes -
+  // covers both the initial async load of the active event key and the user
+  // switching the event dropdown afterward.
+  $: {
+    if (resolvedEventKey !== lastLoadedEventKeyForTeams) {
+      lastLoadedEventKeyForTeams = resolvedEventKey;
+      loadPage();
+    }
+  }
 </script>
 
 <div class="page-header card">
   <div class="teamview-header-copy">
     <h2 class="teamview-title">Team View</h2>
-    {#if eventKey}
-      <div class="form-label">Event: {eventKey}</div>
+    {#if resolvedEventKey}
+      <div class="form-label">Event: {resolvedEventKey}</div>
     {/if}
     {#if apiNote}
       <div class="note">{apiNote}</div>
     {/if}
   </div>
   <div class="page-actions">
+    <SeasonFilter
+      options={availableEvents}
+      bind:value={selectedEventKey}
+      allLabel={`Current Event (${eventKey || 'none set'})`}
+    />
     {#if selectedTeam}
       <button class="btn btn-secondary" on:click={clearSelection}>&larr; Back</button>
     {/if}

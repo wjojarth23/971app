@@ -4,6 +4,8 @@
   import { getAuthHeader } from '$lib/supabase.js';
   import { FRC_TEAMS } from '$lib/permissions.js';
   import ScoutAssignmentPanel from '$lib/components/ScoutAssignmentPanel.svelte';
+  import { fetchAvailableScoutingEvents } from '$lib/scoutingEvent.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
 
   let user;
   let loading = false;
@@ -16,6 +18,15 @@
   let selectedEventKey = '';
   let savingEvent = false;
   let deletingAllScoutingData = false;
+
+  // Separate from selectedEventKey above (which drives the "Competition
+  // Code" picker that sets the live active event) - this just lets an admin
+  // browse which past events have scouting data. The dashboard metrics below
+  // come entirely from /api/scouting-admin, which is always scoped to the
+  // active event server-side, so this doesn't re-filter them; it's here for
+  // consistency with the other scouting pages' event browser.
+  let browseEventKey = null;
+  let availableEvents = [];
 
   // Google Sheets batch sync - see docs/plans for design context. Not
   // real-time: this is either the daily-ish cron or a manual "Sync Now".
@@ -30,6 +41,7 @@
     pit: { percent: 0, scouted_teams: 0, pending_teams: 0, needs_photo_teams: 0, completed_teams: 0, total_teams: 0 },
     data: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0, missed_shifts: 0, assigned_matches: 0, scouted_matches: 0, total_matches: 0 },
     note: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0, missed_shifts: 0, assigned_matches: 0, scouted_matches: 0, total_matches: 0 },
+    quick: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0, missed_shifts: 0, assigned_matches: 0, scouted_matches: 0, total_matches: 0 },
     overall: { assigned_percent: 0, scouted_percent: 0, missed_shift_percent: 0 }
   };
 
@@ -42,6 +54,14 @@
     residual_mae: 0,
     warning: '',
     by_scout: []
+  };
+  let quickScoutModel = {
+    alliance_count: 0,
+    coefficients: null,
+    residual_rmse: 0,
+    residual_mae: 0,
+    warning: '',
+    by_team: []
   };
   let savingSmartFuel = false;
   let userSearch = '';
@@ -117,6 +137,7 @@
       users = data.data?.users || [];
       missedMatches = data.data?.missed_matches || [];
       smartFuelModel = data.data?.smart_fuel_model || smartFuelModel;
+      quickScoutModel = data.data?.quick_scout_model || quickScoutModel;
       googleSheetId = data.data?.google_sheet_id || '';
       googleSheetIdInput = googleSheetId;
       googleSheetLastSyncedAt = data.data?.google_sheet_last_synced_at || null;
@@ -358,8 +379,13 @@
     }
   }
 
+  async function loadAvailableEvents() {
+    availableEvents = await fetchAvailableScoutingEvents();
+  }
+
   onMount(() => {
     loadDashboard();
+    loadAvailableEvents();
   });
 
   $: if (user?.id && user.id !== lastUserId) {
@@ -392,6 +418,11 @@
         </div>
       </div>
       <div class="page-actions">
+        <SeasonFilter
+          options={availableEvents}
+          bind:value={browseEventKey}
+          allLabel={`Current Event (${eventKey || 'none set'})`}
+        />
         <button class="btn btn-secondary" disabled={loading} on:click={loadDashboard}>Refresh Dashboard</button>
       </div>
     </div>
@@ -496,6 +527,13 @@
       </div>
       <div class="card stat-card">
         <div class="stat-content">
+          <div class="stat-label">Quick Assigned</div>
+          <div class="stat-value">{metrics.quick.assigned_percent}%</div>
+          <div class="stat-sub">{metrics.quick.assigned_matches}/{metrics.quick.total_matches} matches</div>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-content">
           <div class="stat-label">Data Scouted</div>
           <div class="stat-value">{metrics.data.scouted_percent}%</div>
           <div class="stat-sub">{metrics.data.scouted_matches}/{metrics.data.total_matches} matches</div>
@@ -510,9 +548,16 @@
       </div>
       <div class="card stat-card">
         <div class="stat-content">
+          <div class="stat-label">Quick Scouted</div>
+          <div class="stat-value">{metrics.quick.scouted_percent}%</div>
+          <div class="stat-sub">{metrics.quick.scouted_matches}/{metrics.quick.total_matches} matches</div>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-content">
           <div class="stat-label">Missed Shifts</div>
           <div class="stat-value">{metrics.overall.missed_shift_percent}%</div>
-          <div class="stat-sub">Data {metrics.data.missed_shifts} / Note {metrics.note.missed_shifts}</div>
+          <div class="stat-sub">Data {metrics.data.missed_shifts} / Note {metrics.note.missed_shifts} / Quick {metrics.quick.missed_shifts}</div>
         </div>
       </div>
     </div>
@@ -532,6 +577,7 @@
                   <th>Match</th>
                   <th>Data Misses</th>
                   <th>Note Misses</th>
+                  <th>Quick Misses</th>
                   <th>Missed Assignments</th>
                 </tr>
               </thead>
@@ -541,6 +587,7 @@
                     <td>#{m.match_number}</td>
                     <td>{m.data_missed_count}</td>
                     <td>{m.note_missed_count}</td>
+                    <td>{m.quick_missed_count}</td>
                     <td>
                       <div class="missed-list">
                         {#each m.missed_assignments as a}
@@ -560,6 +607,7 @@
     <div class="assignment-section">
       <ScoutAssignmentPanel scoutingType="data" />
       <ScoutAssignmentPanel scoutingType="note" />
+      <ScoutAssignmentPanel scoutingType="quick" />
     </div>
 
     <details class="role-accordion">
@@ -631,6 +679,71 @@
                       <td>{row.residual_mae}</td>
                       <td>{row.residual_bias}</td>
                       <td>{row.sample_matches}</td>
+                    </tr>
+                  {/each}
+                {/if}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="role-accordion">
+      <summary class="role-summary">
+        <span class="role-summary-title">Quick Scout Alliance Attribution</span>
+      </summary>
+      <div class="role-body">
+        <div class="text-muted">
+          Regresses Quick Scout's shooting/climbed/defense/broken signals against each match's real
+          alliance score (from The Blue Alliance) to estimate what share each robot contributed - an
+          OPR-like attribution built from data anyone can collect. Defense reduces the <em>opponent's</em>
+          score, not this alliance's own total, so its weight will likely stay near zero or noisy - that's
+          an expected limitation of a same-alliance model, not a bug.
+        </div>
+
+        <div class="smart-stats">
+          <div class="smart-stat"><span>Alliance-Matches Fit</span><strong>{quickScoutModel.alliance_count || 0}</strong></div>
+          <div class="smart-stat"><span>Residual RMSE</span><strong>{quickScoutModel.residual_rmse || 0}</strong></div>
+          <div class="smart-stat"><span>Residual MAE</span><strong>{quickScoutModel.residual_mae || 0}</strong></div>
+        </div>
+
+        {#if quickScoutModel.warning}
+          <div class="status-message status-warning">{quickScoutModel.warning}</div>
+        {/if}
+
+        {#if quickScoutModel.coefficients}
+          <div class="smart-stats">
+            <div class="smart-stat"><span>Pts / Shooting Sec</span><strong>{quickScoutModel.coefficients.shooting_seconds}</strong></div>
+            <div class="smart-stat"><span>Pts / Climbed</span><strong>{quickScoutModel.coefficients.climbed}</strong></div>
+            <div class="smart-stat"><span>Pts / Defense</span><strong>{quickScoutModel.coefficients.defense}</strong></div>
+            <div class="smart-stat"><span>Pts / Broken</span><strong>{quickScoutModel.coefficients.broken}</strong></div>
+          </div>
+        {/if}
+
+        <div class="table-wrap">
+          <div class="table-container">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Avg % of Alliance Score</th>
+                  <th>Avg Contribution (pts)</th>
+                  <th>Matches Scored</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#if !quickScoutModel.by_team?.length}
+                  <tr>
+                    <td colspan="4" class="empty">No Quick Scout attribution rows available yet.</td>
+                  </tr>
+                {:else}
+                  {#each quickScoutModel.by_team as row}
+                    <tr>
+                      <td>{String(row.team_key || '').replace(/^frc/i, '')}</td>
+                      <td>{row.avg_percent_of_alliance_score}%</td>
+                      <td>{row.avg_contribution_points}</td>
+                      <td>{row.matches_scored}</td>
                     </tr>
                   {/each}
                 {/if}

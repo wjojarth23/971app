@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { getAuthHeader } from '$lib/supabase.js';
   import { userStore } from '$lib/stores/auth.js';
-  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+  import { fetchActiveScoutingEventKey, fetchAvailableScoutingEvents } from '$lib/scoutingEvent.js';
+  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
   let user;
   userStore.subscribe((v) => (user = v));
 
@@ -21,7 +22,16 @@
   let teamNotes = [];
   let saving = false;
   let apiNote = '';
-  let eventKey = '';
+  let eventKey = ''; // globally active scouting event
+  let selectedEventKey = null; // event being browsed, if different from active
+  let availableEvents = [];
+  let lastLoadedMatchesEventKey = null;
+
+  // Every downstream fetch (TBA matches, manual match keys) should use this,
+  // not the raw active eventKey - blank selectedEventKey means "track
+  // whatever event is currently active."
+  $: resolvedEventKey = selectedEventKey || eventKey;
+  $: isViewingPastEvent = !!selectedEventKey && selectedEventKey !== eventKey;
 
   async function authFetch(url, options = {}) {
     const headers = {
@@ -58,7 +68,7 @@
     if (!trimmed || !slug) return null;
     const numeric = parseInt(trimmed.replace(/\D/g, ''), 10);
     return {
-      match_key: `${eventKey || 'manual'}_manual_${slug}`,
+      match_key: `${resolvedEventKey || 'manual'}_manual_${slug}`,
       match_number: Number.isFinite(numeric) ? numeric : null,
       manual_label: trimmed,
       manual: true,
@@ -85,14 +95,13 @@
   // Load event matches via server proxy to The Blue Alliance
   async function loadMatches() {
     apiNote = '';
-    eventKey = (await fetchActiveScoutingEventKey()) || '';
-    if (!eventKey) {
+    if (!resolvedEventKey) {
       apiNote = 'No event configured for Note Scouting.';
       matches = [];
       return;
     }
     try {
-      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}`);
+      const res = await fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(resolvedEventKey)}`);
       let data;
       try { data = await res.json(); } catch(parseErr){
         const text = await res.text();
@@ -203,21 +212,48 @@
     }
   }
 
-  onMount(() => { loadMatches(); loadTeamsWithNotes(); });
+  async function loadEventOptions() {
+    eventKey = (await fetchActiveScoutingEventKey()) || '';
+    availableEvents = await fetchAvailableScoutingEvents();
+  }
+
+  onMount(() => { loadEventOptions(); loadTeamsWithNotes(); });
+
+  // Re-fetch matches whenever the resolved event changes - covers both the
+  // initial async load of the active event key and the user switching the
+  // event dropdown afterward.
+  $: {
+    if (resolvedEventKey !== lastLoadedMatchesEventKey) {
+      lastLoadedMatchesEventKey = resolvedEventKey;
+      loadMatches();
+    }
+  }
 </script>
 
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Note Scouting</h2>
-    {#if eventKey}
-      <div class="form-label" style="margin-top:0.25rem">Event: {eventKey}</div>
+    {#if resolvedEventKey}
+      <div class="form-label" style="margin-top:0.25rem">Event: {resolvedEventKey}</div>
     {/if}
     {#if apiNote}
       <div class="note" style="margin-top:0.5rem">{apiNote}</div>
     {/if}
+    {#if isViewingPastEvent}
+      <div class="note" style="margin-top:0.5rem">
+        Viewing past event {selectedEventKey}, not the active event ({eventKey || 'none set'}). Notes saved
+        here will be saved under {selectedEventKey} too — switch back to "Current Event" before scouting a
+        live match.
+      </div>
+    {/if}
   </div>
 
   <div class="page-actions">
+    <SeasonFilter
+      options={availableEvents}
+      bind:value={selectedEventKey}
+      allLabel={`Current Event (${eventKey || 'none set'})`}
+    />
     <div class="form-group" style="min-width:220px">
       <label class="form-label" for="matchSelect">Match</label>
       <select class="form-select" id="matchSelect" bind:value={selectedMatchKey} on:change={onSelectMatchByKey}>

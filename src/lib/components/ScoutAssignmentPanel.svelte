@@ -7,7 +7,7 @@
   let user;
   userStore.subscribe((v) => (user = v));
 
-  export let scoutingType = 'data'; // 'data' | 'note'
+  export let scoutingType = 'data'; // 'data' | 'note' | 'quick'
 
   let panelOpen = false;
   let matches = []; // { key, red:[], blue:[] }
@@ -333,7 +333,7 @@
 <details class="assignment-accordion" bind:open={panelOpen}>
   <summary class="summary-row">
     <div class="summary-title">
-      {scoutingType === 'note' ? 'Note' : 'Data'} Scouting Assignments
+      {scoutingType === 'note' ? 'Note' : scoutingType === 'quick' ? 'Quick' : 'Data'} Scouting Assignments
     </div>
     <div class="summary-meta">
       <span class="mode-pill" class:editable={capabilities.can_edit}>

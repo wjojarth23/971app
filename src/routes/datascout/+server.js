@@ -36,6 +36,8 @@ async function getActor(authSupa) {
   Data Scout API
   POST actions:
     - record-event: { action, match_key, match_number, team_key, phase, event_type, event_value, role, on_shift }
+    - update-event-timestamp: { action, id, created_at } => used by Quick Scout's editable
+      timeline to correct a mistimed toggle tap; same ownership rule as DELETE below.
   DELETE actions:
     - { id } => deletes specific event
   GET query params:
@@ -47,6 +49,48 @@ async function getActor(authSupa) {
 export async function POST({ request, url }) {
   try {
     const body = await request.json();
+
+    if (body?.action === 'update-event-timestamp') {
+      const { id, created_at } = body;
+      if (!id || !created_at) return json({ error: 'Missing required fields' }, { status: 400 });
+
+      const authSupa = getClientFromRequest(request);
+      const db = getDbClient(authSupa);
+      const actor = await getActor(authSupa);
+      const isLocal = isLocalHost(url);
+
+      if (!isLocal && !actor?.id) return json({ error: 'Unauthorized' }, { status: 401 });
+
+      if (!isLocal) {
+        const { data: profile } = await authSupa
+          .from('user_profiles')
+          .select('role')
+          .eq('id', actor.id)
+          .single();
+
+        const { data: row, error: rowErr } = await db
+          .from('scout_data_events')
+          .select('created_by')
+          .eq('id', id)
+          .single();
+
+        if (rowErr) return json({ error: rowErr.message }, { status: 500 });
+
+        const canEdit = profile?.role === 'admin' || row?.created_by === actor.id;
+        if (!canEdit) return json({ error: 'Forbidden' }, { status: 403 });
+      }
+
+      const { data, error } = await db
+        .from('scout_data_events')
+        .update({ created_at })
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) return json({ error: error.message }, { status: 500 });
+      return json({ success: true, data });
+    }
+
     if (body?.action !== 'record-event') return json({ error: 'Invalid action' }, { status: 400 });
 
     const authSupa = getClientFromRequest(request);

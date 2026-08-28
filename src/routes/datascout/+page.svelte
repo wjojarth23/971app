@@ -2,8 +2,9 @@
   import { onMount, tick } from "svelte";
   import { userStore } from "$lib/stores/auth.js";
   import { getAuthHeader } from "$lib/supabase.js";
-  import { fetchActiveScoutingEventKey } from "$lib/scoutingEvent.js";
+  import { fetchActiveScoutingEventKey, fetchAvailableScoutingEvents } from "$lib/scoutingEvent.js";
   import { fuelCountFromEvents } from "$lib/scoutingStats.js";
+  import SeasonFilter from "$lib/components/SeasonFilter.svelte";
 
   let user;
   userStore.subscribe((v) => (user = v));
@@ -19,7 +20,16 @@
   let manualTeamInput = "";
   let loadNote = "";
   let loadingMatches = false;
-  let eventKey = "";
+  let eventKey = ""; // globally active scouting event
+  let selectedEventKey = null; // event being browsed, if different from active
+  let availableEvents = [];
+  let lastLoadedMatchesEventKey = null;
+
+  // Every downstream fetch (TBA matches, Statbotics EPAs, manual match keys)
+  // should use this, not the raw active eventKey - blank selectedEventKey
+  // means "track whatever event is currently active."
+  $: resolvedEventKey = selectedEventKey || eventKey;
+  $: isViewingPastEvent = !!selectedEventKey && selectedEventKey !== eventKey;
 
   // Power ranking (Statbotics EPA) - fetched once per event alongside
   // matches, same endpoint /scouting already uses for the team-comparison
@@ -152,7 +162,7 @@
     if (!trimmed || !slug) return null;
     const numeric = parseInt(trimmed.replace(/\D/g, ""), 10);
     return {
-      key: `${eventKey || "manual"}_manual_${slug}`,
+      key: `${resolvedEventKey || "manual"}_manual_${slug}`,
       match_number: Number.isFinite(numeric) ? numeric : null,
       manual_label: trimmed,
       manual: true,
@@ -243,15 +253,14 @@
 
   async function fetchMatches() {
     loadNote = "";
-    eventKey = (await fetchActiveScoutingEventKey()) || "";
-    if (!eventKey) {
+    if (!resolvedEventKey) {
       loadNote = "No event configured.";
       return;
     }
       loadingMatches = true;
     try {
       const res = await fetch(
-        `/api/tba/event-matches?event_key=${encodeURIComponent(eventKey)}&comp_level=all`,
+        `/api/tba/event-matches?event_key=${encodeURIComponent(resolvedEventKey)}&comp_level=all`,
       );
       if (!res.ok) {
         const js = await res.json().catch(() => null);
@@ -284,10 +293,10 @@
   // working - a Statbotics outage (it's had real ones - see /scouting's own
   // handling of this same endpoint) shouldn't block match loading above.
   async function fetchTeamEPAs() {
-    if (!eventKey) return;
+    if (!resolvedEventKey) return;
     try {
       const res = await fetch(
-        `/api/statbotics/team-epas?event_key=${encodeURIComponent(eventKey)}`,
+        `/api/statbotics/team-epas?event_key=${encodeURIComponent(resolvedEventKey)}`,
       );
       const js = await res.json().catch(() => null);
       if (js?.success && Array.isArray(js.data)) {
@@ -1018,8 +1027,13 @@
     teamEvents = [];
   }
 
+  async function loadEventOptions() {
+    eventKey = (await fetchActiveScoutingEventKey()) || "";
+    availableEvents = await fetchAvailableScoutingEvents();
+  }
+
   onMount(() => {
-    fetchMatches();
+    loadEventOptions();
     loadMyAssignments();
   });
 
@@ -1030,6 +1044,16 @@
       loadMyAssignments();
     }
   }
+
+  // Re-fetch matches whenever the resolved event changes - covers both the
+  // initial async load of the active event key and the user switching the
+  // event dropdown afterward.
+  $: {
+    if (resolvedEventKey !== lastLoadedMatchesEventKey) {
+      lastLoadedMatchesEventKey = resolvedEventKey;
+      fetchMatches();
+    }
+  }
 </script>
 
 <svelte:window on:contextmenu|preventDefault />
@@ -1038,13 +1062,25 @@
 <div class="page-header card">
   <div>
     <h2 style="margin:0">Data Scouting</h2>
-    {#if eventKey}
-      <div class="sub-label">{eventKey}</div>
+    {#if resolvedEventKey}
+      <div class="sub-label">{resolvedEventKey}</div>
     {/if}
     {#if loadNote}<div class="note">{loadNote}</div>{/if}
+    {#if isViewingPastEvent}
+      <div class="note">
+        Viewing past event {selectedEventKey}, not the active event ({eventKey || "none set"}). Anything
+        recorded here will be saved under {selectedEventKey} too — switch back to "Current Event" before
+        scouting a live match.
+      </div>
+    {/if}
   </div>
 
   <div class="page-actions">
+    <SeasonFilter
+      options={availableEvents}
+      bind:value={selectedEventKey}
+      allLabel={`Current Event (${eventKey || "none set"})`}
+    />
     <div class="form-group match-select">
       <span class="label" for="matchSelect">Match</span>
       <select

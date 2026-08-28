@@ -397,6 +397,233 @@ function computeSmartScoutAdjustment({ matches, dataEvents, userNameMap, enabled
   };
 }
 
+// ===== Quick Scout alliance-score attribution =====
+// Team 604's method: a scout logs starting position + shooting/climbed/
+// defense/broken toggles (see src/routes/quickscout/), and this regresses
+// those coarse per-robot signals against each match's REAL alliance score
+// (score_breakdown.<color>.totalPoints, confirmed live against real 2026arc
+// data - unlike extractBlueFuelCount above, this field is season-agnostic
+// and always present) to estimate what share of the alliance's score each
+// robot was responsible for. Same solveLinearSystem solver as Smart Fuel
+// Calibration above, but a genuinely different regression shape: that tool
+// solves one correction FACTOR per scout (ridge shrinks toward 1) using
+// alliance-total fuel counts; this solves shared point-VALUE coefficients
+// (ridge shrinks toward 0) using alliance-total score, one row per
+// match×alliance since TBA never gives us a single robot's own score.
+//
+// Known, accepted limitation: defense reduces the OPPONENT alliance's
+// score, not this alliance's own total, so a same-alliance regression
+// structurally can't credit it well - its coefficient will likely be near
+// zero or noisy. That's expected, not a bug - matches what was actually
+// asked for (604's simple method), not a fancier two-alliance model.
+const QUICK_FEATURE_NAMES = ['intercept', 'shooting_seconds', 'climbed_count', 'defense_count', 'broken_count'];
+
+function buildQuickScoutFeatureMap(rows) {
+  const byTeamMatch = new Map();
+  const openShootStarts = new Map(); // `${match}::${team}` -> [start ms, ...]
+
+  for (const row of rows || []) {
+    const matchKey = String(row?.match_key || '');
+    const teamKey = String(row?.team_key || '');
+    const eventType = String(row?.event_type || '').trim();
+    if (!matchKey || !teamKey || !eventType.startsWith('quick_')) continue;
+
+    const key = `${matchKey}::${teamKey}`;
+    if (!byTeamMatch.has(key)) {
+      byTeamMatch.set(key, {
+        match_key: matchKey,
+        team_key: teamKey,
+        shooting_seconds: 0,
+        climbed: false,
+        defense: false,
+        broken: false
+      });
+    }
+    const agg = byTeamMatch.get(key);
+    const ts = parseTimestampMs(row?.created_at);
+
+    if (eventType === 'quick_shooting_start') {
+      if (ts !== null) {
+        if (!openShootStarts.has(key)) openShootStarts.set(key, []);
+        openShootStarts.get(key).push(ts);
+      }
+      continue;
+    }
+    if (eventType === 'quick_shooting_end') {
+      const stack = openShootStarts.get(key);
+      if (ts === null || !stack || stack.length === 0) continue;
+      const start = stack.shift();
+      const deltaSec = Math.max(0, (ts - start) / 1000);
+      if (deltaSec > 0) agg.shooting_seconds += deltaSec;
+      continue;
+    }
+    if (eventType === 'quick_climbed_start') { agg.climbed = true; continue; }
+    if (eventType === 'quick_defense_start') { agg.defense = true; continue; }
+    if (eventType === 'quick_broken_start') { agg.broken = true; continue; }
+    // quick_auto_start_position and the _end events of climbed/defense/broken
+    // (already captured by their _start above) intentionally don't affect
+    // the feature map further.
+  }
+
+  return byTeamMatch;
+}
+
+function buildAllianceRegressionRows({ matches, featureMap }) {
+  const rows = [];
+  for (const match of matches || []) {
+    for (const color of ['blue', 'red']) {
+      const teamKeys = match?.alliances?.[color]?.team_keys || [];
+      if (teamKeys.length !== 3) continue;
+      const totalPoints = match?.score_breakdown?.[color]?.totalPoints;
+      if (!Number.isFinite(Number(totalPoints))) continue;
+
+      const perTeamFeatures = {};
+      let anyCoverage = false;
+      let shootSum = 0;
+      let climbedCount = 0;
+      let defenseCount = 0;
+      let brokenCount = 0;
+      for (const teamKey of teamKeys) {
+        const feat = featureMap.get(`${match.key}::${teamKey}`);
+        const resolved = feat || { shooting_seconds: 0, climbed: false, defense: false, broken: false };
+        if (feat) anyCoverage = true;
+        perTeamFeatures[teamKey] = resolved;
+        shootSum += safeNumber(resolved.shooting_seconds, 0);
+        if (resolved.climbed) climbedCount += 1;
+        if (resolved.defense) defenseCount += 1;
+        if (resolved.broken) brokenCount += 1;
+      }
+      if (!anyCoverage) continue;
+
+      rows.push({
+        match_key: match.key,
+        alliance_color: color,
+        team_keys: teamKeys,
+        features: [1, shootSum, climbedCount, defenseCount, brokenCount],
+        per_team_features: perTeamFeatures,
+        target: safeNumber(totalPoints, 0)
+      });
+    }
+  }
+  return rows;
+}
+
+// Ridge toward 0 (a sensible zero-prior for literal point-value weights,
+// unlike computeSmartScoutAdjustment's shrink-toward-1 correction factors).
+// Standardizes the 4 non-intercept features before fitting so one flat
+// lambda regularizes evenly despite very different natural scales
+// (shooting seconds can be 100+, climb/defense/broken counts are 0-3), then
+// un-standardizes the fitted coefficients back to real point-value units.
+function fitQuickScoutRegression(rows, lambda = 0.05) {
+  const P = QUICK_FEATURE_NAMES.length;
+  if (!rows.length) return Array(P).fill(0);
+
+  const scales = [1];
+  for (let i = 1; i < P; i += 1) {
+    const maxAbs = Math.max(0, ...rows.map((r) => Math.abs(r.features[i])));
+    scales.push(maxAbs > 0 ? maxAbs : 1);
+  }
+
+  const gram = Array.from({ length: P }, () => Array(P).fill(0));
+  const rhs = Array(P).fill(0);
+  for (const row of rows) {
+    const x = row.features.map((v, i) => v / scales[i]);
+    for (let i = 0; i < P; i += 1) {
+      rhs[i] += x[i] * row.target;
+      for (let j = 0; j < P; j += 1) gram[i][j] += x[i] * x[j];
+    }
+  }
+  for (let i = 1; i < P; i += 1) gram[i][i] += lambda;
+
+  const solvedStandardized = solveLinearSystem(gram, rhs);
+  return solvedStandardized.map((v, i) => safeNumber(v, 0) / scales[i]);
+}
+
+function computeQuickScoutModel({ matches, quickEvents }) {
+  const featureMap = buildQuickScoutFeatureMap(quickEvents);
+  const rows = buildAllianceRegressionRows({ matches, featureMap });
+
+  if (rows.length === 0) {
+    return {
+      alliance_count: 0,
+      coefficients: null,
+      residual_rmse: 0,
+      residual_mae: 0,
+      warning: 'No matches yet have both Quick Scout data and a real alliance score to regress against.',
+      by_team: []
+    };
+  }
+
+  // lambda=0.05, not 0.5: verified against synthetic data with known ground
+  // truth (see session notes) that 0.5 introduces real bias here - an
+  // unregularized intercept trades off against low-variance regularized
+  // features (climbed/defense/broken are small integer counts), and 0.5
+  // was strong enough to shrink a true broken coefficient of -2 down to
+  // -0.36. 0.05 recovers known coefficients within ~15% on 60 synthetic
+  // alliance-matches while still preventing an unregularized blowup on
+  // small/collinear real data.
+  const [beta0, betaShoot, betaClimb, betaDefense, betaBroken] = fitQuickScoutRegression(rows, 0.05);
+
+  const residuals = [];
+  const teamAgg = new Map();
+
+  for (const row of rows) {
+    const contributions = {};
+    let predictedTotal = beta0;
+    for (const teamKey of row.team_keys) {
+      const f = row.per_team_features[teamKey];
+      const contribution =
+        betaShoot * safeNumber(f?.shooting_seconds, 0) +
+        betaClimb * (f?.climbed ? 1 : 0) +
+        betaDefense * (f?.defense ? 1 : 0) +
+        betaBroken * (f?.broken ? 1 : 0);
+      contributions[teamKey] = contribution;
+      predictedTotal += contribution;
+    }
+    residuals.push(row.target - predictedTotal);
+
+    const sumContribution = Object.values(contributions).reduce((s, v) => s + v, 0);
+    for (const teamKey of row.team_keys) {
+      const contribution = contributions[teamKey];
+      // Relative-share convention; split evenly if the whole alliance's
+      // modeled contribution is ~0 (e.g. no Quick Scout coverage this match).
+      const percent = sumContribution > 1e-6 ? (contribution / sumContribution) * 100 : 100 / 3;
+      if (!teamAgg.has(teamKey)) teamAgg.set(teamKey, { sumPercent: 0, sumContribution: 0, matchCount: 0 });
+      const agg = teamAgg.get(teamKey);
+      agg.sumPercent += percent;
+      agg.sumContribution += contribution;
+      agg.matchCount += 1;
+    }
+  }
+
+  const rmse = residuals.length ? Math.sqrt(residuals.reduce((s, r) => s + r * r, 0) / residuals.length) : 0;
+  const mae = residuals.length ? residuals.reduce((s, r) => s + Math.abs(r), 0) / residuals.length : 0;
+
+  const byTeam = [...teamAgg.entries()]
+    .map(([teamKey, agg]) => ({
+      team_key: teamKey,
+      matches_scored: agg.matchCount,
+      avg_percent_of_alliance_score: toRound(agg.sumPercent / agg.matchCount, 1),
+      avg_contribution_points: toRound(agg.sumContribution / agg.matchCount, 2)
+    }))
+    .sort((a, b) => b.avg_percent_of_alliance_score - a.avg_percent_of_alliance_score);
+
+  return {
+    alliance_count: rows.length,
+    coefficients: {
+      intercept: toRound(beta0, 3),
+      shooting_seconds: toRound(betaShoot, 4),
+      climbed: toRound(betaClimb, 3),
+      defense: toRound(betaDefense, 3),
+      broken: toRound(betaBroken, 3)
+    },
+    residual_rmse: toRound(rmse, 2),
+    residual_mae: toRound(mae, 2),
+    warning: rows.length < 5 ? 'Very few matches with Quick Scout coverage so far - estimates will be noisy.' : null,
+    by_team: byTeam
+  };
+}
+
 async function fetchActorProfile(authSupa) {
   const { data } = await authSupa.auth.getUser();
   const actorId = data?.user?.id || null;
@@ -753,21 +980,23 @@ function computeTypeMetrics({ type, assignments, matches, slotTeamsByMatch, evid
   };
 }
 
-function computeMissedMatchList(dataMissed, noteMissed) {
+function computeMissedMatchList(dataMissed, noteMissed, quickMissed = []) {
   const byMatch = new Map();
-  for (const item of [...dataMissed, ...noteMissed]) {
+  for (const item of [...dataMissed, ...noteMissed, ...quickMissed]) {
     if (!byMatch.has(item.match_key)) {
       byMatch.set(item.match_key, {
         match_key: item.match_key,
         match_number: item.match_number,
         data_missed_count: 0,
         note_missed_count: 0,
+        quick_missed_count: 0,
         missed_assignments: []
       });
     }
     const row = byMatch.get(item.match_key);
     if (item.scouting_type === 'data') row.data_missed_count += 1;
     if (item.scouting_type === 'note') row.note_missed_count += 1;
+    if (item.scouting_type === 'quick') row.quick_missed_count += 1;
     row.missed_assignments.push(item);
   }
 
@@ -942,7 +1171,7 @@ export async function GET({ request }) {
       db
         .from('scout_match_assignments')
         .select('scouting_type, match_key, team_key, assigned_user, completed_at')
-        .in('scouting_type', ['data', 'note']),
+        .in('scouting_type', ['data', 'note', 'quick']),
       eventKey
         ? selectPitScoutEntries(db, (query) => query.eq('event_key', eventKey))
         : Promise.resolve({ data: [], error: null, schema: null, warning: null }),
@@ -1013,7 +1242,13 @@ export async function GET({ request }) {
 
     if (noteEventsRes.error) return json({ error: noteEventsRes.error.message }, { status: 500 });
 
-    const dataEvidenceRows = dataEventsRes.data || [];
+    // scout_data_events is shared by every scouting mode with no mode
+    // column - split it here by the quick_ event_type prefix so a match
+    // scouted only via Quick Scout doesn't silently count as "Data Scouted"
+    // too (computeTypeMetrics has no event_type filtering of its own).
+    const allDataEventRows = dataEventsRes.data || [];
+    const dataEvidenceRows = allDataEventRows.filter((r) => !String(r?.event_type || '').startsWith('quick_'));
+    const quickEvidenceRows = allDataEventRows.filter((r) => String(r?.event_type || '').startsWith('quick_'));
     const noteEvidenceRows = noteEventsRes.data || [];
 
     const assignments = (assignmentsRes.data || []).filter((row) => isMatchKeyForEvent(row?.match_key, eventKey));
@@ -1030,6 +1265,7 @@ export async function GET({ request }) {
     for (const row of assignments) addLocalSlot(row?.match_key, row?.team_key);
     for (const row of dataEvidenceRows) addLocalSlot(row?.match_key, row?.team_key);
     for (const row of noteEvidenceRows) addLocalSlot(row?.match_key, row?.team_key);
+    for (const row of quickEvidenceRows) addLocalSlot(row?.match_key, row?.team_key);
 
     for (const [localMatchKey, teamKeys] of localSlotsByMatch.entries()) {
       const teams = [...teamKeys];
@@ -1082,6 +1318,15 @@ export async function GET({ request }) {
       userNameMap
     });
 
+    const quickMetrics = computeTypeMetrics({
+      type: 'quick',
+      assignments,
+      matches,
+      slotTeamsByMatch,
+      evidenceRows: quickEvidenceRows,
+      userNameMap
+    });
+
     const pitRows = pitRes.data || [];
     const pitSchema = pitRes.schema || {};
     const pitStatusByTeam = new Map(
@@ -1099,7 +1344,7 @@ export async function GET({ request }) {
     const pitScoutedTeams = pitStatusCounts.completed;
 
     const totalMatches = matches.length;
-    const missedMatches = computeMissedMatchList(dataMetrics.missed_assignments, noteMetrics.missed_assignments);
+    const missedMatches = computeMissedMatchList(dataMetrics.missed_assignments, noteMetrics.missed_assignments, quickMetrics.missed_assignments);
 
     const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
     const smartFuelModel = computeSmartScoutAdjustment({
@@ -1107,6 +1352,10 @@ export async function GET({ request }) {
       dataEvents: dataEvidenceRows,
       userNameMap,
       enabled: smartFuelEnabled
+    });
+    const quickScoutModel = computeQuickScoutModel({
+      matches,
+      quickEvents: quickEvidenceRows
     });
 
     return json({
@@ -1148,6 +1397,15 @@ export async function GET({ request }) {
             missed_shifts: noteMetrics.missed_shifts,
             missed_shift_percent: noteMetrics.missed_shift_percent
           },
+          quick: {
+            assigned_matches: quickMetrics.assigned_matches,
+            scouted_matches: quickMetrics.scouted_matches,
+            total_matches: totalMatches,
+            assigned_percent: quickMetrics.assigned_match_percent,
+            scouted_percent: quickMetrics.scouted_match_percent,
+            missed_shifts: quickMetrics.missed_shifts,
+            missed_shift_percent: quickMetrics.missed_shift_percent
+          },
           overall: {
             assigned_percent: pct(
               dataMetrics.assigned_matches + noteMetrics.assigned_matches,
@@ -1164,7 +1422,8 @@ export async function GET({ request }) {
           }
         },
         missed_matches: missedMatches,
-        smart_fuel_model: smartFuelModel
+        smart_fuel_model: smartFuelModel,
+        quick_scout_model: quickScoutModel
       }
     });
   } catch (e) {

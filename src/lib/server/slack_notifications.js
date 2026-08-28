@@ -109,7 +109,7 @@ export async function notifyScoutAssignment({ assignmentId, userId, matchKey, te
   if (!userId || !assignmentId) return { ok: false, reason: 'invalid-input' };
   const teamDisplay = teamKey ? teamKey.replace(/^frc/i, '') : 'team';
   const label = formatMatchLabel(matchKey);
-  const typeLabel = scoutingType === 'note' ? 'note' : 'data';
+  const typeLabel = scoutingType === 'note' ? 'note' : scoutingType === 'quick' ? 'quick' : 'data';
   const text = `You were assigned to ${typeLabel} scouting for ${label} (Team ${teamDisplay}).`;
   return dispatchNotification({
     userId,
