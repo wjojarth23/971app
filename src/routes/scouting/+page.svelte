@@ -6,7 +6,7 @@
   } from 'lucide-svelte';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import { getAuthHeader } from '$lib/supabase.js';
-  import { summarizeTeamEvents, buildPowerRankings } from '$lib/scoutingStats.js';
+  import { summarizeTeamEvents } from '$lib/scoutingStats.js';
 
   // Team comparison / pick-list workspace: fuses four sources into one
   // page, the same pattern the strongest researched FRC scouting tools
@@ -39,11 +39,8 @@
 
   let search = '';
 
-  let sortKey = 'scoutPower';
-  let sortAsc = false; // EPA defaults high-to-low - that's the whole point of a pick list
-  let viewMode = 'basic';
-  let compareLeftKey = '';
-  let compareRightKey = '';
+  let sortKey = 'epa';
+  let sortAsc = false; // OPR defaults high-to-low - that's the whole point of a pick list
 
   function sortBy(key) {
     if (sortKey === key) {
@@ -51,17 +48,6 @@
     } else {
       sortKey = key;
       sortAsc = key === 'team_number';
-    }
-  }
-
-  function setViewMode(mode) {
-    viewMode = mode;
-    if (mode === 'power') {
-      sortKey = 'scoutPower';
-      sortAsc = false;
-    } else if (mode === 'basic') {
-      sortKey = 'epa';
-      sortAsc = false;
     }
   }
 
@@ -86,13 +72,6 @@
   function fmtEpa(v) {
     return v == null ? '—' : v.toFixed(1);
   }
-
-  function fmtPercent(v) {
-    return v == null ? '—' : `${Math.round(v)}%`;
-  }
-
-  $: compareLeft = teams.find((team) => team.key === compareLeftKey) || null;
-  $: compareRight = teams.find((team) => team.key === compareRightKey) || null;
 
   // --- Pick list --------------------------------------------------------
 
@@ -194,15 +173,9 @@
   // --- CSV export -----------------------------------------------------
 
   function exportCsv() {
-    const power = viewMode === 'power';
-    const header = power
-      ? ['Power Rank', 'Team', 'Name', 'Scout Power', 'Matches Scouted', 'Avg Fuel', 'Driving', 'Accuracy', 'Speed', 'Climb Success']
-      : ['Team', 'Name', 'OPR', 'Official Rank', 'Wins', 'Losses', 'Ties'];
-    const rows = filteredTeams.map((t) => power
-      ? [t.powerRank ?? '', t.team_number, t.nickname, t.scoutPower ?? '', t.scoutSummary?.matchesScouted ?? 0,
-          t.scoutSummary?.avgFuel ?? '', t.scoutSummary?.avgDrivingRank ?? '', t.scoutSummary?.avgAccuracy ?? '',
-          t.scoutSummary?.avgSpeed ?? '', t.scoutSummary?.climbSuccessRate ?? '']
-      : [t.team_number, t.nickname, t.epa ?? '', t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '']);
+    const header = ['Team', 'Name', 'OPR', 'Official Rank', 'Wins', 'Losses', 'Ties'];
+    const rows = filteredTeams.map((t) =>
+      [t.team_number, t.nickname, t.epa ?? '', t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '']);
     const escapeCell = (c) => {
       const s = String(c);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -274,27 +247,20 @@
       }
     }
 
-    teams = buildPowerRankings(roster.map((t) => {
+    teams = roster.map((t) => {
       const epaRow = epaByTeamNumber.get(t.team_number);
       return {
         key: t.key,
         team_number: t.team_number,
         nickname: t.nickname,
         epa: epaRow?.epa ?? null,
-        auto_epa: epaRow?.auto_epa ?? null,
-        teleop_epa: epaRow?.teleop_epa ?? null,
-        endgame_epa: epaRow?.endgame_epa ?? null,
         rank: epaRow?.rank ?? null,
         wins: epaRow?.wins ?? null,
         losses: epaRow?.losses ?? null,
         ties: epaRow?.ties ?? null,
         locallyScouted: scoutedKeys.has(t.key)
       };
-    }), scoutEvents);
-
-    const ranked = [...teams].sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1));
-    if (!compareLeftKey && ranked[0]) compareLeftKey = ranked[0].key;
-    if (!compareRightKey && ranked[1]) compareRightKey = ranked[1].key;
+    });
 
     loadingTeams = false;
   }
@@ -398,53 +364,6 @@
       {/if}
     </div>
 
-    <div class="view-tabs" aria-label="Scouting analysis view">
-      <button class:active={viewMode === 'basic'} on:click={() => setViewMode('basic')}>Basic Rankings</button>
-      <a class="ranking-link" href="/scouting/powerrankings">Power Rankings &amp; Head to Head</a>
-    </div>
-
-    {#if viewMode === 'compare'}
-      <div class="surface-card comparison-card">
-        <div class="comparison-selectors">
-          <label>Team A
-            <select class="form-input" bind:value={compareLeftKey}>
-              {#each [...teams].sort((a, b) => a.team_number - b.team_number) as team}
-                <option value={team.key}>#{team.team_number} {team.nickname}</option>
-              {/each}
-            </select>
-          </label>
-          <span class="versus">VS</span>
-          <label>Team B
-            <select class="form-input" bind:value={compareRightKey}>
-              {#each [...teams].sort((a, b) => a.team_number - b.team_number) as team}
-                <option value={team.key}>#{team.team_number} {team.nickname}</option>
-              {/each}
-            </select>
-          </label>
-        </div>
-        {#if compareLeft && compareRight}
-          <div class="comparison-grid">
-            <strong>#{compareLeft.team_number}</strong><span>Metric</span><strong>#{compareRight.team_number}</strong>
-            <b>{compareLeft.powerRank ?? '—'}</b><span>Combined rank</span><b>{compareRight.powerRank ?? '—'}</b>
-            <b>{fmtEpa(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmtEpa(compareRight.scoutPower)}</b>
-            <b>{fmtEpa(compareLeft.epa)}</b><span>TBA OPR</span><b>{fmtEpa(compareRight.epa)}</b>
-            <b>{compareLeft.scoutSummary.matchesScouted}</b><span>Matches scouted</span><b>{compareRight.scoutSummary.matchesScouted}</b>
-            <b>{fmtEpa(compareLeft.scoutSummary.avgFuel)}</b><span>Avg fuel / match</span><b>{fmtEpa(compareRight.scoutSummary.avgFuel)}</b>
-            <b>{fmtEpa(compareLeft.scoutSummary.avgDrivingRank)}</b><span>Driving (1–3)</span><b>{fmtEpa(compareRight.scoutSummary.avgDrivingRank)}</b>
-            <b>{fmtEpa(compareLeft.scoutSummary.avgAccuracy)}</b><span>Accuracy (1–5)</span><b>{fmtEpa(compareRight.scoutSummary.avgAccuracy)}</b>
-            <b>{fmtEpa(compareLeft.scoutSummary.avgSpeed)}</b><span>Speed</span><b>{fmtEpa(compareRight.scoutSummary.avgSpeed)}</b>
-            <b>{fmtPercent(compareLeft.scoutSummary.climbSuccessRate)}</b><span>Climb success</span><b>{fmtPercent(compareRight.scoutSummary.climbSuccessRate)}</b>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    {#if viewMode === 'power'}
-    <div class="ranking-explainer text-muted">
-      Scout power combines your team's observations only: fuel 40%, driving 20%, accuracy 15%, climb 15%, and speed 10%. Missing metrics are omitted and remaining weights are rebalanced. TBA OPR is kept separately under Basic Rankings.
-    </div>
-    {/if}
-    {#if viewMode !== 'compare'}
     <div class="docs-search" style="margin: var(--space-4) 0 var(--space-3) 0">
       <Search size={16} />
       <input class="form-input" type="text" placeholder="Filter by team number or name..." bind:value={search} />
@@ -464,18 +383,12 @@
           <thead>
             <tr>
               <th></th>
-              {#if viewMode === 'power'}<th><button class="sort-th" on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>{/if}
               <th><button class="sort-th" on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
               <th>Name</th>
-              {#if viewMode === 'power'}
-              <th><button class="sort-th" on:click={() => sortBy('scoutPower')}>Scout Power <ArrowUpDown size={11} /></button></th>
-              <th>Matches</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
-              {:else}
               <th><button class="sort-th" on:click={() => sortBy('epa')}>OPR <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('rank')}>Rank <ArrowUpDown size={11} /></button></th>
               <th>Record</th>
               <th>Scouted</th>
-              {/if}
               <th>Pick</th>
             </tr>
           </thead>
@@ -485,20 +398,12 @@
                 <td class="expand-cell">
                   {#if expandedTeamKey === t.key}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
                 </td>
-                {#if viewMode === 'power'}<td class="strong">{t.powerRank ?? '—'}</td>{/if}
                 <td class="mono">{t.team_number}</td>
                 <td>{t.nickname}</td>
-                {#if viewMode === 'power'}
-                <td class="strong">{fmtEpa(t.scoutPower)}</td>
-                <td>{t.scoutSummary.matchesScouted}</td><td>{fmtEpa(t.scoutSummary.avgFuel)}</td>
-                <td>{fmtEpa(t.scoutSummary.avgDrivingRank)}</td><td>{fmtEpa(t.scoutSummary.avgAccuracy)}</td>
-                <td>{fmtEpa(t.scoutSummary.avgSpeed)}</td><td>{fmtPercent(t.scoutSummary.climbSuccessRate)}</td>
-                {:else}
                 <td class="strong">{fmtEpa(t.epa)}</td>
                 <td>{t.rank ?? '—'}</td>
                 <td class="mono">{t.wins == null ? '—' : `${t.wins}-${t.losses}-${t.ties}`}</td>
                 <td>{t.locallyScouted ? '✓' : ''}</td>
-                {/if}
                 <td>
                   <button
                     class="icon-btn"
@@ -513,7 +418,7 @@
               </tr>
               {#if expandedTeamKey === t.key}
                 <tr class="detail-row">
-                  <td colspan={viewMode === 'power' ? 12 : 8}>
+                  <td colspan="8">
                     {#if teamDetails[t.key]?.loading}
                       <p class="text-muted">Loading team detail...</p>
                     {:else if teamDetails[t.key]}
@@ -548,7 +453,6 @@
         </table>
       </div>
     {/if}
-    {/if}
   {/if}
 {/if}
 
@@ -568,59 +472,6 @@
   }
   .sort-th:hover {
     color: var(--text);
-  }
-
-  .view-tabs {
-    display: flex;
-    gap: var(--gap-2);
-    margin: var(--space-4) 0;
-  }
-  .view-tabs button {
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    color: var(--text-muted);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-  }
-  .view-tabs .ranking-link {
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    color: var(--text-muted);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-md);
-    text-decoration: none;
-  }
-  .view-tabs .ranking-link:hover { color: var(--text); border-color: var(--brand-primary, #d9a413); }
-  .view-tabs button.active {
-    color: var(--text);
-    border-color: var(--brand-primary, #d9a413);
-    background: var(--surface-2);
-  }
-  .ranking-explainer {
-    font-size: 0.82rem;
-    line-height: 1.5;
-  }
-  .comparison-card { padding: var(--space-4); }
-  .comparison-selectors {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    align-items: end;
-    gap: var(--gap-4);
-  }
-  .comparison-selectors label { display: grid; gap: var(--space-1); }
-  .versus { padding-bottom: var(--space-2); font-weight: 700; color: var(--text-muted); }
-  .comparison-grid {
-    display: grid;
-    grid-template-columns: minmax(5rem, 1fr) minmax(9rem, 1.25fr) minmax(5rem, 1fr);
-    margin-top: var(--space-4);
-    text-align: center;
-  }
-  .comparison-grid > * { padding: var(--space-2); border-bottom: 1px solid var(--border); }
-  .comparison-grid > span { color: var(--text-muted); }
-  @media (max-width: 640px) {
-    .comparison-selectors { grid-template-columns: 1fr; }
-    .versus { text-align: center; padding: 0; }
   }
 
   .docs-search {
