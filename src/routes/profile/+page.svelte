@@ -221,6 +221,23 @@
     };
   }
 
+  async function saveLoginScreenStyle(value) {
+    if (!user?.id) return toastActions.show('Not signed in');
+    login_screen_style = value;
+    setLoginScreenStyle(value);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ login_screen_style: value })
+        .eq('id', user.id);
+      if (error) throw error;
+      toastActions.show('Login screen updated');
+    } catch (e) {
+      console.error('login screen style update error', e);
+      toastActions.show(e.message || 'Failed to update login screen');
+    }
+  }
+
   async function saveProfile() {
   if (!user?.id) return toastActions.show('Not signed in');
     savingProfile = true;
@@ -351,11 +368,11 @@
         <small class="form-help">Applies instantly and is remembered on this device.</small>
       </label>
       <label class="form-label" for="login-screen-select">Login Screen
-        <select class="form-select" id="login-screen-select" bind:value={login_screen_style}>
+        <select class="form-select" id="login-screen-select" value={login_screen_style} on:change={(e) => saveLoginScreenStyle(e.target.value)}>
           <option value="legacy">Legacy Login</option>
           <option value="modern">Modern Login</option>
         </select>
-        <small class="form-help">Which sign-in screen you see when signed out. Saved to your account and remembered on this device.</small>
+        <small class="form-help">Applies instantly and is saved to your account.</small>
       </label>
       <div class="actions">
         <button class="btn" on:click={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save'}</button>
