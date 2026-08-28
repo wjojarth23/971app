@@ -6,7 +6,7 @@
   } from 'lucide-svelte';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import { getAuthHeader } from '$lib/supabase.js';
-  import { summarizeTeamEvents } from '$lib/scoutingStats.js';
+  import { summarizeTeamEvents, buildPowerRankings } from '$lib/scoutingStats.js';
 
   // Team comparison / pick-list workspace: fuses four sources into one
   // page, the same pattern the strongest researched FRC scouting tools
@@ -32,11 +32,15 @@
   let teams = []; // merged rows
   let teamsError = '';
   let statboticsError = '';
+  let scoutingDataWarning = '';
 
   let search = '';
 
-  let sortKey = 'epa';
+  let sortKey = 'combinedPower';
   let sortAsc = false; // EPA defaults high-to-low - that's the whole point of a pick list
+  let viewMode = 'rankings';
+  let compareLeftKey = '';
+  let compareRightKey = '';
 
   function sortBy(key) {
     if (sortKey === key) {
@@ -68,6 +72,13 @@
   function fmtEpa(v) {
     return v == null ? '—' : v.toFixed(1);
   }
+
+  function fmtPercent(v) {
+    return v == null ? '—' : `${Math.round(v)}%`;
+  }
+
+  $: compareLeft = teams.find((team) => team.key === compareLeftKey) || null;
+  $: compareRight = teams.find((team) => team.key === compareRightKey) || null;
 
   // --- Pick list --------------------------------------------------------
 
@@ -169,10 +180,11 @@
   // --- CSV export -----------------------------------------------------
 
   function exportCsv() {
-    const header = ['Team', 'Name', 'EPA', 'Auto EPA', 'Teleop EPA', 'Endgame EPA', 'Rank', 'Wins', 'Losses', 'Ties', 'Scouted'];
+    const header = ['Power Rank', 'Team', 'Name', 'Combined Power', 'Scout Power', 'EPA', 'Auto EPA', 'Teleop EPA', 'Endgame EPA', 'Official Rank', 'Wins', 'Losses', 'Ties', 'Matches Scouted'];
     const rows = filteredTeams.map((t) => [
-      t.team_number, t.nickname, t.epa ?? '', t.auto_epa ?? '', t.teleop_epa ?? '', t.endgame_epa ?? '',
-      t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '', t.locallyScouted ? 'yes' : 'no'
+      t.powerRank ?? '', t.team_number, t.nickname, t.combinedPower ?? '', t.scoutPower ?? '',
+      t.epa ?? '', t.auto_epa ?? '', t.teleop_epa ?? '', t.endgame_epa ?? '',
+      t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '', t.scoutSummary?.matchesScouted ?? 0
     ]);
     const escapeCell = (c) => {
       const s = String(c);
@@ -195,11 +207,12 @@
     loadingTeams = true;
     teamsError = '';
     statboticsError = '';
+    scoutingDataWarning = '';
 
     const [tbaRes, statboticsRes, scoutedRes] = await Promise.all([
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
       fetch(`/api/statbotics/team-epas?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
-      fetch(`/datascout?list_teams=1&event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null)
+      fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null)
     ]);
 
     if (!tbaRes?.success) {
@@ -218,9 +231,15 @@
     }
     const epaByTeamNumber = new Map((statboticsRes?.data || []).map((row) => [row.team, row]));
 
-    const scoutedKeys = new Set(scoutedRes?.success ? scoutedRes.data : []);
+    const scoutEvents = scoutedRes?.success ? scoutedRes.data : [];
+    if (scoutedRes?.truncated) {
+      scoutingDataWarning = 'Scouting data exceeded the 50,000-event safety limit; rankings may be incomplete.';
+    } else if (!scoutedRes?.success) {
+      scoutingDataWarning = scoutedRes?.error || 'Local scouting data is unavailable; rankings are using EPA only.';
+    }
+    const scoutedKeys = new Set(scoutEvents.map((row) => row.team_key));
 
-    teams = tbaRes.data.map((t) => {
+    teams = buildPowerRankings(tbaRes.data.map((t) => {
       const epaRow = epaByTeamNumber.get(t.team_number);
       return {
         key: t.key,
@@ -236,7 +255,11 @@
         ties: epaRow?.ties ?? null,
         locallyScouted: scoutedKeys.has(t.key)
       };
-    });
+    }), scoutEvents);
+
+    const ranked = [...teams].sort((a, b) => (b.combinedPower ?? -1) - (a.combinedPower ?? -1));
+    if (!compareLeftKey && ranked[0]) compareLeftKey = ranked[0].key;
+    if (!compareRightKey && ranked[1]) compareRightKey = ranked[1].key;
 
     loadingTeams = false;
   }
@@ -295,6 +318,9 @@
         ⚠ {statboticsError} Showing the team roster, local scouting coverage, and pick list without EPA for now.
       </p>
     {/if}
+    {#if scoutingDataWarning}
+      <p class="text-muted" style="margin-bottom: var(--space-3)">⚠ {scoutingDataWarning}</p>
+    {/if}
 
     <!-- Pick list -->
     <div class="surface-card picklist-card">
@@ -337,6 +363,52 @@
       {/if}
     </div>
 
+    <div class="view-tabs" aria-label="Scouting analysis view">
+      <button class:active={viewMode === 'rankings'} on:click={() => (viewMode = 'rankings')}>Power Rankings</button>
+      <button class:active={viewMode === 'compare'} on:click={() => (viewMode = 'compare')}>Head to Head</button>
+    </div>
+
+    {#if viewMode === 'compare'}
+      <div class="surface-card comparison-card">
+        <div class="comparison-selectors">
+          <label>Team A
+            <select class="form-input" bind:value={compareLeftKey}>
+              {#each [...teams].sort((a, b) => a.team_number - b.team_number) as team}
+                <option value={team.key}>#{team.team_number} {team.nickname}</option>
+              {/each}
+            </select>
+          </label>
+          <span class="versus">VS</span>
+          <label>Team B
+            <select class="form-input" bind:value={compareRightKey}>
+              {#each [...teams].sort((a, b) => a.team_number - b.team_number) as team}
+                <option value={team.key}>#{team.team_number} {team.nickname}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        {#if compareLeft && compareRight}
+          <div class="comparison-grid">
+            <strong>#{compareLeft.team_number}</strong><span>Metric</span><strong>#{compareRight.team_number}</strong>
+            <b>{compareLeft.powerRank ?? '—'}</b><span>Combined rank</span><b>{compareRight.powerRank ?? '—'}</b>
+            <b>{fmtEpa(compareLeft.combinedPower)}</b><span>Combined power</span><b>{fmtEpa(compareRight.combinedPower)}</b>
+            <b>{fmtEpa(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmtEpa(compareRight.scoutPower)}</b>
+            <b>{fmtEpa(compareLeft.epa)}</b><span>Statbotics EPA</span><b>{fmtEpa(compareRight.epa)}</b>
+            <b>{compareLeft.scoutSummary.matchesScouted}</b><span>Matches scouted</span><b>{compareRight.scoutSummary.matchesScouted}</b>
+            <b>{fmtEpa(compareLeft.scoutSummary.avgFuel)}</b><span>Avg fuel / match</span><b>{fmtEpa(compareRight.scoutSummary.avgFuel)}</b>
+            <b>{fmtEpa(compareLeft.scoutSummary.avgDrivingRank)}</b><span>Driving (1–3)</span><b>{fmtEpa(compareRight.scoutSummary.avgDrivingRank)}</b>
+            <b>{fmtEpa(compareLeft.scoutSummary.avgAccuracy)}</b><span>Accuracy (1–5)</span><b>{fmtEpa(compareRight.scoutSummary.avgAccuracy)}</b>
+            <b>{fmtEpa(compareLeft.scoutSummary.avgSpeed)}</b><span>Speed</span><b>{fmtEpa(compareRight.scoutSummary.avgSpeed)}</b>
+            <b>{fmtPercent(compareLeft.scoutSummary.climbSuccessRate)}</b><span>Climb success</span><b>{fmtPercent(compareRight.scoutSummary.climbSuccessRate)}</b>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if viewMode === 'rankings'}
+    <div class="ranking-explainer text-muted">
+      Combined power is 60% scout power and 40% event-relative EPA. Scout power weights fuel 40%, driving 20%, accuracy 15%, climb 15%, and speed 10%; missing metrics are omitted and remaining weights are rebalanced.
+    </div>
     <div class="docs-search" style="margin: var(--space-4) 0 var(--space-3) 0">
       <Search size={16} />
       <input class="form-input" type="text" placeholder="Filter by team number or name..." bind:value={search} />
@@ -356,8 +428,11 @@
           <thead>
             <tr>
               <th></th>
+              <th><button class="sort-th" on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
               <th>Name</th>
+              <th><button class="sort-th" on:click={() => sortBy('combinedPower')}>Combined <ArrowUpDown size={11} /></button></th>
+              <th><button class="sort-th" on:click={() => sortBy('scoutPower')}>Scout <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('epa')}>EPA <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('auto_epa')}>Auto <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('teleop_epa')}>Teleop <ArrowUpDown size={11} /></button></th>
@@ -374,8 +449,11 @@
                 <td class="expand-cell">
                   {#if expandedTeamKey === t.key}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
                 </td>
+                <td class="strong">{t.powerRank ?? '—'}</td>
                 <td class="mono">{t.team_number}</td>
                 <td>{t.nickname}</td>
+                <td class="strong">{fmtEpa(t.combinedPower)}</td>
+                <td>{fmtEpa(t.scoutPower)}</td>
                 <td class="strong">{fmtEpa(t.epa)}</td>
                 <td>{fmtEpa(t.auto_epa)}</td>
                 <td>{fmtEpa(t.teleop_epa)}</td>
@@ -397,7 +475,7 @@
               </tr>
               {#if expandedTeamKey === t.key}
                 <tr class="detail-row">
-                  <td colspan="11">
+                  <td colspan="14">
                     {#if teamDetails[t.key]?.loading}
                       <p class="text-muted">Loading team detail...</p>
                     {:else if teamDetails[t.key]}
@@ -432,6 +510,7 @@
         </table>
       </div>
     {/if}
+    {/if}
   {/if}
 {/if}
 
@@ -451,6 +530,50 @@
   }
   .sort-th:hover {
     color: var(--text);
+  }
+
+  .view-tabs {
+    display: flex;
+    gap: var(--gap-2);
+    margin: var(--space-4) 0;
+  }
+  .view-tabs button {
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-muted);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .view-tabs button.active {
+    color: var(--text);
+    border-color: var(--brand-primary, #d9a413);
+    background: var(--surface-2);
+  }
+  .ranking-explainer {
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+  .comparison-card { padding: var(--space-4); }
+  .comparison-selectors {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: end;
+    gap: var(--gap-4);
+  }
+  .comparison-selectors label { display: grid; gap: var(--space-1); }
+  .versus { padding-bottom: var(--space-2); font-weight: 700; color: var(--text-muted); }
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: minmax(5rem, 1fr) minmax(9rem, 1.25fr) minmax(5rem, 1fr);
+    margin-top: var(--space-4);
+    text-align: center;
+  }
+  .comparison-grid > * { padding: var(--space-2); border-bottom: 1px solid var(--border); }
+  .comparison-grid > span { color: var(--text-muted); }
+  @media (max-width: 640px) {
+    .comparison-selectors { grid-template-columns: 1fr; }
+    .versus { text-align: center; padding: 0; }
   }
 
   .docs-search {

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { summarizeTeamEvents, fuelCountFromEvents, deriveMatchTeamRow } from './scoutingStats.js';
+import {
+  summarizeTeamEvents, summarizeTeamPerformance, buildPowerRankings,
+  fuelCountFromEvents, deriveMatchTeamRow
+} from './scoutingStats.js';
 
 function event(overrides) {
   return { match_key: '2026casf_qm1', team_key: 'frc971', event_type: null, event_value: null, ...overrides };
@@ -156,5 +159,38 @@ describe('deriveMatchTeamRow', () => {
     expect(deriveMatchTeamRow([event({ event_type: 'dead_auto', event_value: 'true' })]).deadAuto).toBe(true);
     expect(deriveMatchTeamRow([event({ event_type: 'dead_auto', event_value: 'false' })]).deadAuto).toBe(false);
     expect(deriveMatchTeamRow([]).deadAuto).toBe(false);
+  });
+});
+
+describe('power rankings', () => {
+  it('aggregates fuel and climb results by match', () => {
+    const events = [
+      event({ event_type: 'hub_fuel' }),
+      event({ event_type: 'hub_fuel' }),
+      event({ event_type: 'climb_pos', event_value: 'L2' }),
+      event({ match_key: '2026casf_qm2', event_type: 'hub_fuel' }),
+      event({ match_key: '2026casf_qm2', event_type: 'climb_pos', event_value: 'Failed' })
+    ];
+    const summary = summarizeTeamPerformance(events);
+    expect(summary.avgFuel).toBe(1.5);
+    expect(summary.avgClimbLevel).toBe(1);
+    expect(summary.climbSuccessRate).toBe(0.5);
+  });
+
+  it('combines local scouting and EPA without treating missing data as zero', () => {
+    const teams = [
+      { key: 'frc1', epa: 10 },
+      { key: 'frc2', epa: 20 },
+      { key: 'frc3', epa: null }
+    ];
+    const events = [
+      event({ team_key: 'frc1', event_type: 'rank_driving', event_value: '1' }),
+      event({ team_key: 'frc2', event_type: 'rank_driving', event_value: '3' }),
+      event({ team_key: 'frc3', event_type: 'rank_driving', event_value: '2' })
+    ];
+    const ranked = buildPowerRankings(teams, events);
+    expect(ranked.find((row) => row.key === 'frc2').powerRank).toBe(1);
+    expect(ranked.find((row) => row.key === 'frc3').combinedPower).toBeCloseTo(50, 5);
+    expect(ranked.find((row) => row.key === 'frc3').combinedPower).not.toBe(0);
   });
 });

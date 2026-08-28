@@ -24,7 +24,7 @@ function isLocalHost(url) {
 
 function isPublicReadRequest(url) {
   const teamKey = String(url.searchParams.get('team_key') || '').trim();
-  return url.searchParams.has('list_teams') || Boolean(teamKey);
+  return url.searchParams.has('list_teams') || url.searchParams.has('all_teams') || Boolean(teamKey);
 }
 
 async function getActor(authSupa) {
@@ -181,6 +181,28 @@ export async function GET({ url, request }) {
         }
       }
       return json({ success: true, data: teams });
+    }
+
+    if (url.searchParams.get('all_teams')) {
+      const pageSize = 1000;
+      const maxRows = 50000;
+      const rows = [];
+      for (let from = 0; from < maxRows; from += pageSize) {
+        // Rankings need match outcomes, not scout identity or assignment
+        // metadata. Keep the public event-wide response deliberately narrow.
+        let query = db
+          .from('scout_data_events')
+          .select('id,match_key,team_key,event_type,event_value,created_at');
+        query = applyEventFilter(query);
+        const { data, error } = await query
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) return json({ error: error.message }, { status: 500 });
+        rows.push(...(data || []));
+        if ((data || []).length < pageSize) break;
+      }
+      return json({ success: true, data: rows, truncated: rows.length >= maxRows });
     }
 
     const recent = Number(url.searchParams.get('recent') || '100');

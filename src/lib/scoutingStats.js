@@ -123,3 +123,98 @@ export function deriveMatchTeamRow(events) {
     hubFuel: fuelCountFromEvents(list, 'hub')
   };
 }
+
+const CLIMB_LEVEL = { 'N/A': 0, Failed: 0, L1: 1, L2: 2, L3: 3 };
+
+// Builds the local-scouting inputs used by the rankings page. Match-level
+// values are derived first so a match with fifty fuel taps does not count as
+// fifty independent observations while one subjective rating counts once.
+export function summarizeTeamPerformance(events) {
+  const byMatch = new Map();
+  for (const row of events || []) {
+    if (!row?.match_key) continue;
+    if (!byMatch.has(row.match_key)) byMatch.set(row.match_key, []);
+    byMatch.get(row.match_key).push(row);
+  }
+
+  const matches = [...byMatch.values()].map(deriveMatchTeamRow);
+  const average = (values) => {
+    const usable = values.filter((value) => Number.isFinite(value));
+    return usable.length ? usable.reduce((sum, value) => sum + value, 0) / usable.length : null;
+  };
+
+  return {
+    ...summarizeTeamEvents(events),
+    avgFuel: matches.length ? average(matches.map((match) => match.shuttleFuel + match.hubFuel)) : null,
+    avgClimbLevel: average(matches.map((match) => CLIMB_LEVEL[match.finalClimbPos]).filter((level) => level != null)),
+    climbSuccessRate: matches.length
+      ? matches.filter((match) => (CLIMB_LEVEL[match.finalClimbPos] || 0) > 0).length / matches.length
+      : null
+  };
+}
+
+function normalize(value, values) {
+  if (!Number.isFinite(value)) return null;
+  const usable = values.filter(Number.isFinite);
+  if (!usable.length) return null;
+  const min = Math.min(...usable);
+  const max = Math.max(...usable);
+  // A tied field contains no evidence that anyone is above or below the
+  // event field, so it is neutral rather than a free perfect score.
+  if (max === min) return 50;
+  return ((value - min) / (max - min)) * 100;
+}
+
+function weightedScore(parts) {
+  const usable = parts.filter((part) => Number.isFinite(part.value));
+  const weight = usable.reduce((sum, part) => sum + part.weight, 0);
+  if (!weight) return null;
+  return usable.reduce((sum, part) => sum + part.value * part.weight, 0) / weight;
+}
+
+// Produces event-relative rankings. Local scout power is intentionally based
+// only on observed scouting fields; the combined score layers EPA on top.
+// Missing dimensions are omitted and the remaining weights are normalized,
+// never converted to fake zeroes.
+export function buildPowerRankings(teams, events) {
+  const eventsByTeam = new Map();
+  for (const row of events || []) {
+    if (!row?.team_key) continue;
+    if (!eventsByTeam.has(row.team_key)) eventsByTeam.set(row.team_key, []);
+    eventsByTeam.get(row.team_key).push(row);
+  }
+
+  const rows = (teams || []).map((team) => ({
+    ...team,
+    scoutSummary: summarizeTeamPerformance(eventsByTeam.get(team.key) || [])
+  }));
+  const metricValues = (key) => rows.map((row) => row.scoutSummary[key]);
+  const epaValues = rows.map((row) => row.epa);
+
+  const ranked = rows.map((row) => {
+    const summary = row.scoutSummary;
+    const scoutPower = weightedScore([
+      { value: normalize(summary.avgFuel, metricValues('avgFuel')), weight: 0.4 },
+      { value: normalize(summary.avgDrivingRank, metricValues('avgDrivingRank')), weight: 0.2 },
+      { value: normalize(summary.avgAccuracy, metricValues('avgAccuracy')), weight: 0.15 },
+      { value: normalize(summary.avgSpeed, metricValues('avgSpeed')), weight: 0.1 },
+      { value: normalize(summary.avgClimbLevel, metricValues('avgClimbLevel')), weight: 0.15 }
+    ]);
+    const normalizedEpa = normalize(row.epa, epaValues);
+    return {
+      ...row,
+      scoutPower,
+      normalizedEpa,
+      combinedPower: weightedScore([
+        { value: scoutPower, weight: 0.6 },
+        { value: normalizedEpa, weight: 0.4 }
+      ])
+    };
+  });
+
+  const order = [...ranked]
+    .sort((a, b) => (b.combinedPower ?? -1) - (a.combinedPower ?? -1))
+    .map((row, index) => [row.key, row.combinedPower == null ? null : index + 1]);
+  const rankByKey = new Map(order);
+  return ranked.map((row) => ({ ...row, powerRank: rankByKey.get(row.key) }));
+}
