@@ -156,11 +156,17 @@
   let nextScoutAssignment = null; // { scouting_type, match_key, team_key }
   let showScoutAlert = true;
 
+  function scoutAssignmentRoute(scoutingType) {
+    if (scoutingType === 'note') return 'notescout';
+    if (scoutingType === 'quick') return 'quickscout';
+    return 'datascout';
+  }
+
   async function loadScoutAssignments(){
     if(!user?.id) return;
     try {
       const authHeaders = await getAuthHeader();
-      // Fetch both types
+      // Fetch all three scouting types
       const res1 = await fetch(`/api/scout-assignments?scouting_type=data&mine=1&user_id=${encodeURIComponent(user.id)}`, {
         headers: authHeaders
       });
@@ -169,7 +175,11 @@
         headers: authHeaders
       });
       const js2 = await res2.json();
-      const rows = [].concat(js1?.data||[], js2?.data||[]);
+      const res3 = await fetch(`/api/scout-assignments?scouting_type=quick&mine=1&user_id=${encodeURIComponent(user.id)}`, {
+        headers: authHeaders
+      });
+      const js3 = await res3.json();
+      const rows = [].concat(js1?.data||[], js2?.data||[], js3?.data||[]);
       // Filter incomplete
       const incomplete = rows.filter(r => !r.completed_at);
       myScoutAssignments = incomplete;
@@ -432,7 +442,7 @@
           <p>You have {myScoutAssignments.length} upcoming scouting assignment{myScoutAssignments.length===1?'':'s'}.</p>
           {#if nextScoutAssignment}
             <div style="margin-top:0.25rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
-              <button class="btn btn-primary" on:click={() => goto(`/${nextScoutAssignment.scouting_type==='note'?'notescout':'datascout'}`)}>Go to Next ({nextScoutAssignment.scouting_type} – {nextScoutAssignment.match_key.split('_').pop()} – {nextScoutAssignment.team_key.replace('frc','')})</button>
+              <button class="btn btn-primary" on:click={() => goto(`/${scoutAssignmentRoute(nextScoutAssignment.scouting_type)}`)}>Go to Next ({nextScoutAssignment.scouting_type} – {nextScoutAssignment.match_key.split('_').pop()} – {nextScoutAssignment.team_key.replace('frc','')})</button>
               <button class="btn btn-outline" on:click={() => showScoutAlert=false}>Dismiss</button>
             </div>
           {/if}
