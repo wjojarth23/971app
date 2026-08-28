@@ -15,8 +15,11 @@
   //   1. TBA - the real team roster for the active event (authoritative;
   //      everything else only narrows or annotates this list, never
   //      defines it).
-  //   2. Statbotics EPA - per-match scoring-contribution rating with
-  //      auto/teleop/endgame components.
+  //   2. TBA OPR - The Blue Alliance's own computed power rating for the
+  //      event (replaces Statbotics EPA - see issue #80; Statbotics'
+  //      public API was returning HTTP 500 on every query. TBA doesn't
+  //      break OPR down into auto/teleop/endgame components the way EPA
+  //      did, so those fields are always null now).
   //   3. This team's own local scouting coverage (scout_data_events) +
   //      derived summary stats (driving/accuracy/speed/climb) + free-text
   //      notes (scout_notes) - reads from datascout/notescout, doesn't
@@ -31,7 +34,7 @@
 
   let teams = []; // merged rows
   let teamsError = '';
-  let statboticsError = '';
+  let powerRatingError = '';
   let scoutingDataWarning = '';
 
   let search = '';
@@ -194,13 +197,12 @@
     const power = viewMode === 'power';
     const header = power
       ? ['Power Rank', 'Team', 'Name', 'Scout Power', 'Matches Scouted', 'Avg Fuel', 'Driving', 'Accuracy', 'Speed', 'Climb Success']
-      : ['Team', 'Name', 'EPA', 'Auto EPA', 'Teleop EPA', 'Endgame EPA', 'Official Rank', 'Wins', 'Losses', 'Ties'];
+      : ['Team', 'Name', 'OPR', 'Official Rank', 'Wins', 'Losses', 'Ties'];
     const rows = filteredTeams.map((t) => power
       ? [t.powerRank ?? '', t.team_number, t.nickname, t.scoutPower ?? '', t.scoutSummary?.matchesScouted ?? 0,
           t.scoutSummary?.avgFuel ?? '', t.scoutSummary?.avgDrivingRank ?? '', t.scoutSummary?.avgAccuracy ?? '',
           t.scoutSummary?.avgSpeed ?? '', t.scoutSummary?.climbSuccessRate ?? '']
-      : [t.team_number, t.nickname, t.epa ?? '', t.auto_epa ?? '', t.teleop_epa ?? '', t.endgame_epa ?? '',
-          t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '']);
+      : [t.team_number, t.nickname, t.epa ?? '', t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '']);
     const escapeCell = (c) => {
       const s = String(c);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -221,24 +223,22 @@
     if (!eventKey) return;
     loadingTeams = true;
     teamsError = '';
-    statboticsError = '';
+    powerRatingError = '';
     scoutingDataWarning = '';
     const authHeaders = await getAuthHeader();
 
-    const [tbaRes, statboticsRes, scoutedRes] = await Promise.all([
+    const [tbaRes, oprRes, scoutedRes] = await Promise.all([
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
-      fetch(`/api/statbotics/team-epas?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/tba/event-oprs?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
       fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((r) => r.json()).catch(() => null)
     ]);
 
-    if (!statboticsRes?.success) {
-      // Degrade gracefully - a real, current condition worth handling, not
-      // hypothetical: Statbotics' public API has been returning HTTP 500 on
-      // every query while this was built. The roster + local-scouting
-      // signal are still useful without EPA layered on top.
-      statboticsError = statboticsRes?.error || 'Statbotics EPA data is unavailable right now.';
+    if (!oprRes?.success) {
+      // Degrade gracefully - the roster + local-scouting signal are still
+      // useful without OPR layered on top (e.g. a transient TBA outage).
+      powerRatingError = oprRes?.error || 'TBA power rating data is unavailable right now.';
     }
-    const epaByTeamNumber = new Map((statboticsRes?.data || []).map((row) => [row.team, row]));
+    const epaByTeamNumber = new Map((oprRes?.data || []).map((row) => [row.team, row]));
 
     const scoutEvents = scoutedRes?.success ? scoutedRes.data : [];
     if (scoutedRes?.truncated) {
@@ -251,7 +251,7 @@
     let roster = tbaRes?.success ? tbaRes.data : [];
     if (!roster.length) {
       const fallback = new Map();
-      for (const row of statboticsRes?.data || []) {
+      for (const row of oprRes?.data || []) {
         fallback.set(`frc${row.team}`, {
           key: `frc${row.team}`,
           team_number: row.team,
@@ -265,7 +265,7 @@
       }
       roster = [...fallback.values()];
       if (roster.length) {
-        scoutingDataWarning = `${tbaRes?.error || 'The Blue Alliance roster is unavailable.'} Using Statbotics and locally scouted teams as the roster.`;
+        scoutingDataWarning = `${tbaRes?.error || 'The Blue Alliance roster is unavailable.'} Using TBA OPR and locally scouted teams as the roster.`;
       } else {
         teamsError = tbaRes?.error || 'Could not load an event team roster.';
         teams = [];
@@ -317,7 +317,7 @@
     <h1><Binoculars size={22} style="vertical-align:-3px; margin-right:6px" /> Scouting</h1>
     <p>
       Team comparison / pick list{eventKey ? ` for ${eventKey}` : ''} - The Blue Alliance roster,
-      Statbotics EPA, your team's own scouting coverage, and a shared pick list in one workspace.
+      TBA OPR, your team's own scouting coverage, and a shared pick list in one workspace.
     </p>
   </div>
   {#if eventKey}
@@ -348,9 +348,9 @@
       <p>{teamsError}</p>
     </div>
   {:else}
-    {#if statboticsError}
+    {#if powerRatingError}
       <p class="text-muted" style="margin-bottom: var(--space-3)">
-        ⚠ {statboticsError} Showing the team roster, local scouting coverage, and pick list without EPA for now.
+        ⚠ {powerRatingError} Showing the team roster, local scouting coverage, and pick list without OPR for now.
       </p>
     {/if}
     {#if scoutingDataWarning}
@@ -427,7 +427,7 @@
             <strong>#{compareLeft.team_number}</strong><span>Metric</span><strong>#{compareRight.team_number}</strong>
             <b>{compareLeft.powerRank ?? '—'}</b><span>Combined rank</span><b>{compareRight.powerRank ?? '—'}</b>
             <b>{fmtEpa(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmtEpa(compareRight.scoutPower)}</b>
-            <b>{fmtEpa(compareLeft.epa)}</b><span>Statbotics EPA</span><b>{fmtEpa(compareRight.epa)}</b>
+            <b>{fmtEpa(compareLeft.epa)}</b><span>TBA OPR</span><b>{fmtEpa(compareRight.epa)}</b>
             <b>{compareLeft.scoutSummary.matchesScouted}</b><span>Matches scouted</span><b>{compareRight.scoutSummary.matchesScouted}</b>
             <b>{fmtEpa(compareLeft.scoutSummary.avgFuel)}</b><span>Avg fuel / match</span><b>{fmtEpa(compareRight.scoutSummary.avgFuel)}</b>
             <b>{fmtEpa(compareLeft.scoutSummary.avgDrivingRank)}</b><span>Driving (1–3)</span><b>{fmtEpa(compareRight.scoutSummary.avgDrivingRank)}</b>
@@ -441,7 +441,7 @@
 
     {#if viewMode === 'power'}
     <div class="ranking-explainer text-muted">
-      Scout power combines your team's observations only: fuel 40%, driving 20%, accuracy 15%, climb 15%, and speed 10%. Missing metrics are omitted and remaining weights are rebalanced. Statbotics EPA is kept separately under Basic Rankings.
+      Scout power combines your team's observations only: fuel 40%, driving 20%, accuracy 15%, climb 15%, and speed 10%. Missing metrics are omitted and remaining weights are rebalanced. TBA OPR is kept separately under Basic Rankings.
     </div>
     {/if}
     {#if viewMode !== 'compare'}
@@ -471,10 +471,7 @@
               <th><button class="sort-th" on:click={() => sortBy('scoutPower')}>Scout Power <ArrowUpDown size={11} /></button></th>
               <th>Matches</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
               {:else}
-              <th><button class="sort-th" on:click={() => sortBy('epa')}>EPA <ArrowUpDown size={11} /></button></th>
-              <th><button class="sort-th" on:click={() => sortBy('auto_epa')}>Auto <ArrowUpDown size={11} /></button></th>
-              <th><button class="sort-th" on:click={() => sortBy('teleop_epa')}>Teleop <ArrowUpDown size={11} /></button></th>
-              <th><button class="sort-th" on:click={() => sortBy('endgame_epa')}>Endgame <ArrowUpDown size={11} /></button></th>
+              <th><button class="sort-th" on:click={() => sortBy('epa')}>OPR <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('rank')}>Rank <ArrowUpDown size={11} /></button></th>
               <th>Record</th>
               <th>Scouted</th>
@@ -498,9 +495,6 @@
                 <td>{fmtEpa(t.scoutSummary.avgSpeed)}</td><td>{fmtPercent(t.scoutSummary.climbSuccessRate)}</td>
                 {:else}
                 <td class="strong">{fmtEpa(t.epa)}</td>
-                <td>{fmtEpa(t.auto_epa)}</td>
-                <td>{fmtEpa(t.teleop_epa)}</td>
-                <td>{fmtEpa(t.endgame_epa)}</td>
                 <td>{t.rank ?? '—'}</td>
                 <td class="mono">{t.wins == null ? '—' : `${t.wins}-${t.losses}-${t.ties}`}</td>
                 <td>{t.locallyScouted ? '✓' : ''}</td>
@@ -519,7 +513,7 @@
               </tr>
               {#if expandedTeamKey === t.key}
                 <tr class="detail-row">
-                  <td colspan={viewMode === 'power' ? 12 : 11}>
+                  <td colspan={viewMode === 'power' ? 12 : 8}>
                     {#if teamDetails[t.key]?.loading}
                       <p class="text-muted">Loading team detail...</p>
                     {:else if teamDetails[t.key]}

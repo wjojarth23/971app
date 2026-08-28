@@ -31,9 +31,10 @@
   $: resolvedEventKey = selectedEventKey || eventKey;
   $: isViewingPastEvent = !!selectedEventKey && selectedEventKey !== eventKey;
 
-  // Power ranking (Statbotics EPA) - fetched once per event alongside
-  // matches, same endpoint /scouting already uses for the team-comparison
-  // table. Keyed by team NUMBER (Statbotics' own key shape), not "frcNNNN".
+  // Power ranking (TBA OPR) - fetched once per event alongside matches,
+  // same endpoint /scouting already uses for the team-comparison table.
+  // Keyed by team NUMBER (matches the old Statbotics key shape this
+  // replaced - see issue #80), not "frcNNNN".
   let teamEPAs = new Map();
   $: selectedTeamEPA = selectedTeam
     ? teamEPAs.get(parseInt(String(selectedTeam).replace(/^frc/i, ""), 10))
@@ -289,14 +290,13 @@
     }
   }
 
-  // Non-fatal: EPA is a nice-to-have while scouting, not required to keep
-  // working - a Statbotics outage (it's had real ones - see /scouting's own
-  // handling of this same endpoint) shouldn't block match loading above.
+  // Non-fatal: OPR is a nice-to-have while scouting, not required to keep
+  // working - a TBA outage shouldn't block match loading above.
   async function fetchTeamEPAs() {
     if (!resolvedEventKey) return;
     try {
       const res = await fetch(
-        `/api/statbotics/team-epas?event_key=${encodeURIComponent(resolvedEventKey)}`,
+        `/api/tba/event-oprs?event_key=${encodeURIComponent(resolvedEventKey)}`,
       );
       const js = await res.json().catch(() => null);
       if (js?.success && Array.isArray(js.data)) {
@@ -1808,8 +1808,8 @@
           {/if}
         </div>
         {#if selectedTeamEPA}
-          <div class="info-block" title="Statbotics EPA - overall power ranking">
-            <span class="label">EPA (Rank {selectedTeamEPA.rank ?? "—"})</span>
+          <div class="info-block" title="TBA OPR - overall power ranking">
+            <span class="label">OPR (Rank {selectedTeamEPA.rank ?? "—"})</span>
             <div class="val">{selectedTeamEPA.epa?.toFixed(1) ?? "—"}</div>
           </div>
         {/if}
