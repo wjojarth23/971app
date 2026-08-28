@@ -38,7 +38,7 @@
 
   let sortKey = 'scoutPower';
   let sortAsc = false; // EPA defaults high-to-low - that's the whole point of a pick list
-  let viewMode = 'power';
+  let viewMode = 'basic';
   let compareLeftKey = '';
   let compareRightKey = '';
 
@@ -399,9 +399,8 @@
     </div>
 
     <div class="view-tabs" aria-label="Scouting analysis view">
-      <button class:active={viewMode === 'power'} on:click={() => setViewMode('power')}>Power Rankings</button>
       <button class:active={viewMode === 'basic'} on:click={() => setViewMode('basic')}>Basic Rankings</button>
-      <button class:active={viewMode === 'compare'} on:click={() => setViewMode('compare')}>Head to Head</button>
+      <a class="ranking-link" href="/scouting/powerrankings">Power Rankings &amp; Head to Head</a>
     </div>
 
     {#if viewMode === 'compare'}
@@ -590,6 +589,15 @@
     border-radius: var(--radius-md);
     cursor: pointer;
   }
+  .view-tabs .ranking-link {
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-muted);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    text-decoration: none;
+  }
+  .view-tabs .ranking-link:hover { color: var(--text); border-color: var(--brand-primary, #d9a413); }
   .view-tabs button.active {
     color: var(--text);
     border-color: var(--brand-primary, #d9a413);

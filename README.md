@@ -59,12 +59,14 @@ reading code.
     auto/teleop/endgame breakdown - degrades gracefully if Statbotics' public
     API is down), and a "scouted?" flag from `datascout`'s existing
     `?list_teams=1&event_key=` endpoint.
-  - A separate event-relative **power rankings** tab built only from combined
+  - A separate event-relative **power rankings** page built only from combined
     local scout observations. It weights average fuel per match (40%), driving
     (20%), accuracy (15%), climb level (15%), and speed (10%); missing
     dimensions are omitted and the remaining weights are rebalanced instead
-    of being treated as zero. Third-party EPA stays in a separate **Basic
-    Rankings** tab so the two models are never presented as one mystery score.
+    of being treated as zero. Third-party EPA stays on the **Basic Rankings**
+    page so the two models are never presented as one mystery score.
+    It lives at the dedicated `/scouting/powerrankings` subpage, linked from
+    the basic `/scouting` rankings workspace.
   - A **head-to-head comparison** view for any two event teams, covering
     scout power, EPA, scouting coverage, fuel, driving, accuracy,
     speed, and climb success.
