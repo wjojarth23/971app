@@ -172,8 +172,7 @@ function weightedScore(parts) {
   return usable.reduce((sum, part) => sum + part.value * part.weight, 0) / weight;
 }
 
-// Produces event-relative rankings. Local scout power is intentionally based
-// only on observed scouting fields; the combined score layers EPA on top.
+// Produces event-relative rankings from the team's own scouting observations.
 // Missing dimensions are omitted and the remaining weights are normalized,
 // never converted to fake zeroes.
 export function buildPowerRankings(teams, events) {
@@ -189,8 +188,6 @@ export function buildPowerRankings(teams, events) {
     scoutSummary: summarizeTeamPerformance(eventsByTeam.get(team.key) || [])
   }));
   const metricValues = (key) => rows.map((row) => row.scoutSummary[key]);
-  const epaValues = rows.map((row) => row.epa);
-
   const ranked = rows.map((row) => {
     const summary = row.scoutSummary;
     const scoutPower = weightedScore([
@@ -200,21 +197,15 @@ export function buildPowerRankings(teams, events) {
       { value: normalize(summary.avgSpeed, metricValues('avgSpeed')), weight: 0.1 },
       { value: normalize(summary.avgClimbLevel, metricValues('avgClimbLevel')), weight: 0.15 }
     ]);
-    const normalizedEpa = normalize(row.epa, epaValues);
     return {
       ...row,
-      scoutPower,
-      normalizedEpa,
-      combinedPower: weightedScore([
-        { value: scoutPower, weight: 0.6 },
-        { value: normalizedEpa, weight: 0.4 }
-      ])
+      scoutPower
     };
   });
 
   const order = [...ranked]
-    .sort((a, b) => (b.combinedPower ?? -1) - (a.combinedPower ?? -1))
-    .map((row, index) => [row.key, row.combinedPower == null ? null : index + 1]);
+    .sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1))
+    .map((row, index) => [row.key, row.scoutPower == null ? null : index + 1]);
   const rankByKey = new Map(order);
   return ranked.map((row) => ({ ...row, powerRank: rankByKey.get(row.key) }));
 }

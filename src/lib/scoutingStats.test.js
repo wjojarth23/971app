@@ -177,7 +177,7 @@ describe('power rankings', () => {
     expect(summary.climbSuccessRate).toBe(0.5);
   });
 
-  it('combines local scouting and EPA without treating missing data as zero', () => {
+  it('ranks combined local scouting metrics without treating missing data as zero', () => {
     const teams = [
       { key: 'frc1', epa: 10 },
       { key: 'frc2', epa: 20 },
@@ -190,7 +190,7 @@ describe('power rankings', () => {
     ];
     const ranked = buildPowerRankings(teams, events);
     expect(ranked.find((row) => row.key === 'frc2').powerRank).toBe(1);
-    expect(ranked.find((row) => row.key === 'frc3').combinedPower).toBeCloseTo(50, 5);
-    expect(ranked.find((row) => row.key === 'frc3').combinedPower).not.toBe(0);
+    expect(ranked.find((row) => row.key === 'frc3').scoutPower).toBeCloseTo(50, 5);
+    expect(ranked.find((row) => row.key === 'frc3').scoutPower).not.toBe(0);
   });
 });

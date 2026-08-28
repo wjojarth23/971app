@@ -36,9 +36,9 @@
 
   let search = '';
 
-  let sortKey = 'combinedPower';
+  let sortKey = 'scoutPower';
   let sortAsc = false; // EPA defaults high-to-low - that's the whole point of a pick list
-  let viewMode = 'rankings';
+  let viewMode = 'power';
   let compareLeftKey = '';
   let compareRightKey = '';
 
@@ -48,6 +48,17 @@
     } else {
       sortKey = key;
       sortAsc = key === 'team_number';
+    }
+  }
+
+  function setViewMode(mode) {
+    viewMode = mode;
+    if (mode === 'power') {
+      sortKey = 'scoutPower';
+      sortAsc = false;
+    } else if (mode === 'basic') {
+      sortKey = 'epa';
+      sortAsc = false;
     }
   }
 
@@ -180,12 +191,16 @@
   // --- CSV export -----------------------------------------------------
 
   function exportCsv() {
-    const header = ['Power Rank', 'Team', 'Name', 'Combined Power', 'Scout Power', 'EPA', 'Auto EPA', 'Teleop EPA', 'Endgame EPA', 'Official Rank', 'Wins', 'Losses', 'Ties', 'Matches Scouted'];
-    const rows = filteredTeams.map((t) => [
-      t.powerRank ?? '', t.team_number, t.nickname, t.combinedPower ?? '', t.scoutPower ?? '',
-      t.epa ?? '', t.auto_epa ?? '', t.teleop_epa ?? '', t.endgame_epa ?? '',
-      t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '', t.scoutSummary?.matchesScouted ?? 0
-    ]);
+    const power = viewMode === 'power';
+    const header = power
+      ? ['Power Rank', 'Team', 'Name', 'Scout Power', 'Matches Scouted', 'Avg Fuel', 'Driving', 'Accuracy', 'Speed', 'Climb Success']
+      : ['Team', 'Name', 'EPA', 'Auto EPA', 'Teleop EPA', 'Endgame EPA', 'Official Rank', 'Wins', 'Losses', 'Ties'];
+    const rows = filteredTeams.map((t) => power
+      ? [t.powerRank ?? '', t.team_number, t.nickname, t.scoutPower ?? '', t.scoutSummary?.matchesScouted ?? 0,
+          t.scoutSummary?.avgFuel ?? '', t.scoutSummary?.avgDrivingRank ?? '', t.scoutSummary?.avgAccuracy ?? '',
+          t.scoutSummary?.avgSpeed ?? '', t.scoutSummary?.climbSuccessRate ?? '']
+      : [t.team_number, t.nickname, t.epa ?? '', t.auto_epa ?? '', t.teleop_epa ?? '', t.endgame_epa ?? '',
+          t.rank ?? '', t.wins ?? '', t.losses ?? '', t.ties ?? '']);
     const escapeCell = (c) => {
       const s = String(c);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -208,19 +223,13 @@
     teamsError = '';
     statboticsError = '';
     scoutingDataWarning = '';
+    const authHeaders = await getAuthHeader();
 
     const [tbaRes, statboticsRes, scoutedRes] = await Promise.all([
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
       fetch(`/api/statbotics/team-epas?event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null),
-      fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`).then((r) => r.json()).catch(() => null)
+      fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((r) => r.json()).catch(() => null)
     ]);
-
-    if (!tbaRes?.success) {
-      teamsError = tbaRes?.error || 'Could not load the team list from The Blue Alliance.';
-      teams = [];
-      loadingTeams = false;
-      return;
-    }
 
     if (!statboticsRes?.success) {
       // Degrade gracefully - a real, current condition worth handling, not
@@ -239,7 +248,33 @@
     }
     const scoutedKeys = new Set(scoutEvents.map((row) => row.team_key));
 
-    teams = buildPowerRankings(tbaRes.data.map((t) => {
+    let roster = tbaRes?.success ? tbaRes.data : [];
+    if (!roster.length) {
+      const fallback = new Map();
+      for (const row of statboticsRes?.data || []) {
+        fallback.set(`frc${row.team}`, {
+          key: `frc${row.team}`,
+          team_number: row.team,
+          nickname: row.team_name || ''
+        });
+      }
+      for (const row of scoutEvents) {
+        if (!row?.team_key || fallback.has(row.team_key)) continue;
+        const teamNumber = Number(String(row.team_key).replace(/^frc/i, ''));
+        fallback.set(row.team_key, { key: row.team_key, team_number: teamNumber, nickname: '' });
+      }
+      roster = [...fallback.values()];
+      if (roster.length) {
+        scoutingDataWarning = `${tbaRes?.error || 'The Blue Alliance roster is unavailable.'} Using Statbotics and locally scouted teams as the roster.`;
+      } else {
+        teamsError = tbaRes?.error || 'Could not load an event team roster.';
+        teams = [];
+        loadingTeams = false;
+        return;
+      }
+    }
+
+    teams = buildPowerRankings(roster.map((t) => {
       const epaRow = epaByTeamNumber.get(t.team_number);
       return {
         key: t.key,
@@ -257,7 +292,7 @@
       };
     }), scoutEvents);
 
-    const ranked = [...teams].sort((a, b) => (b.combinedPower ?? -1) - (a.combinedPower ?? -1));
+    const ranked = [...teams].sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1));
     if (!compareLeftKey && ranked[0]) compareLeftKey = ranked[0].key;
     if (!compareRightKey && ranked[1]) compareRightKey = ranked[1].key;
 
@@ -364,8 +399,9 @@
     </div>
 
     <div class="view-tabs" aria-label="Scouting analysis view">
-      <button class:active={viewMode === 'rankings'} on:click={() => (viewMode = 'rankings')}>Power Rankings</button>
-      <button class:active={viewMode === 'compare'} on:click={() => (viewMode = 'compare')}>Head to Head</button>
+      <button class:active={viewMode === 'power'} on:click={() => setViewMode('power')}>Power Rankings</button>
+      <button class:active={viewMode === 'basic'} on:click={() => setViewMode('basic')}>Basic Rankings</button>
+      <button class:active={viewMode === 'compare'} on:click={() => setViewMode('compare')}>Head to Head</button>
     </div>
 
     {#if viewMode === 'compare'}
@@ -391,7 +427,6 @@
           <div class="comparison-grid">
             <strong>#{compareLeft.team_number}</strong><span>Metric</span><strong>#{compareRight.team_number}</strong>
             <b>{compareLeft.powerRank ?? '—'}</b><span>Combined rank</span><b>{compareRight.powerRank ?? '—'}</b>
-            <b>{fmtEpa(compareLeft.combinedPower)}</b><span>Combined power</span><b>{fmtEpa(compareRight.combinedPower)}</b>
             <b>{fmtEpa(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmtEpa(compareRight.scoutPower)}</b>
             <b>{fmtEpa(compareLeft.epa)}</b><span>Statbotics EPA</span><b>{fmtEpa(compareRight.epa)}</b>
             <b>{compareLeft.scoutSummary.matchesScouted}</b><span>Matches scouted</span><b>{compareRight.scoutSummary.matchesScouted}</b>
@@ -405,10 +440,12 @@
       </div>
     {/if}
 
-    {#if viewMode === 'rankings'}
+    {#if viewMode === 'power'}
     <div class="ranking-explainer text-muted">
-      Combined power is 60% scout power and 40% event-relative EPA. Scout power weights fuel 40%, driving 20%, accuracy 15%, climb 15%, and speed 10%; missing metrics are omitted and remaining weights are rebalanced.
+      Scout power combines your team's observations only: fuel 40%, driving 20%, accuracy 15%, climb 15%, and speed 10%. Missing metrics are omitted and remaining weights are rebalanced. Statbotics EPA is kept separately under Basic Rankings.
     </div>
+    {/if}
+    {#if viewMode !== 'compare'}
     <div class="docs-search" style="margin: var(--space-4) 0 var(--space-3) 0">
       <Search size={16} />
       <input class="form-input" type="text" placeholder="Filter by team number or name..." bind:value={search} />
@@ -428,11 +465,13 @@
           <thead>
             <tr>
               <th></th>
-              <th><button class="sort-th" on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>
+              {#if viewMode === 'power'}<th><button class="sort-th" on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>{/if}
               <th><button class="sort-th" on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
               <th>Name</th>
-              <th><button class="sort-th" on:click={() => sortBy('combinedPower')}>Combined <ArrowUpDown size={11} /></button></th>
-              <th><button class="sort-th" on:click={() => sortBy('scoutPower')}>Scout <ArrowUpDown size={11} /></button></th>
+              {#if viewMode === 'power'}
+              <th><button class="sort-th" on:click={() => sortBy('scoutPower')}>Scout Power <ArrowUpDown size={11} /></button></th>
+              <th>Matches</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
+              {:else}
               <th><button class="sort-th" on:click={() => sortBy('epa')}>EPA <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('auto_epa')}>Auto <ArrowUpDown size={11} /></button></th>
               <th><button class="sort-th" on:click={() => sortBy('teleop_epa')}>Teleop <ArrowUpDown size={11} /></button></th>
@@ -440,6 +479,7 @@
               <th><button class="sort-th" on:click={() => sortBy('rank')}>Rank <ArrowUpDown size={11} /></button></th>
               <th>Record</th>
               <th>Scouted</th>
+              {/if}
               <th>Pick</th>
             </tr>
           </thead>
@@ -449,11 +489,15 @@
                 <td class="expand-cell">
                   {#if expandedTeamKey === t.key}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
                 </td>
-                <td class="strong">{t.powerRank ?? '—'}</td>
+                {#if viewMode === 'power'}<td class="strong">{t.powerRank ?? '—'}</td>{/if}
                 <td class="mono">{t.team_number}</td>
                 <td>{t.nickname}</td>
-                <td class="strong">{fmtEpa(t.combinedPower)}</td>
-                <td>{fmtEpa(t.scoutPower)}</td>
+                {#if viewMode === 'power'}
+                <td class="strong">{fmtEpa(t.scoutPower)}</td>
+                <td>{t.scoutSummary.matchesScouted}</td><td>{fmtEpa(t.scoutSummary.avgFuel)}</td>
+                <td>{fmtEpa(t.scoutSummary.avgDrivingRank)}</td><td>{fmtEpa(t.scoutSummary.avgAccuracy)}</td>
+                <td>{fmtEpa(t.scoutSummary.avgSpeed)}</td><td>{fmtPercent(t.scoutSummary.climbSuccessRate)}</td>
+                {:else}
                 <td class="strong">{fmtEpa(t.epa)}</td>
                 <td>{fmtEpa(t.auto_epa)}</td>
                 <td>{fmtEpa(t.teleop_epa)}</td>
@@ -461,6 +505,7 @@
                 <td>{t.rank ?? '—'}</td>
                 <td class="mono">{t.wins == null ? '—' : `${t.wins}-${t.losses}-${t.ties}`}</td>
                 <td>{t.locallyScouted ? '✓' : ''}</td>
+                {/if}
                 <td>
                   <button
                     class="icon-btn"
@@ -475,7 +520,7 @@
               </tr>
               {#if expandedTeamKey === t.key}
                 <tr class="detail-row">
-                  <td colspan="14">
+                  <td colspan={viewMode === 'power' ? 12 : 11}>
                     {#if teamDetails[t.key]?.loading}
                       <p class="text-muted">Loading team detail...</p>
                     {:else if teamDetails[t.key]}
