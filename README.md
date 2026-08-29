@@ -54,22 +54,11 @@ reading code.
   pit/data/note scouting *collection* tools below, which this reads from
   rather than replaces:
   - Sortable comparison table fusing The Blue Alliance's real team roster
-    (authoritative - nothing else here ever narrows or redefines it),
-    [Statbotics](https://www.statbotics.io) EPA ratings (`api/statbotics/team-epas`,
-    auto/teleop/endgame breakdown - degrades gracefully if Statbotics' public
-    API is down), and a "scouted?" flag from `datascout`'s existing
-    `?list_teams=1&event_key=` endpoint.
-  - A separate event-relative **power rankings** page built only from combined
-    local scout observations. It weights average fuel per match (40%), driving
-    (20%), accuracy (15%), climb level (15%), and speed (10%); missing
-    dimensions are omitted and the remaining weights are rebalanced instead
-    of being treated as zero. Third-party EPA stays on the **Basic Rankings**
-    page so the two models are never presented as one mystery score.
-    It lives at the dedicated `/scouting/powerrankings` subpage, linked from
-    the basic `/scouting` rankings workspace.
-  - A **head-to-head comparison** view for any two event teams, covering
-    scout power, EPA, scouting coverage, fuel, driving, accuracy,
-    speed, and climb success.
+    (authoritative - nothing else here ever narrows or redefines it), TBA's
+    own OPR/rankings (`api/tba/event-oprs` - replaced the dead Statbotics EPA
+    proxy, see issue #80; TBA has no auto/teleop/endgame breakdown the way
+    Statbotics EPA did, so this is a single OPR column), and a "scouted?"
+    flag from `datascout`'s existing `?list_teams=1&event_key=` endpoint.
   - Search/filter by team number or name; CSV export of the visible table.
   - Click any team row to expand a detail panel: derived summary stats
     (avg driving/accuracy/speed rank, most common climb position) computed
@@ -81,6 +70,17 @@ reading code.
     any entry (deliberately more open than `scout_notes`' creator-only
     edit rule - a pick list is one document the whole strategy group edits
     together, and per-row ownership would break group reordering).
+- **Power Rankings** (`powerrankings/`): a separate top-level tab in the
+  Competition nav folder, alongside Scouting rather than nested inside it -
+  intentionally its own page rather than a mode of the Scouting workspace, so
+  it never gets confused with the TBA-OPR-backed comparison table above. An
+  event-relative ranking built only from combined local scout observations:
+  weights average fuel per match (40%), driving (20%), accuracy (15%), climb
+  level (15%), and speed (10%); missing dimensions are omitted and the
+  remaining weights are rebalanced instead of being treated as zero. Also
+  includes a **head-to-head comparison** view for any two event teams,
+  covering scout power, matches scouted, fuel, driving, accuracy, speed, and
+  climb success.
 - **Docs** (`docs/`): browses every `*.md` file in the repo (a "finder" -
   folder tree + search on the left, rendered markdown on the right).
   Content is bundled at build time via Vite's `import.meta.glob` (raw
@@ -215,8 +215,11 @@ own docs are all together in one place instead of scattered across
   (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
   Supabase `pg_cron` job every 15 minutes.
 - **`pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
-  `teamview/`, `discover/`** - FRC competition scouting: pit scouting forms,
-  match data scouting, notes, and cross-team data discovery/analysis.
+  `teamview/`, `discover/`, `powerrankings/`** - FRC competition scouting:
+  pit scouting forms, match data scouting, notes, cross-team data
+  discovery/analysis, and the local-scouting-only power rankings +
+  head-to-head comparison view (own top-level tab, not nested under
+  `scouting/`).
 - **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
   off-the-shelf) part stock tracking and kitting workflows.
 - **`tasks/`** - general task tracking, separate from the planner's

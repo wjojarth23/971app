@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { ArrowLeft, ArrowUpDown, RefreshCw, Search, Swords, Trophy } from 'lucide-svelte';
+  import { ArrowUpDown, RefreshCw, Search, Swords, Trophy } from 'lucide-svelte';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import { getAuthHeader } from '$lib/supabase.js';
   import { buildPowerRankings } from '$lib/scoutingStats.js';
@@ -92,11 +92,10 @@
   });
 </script>
 
-<svelte:head><title>Power Rankings | Scouting</title></svelte:head>
+<svelte:head><title>Power Rankings</title></svelte:head>
 
 <div class="page-header">
   <div class="header-content">
-    <a class="back-link" href="/scouting"><ArrowLeft size={14} /> Basic Rankings</a>
     <h1><Trophy size={22} /> Power Rankings</h1>
     <p>Combined 971 scout observations{eventKey ? ` for ${eventKey}` : ''}. No Statbotics or third-party rating is included.</p>
   </div>
@@ -156,8 +155,7 @@
 {/if}
 
 <style>
-  .back-link, h1, h2, .search { display:flex; align-items:center; gap:var(--gap-2); }
-  .back-link { color:var(--text-muted); text-decoration:none; font-size:.85rem; margin-bottom:var(--space-2); }
+  h1, h2, .search { display:flex; align-items:center; gap:var(--gap-2); }
   .formula { color:var(--text-muted); font-size:.85rem; }
   .comparison-card { padding:var(--space-4); margin:var(--space-4) 0; }
   .comparison-card h2 { margin-top:0; font-size:1rem; }
