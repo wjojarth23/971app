@@ -123,13 +123,21 @@ over frame rate**. Motion-blurred robots at 60fps are worse than sharp ones at
 
 ### A6. A labeled dataset and a trained YOLO model **[BLOCKER for useful output]**
 
+**The full procedure is written up in
+[`vision/training/TRAINING.md`](vision/training/TRAINING.md)** — footage
+quantities, camera settings, the attempt-vs-success labeling rule, split
+discipline, what to evaluate beyond mAP, and the promotion checklist.
+
 `create_placeholder_model.py` produces a real, loadable 6-class checkpoint that
 exercises the claim/heartbeat/complete plumbing — its detections are
 meaningless noise. A real model needs, in order: recordings (A5), frame
 extraction, manual labeling in CVAT or similar (no labeled dataset exists),
-a real `train_model.py` run, and evaluation against the acceptance gates in
-`implementations/vision-scouting-system.md`. This is data-collection and
-human-labeling time; no scripting shortcut exists.
+a real `train_model.py` run, and evaluation against the acceptance gates. This
+is data-collection and human-labeling time; no scripting shortcut exists.
+
+Rough scale from TRAINING.md: ~8–12 matches for a first trainable model, 25–40
+across at least two venues for something competition-usable. Variety across
+events matters more than raw frame count.
 
 Note the Qwen checkpoint is pretrained and needs **no** local training — Qwen
 review trials can begin as soon as A1/A2 are done, before any YOLO model
