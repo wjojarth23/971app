@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { createClient } from '@supabase/supabase-js';
-import { summarizeVision, trajectoryMetrics, reconcileWithReference } from '$lib/visionAnalytics.js';
+import { summarizeVision, trajectoryMetrics, reconcileWithReference, reconcileVisionSources } from '$lib/visionAnalytics.js';
 import { fetchTbaMatchReference } from '$lib/server/vision_reference.js';
 import { notifyVisionRunFailed, notifyVisionCriticalDiscrepancy } from '$lib/server/slack_notifications.js';
 
@@ -41,6 +41,9 @@ export async function POST({ request }) {
       runner_id: runnerId,
       last_seen_at: new Date().toISOString(),
       model_path: body.model_path || null,
+      qwen_model: body.qwen_model || null,
+      qwen_endpoint: body.qwen_endpoint || null,
+      runtime_metrics: body.runtime_metrics || {},
       current_run_id: body.current_run_id || null,
       last_error: body.last_error || null
     }, { onConflict: 'runner_id' });
@@ -78,13 +81,35 @@ export async function POST({ request }) {
     const { data: run } = await db.from('vision_runs').select('*, vision_matches(match_key)').eq('id', body.run_id).single();
     if (!run || run.status !== 'processing') return json({ error: 'Run is not processing' }, { status: 409 });
     const tracks = (body.tracks || []).map((track) => ({ ...track, vision_run_id: run.id, metrics: track.metrics || trajectoryMetrics(track.trajectory) }));
-    const observations = (body.observations || []).map((observation) => ({ ...observation, vision_run_id: run.id, model_version: run.model_version }));
-    if (tracks.length) await db.from('vision_tracks').insert(tracks);
-    if (observations.length) await db.from('vision_observations').insert(observations);
-    const summary = summarizeVision(observations, tracks);
+    const observations = (body.observations || []).map((observation) => ({
+      ...observation,
+      vision_run_id: run.id,
+      model_version: run.model_version,
+      source: observation.source || 'legacy',
+      review_status: 'unreviewed'
+    }));
+    const qwenClips = (body.qwen_clips || []).map((clip) => ({ ...clip, vision_run_id: run.id }));
+    if (tracks.length) {
+      const { error } = await db.from('vision_tracks').insert(tracks);
+      if (error) return json({ error: error.message }, { status: 500 });
+    }
+    if (observations.length) {
+      const { error } = await db.from('vision_observations').insert(observations);
+      if (error) return json({ error: error.message }, { status: 500 });
+    }
+    if (qwenClips.length) {
+      const { error } = await db.from('vision_qwen_clips').insert(qwenClips);
+      if (error) return json({ error: error.message }, { status: 500 });
+    }
+    const primaryObservations = observations.filter((observation) => observation.source !== 'qwen3_vl');
+    const qwenObservations = observations.filter((observation) => observation.source === 'qwen3_vl');
+    const summary = summarizeVision(primaryObservations, tracks);
+    const qwenSummary = summarizeVision(qwenObservations, []);
     const reference = await fetchTbaMatchReference(run.vision_matches?.match_key, env.TBA_API_KEY || env.PUBLIC_TBA_API_KEY);
     if (reference) await db.from('vision_reference_snapshots').upsert({ vision_run_id: run.id, source: 'tba', match_key: run.vision_matches.match_key, payload: reference }, { onConflict: 'vision_run_id,source' });
-    const discrepancies = reference ? reconcileWithReference(summary, reference, run.config?.thresholds).map((item) => ({ ...item, vision_run_id: run.id })) : [];
+    const referenceDiscrepancies = reference ? reconcileWithReference(summary, reference, run.config?.thresholds) : [];
+    const sourceDiscrepancies = qwenObservations.length ? reconcileVisionSources(summary, qwenSummary, run.config?.thresholds) : [];
+    const discrepancies = [...referenceDiscrepancies, ...sourceDiscrepancies].map((item) => ({ ...item, vision_run_id: run.id }));
     let insertedDiscrepancies = [];
     if (discrepancies.length) {
       const { data } = await db.from('vision_discrepancies').insert(discrepancies).select('id, severity');
@@ -101,7 +126,7 @@ export async function POST({ request }) {
         notifyVisionCriticalDiscrepancy(discrepancy.id).catch((err) => console.error('notifyVisionCriticalDiscrepancy failed', err));
       }
     }
-    return json({ success: true, summary, reference, discrepancy_count: discrepancies.length });
+    return json({ success: true, summary, qwen_summary: qwenSummary, reference, discrepancy_count: discrepancies.length });
   }
 
   if (action === 'fail') {

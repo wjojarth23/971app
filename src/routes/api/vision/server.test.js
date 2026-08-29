@@ -169,8 +169,8 @@ describe('api/vision', () => {
   describe('POST release-run', () => {
     const run = { id: 'run-1', status: 'complete', released_at: null, vision_matches: { match_key: '2026casf_qm1' } };
     const observations = [
-      { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 3 } },
-      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'L2' } }
+      { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 3 }, review_status: 'accepted' },
+      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'L2' }, review_status: 'accepted' }
     ];
 
     it('requires run_id', async () => {
@@ -207,7 +207,7 @@ describe('api/vision', () => {
       mockDb = makeMockClient({
         vision_runs: [{ data: run, error: null }],
         vision_tracks: [{ data: [], error: null }],
-        vision_observations: [{ data: [{ observation_type: 'fuel_scored', team_key: null, alliance: 'red', started_ms: 1000, value: { count: 3 } }], error: null }]
+        vision_observations: [{ data: [{ observation_type: 'fuel_scored', team_key: null, alliance: 'red', started_ms: 1000, value: { count: 3 }, review_status: 'accepted' }], error: null }]
       });
       const { POST } = await import('./+server.js');
       const res = await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
@@ -266,8 +266,8 @@ describe('api/vision', () => {
         vision_runs: [{ data: run, error: null }],
         vision_tracks: [{ data: [], error: null }],
         vision_observations: [{ data: [
-          { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 1 } },
-          { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'success' } }
+          { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 1 }, review_status: 'accepted' },
+          { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'success' }, review_status: 'accepted' }
         ], error: null }],
         scout_data_events: [{ data: [{ id: 'e1' }], error: null }]
       });
@@ -284,6 +284,39 @@ describe('api/vision', () => {
       await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
       expect(insertedRows.some((row) => row.event_type === 'climb_pos')).toBe(false);
     });
+
+    it('refuses to release unreviewed model observations', async () => {
+      mockClient = makeMockClient({ user_profiles: [{ data: { role: 'member', permissions: ['VISION_RELEASE'] }, error: null }] });
+      mockDb = makeMockClient({
+        vision_runs: [{ data: run, error: null }],
+        vision_tracks: [{ data: [], error: null }],
+        vision_observations: [{ data: [{
+          observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red',
+          started_ms: 1000, value: { count: 9 }, review_status: 'unreviewed'
+        }], error: null }]
+      });
+      const { POST } = await import('./+server.js');
+      const res = await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  it('rejects an invalid observation review state', async () => {
+    const { POST } = await import('./+server.js');
+    const res = await POST({ request: request({ action: 'review-observation', id: 'o1', status: 'rubber-stamped' }) });
+    expect(res.status).toBe(400);
+  });
+
+  it('records a corrected observation for human-reviewed release', async () => {
+    mockClient = makeMockClient({ vision_observations: [{ data: { id: 'o1', review_status: 'corrected' }, error: null }] });
+    const { POST } = await import('./+server.js');
+    const res = await POST({ request: request({
+      action: 'review-observation', id: 'o1', status: 'corrected',
+      team_key: 'frc971', value: { count: 4 }
+    }) });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.data.review_status).toBe('corrected');
   });
 
   it('rejects an unknown action', async () => {

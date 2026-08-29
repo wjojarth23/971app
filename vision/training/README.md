@@ -37,20 +37,24 @@ and verify that no source leaks across splits:
 ```
 
 Qwen3-VL can bootstrap semantic proposals directly from any number of camera
-recordings. On an 8 GB NVIDIA GPU, use the default 4-bit configuration:
+recordings. The default is the full BF16 `Qwen3-VL-30B-A3B-Instruct` MoE
+checkpoint and requires the DGX Spark or comparable CUDA memory:
 
 ```bash
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python bootstrap_annotate.py recordings/qm1_fullfield.mov \
   recordings/qm1_red_goal.mov recordings/qm1_climb.mov \
   --view-names full-field red-goal climb \
-  --output labeling/qm1-qwen-review.json --match-key 2026casf_qm1
+  --output labeling/qm1-qwen-review.json --match-key 2026casf_qm1 \
+  --attention sdpa
 ```
 
 The output contains timestamped, grounded Qwen proposals for robot, fuel,
 climb, and immobility evidence. It is always marked unreviewed and is not a
 training dataset until a human corrects it. Qwen analyzes bounded five-second
 clips rather than blindly consuming an entire match in one context.
+It loads BF16 weights without quantization; use the long-lived service under
+`vision/qwen/` for repeated production jobs so the checkpoint loads once.
 
 After reviewed seed YOLO weights exist, `bootstrap_yolo_annotate.py` provides
 the faster dense pseudo-labeling pass. The hybrid is intentional: Qwen handles

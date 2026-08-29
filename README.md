@@ -37,7 +37,8 @@ reading code.
   approved user like the rest of Competition (no special permission needed),
   running post-match, multi-camera ML processing at `/scouting/vision` for
   robot trajectories/mobility, fuel, and climbing.
-  Qwen3-VL proposes semantic events from bounded multi-camera clips; a
+  A full BF16 Qwen3-VL-30B-A3B service on NVIDIA DGX Spark proposes semantic
+  events from bounded multi-camera clips; a
   separate versioned YOLO/ByteTrack runner supplies dense tracking and
   mobility. Both feed a human-reviewed evidence queue rather than silently
   treating model predictions as ground truth; compatible alliance totals are
@@ -155,7 +156,8 @@ than duplicating that detail.
   Onshape API (CAD source of truth for parts - see the Onshape-key exposure
   note under **Known gaps** below), The Blue Alliance API (scouting), Sentry
   (error monitoring), Google Drive API (AutoCAM input/output watcher, hand-
-  rolled, no `googleapis` dependency - see `autocam/docs/drive-watcher-folder-layout.md`).
+  rolled, no `googleapis` dependency - see `autocam/docs/drive-watcher-folder-layout.md`),
+  and Hugging Face Qwen3-VL (private DGX Spark inference for Vision Scouting).
 
 ## AutoCAM (`autocam/`, top-level - not under `src/lib/`)
 
@@ -246,9 +248,11 @@ own docs are all together in one place instead of scattered across
 - **`scouting/vision/`, `scouting/vision/dashboard/`** - post-match
   multi-view ML processing, TBA discrepancy review, and the release bridge
   into `scout_data_events` (the release action itself is `VISION_RELEASE`-
-  gated; everything else is open to any approved user); the event-level
-  fleet/throughput dashboard is a sub-route. External worker lives in
-  `vision/runner/`; offline training toolchain in `vision/training/`.
+  gated; everything else is open to any approved user). The GPU stack lives
+  in `vision/runner/` (dense tracking) and `vision/qwen/` (full BF16
+  Qwen3-VL-30B-A3B service on DGX Spark); the fleet/throughput dashboard is
+  a sub-route, the offline training toolchain lives in `vision/training/`,
+  and acceptance metrics live in `vision/evaluation/`.
 - **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
   off-the-shelf) part stock tracking and kitting workflows.
 - **`tasks/`** - general task tracking, separate from the planner's
@@ -310,6 +314,11 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 - **Vercel**: the original deployment target, being phased out per
   `implementations/vercel-and-supabase-to-google-plan.md` - not yet
   decommissioned as of this writing (see that plan doc's TODOs).
+- **Vision GPU worker**: `vision/runner/docker-compose.yml` deploys the
+  dense YOLO/ByteTrack runner and private full-BF16 Qwen3-VL service together
+  on NVIDIA DGX Spark. It is separate from the web deployment, uses a
+  persistent Hugging Face model cache, and calls the app through authenticated
+  runner APIs; see `vision/runner/README.md`.
 - **No GitHub Actions CI** - "the GitHub workflow" for this project is the
   branch/PR process below, not a `.github/workflows/*.yml` file (none
   exists). The closest thing to a CI check is the Cloud Build trigger

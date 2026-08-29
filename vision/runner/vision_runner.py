@@ -15,6 +15,7 @@ scoutingvision.md for the full writeup of what changed and why.
 """
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -32,6 +33,15 @@ TOKEN = os.environ["VISION_RUNNER_TOKEN"]
 RUNNER_ID = os.environ.get("VISION_RUNNER_ID", "vision-runner-local")
 WEIGHTS = os.environ["VISION_MODEL_PATH"]
 POLL_SECONDS = int(os.environ.get("VISION_POLL_SECONDS", "10"))
+QWEN_URL = os.environ.get("VISION_QWEN_URL", "").rstrip("/")
+QWEN_TOKEN = os.environ.get("VISION_QWEN_TOKEN", "")
+QWEN_MODEL = os.environ.get("VISION_QWEN_MODEL", "Qwen/Qwen3-VL-30B-A3B-Instruct")
+QWEN_REVISION = os.environ.get("VISION_QWEN_REVISION", "9c4b90e1e4ba969fd3b5378b57d966d725f1b86c")
+QWEN_REQUIRED = os.environ.get("VISION_QWEN_REQUIRED", "true").lower() in {"1", "true", "yes"}
+QWEN_CLIP_SECONDS = float(os.environ.get("VISION_QWEN_CLIP_SECONDS", "5"))
+QWEN_FRAMES_PER_CLIP = int(os.environ.get("VISION_QWEN_FRAMES_PER_CLIP", "8"))
+QWEN_MAX_IMAGES = max(2, int(os.environ.get("VISION_QWEN_MAX_IMAGES", "8")))
+QWEN_JPEG_WIDTH = int(os.environ.get("VISION_QWEN_JPEG_WIDTH", "1280"))
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 # Defaults for the hybrid game-piece pipeline. All overridable per run via
@@ -50,12 +60,142 @@ def api(action: str, **payload):
     return response.json()
 
 
+def qwen_health():
+    if not QWEN_URL:
+        return {"ready": False, "error": "VISION_QWEN_URL is not configured"}
+    try:
+        response = requests.get(f"{QWEN_URL}/health", timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except Exception as error:
+        return {"ready": False, "error": str(error)}
+
+
 def download(url: str, target: Path):
     with requests.get(url, stream=True, timeout=3600) as response:
         response.raise_for_status()
         with target.open("wb") as output:
             for chunk in response.iter_content(1024 * 1024):
                 output.write(chunk)
+
+
+def phase_for_timestamp(timestamp_ms, config):
+    if timestamp_ms < int(config.get("auto_end_ms", 15_000)):
+        return "auto"
+    if timestamp_ms >= int(config.get("endgame_start_ms", 135_000)):
+        return "endgame"
+    return "teleop"
+
+
+def sample_qwen_clip(video_path, start_ms, end_ms, count):
+    capture = cv2.VideoCapture(str(video_path))
+    timestamps = [round(start_ms + (end_ms - start_ms) * index / (count - 1)) for index in range(count)]
+    frames = []
+    for timestamp_ms in timestamps:
+        capture.set(cv2.CAP_PROP_POS_MSEC, timestamp_ms)
+        ok, frame = capture.read()
+        if not ok:
+            continue
+        if frame.shape[1] > QWEN_JPEG_WIDTH:
+            scale = QWEN_JPEG_WIDTH / frame.shape[1]
+            frame = cv2.resize(frame, (QWEN_JPEG_WIDTH, round(frame.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+        encoded, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        if encoded:
+            frames.append({"timestamp_ms": timestamp_ms, "jpeg_base64": base64.b64encode(jpeg).decode("ascii")})
+    capture.release()
+    return frames
+
+
+def qwen_event_to_observation(event, view, config, clip, response):
+    event_type = event.get("type")
+    observation_type = {
+        "fuel_scored": "fuel_scored",
+        "climb_attempt": "climb_attempt",
+        "climb_success": "climb_success",
+        "disabled_or_immobile": "disabled",
+    }.get(event_type)
+    if not observation_type:
+        return None
+    timestamp_ms = int(event["timestamp_ms"]) + int(view.get("sync_offset_ms") or 0)
+    value = {"count": 1} if observation_type == "fuel_scored" else {}
+    if observation_type.startswith("climb"):
+        value["level"] = event.get("climb_level") or config.get("default_climb_level")
+    return {
+        "view_id": view["id"], "team_key": None,
+        "alliance": event.get("alliance") if event.get("alliance") in {"red", "blue"} else None,
+        "phase": phase_for_timestamp(timestamp_ms, config),
+        "observation_type": observation_type, "value": value,
+        "started_ms": timestamp_ms, "ended_ms": timestamp_ms,
+        "confidence": float(event.get("confidence") or 0),
+        "source": "qwen3_vl", "review_status": "unreviewed",
+        "evidence": {
+            "source": "qwen3_vl", "model": response.get("model", QWEN_MODEL),
+            "revision": response.get("revision", QWEN_REVISION),
+            "dtype": response.get("dtype", "bfloat16"),
+            "box_0_1000": event.get("box_0_1000"),
+            "explanation": event.get("evidence"),
+            "clip_start_ms": clip[0], "clip_end_ms": clip[1],
+            "latency_ms": response.get("latency_ms"),
+            "review_required": True,
+        },
+    }
+
+
+def analyze_view_with_qwen(view, config, video_path, match_key=None):
+    if not QWEN_URL:
+        if QWEN_REQUIRED:
+            raise RuntimeError("VISION_QWEN_URL is required but not configured")
+        return [], []
+    capture = cv2.VideoCapture(str(video_path))
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    capture.release()
+    if fps <= 0 or frame_count <= 0:
+        raise RuntimeError(f"Could not read video for Qwen: {video_path}")
+    duration_ms = round(frame_count * 1000 / fps)
+    clip_ms = max(1000, round(float(config.get("qwen_clip_seconds", QWEN_CLIP_SECONDS)) * 1000))
+    frame_count_per_clip = max(
+        2,
+        min(QWEN_MAX_IMAGES, int(config.get("qwen_frames_per_clip", QWEN_FRAMES_PER_CLIP))),
+    )
+    observations = []
+    clips = []
+    start_ms = 0
+    while start_ms < duration_ms:
+        end_ms = min(start_ms + clip_ms, duration_ms)
+        frames = sample_qwen_clip(video_path, start_ms, end_ms, frame_count_per_clip)
+        if len(frames) < 2:
+            start_ms = end_ms
+            continue
+        response = requests.post(
+            f"{QWEN_URL}/analyze",
+            headers={"Authorization": f"Bearer {QWEN_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "match_key": match_key, "view_id": view["id"],
+                "view_label": view.get("label"), "clip_start_ms": start_ms,
+                "clip_end_ms": end_ms, "frames": frames,
+            }, timeout=900,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("result", {})
+        clips.append({
+            "view_id": view["id"], "started_ms": start_ms, "ended_ms": end_ms,
+            "model": payload.get("model", QWEN_MODEL),
+            "revision": payload.get("revision", QWEN_REVISION),
+            "dtype": payload.get("dtype", "bfloat16"),
+            "latency_ms": payload.get("latency_ms"),
+            "clip_quality": result.get("clip_quality"),
+            "event_count": len(result.get("events", [])),
+            "normalized_result": result,
+            "raw_response": payload.get("raw_response", ""),
+        })
+        for event in result.get("events", []):
+            observation = qwen_event_to_observation(event, view, config, (start_ms, end_ms), payload)
+            if observation:
+                observations.append(observation)
+        start_ms = end_ms
+    return observations, clips
 
 
 def field_point(center, homography):
@@ -287,7 +427,8 @@ def attribute_scores(piece_trajectories, robot_tracks, goal_zones, frame_shape, 
             "started_ms": start_t,
             "ended_ms": end_t,
             "confidence": 0.7 if best_track else 0.4,  # lower confidence when no robot track could be matched to the origin
-            "evidence": {"zone": scoring_zone.get("label"), "trajectory_points": len(trajectory)}
+            "source": "classical_cv", "review_status": "unreviewed",
+            "evidence": {"source": "classical_cv", "zone": scoring_zone.get("label"), "trajectory_points": len(trajectory), "review_required": True}
         })
     return observations
 
@@ -372,7 +513,8 @@ def process_view(model, view, config, video_path):
                         "value": {"level": config.get("default_climb_level")},
                         "started_ms": timestamp_ms, "ended_ms": timestamp_ms,
                         "confidence": confidence,
-                        "evidence": {"frame": frame_index, "box": coords, "class_name": class_name}
+                        "source": "yolo", "review_status": "unreviewed",
+                        "evidence": {"source": "yolo", "frame": frame_index, "box": coords, "class_name": class_name, "review_required": True}
                     })
                 # fuel_scored is deliberately not handled here even if legacy
                 # weights still emit it - the classical-CV pipeline below is
@@ -397,8 +539,12 @@ def process_view(model, view, config, video_path):
 
 
 def run_job(model, run):
+    if run.get("qwen_model") and run["qwen_model"] != QWEN_MODEL:
+        raise RuntimeError(f"Run requires Qwen model {run['qwen_model']}, runner serves {QWEN_MODEL}")
+    if run.get("qwen_revision") and run["qwen_revision"] != QWEN_REVISION:
+        raise RuntimeError(f"Run requires Qwen revision {run['qwen_revision']}, runner serves {QWEN_REVISION}")
     api("processing", run_id=run["id"])
-    all_tracks, all_observations = [], []
+    all_tracks, all_observations, all_qwen_clips = [], [], []
     with tempfile.TemporaryDirectory(prefix="spartans-vision-") as directory:
         directory = Path(directory)
         for index, view in enumerate(run.get("views", [])):
@@ -407,9 +553,15 @@ def run_job(model, run):
             path = directory / f"view-{index}.mp4"
             download(view["signed_url"], path)
             tracks, observations = process_view(model, view, run.get("config") or {}, path)
+            qwen_observations, qwen_clips = analyze_view_with_qwen(
+                view, run.get("config") or {}, path,
+                (run.get("vision_matches") or {}).get("match_key"),
+            )
             all_tracks.extend(tracks)
             all_observations.extend(observations)
-    api("complete", run_id=run["id"], tracks=all_tracks, observations=all_observations)
+            all_observations.extend(qwen_observations)
+            all_qwen_clips.extend(qwen_clips)
+    api("complete", run_id=run["id"], tracks=all_tracks, observations=all_observations, qwen_clips=all_qwen_clips)
 
 
 def heartbeat(current_run_id=None, last_error=None):
@@ -418,16 +570,34 @@ def heartbeat(current_run_id=None, last_error=None):
     # Best-effort: a heartbeat failure (network blip, server restart) must
     # never take down the actual processing loop over a status ping.
     try:
-        api("heartbeat", runner_id=RUNNER_ID, model_path=WEIGHTS, current_run_id=current_run_id, last_error=last_error)
+        qwen_status = qwen_health() if QWEN_URL else None
+        api(
+            "heartbeat", runner_id=RUNNER_ID, model_path=WEIGHTS,
+            qwen_model=QWEN_MODEL, qwen_endpoint=QWEN_URL or None,
+            runtime_metrics={"qwen": qwen_status},
+            current_run_id=current_run_id, last_error=last_error,
+        )
     except Exception:
         pass
 
 
 def main():
+    if QWEN_REQUIRED and (not QWEN_URL or not QWEN_TOKEN):
+        raise RuntimeError("VISION_QWEN_URL and VISION_QWEN_TOKEN are required")
     model = YOLO(WEIGHTS)
     last_error = None
     while True:
         heartbeat(last_error=last_error)
+        status = qwen_health()
+        if QWEN_REQUIRED and (
+            not status.get("ready") or status.get("model") != QWEN_MODEL
+            or status.get("revision") != QWEN_REVISION or status.get("dtype") != "bfloat16"
+        ):
+            last_error = f"Qwen service not ready or mismatched: {status}"
+            time.sleep(POLL_SECONDS)
+            continue
+        if last_error and last_error.startswith("Qwen service not ready or mismatched:"):
+            last_error = None
         claimed = api("claim", runner_id=RUNNER_ID).get("run")
         if not claimed:
             time.sleep(POLL_SECONDS)

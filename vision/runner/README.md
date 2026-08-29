@@ -24,11 +24,11 @@ Requires a per-view **field mask** (audience/background exclusion) and
 **goal zone** calibration (where a scored piece's trajectory should end) to
 get useful output - see the upload form on `/scouting/vision`.
 
-This worker complements the offline Qwen3-VL bootstrap in
-`vision/training/bootstrap_annotate.py`. Qwen proposes semantic events for
-human review; this worker provides deterministic per-frame tracks, mobility
-metrics, and piece attribution. Qwen does not replace the tracker or write
-production observations directly.
+This worker calls the authenticated full-BF16 Qwen3-VL-30B-A3B service in
+`vision/qwen/` for bounded semantic clip analysis. It still provides
+deterministic per-frame tracks, mobility metrics, and piece attribution.
+Qwen proposals are stored as unreviewed observations and cannot be released
+into scouting data until a human accepts or corrects them.
 
 Required environment:
 
@@ -37,6 +37,9 @@ VISION_API_URL=https://your-spartans-hub-origin
 VISION_RUNNER_TOKEN=shared-secret
 VISION_RUNNER_ID=vision-runner-gpu-1
 VISION_MODEL_PATH=/models/frc-vision-v1.pt
+VISION_QWEN_URL=http://qwen:8000
+VISION_QWEN_TOKEN=separate-shared-secret
+VISION_QWEN_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct
 ```
 
 Manual install and run (quickest way to test on a machine you already have
@@ -52,19 +55,20 @@ python3 -m venv .venv
 
 ## Deployment (long-running - pick one)
 
-This has to run continuously on a real machine somewhere, not on Cloud Run
+This has to run continuously on the DGX Spark, not on Cloud Run
 (no GPU support there, and this polls for work rather than serving inbound
 requests). No such host is provisioned yet as of this doc - see
 `../../scoutingvision-remaining-work.md`. Three ready-to-use options,
 depending on what hardware ends up hosting this:
 
-- **`Dockerfile`** + **`docker-compose.yml`** - if the host has Docker and
-  the NVIDIA Container Toolkit set up. `cp .env.example .env`, fill it in,
-  `mkdir models` and drop a `.pt` file in it, then `docker compose up -d
-  --build`.
-- **`vision-runner.service`** - a systemd unit for running directly on a
-  bare-metal/VM GPU host without Docker (e.g. a repurposed gaming PC).
-  Install steps are in the file's own header comment.
+- **`Dockerfile`** + **`docker-compose.yml`** - the recommended DGX Spark
+  deployment. It starts both the BF16 Qwen service and dense runner, persists
+  the model cache, and waits for Qwen health before claiming work. `cp
+  .env.example .env`, fill it in, `mkdir models`, add the tracker `.pt`, then
+  run `docker compose up -d --build`.
+- **`vision-runner.service`** + **`../qwen/qwen.service`** - a systemd
+  alternative for running both processes directly on DGX Spark without
+  Docker. Install steps are in the files' header comments.
 
 Either way, `VISION_RUNNER_TOKEN` must be set to the *same* value as the web
 service's `VISION_RUNNER_TOKEN` secret (not yet created in Secret Manager -
@@ -85,7 +89,7 @@ color alone. Queue configuration may provide an audited `identity_map` from
 review instead of guessed.
 
 Every poll iteration - whether or not it claims a job - also sends a
-`heartbeat` (runner id, model path, current run, last error) so the event
+`heartbeat` (runner id, tracker path, Qwen identity/health, current run, last error) so the event
 dashboard can show this runner as online/offline instead of that only being
 inferable from "jobs stopped moving." A heartbeat failure never blocks or
 crashes the actual processing loop.

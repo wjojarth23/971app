@@ -32,7 +32,9 @@ see **Model acceptance gates** below.
 The SvelteKit service queues metadata only. A separate GPU-capable runner in
 `vision/runner/` claims jobs with `VISION_RUNNER_TOKEN`, receives one-hour
 signed URLs, runs custom versioned Ultralytics YOLO weights, and submits robot
-tracks and action observations. The runner must always complete or fail a
+tracks and action observations. It also calls the authenticated full-BF16
+Qwen3-VL-30B-A3B service in `vision/qwen/` with bounded frame sequences. The
+runner must always complete or fail a
 claimed run, following the same terminal-state invariant used by AutoCAM. It
 also heartbeats every poll iteration so a fleet dashboard can show runner
 online/offline status directly, instead of that only being inferable from
@@ -82,12 +84,15 @@ detection's bumper-region color histogram is similar enough to the lost
 track's (position alone is ambiguous with multiple same-alliance robots
 nearby).
 
-`vision/training/bootstrap_annotate.py` uses 4-bit Qwen3-VL-4B-Instruct to
-analyze bounded, timestamped clips from one or more camera views and propose
+The authenticated service in `vision/qwen/` loads the full BF16
+Qwen3-VL-30B-A3B-Instruct MoE checkpoint once on DGX Spark. The runner sends
+bounded, timestamped clips from one or more camera views and receives
 grounded robot, climb, and immobility evidence (fuel proposals, if any, are
 purely a labeling hint - production fuel detection is the classical pipeline
-above, not Qwen). Every proposal and raw response remains explicitly
-unreviewed until corrected by a human. Once reviewed seed detector weights
+above, not Qwen). Every proposal remains explicitly unreviewed until accepted
+or corrected by a human, and the release API rejects unreviewed observations.
+The offline `vision/training/bootstrap_annotate.py` uses the same full model
+contract for dataset work. Once reviewed seed detector weights
 exist, `bootstrap_yolo_annotate.py` supplies a faster dense pseudo-labeling
 pass. Qwen performs semantic event reasoning; YOLO/ByteTrack remains
 responsible for repeatable boxes and mobility tracks. Neither model output
@@ -138,9 +143,13 @@ VISION_API_URL=https://spartanshub.example
 VISION_RUNNER_TOKEN=<same secret>
 VISION_RUNNER_ID=vision-runner-gpu-1
 VISION_MODEL_PATH=/models/frc-vision-v1.pt
+VISION_QWEN_URL=http://qwen:8000
+VISION_QWEN_TOKEN=<separate high-entropy internal secret>
+VISION_QWEN_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct
 ```
 
-Run all three `migrations/2026082*_vision_*.sql` files, grant `VISION_RELEASE`
+Run all four Vision migrations including
+`20260829_vision_qwen30b_dgx.sql`, grant `VISION_RELEASE`
 from the admin panel to whoever should be able to release results (basic use
 needs no grant - every approved user already has it), then deploy the worker
 separately. No Vision route or bucket is useful before those steps.
@@ -153,7 +162,11 @@ Before a model version can affect scouting rankings:
 - Report per-class precision, recall, and identity-switch rate.
 - Report trajectory error in meters after calibration.
 - Report alliance fuel absolute error and climb confusion matrix.
+- Run `vision/evaluation/evaluate_qwen.py` for hallucination rate, timestamp
+  MAE, box IoU, fuel error, climb confusion, and multi-camera agreement.
 - Review every critical discrepancy for the initial event.
+- Pin the accepted Qwen Hugging Face revision and record BF16/attention/clip
+  settings with the run.
 - Keep model output advisory by default: nothing writes to `scout_data_events`
   or power rankings on its own. A completed run can be explicitly released
   (`POST api/vision {action: 'release-run'}`) by whoever holds the

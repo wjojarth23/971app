@@ -96,7 +96,7 @@
     {:else}
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Runner</th><th>Status</th><th>Last seen</th><th>Current run</th><th>Model</th><th>Last error</th></tr></thead>
+            <thead><tr><th>Runner</th><th>Status</th><th>Last seen</th><th>Current run</th><th>Tracker</th><th>Qwen</th><th>Qwen latency</th><th>Last error</th></tr></thead>
           <tbody>
             {#each data.runners as runner}
               <tr>
@@ -107,6 +107,8 @@
                 <td class:stale={Date.now() - new Date(runner.last_seen_at).getTime() > RUNNER_STALE_WARN_MS}>{formatAge(runner.last_seen_at)}</td>
                 <td>{runner.current_run_id ? runner.current_run_id.slice(0, 8) : '—'}</td>
                 <td class="mono">{runner.model_path || '—'}</td>
+                <td class="mono">{runner.qwen_model || '—'}</td>
+                <td>{runner.runtime_metrics?.qwen?.last_latency_ms ? `${runner.runtime_metrics.qwen.last_latency_ms} ms` : '—'}</td>
                 <td class="error-cell">{runner.last_error || '—'}</td>
               </tr>
             {/each}

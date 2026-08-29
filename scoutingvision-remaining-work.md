@@ -1,12 +1,36 @@
 # Vision Scouting — what's left before this actually works
 
-Everything in `scoutingvision.md` is built, merged, and the schema is live
-in production. This doc tracks the gap between "the code and tables exist"
-and "this produces a trustworthy scouting number for a real match." Updated
+The original PR #84 Vision surface and its first three migrations exist; the
+new Qwen/DGX changes and fourth migration remain local and undeployed. This
+doc tracks the gap between "the code exists" and "this produces a trustworthy
+scouting number for a real match." Updated
 after doing as much of the groundwork as is actually possible from a repo
 checkout alone — the remaining items genuinely need a human with GCP
 console access, physical hardware, or real match footage; nothing left here
 is something more code could resolve on its own.
+
+## DGX Spark / Qwen3-VL-30B addition
+
+The repository now has a concrete DGX Spark stack for the full BF16
+`Qwen/Qwen3-VL-30B-A3B-Instruct` checkpoint:
+
+- `vision/qwen/` is an authenticated, single-concurrency inference service
+  using the MoE-specific Transformers class and BF16 weights with no
+  BitsAndBytes quantization.
+- `vision/runner/docker-compose.yml` starts Qwen and the dense tracking
+  runner together from configurable NVIDIA NGC PyTorch ARM64/CUDA images,
+  persists the Hugging Face cache, and blocks the runner until Qwen is ready.
+- The dense runner sends bounded timestamped JPEG sequences, stores Qwen
+  source/model/latency evidence, and reports Qwen health on its fleet
+  heartbeat.
+- `20260829_vision_qwen30b_dgx.sql` makes every model observation explicitly
+  reviewable. The release bridge now excludes anything not human-accepted or
+  corrected.
+
+Still requiring operator action: apply that migration, provision the DGX
+Spark, replace both example secrets, pin `VISION_QWEN_REVISION`, authenticate
+Docker to NVIDIA NGC, download the 60+ GB model cache, and run a real-video
+acceptance pass. Code cannot truthfully certify hardware it cannot access.
 
 ## 1. Done in this pass
 
@@ -21,14 +45,14 @@ is something more code could resolve on its own.
   unrelated project, `geminiapi-469220` — not something to run blind
   against), then move the one line from the comment into `--set-secrets`.
 - **`vision/runner/.env.example`** — a ready-to-copy local config template
-  (all four required vars, one generated example token for illustration
+  (runner, Qwen, memory-bound, and model-revision vars; one generated example token for illustration
   only — not a real secret, must be regenerated with `openssl rand -hex 32`).
 - **A real deployment target for the runner now exists**, three ways,
   because it wasn't clear which hardware this will end up on:
   - `vision/runner/Dockerfile` + `vision/runner/docker-compose.yml`, for a
     host with Docker + the NVIDIA Container Toolkit.
-  - `vision/runner/vision-runner.service`, a systemd unit for running
-    directly on a bare-metal/VM GPU host (e.g. a repurposed gaming PC).
+  - `vision/runner/vision-runner.service`, a fallback systemd unit for
+    running the dense tracker directly on the DGX host.
   - Manual `venv` + `python vision_runner.py`, already documented, now with
     an actual `.env.example` to copy instead of hand-assembling four vars.
   None of these are *running* anywhere yet — there's still no actual
@@ -73,17 +97,18 @@ value into whichever host ends up running the runner. Until this happens,
 `api/vision-runner` rejects every request — this is still the single
 hardest blocker, just now fully spelled out with the exact commands.
 
-### Provision an actual runner host
+### Provision the DGX Spark runner host
 
-The Dockerfile/compose file/systemd unit all exist now, but none of them
-are running anywhere — there's no GPU machine actually provisioned and
-network-reachable from this app yet. This is a hardware/ops decision
-(buy/repurpose a machine, decide who's responsible for keeping it on),
-not something further code changes here can resolve.
+The Docker/Compose and systemd units exist, but they are not running on the
+planned DGX Spark yet. Install current DGX OS updates, NVIDIA Container
+Toolkit/NGC credentials, copy the runner `.env`, pin the model revision, and
+decide who owns uptime and model-cache maintenance.
 
-### Real training data and a real trained model
+### Real training data and a real YOLO tracker model
 
-`create_placeholder_model.py` proves the plumbing works; it does not
+The Qwen checkpoint is pretrained and does not need local training to begin
+reviewed trials. `create_placeholder_model.py` proves the dense tracker
+plumbing works; it does not
 produce anything that detects a real robot or game piece. Getting a real
 model still needs, in order: actual match recordings from a fixed elevated
 camera (no camera is procured yet either), frame extraction + manual
@@ -119,11 +144,11 @@ trust-based process, or add an actual `approved_for_release` check.
 
 ## Suggested order (unchanged, still the right sequence)
 
-1. Run the two `gcloud` commands above — the fastest remaining unblock.
-2. Stand up *any* runner host (a laptop is fine for this step) using
-   whichever of the three new deployment options fits, point it at the
-   placeholder model, and confirm a full `queue-run` → `claim` → `complete`
-   cycle actually happens end to end against the real deployed app.
+1. Apply `20260829_vision_qwen30b_dgx.sql` and run the two `gcloud` commands
+   above.
+2. Stand up the DGX Spark Compose stack, pin the Qwen revision, point the
+   dense runner at the placeholder model, and confirm a full `queue-run` →
+   `claim` → Qwen analysis → `complete` cycle against the deployed app.
 3. Get one real recording (any camera, even a phone) through the pipeline
    by hand to see what the hybrid detection actually produces before
    investing in labeling/training.

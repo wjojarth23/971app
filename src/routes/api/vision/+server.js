@@ -114,18 +114,20 @@ export async function GET({ request, url }) {
     views.push({ ...view, signed_url: signed?.signedUrl || null });
   }
   const runId = url.searchParams.get('run_id') || runs?.[0]?.id;
-  let tracks = [], observations = [], discrepancies = [];
+  let tracks = [], observations = [], discrepancies = [], qwenClips = [];
   if (runId) {
     const results = await Promise.all([
       client.from('vision_tracks').select('*').eq('vision_run_id', runId),
       client.from('vision_observations').select('*').eq('vision_run_id', runId).order('started_ms'),
-      client.from('vision_discrepancies').select('*').eq('vision_run_id', runId).order('created_at')
+      client.from('vision_discrepancies').select('*').eq('vision_run_id', runId).order('created_at'),
+      client.from('vision_qwen_clips').select('id,view_id,started_ms,ended_ms,model,revision,dtype,latency_ms,clip_quality,event_count,normalized_result,created_at').eq('vision_run_id', runId).order('started_ms')
     ]);
     tracks = results[0].data || [];
     observations = results[1].data || [];
     discrepancies = results[2].data || [];
+    qwenClips = results[3].data || [];
   }
-  return json({ success: true, data: { match, views: views || [], runs: runs || [], tracks, observations, discrepancies } });
+  return json({ success: true, data: { match, views: views || [], runs: runs || [], tracks, observations, discrepancies, qwenClips } });
 }
 
 export async function POST({ request }) {
@@ -164,7 +166,16 @@ export async function POST({ request }) {
     if (!body.vision_match_id || !body.model_name || !body.model_version) return json({ error: 'vision_match_id and model identity required' }, { status: 400 });
     const { data: views } = await client.from('vision_views').select('id').eq('vision_match_id', body.vision_match_id);
     if (!views?.length) return json({ error: 'Upload at least one camera view first' }, { status: 400 });
-    const { data, error } = await client.from('vision_runs').insert({ vision_match_id: body.vision_match_id, model_name: body.model_name, model_version: body.model_version, config: body.config || {}, created_by: actor.id }).select('*').single();
+    const { data, error } = await client.from('vision_runs').insert({
+      vision_match_id: body.vision_match_id,
+      model_name: body.model_name,
+      model_version: body.model_version,
+      qwen_model: body.qwen_model || 'Qwen/Qwen3-VL-30B-A3B-Instruct',
+      qwen_revision: body.qwen_revision || '9c4b90e1e4ba969fd3b5378b57d966d725f1b86c',
+      qwen_dtype: 'bfloat16',
+      config: body.config || {},
+      created_by: actor.id
+    }).select('*').single();
     if (error) return json({ error: error.message }, { status: 400 });
     await client.from('vision_matches').update({ status: 'queued', updated_at: new Date().toISOString() }).eq('id', body.vision_match_id);
     return json({ success: true, data });
@@ -197,6 +208,22 @@ export async function POST({ request }) {
     if (error) return json({ error: error.message }, { status: 400 });
     return json({ success: true, data });
   }
+  if (action === 'review-observation') {
+    const allowed = ['accepted','corrected','rejected','unobservable'];
+    if (!body.id || !allowed.includes(body.status)) return json({ error: 'Valid observation id and review status required' }, { status: 400 });
+    const updates = {
+      review_status: body.status,
+      reviewer_id: actor.id,
+      reviewed_at: new Date().toISOString()
+    };
+    if (body.status === 'corrected') {
+      if (body.value && typeof body.value === 'object') updates.value = body.value;
+      if (body.team_key !== undefined) updates.team_key = body.team_key || null;
+    }
+    const { data, error } = await client.from('vision_observations').update(updates).eq('id', body.id).select('*').single();
+    if (error) return json({ error: error.message }, { status: 400 });
+    return json({ success: true, data });
+  }
 
   // Reviewed-result consumer: the one path that lets a project owner turn
   // advisory vision output into real scouting data. Every other action
@@ -224,13 +251,14 @@ export async function POST({ request }) {
       db.from('vision_tracks').select('*').eq('vision_run_id', run.id),
       db.from('vision_observations').select('*').eq('vision_run_id', run.id)
     ]);
-    const summary = summarizeVision(observations || [], tracks || []);
+    const reviewedObservations = (observations || []).filter((observation) => ['accepted', 'corrected'].includes(observation.review_status));
+    const summary = summarizeVision(reviewedObservations, tracks || []);
 
     const nowIso = new Date().toISOString();
     const rows = [];
     for (const [teamKey, team] of Object.entries(summary.teams)) {
       if (!teamKey) continue; // never release an alliance-only, unattributed result as a specific team's data
-      if (Number.isFinite(team.fuelScored)) {
+      if (team.fuelObservations > 0 && Number.isFinite(team.fuelScored)) {
         rows.push({
           match_key: matchKey, match_number: null, team_key: teamKey, phase: null,
           event_type: 'hub_fuel_override', event_value: String(Math.round(team.fuelScored)),
@@ -246,7 +274,7 @@ export async function POST({ request }) {
       }
     }
     if (!rows.length) {
-      return json({ error: 'No attributable team results to release yet - resolve at least one track/observation team identity first' }, { status: 400 });
+      return json({ error: 'No reviewed, attributable team results to release yet - accept/correct observations and resolve team identity first' }, { status: 400 });
     }
 
     const { data: inserted, error: insertError } = await db.from('scout_data_events').insert(rows).select('id');

@@ -25,8 +25,10 @@
   let fieldMaskText = '';
   let goalZonesText = '';
   let files = [];
-  let modelName = 'frc-vision-yolo';
-  let modelVersion = 'v1';
+  let modelName = 'frc-vision-hybrid';
+  let modelVersion = 'qwen3-vl-30b-a3b-bf16+yolo-v1';
+  let qwenModel = 'Qwen/Qwen3-VL-30B-A3B-Instruct';
+  let qwenRevision = '9c4b90e1e4ba969fd3b5378b57d966d725f1b86c';
   let confidenceFloor = 0.35;
   let hsvLowerText = '20,100,100';
   let hsvUpperText = '35,255,255';
@@ -35,6 +37,8 @@
   let busy = false;
   let reviewNotes = {};
   let trackTeamDraft = {};
+  let observationTeamDraft = {};
+  let observationValueDraft = {};
 
   async function api(path = '', options = {}) {
     const headers = { ...(await getAuthHeader()), ...(options.headers || {}) };
@@ -61,6 +65,10 @@
     selectedId = id;
     detail = await api(`?id=${encodeURIComponent(id)}`);
     for (const track of detail.tracks || []) trackTeamDraft[track.id] = track.team_key || '';
+    for (const observation of detail.observations || []) {
+      observationTeamDraft[observation.id] = observation.team_key || '';
+      observationValueDraft[observation.id] = JSON.stringify(observation.value || {});
+    }
   }
 
   async function post(body) {
@@ -133,6 +141,7 @@
     try {
       await post({
         action: 'queue-run', vision_match_id: selectedId, model_name: modelName, model_version: modelVersion,
+        qwen_model: qwenModel, qwen_revision: qwenRevision,
         config: {
           confidence_floor: Number(confidenceFloor),
           // Hybrid classical-CV game-piece detection tuning (see
@@ -175,6 +184,32 @@
   async function saveTrackIdentity(track) {
     await post({ action: 'update-track', id: track.id, team_key: trackTeamDraft[track.id] });
     await loadDetail(selectedId);
+  }
+
+  async function reviewObservation(observation, status) {
+    busy = true;
+    error = '';
+    try {
+      await post({ action: 'review-observation', id: observation.id, status });
+      await loadDetail(selectedId);
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
+  }
+
+  async function correctObservation(observation) {
+    let value;
+    try { value = JSON.parse(observationValueDraft[observation.id] || '{}'); }
+    catch { error = 'Corrected observation value must be valid JSON.'; return; }
+    busy = true;
+    error = '';
+    try {
+      await post({
+        action: 'review-observation', id: observation.id, status: 'corrected',
+        team_key: observationTeamDraft[observation.id], value
+      });
+      await loadDetail(selectedId);
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
   }
 
   onMount(async () => {
@@ -246,6 +281,8 @@
         <div class="run-controls">
           <label>Model name <input class="form-input" bind:value={modelName} /></label>
           <label>Version <input class="form-input" bind:value={modelVersion} /></label>
+          <label>Qwen model <input class="form-input" bind:value={qwenModel} /></label>
+          <label>Qwen revision <input class="form-input" bind:value={qwenRevision} /></label>
           <label>Confidence <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={confidenceFloor} /></label>
           <button class="btn btn-primary btn-sm" on:click={queueRun} disabled={busy || !detail.views.length}>Queue run</button>
         </div>
@@ -279,7 +316,11 @@
       {/if}
 
       {#if detail.observations.length}
-        <section class="surface-card section"><h2>Detected actions</h2><div class="observation-list">{#each detail.observations as observation}<div><b>{observation.observation_type.replaceAll('_', ' ')}</b><span>{observation.team_key || observation.alliance || 'unattributed'} · {(observation.started_ms / 1000).toFixed(1)}s · {Math.round(observation.confidence * 100)}%</span><code>{JSON.stringify(observation.value)}</code></div>{/each}</div></section>
+        <section class="surface-card section"><h2>Detected actions</h2><div class="observation-list">{#each detail.observations as observation}<div><b>{observation.observation_type.replaceAll('_', ' ')}</b><span>{observation.team_key || observation.alliance || 'unattributed'} · {(observation.started_ms / 1000).toFixed(1)}s · {Math.round(observation.confidence * 100)}% · {observation.source || 'legacy'}</span><code>{JSON.stringify(observation.value)}</code><span class={`observation-review ${observation.review_status || 'unreviewed'}`}>{observation.review_status || 'unreviewed'}</span>{#if !['accepted','corrected','rejected','unobservable'].includes(observation.review_status)}<div class="observation-correction"><input class="form-input" placeholder="frc971" bind:value={observationTeamDraft[observation.id]} /><input class="form-input" aria-label="Corrected observation JSON" bind:value={observationValueDraft[observation.id]} /><button class="btn btn-sm" on:click={() => correctObservation(observation)} disabled={busy}>Save correction</button></div><div class="review-actions"><button class="btn btn-sm" on:click={() => reviewObservation(observation, 'accepted')} disabled={busy}>Accept</button><button class="btn btn-sm" on:click={() => reviewObservation(observation, 'rejected')} disabled={busy}>Reject</button><button class="btn btn-sm" on:click={() => reviewObservation(observation, 'unobservable')} disabled={busy}>Unobservable</button></div>{/if}</div>{/each}</div></section>
+      {/if}
+
+      {#if detail.qwenClips?.length}
+        <section class="surface-card section"><h2>Qwen clip audit</h2><div class="qwen-clip-list">{#each detail.qwenClips as clip}<div><b>{(clip.started_ms / 1000).toFixed(1)}–{(clip.ended_ms / 1000).toFixed(1)}s</b><span>{clip.clip_quality || 'unknown quality'} · {clip.event_count} proposals · {clip.latency_ms ?? '—'} ms</span><small>{clip.model}@{clip.revision?.slice(0, 8)} · {clip.dtype}</small>{#if clip.normalized_result?.review_notes}<p>{clip.normalized_result.review_notes}</p>{/if}</div>{/each}</div></section>
       {/if}
 
       <section class="surface-card section">
@@ -297,6 +338,9 @@
   .vision-layout { display:grid; grid-template-columns:18rem minmax(0,1fr); gap:var(--gap-4); }
   .sidebar,.section { padding:var(--space-4); }
   .create-form,.match-list,.vision-main,.view-list,.run-list,.observation-list,.flag-list { display:grid; gap:var(--space-2); }
+  .qwen-clip-list { display:grid; gap:var(--space-2); }
+  .qwen-clip-list > div { display:grid; grid-template-columns:auto 1fr auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); }
+  .qwen-clip-list p { grid-column:1/-1; margin:0; color:var(--text-muted); }
   .match-list button { display:flex; justify-content:space-between; align-items:center; text-align:left; border:1px solid var(--border); border-radius:var(--radius-md); padding:var(--space-2); background:transparent; color:var(--text); cursor:pointer; }
   .match-list button.active { border-color:var(--brand-primary,#d9a413); background:var(--surface-2); }
   .match-list span,.view-list span { display:grid; }
@@ -316,12 +360,15 @@
   .released-tag { color:var(--brand-gold-base,#d9a413); font-style:normal; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
   .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
   .identity-editor { display:flex; gap:var(--gap-1); }
-  .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); }
+  .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); align-items:center; }
+  .observation-review { font-size:.7rem; text-transform:uppercase; color:var(--text-muted); }
+  .observation-review.accepted,.observation-review.corrected { color:#16a34a; }
+  .observation-correction { grid-column:1/-1; display:grid; grid-template-columns:minmax(7rem,.4fr) minmax(12rem,1fr) auto; gap:var(--gap-2); }
   .flag-list article { border:1px solid var(--border); border-left:4px solid var(--brand-gold-base,#d9a413); border-radius:var(--radius-md); padding:var(--space-3); }
   .flag-list article.resolved { opacity:.65; }
   .flag-list header,.values,.review-actions { display:flex; flex-wrap:wrap; justify-content:space-between; gap:var(--gap-2); }
   .severity { text-transform:uppercase; font-size:.7rem; } .severity.critical { color:var(--red,#c33); }
   .values { justify-content:flex-start; color:var(--text-muted); margin-bottom:var(--space-2); }
   .review-actions { justify-content:flex-start; margin-top:var(--space-2); }
-  @media (max-width:900px) { .vision-layout { grid-template-columns:1fr; } .run-controls,.upload-grid { grid-template-columns:1fr; } }
+  @media (max-width:900px) { .vision-layout { grid-template-columns:1fr; } .run-controls,.upload-grid,.observation-correction { grid-template-columns:1fr; } .observation-list > div { grid-template-columns:1fr; } }
 </style>

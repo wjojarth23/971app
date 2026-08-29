@@ -4,33 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import torch
 from PIL import Image
-from transformers import AutoProcessor, BitsAndBytesConfig, Qwen3VLForConditionalGeneration
+from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
-DEFAULT_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
-SYSTEM_PROMPT = """You are assisting human reviewers with FRC match-video annotation.
-Never invent an event hidden by blur or occlusion. Return only valid JSON matching the
-requested schema. Coordinates use [x1,y1,x2,y2] normalized to 0..1000. All output is
-provisional and will be reviewed by a human."""
-TASK_PROMPT = """Analyze this short chronological sequence of timestamped frames.
-Identify only clearly visible evidence for:
-- robots: alliance color red/blue/unknown and bounding box
-- fuel_scored: a game piece visibly entering a scoring target, with alliance if clear
-- climb_attempt and climb_success, with alliance and level if clear
-- disabled_or_immobile robots
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "qwen"))
+from qwen_contract import SYSTEM_PROMPT, TASK_PROMPT, normalize_result, parse_json_response
 
-Do not infer a score merely because a robot shoots. Do not count the same event twice
-across adjacent frames. Return exactly this JSON shape:
-{"events":[{"type":"robot|fuel_scored|climb_attempt|climb_success|disabled_or_immobile",
-"timestamp_ms":0,"alliance":"red|blue|unknown","box":[0,0,0,0],
-"confidence":0.0,"evidence":"brief visible reason"}],
-"clip_quality":"good|limited|unusable","review_notes":"brief text"}"""
+DEFAULT_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+DEFAULT_REVISION = "9c4b90e1e4ba969fd3b5378b57d966d725f1b86c"
 
 
 def parse_args():
@@ -38,12 +25,13 @@ def parse_args():
     parser.add_argument("videos", nargs="+", help="One or more synchronized camera recordings")
     parser.add_argument("--output", required=True, help="Output review-manifest path")
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--revision", default=DEFAULT_REVISION)
     parser.add_argument("--match-key")
     parser.add_argument("--view-names", nargs="*", help="Optional camera name for each video")
     parser.add_argument("--clip-seconds", type=float, default=5)
     parser.add_argument("--frames-per-clip", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=900)
-    parser.add_argument("--no-4bit", action="store_true", help="Disable 4-bit loading")
+    parser.add_argument("--attention", default="sdpa", choices=["sdpa", "flash_attention_2", "eager"])
     parser.add_argument("--start-seconds", type=float, default=0)
     parser.add_argument("--end-seconds", type=float)
     args = parser.parse_args()
@@ -54,19 +42,14 @@ def parse_args():
     return args
 
 
-def load_model(model_name: str, use_4bit: bool):
-    options = {"device_map": "auto", "dtype": torch.float16}
-    if use_4bit:
-        if not torch.cuda.is_available():
-            raise SystemExit("4-bit Qwen inference requires CUDA; use --no-4bit for CPU/MPS")
-        options["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
-    model = Qwen3VLForConditionalGeneration.from_pretrained(model_name, **options).eval()
-    processor = AutoProcessor.from_pretrained(model_name)
+def load_model(model_name: str, revision: str, attention: str):
+    if not torch.cuda.is_available():
+        raise SystemExit("Full BF16 Qwen3-VL-30B inference requires CUDA")
+    model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+        model_name, device_map="auto", torch_dtype=torch.bfloat16,
+        revision=revision, attn_implementation=attention, low_cpu_mem_usage=True,
+    ).eval()
+    processor = AutoProcessor.from_pretrained(model_name, revision=revision)
     return model, processor
 
 
@@ -93,57 +76,6 @@ def clip_frames(path: Path, start_s: float, end_s: float, count: int):
         output.append((round(timestamp * 1000), Image.fromarray(rgb)))
     capture.release()
     return output
-
-
-def parse_json_response(text: str):
-    stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I | re.S)
-    try:
-        return json.loads(stripped), None
-    except json.JSONDecodeError as error:
-        match = re.search(r"\{.*\}", stripped, flags=re.S)
-        if match:
-            try:
-                return json.loads(match.group()), None
-            except json.JSONDecodeError:
-                pass
-        return None, f"Invalid model JSON: {error}"
-
-
-def normalize_result(parsed, clip_start_ms: int, clip_end_ms: int):
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("events"), list):
-        return None, "Response lacks an events array"
-    cleaned = []
-    allowed_types = {"robot", "fuel_scored", "climb_attempt", "climb_success", "disabled_or_immobile"}
-    for event in parsed["events"]:
-        if not isinstance(event, dict) or event.get("type") not in allowed_types:
-            continue
-        try:
-            timestamp = int(event.get("timestamp_ms"))
-            confidence = max(0.0, min(1.0, float(event.get("confidence", 0))))
-        except (TypeError, ValueError):
-            continue
-        box = event.get("box")
-        if not isinstance(box, list) or len(box) != 4:
-            box = None
-        else:
-            try:
-                box = [max(0, min(1000, round(float(value)))) for value in box]
-            except (TypeError, ValueError):
-                box = None
-        cleaned.append({
-            "type": event["type"],
-            "timestamp_ms": max(clip_start_ms, min(clip_end_ms, timestamp)),
-            "alliance": event.get("alliance") if event.get("alliance") in {"red", "blue", "unknown"} else "unknown",
-            "box_0_1000": box,
-            "confidence": confidence,
-            "evidence": str(event.get("evidence", ""))[:500],
-            "review_status": "unreviewed",
-        })
-    return {
-        "events": cleaned,
-        "clip_quality": parsed.get("clip_quality", "limited"),
-        "review_notes": str(parsed.get("review_notes", ""))[:1000],
-    }, None
 
 
 def analyze_clip(model, processor, frames, max_new_tokens: int):
@@ -175,7 +107,7 @@ def main():
         if not video.is_file():
             raise SystemExit(f"Missing video: {video}")
     views = args.view_names or [video.stem for video in videos]
-    model, processor = load_model(args.model, not args.no_4bit)
+    model, processor = load_model(args.model, args.revision, args.attention)
     clips = []
 
     for video, view_name in zip(videos, views):
@@ -204,8 +136,8 @@ def main():
         "format_version": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "match_key": args.match_key,
-        "model": args.model,
-        "quantization": "4bit-nf4" if not args.no_4bit else "none",
+        "model": args.model, "revision": args.revision,
+        "dtype": "bfloat16", "quantization": "none", "attention": args.attention,
         "policy": {"human_review_required": True, "approved_as_ground_truth": False},
         "clips": clips,
     }

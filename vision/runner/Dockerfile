@@ -5,19 +5,19 @@
 # (../../Dockerfile) - Cloud Run has no GPU support and this needs to run
 # continuously, polling for work, not respond to inbound HTTP requests. Build
 # and run this on a real machine/VM with an NVIDIA GPU and the NVIDIA
-# Container Toolkit installed (see ../../scoutingvision-remaining-work.md -
-# no such host exists yet as of this Dockerfile; it makes deployment
-# possible, it doesn't deploy anything by itself).
+# Container Toolkit installed (see ../../scoutingvision-remaining-work.md).
+# The deployment target is the planned DGX Spark; this image does not deploy
+# or provision that host by itself.
 #
 # Build:  docker build -t vision-runner -f vision/runner/Dockerfile vision/runner
 # Run:    docker run --gpus all --env-file vision/runner/.env \
 #           -v /path/to/models:/models:ro vision-runner
 
-FROM python:3.11-slim
+ARG NVIDIA_PYTORCH_IMAGE=nvcr.io/nvidia/pytorch:26.07-py3
+FROM ${NVIDIA_PYTORCH_IMAGE}
 
-# opencv-python-headless still needs a couple of shared libs at runtime that
-# python:slim doesn't ship (no X11/GUI libs on purpose - "headless" is the
-# whole point, but libgl1/libglib2.0 are still linked against even so).
+# opencv-python-headless still needs these shared libraries at runtime. No
+# X11/GUI stack is installed; the runner remains headless.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY vision_runner.py .
 

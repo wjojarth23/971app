@@ -1,7 +1,7 @@
 # Scouting Vision — implementation reference
 
-A post-match computer-vision pipeline that watches match video, detects
-robot positions and scoring events with a custom YOLO model, and
+A post-match computer-vision pipeline that watches match video, combines
+full-BF16 Qwen3-VL semantic review with deterministic YOLO/classical CV, and
 cross-checks the result against The Blue Alliance's official match
 breakdown. It's **Vision Scouting** in the Competition nav folder, open to
 every approved team member — same as Pit/Data/Note Scouting, no special
@@ -27,10 +27,12 @@ the code and what does it do."
    config (confidence floor, optional `identity_map`).
 3. A separate GPU worker (`vision/runner/vision_runner.py`) polls
    `api/vision-runner`, claims the run, downloads each view via a signed URL,
-   runs YOLO detection + tracking, and reports back `vision_tracks`
+   runs YOLO detection + tracking, sends bounded frame sequences to the
+   authenticated DGX Spark Qwen service, and reports back `vision_tracks`
    (per-robot trajectories) and `vision_observations` (fuel/climb/mobility
    events) to `complete`.
-4. The server fuses multi-camera observations of the same event
+4. The server keeps deterministic and Qwen summaries separate, flags
+   material Qwen-vs-pipeline differences, fuses multi-camera observations
    (`fuseObservations`), summarizes them per team/alliance
    (`summarizeVision`), fetches the official TBA match breakdown
    (`fetchTbaMatchReference`), and diffs the two (`reconcileWithReference`).
@@ -42,7 +44,7 @@ the code and what does it do."
 
 ## Database
 
-Three SQL files, none yet applied to production (see **Setup checklist**
+Four SQL files, with the Qwen/DGX migration still requiring deployment (see **Setup checklist**
 below).
 
 ### `migrations/20260828_vision_system.sql`
@@ -105,6 +107,14 @@ covered by the table's existing policy from the first migration):
   polygon}`; where a scored game piece's trajectory is expected to end. See
   **Hybrid game-piece detection** under the runner section below.
 
+### `migrations/20260829_vision_qwen30b_dgx.sql`
+
+Adds immutable Qwen model identity to runs, Qwen health/runtime fields to
+runner heartbeats, mandatory observation review state/reviewer timestamps,
+and `vision_qwen_clips`. The clip table retains normalized and raw output even
+when Qwen proposes zero events, so absence remains auditable. Only accepted
+or corrected observations are eligible for release.
+
 ## Backend
 
 ### Analytics engine — `src/lib/visionAnalytics.js`
@@ -155,7 +165,7 @@ below, which adds its own explicit `VISION_RELEASE` check.
 - `GET` (no `id`): lists all `vision_matches` with view/run counts.
 - `GET ?id=`: full detail for one match — views (with freshly
   signed 15-minute playback URLs), runs, and (for the latest or a specified
-  `run_id`) tracks/observations/discrepancies.
+  `run_id`) tracks/observations/discrepancies/Qwen clip audit records.
 - `GET ?dashboard=<event_key>`: event-level rollup — matches
   total/complete, run counts by status (+ how many are released), open vs.
   resolved discrepancy counts (with an `open_critical` breakout), the
@@ -172,6 +182,8 @@ below, which adds its own explicit `VISION_RELEASE` check.
     stamping reviewer id and timestamp.
   - `update-track` / `update-observation` — human correction of a track's
     team identity or an observation's team/value/confidence.
+  - `review-observation` — accepts, corrects, rejects, or marks an individual
+    model observation unobservable. Release ignores unreviewed/rejected rows.
   - `release-run` — the reviewed-result release bridge; see its own section
     below.
 
@@ -185,17 +197,17 @@ credential for the GPU worker (which also needs `service_role` DB access to
 write tracks/observations) - unrelated to whether a human teammate needs a
 permission to use the feature; they don't.
 
-- `heartbeat` — upserts `vision_runners` with the runner's id, current run
-  (if any), model path, and last error. See **Runner fleet visibility**.
+- `heartbeat` — upserts `vision_runners` with the runner's id, current run,
+  tracker path, Qwen identity/endpoint/health metrics, and last error.
 - `claim` — atomically claims the oldest of up to 5 queued runs
   (`update ... eq('status','queued')` as the compare-and-swap so two runners
   can't double-claim), returns the run plus every view with a freshly signed
   1-hour download URL.
 - `processing` — marks a claimed run as started; 409s if it wasn't in
   `claimed` state.
-- `complete` — accepts tracks/observations from the runner, inserts them,
-  runs the same `summarizeVision` → `fetchTbaMatchReference` →
-  `reconcileWithReference` pipeline the analytics module exposes, persists
+- `complete` — accepts tracks/observations plus immutable Qwen clip records,
+  keeps Qwen and deterministic summaries separate, runs TBA reconciliation
+  and Qwen-vs-pipeline reconciliation, persists
   any discrepancies and a reference snapshot, flips the match to `review`
   (if discrepancies exist) or `complete`, and fires a Slack alert (see
   below) for every newly inserted `critical` discrepancy.
@@ -323,9 +335,12 @@ inline). Right pane, once a match is selected:
 3. **Robot tracks & mobility** (once a run has tracks) — editable team-key
    field per track (writes back via `update-track`), plus derived distance /
    P90 speed / turn rate.
-4. **Detected actions** (once a run has observations) — raw event list with
-   type, attribution, timestamp, confidence, and the raw `value` JSON.
-5. **Human review** — the discrepancy queue: metric, severity badge, vision
+4. **Detected actions** (once a run has observations) — source-labelled
+   event list with attribution, timestamp, confidence, editable team/value,
+   and accept/correct/reject/unobservable review controls.
+5. **Qwen clip audit** — model revision, clip interval, quality, proposal
+   count, latency, and review notes, including zero-event clips.
+6. **Human review** — the discrepancy queue: metric, severity badge, vision
    vs. TBA values, a notes field, and one-click resolution buttons for each
    of the 5 outcomes.
 
@@ -393,6 +408,21 @@ during review) contains an entry for it; otherwise `needs_review: true`. No
 model weights are committed to the repo — `VISION_MODEL_PATH` must point to
 a locally trained/versioned `.pt` file (see training pipeline below).
 
+## Qwen service — `vision/qwen/`
+
+`qwen_service.py` loads the full BF16
+`Qwen/Qwen3-VL-30B-A3B-Instruct` MoE checkpoint once on DGX Spark and serves
+authenticated, single-concurrency `/analyze` requests. The runner samples
+2–8 timestamped JPEGs from each bounded clip; Qwen never receives an
+unbounded match context. `qwen_contract.py` parses and clamps its JSON before
+anything reaches Supabase. Qwen and deterministic summaries are compared,
+not blindly added together. Their material fuel/climb disagreements become
+`vision_discrepancies` for human review.
+
+`migrations/20260829_vision_qwen30b_dgx.sql` records Qwen model/runtime
+identity and adds observation review states. Only `accepted` or `corrected`
+observations can cross the `VISION_RELEASE` bridge.
+
 ### Calibration & tuning
 
 - **Field mask** (`vision_views.field_mask`) and **goal zones**
@@ -421,16 +451,16 @@ JSON/numbers. A natural follow-up, not built here.
 no YOLO dependency, so they can be exercised directly against synthetic
 frames and fixtures - stub `sys.modules['ultralytics']` before import (the
 module only touches `ultralytics.YOLO` at call time, not import time) since
-`vision_runner.py` otherwise requires the real package. There's no
-pytest/CI wiring for this yet (no Python tests exist anywhere else in this
-repo either) - this was run ad hoc during development to confirm, concretely:
+`vision_runner.py` otherwise requires the real package. The runner-specific
+checks were run ad hoc during development to confirm, concretely:
 a moving piece stays one trajectory; two simultaneous distant pieces don't
 merge; a non-circular blob is rejected by the circularity filter; a piece
 that never enters a goal zone produces no observation; a piece is attributed
 to the robot closest to its *origin*, not the robot closest to the goal; an
 occluded robot is recovered under its original id when both position and
 appearance match; and a same-position, different-colored robot is correctly
-*not* merged.
+*not* merged. Checked-in standard-library tests separately validate Qwen
+contract normalization and evaluation math without loading model weights.
 
 ## Training pipeline — `vision/training/`
 
@@ -445,11 +475,16 @@ YOLO weights the runner needs:
   bug this guards against: adjacent frames of the same match are nearly
   identical, so a naive random split would let the model "cheat" by
   memorizing rather than generalizing — inflating held-out accuracy).
-- `bootstrap_annotate.py` — uses `Qwen/Qwen3-VL-4B-Instruct` (4-bit
-  quantized) to analyze short (~5s) clips across one or more synced views and
+- `bootstrap_annotate.py` — uses the full BF16
+  `Qwen/Qwen3-VL-30B-A3B-Instruct` MoE checkpoint to analyze short (~5s)
+  clips across one or more synced views and
   propose grounded robot/fuel/climb/immobility events as JSON. Purely a
   labeling accelerant — output is explicitly unreviewed and never becomes a
   training set or production result on its own.
+- `vision/qwen/` — long-lived DGX Spark service for the same checkpoint. It
+  serializes bounded inference, authenticates the runner, persists model
+  cache through Compose, and validates/clamps model JSON before the runner
+  stores it as a review-required observation.
 - `bootstrap_yolo_annotate.py` — once reviewed seed YOLO weights exist, runs
   them densely across new recordings to generate a faster pseudo-labeling
   pass (dense box coverage; Qwen still owns semantic event judgment).
@@ -488,8 +523,16 @@ YOLO weights the runner needs:
   happy path asserting the *exact* rows handed to `scout_data_events.insert`
   - including that an unrecognized climb value is dropped rather than
   written through).
+- `vision/qwen/test_qwen_contract.py` — malformed/model-wrapped JSON parsing,
+  schema normalization, coordinate clamping, and mandatory review state.
+- `vision/evaluation/test_evaluate_qwen.py` — event matching, multi-camera
+  deduplication, climb attempt/success separation, and acceptance metrics.
+- `vision/evaluation/evaluate_qwen.py` — offline acceptance gate for event
+  precision/recall, hallucination rate, timestamp error, box IoU, fuel error,
+  climb confusion, and cross-camera agreement; `--fail-on-thresholds` makes
+  it suitable for DGX validation once reviewed recordings exist.
 
-All four vision test files mock `@supabase/supabase-js`'s `createClient`
+The JavaScript vision route tests mock `@supabase/supabase-js`'s `createClient`
 (and `$lib/server/971bot.js`'s `getSupabase` for the two API-route files)
 with a small reusable chain-object mock: every query-builder method returns
 the same chain, and the chain itself is awaitable, resolving to a per-table
@@ -516,23 +559,22 @@ this establishes one.
 
 ## Setup checklist (nothing here works until these are done)
 
-1. Run **all three** migration files against the real Supabase project, in
-   order — **none are applied yet** as of this doc; production currently has
-   no `vision_*` tables, no `vision-recordings` bucket, no `vision_notify`
-   column, and no field-mask/goal-zone columns:
+1. Run all Vision migrations against Supabase in order. The first three were
+   applied during PR #84 development; the new Qwen/DGX migration still needs
+   deployment:
    - `migrations/20260828_vision_system.sql`
    - `migrations/20260829_vision_notifications_release_fleet.sql`
    - `migrations/20260829_vision_field_mask_goal_zones.sql`
+   - `migrations/20260829_vision_qwen30b_dgx.sql`
 2. No permission grant is needed for basic access - every approved user can
    already use Vision Scouting once the migrations run. Grant `VISION_RELEASE`
    (from the admin panel's Permissions column) only to whoever should be able
    to release results into real scouting data.
-3. Set `VISION_RUNNER_TOKEN` (shared secret) and `TBA_API_KEY` in the web
-   service's environment.
-4. Deploy `vision/runner/vision_runner.py` separately (GPU host), with
-   `VISION_API_URL`, `VISION_RUNNER_TOKEN`, `VISION_RUNNER_ID`, and
-   `VISION_MODEL_PATH` pointing at a locally trained model — no weights are
-   committed to this repo.
+3. Set `VISION_RUNNER_TOKEN` and `TBA_API_KEY` in the web service; generate a
+   separate `VISION_QWEN_TOKEN` for the private runner-to-Qwen boundary.
+4. Deploy `vision/runner/docker-compose.yml` on DGX Spark with the pinned
+   Qwen revision, persistent model cache, and `VISION_MODEL_PATH` pointing at
+   a locally trained tracker model — no weights are committed to this repo.
 
 `/scouting/vision` is a real "Vision Scouting" tab in the Competition nav
 folder (`src/routes/+layout.svelte`, `navigation.json`, `defaultTabs.js`),

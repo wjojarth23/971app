@@ -75,7 +75,7 @@ export function summarizeVision(observations, tracks) {
   const fused = fuseObservations(observations);
   const teams = {};
   const alliances = { red: { fuelScored: 0, climbs: 0 }, blue: { fuelScored: 0, climbs: 0 } };
-  const ensure = (teamKey) => teams[teamKey] ||= { fuelScored: 0, climb: null, observations: 0, mobility: null };
+  const ensure = (teamKey) => teams[teamKey] ||= { fuelScored: 0, fuelObservations: 0, climb: null, observations: 0, mobility: null };
   for (const observation of fused) {
     if (!observation.team_key) {
       const alliance = alliances[observation.alliance];
@@ -85,7 +85,10 @@ export function summarizeVision(observations, tracks) {
     }
     const team = ensure(observation.team_key);
     team.observations += 1;
-    if (observation.observation_type === 'fuel_scored') team.fuelScored += Number(observation.value?.count) || 1;
+    if (observation.observation_type === 'fuel_scored') {
+      team.fuelScored += Number(observation.value?.count) || 1;
+      team.fuelObservations += 1;
+    }
     if (observation.observation_type === 'climb_success') team.climb = observation.value?.level || 'success';
   }
   for (const track of tracks || []) {
@@ -121,6 +124,34 @@ export function reconcileWithReference(summary, reference, thresholds = {}) {
       alliance, metric: 'climb_count', vision_value: visionClimbs, reference_value: Number(referenceClimbs),
       absolute_difference: Math.abs(visionClimbs - Number(referenceClimbs)), percent_difference: null,
       severity: 'critical', reason: 'Vision and the official breakdown disagree on successful climbs.'
+    });
+  }
+  return discrepancies;
+}
+
+export function reconcileVisionSources(primary, qwen, thresholds = {}) {
+  const fuelAbsolute = thresholds.sourceFuelAbsolute ?? 3;
+  const discrepancies = [];
+  for (const alliance of ['red', 'blue']) {
+    const primaryFuel = Number(primary?.alliances?.[alliance]?.fuelScored || 0);
+    const qwenFuel = Number(qwen?.alliances?.[alliance]?.fuelScored || 0);
+    const fuelDifference = Math.abs(primaryFuel - qwenFuel);
+    if (fuelDifference > fuelAbsolute) discrepancies.push({
+      alliance, metric: 'qwen_pipeline_fuel', vision_value: { pipeline: primaryFuel, qwen: qwenFuel },
+      reference_value: null, absolute_difference: fuelDifference,
+      percent_difference: fuelDifference / Math.max(1, primaryFuel),
+      severity: fuelDifference >= Math.max(8, primaryFuel * 0.35) ? 'critical' : 'warning',
+      reason: 'Qwen and the deterministic vision pipeline disagree materially on scored fuel.',
+      evidence: { sources: ['qwen3_vl', 'classical_cv'] }
+    });
+    const primaryClimbs = Number(primary?.alliances?.[alliance]?.climbs || 0);
+    const qwenClimbs = Number(qwen?.alliances?.[alliance]?.climbs || 0);
+    if (primaryClimbs !== qwenClimbs) discrepancies.push({
+      alliance, metric: 'qwen_pipeline_climb_count', vision_value: { pipeline: primaryClimbs, qwen: qwenClimbs },
+      reference_value: null, absolute_difference: Math.abs(primaryClimbs - qwenClimbs),
+      percent_difference: null, severity: 'critical',
+      reason: 'Qwen and the deterministic vision pipeline disagree on completed climbs.',
+      evidence: { sources: ['qwen3_vl', 'yolo'] }
     });
   }
   return discrepancies;

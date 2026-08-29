@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fuseObservations, reconcileWithReference, summarizeVision, trajectoryMetrics } from './visionAnalytics.js';
+import { fuseObservations, reconcileVisionSources, reconcileWithReference, summarizeVision, trajectoryMetrics } from './visionAnalytics.js';
 
 describe('vision analytics', () => {
   it('derives real-coordinate mobility metrics', () => {
@@ -39,5 +39,13 @@ describe('vision analytics', () => {
     const flags = reconcileWithReference(summary, { alliances: { red: { teamKeys: ['frc971'], fuel: 20, climbs: 0 }, blue: { teamKeys: [], fuel: 0, climbs: 0 } } });
     expect(summary.teams.frc971.fuelScored).toBe(8);
     expect(flags.some((flag) => flag.metric === 'fuel')).toBe(true);
+  });
+
+  it('flags material Qwen disagreements without mixing Qwen into pipeline totals', () => {
+    const pipeline = summarizeVision([{ alliance: 'red', observation_type: 'fuel_scored', value: { count: 12 }, started_ms: 1 }], []);
+    const qwen = summarizeVision([{ alliance: 'red', observation_type: 'fuel_scored', value: { count: 4 }, started_ms: 1 }], []);
+    const flags = reconcileVisionSources(pipeline, qwen);
+    expect(flags).toEqual(expect.arrayContaining([expect.objectContaining({ metric: 'qwen_pipeline_fuel', severity: 'critical' })]));
+    expect(pipeline.alliances.red.fuelScored).toBe(12);
   });
 });

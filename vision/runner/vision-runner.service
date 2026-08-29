@@ -17,8 +17,8 @@
 
 [Unit]
 Description=Vision Scouting ML runner (spartanshub)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target qwen.service
+Wants=network-online.target qwen.service
 
 [Service]
 Type=simple
