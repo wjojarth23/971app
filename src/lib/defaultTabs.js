@@ -57,6 +57,7 @@ export function defaultHeaderTabs(navConfig = navigation) {
     label: 'Competition',
     children: [
       { key: 'scouting', label: 'Scouting' },
+      { key: 'matchscout', label: 'Match Scouting' },
       { key: 'powerrankings', label: 'Power Rankings' },
       { key: 'pitscout', label: 'Pit Scouting' },
       { key: 'datascout', label: 'Data Scouting' },

@@ -29,7 +29,9 @@ reading code.
   is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
-- **Scouting**: pit scouting forms, match/data scouting, free-form notes,
+- **Scouting**: pit scouting forms, a new match-scouting workspace (`/matchscout`)
+  for pre-match, autonomous, teleop, and post-match reports, data scouting,
+  free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.
@@ -214,7 +216,7 @@ own docs are all together in one place instead of scattered across
   (`wx-svelte-gantt`), Slack-driven prompts/notifications
   (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
   Supabase `pg_cron` job every 15 minutes.
-- **`pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
+- **`matchscout/`, `pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
   `teamview/`, `discover/`, `powerrankings/`** - FRC competition scouting:
   pit scouting forms, match data scouting, notes, cross-team data
   discovery/analysis, and the local-scouting-only power rankings +

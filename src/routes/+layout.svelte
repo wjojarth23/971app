@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, ClipboardCheck } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -253,6 +253,7 @@
     if (compact.startsWith('purchase') || compact.startsWith('purchasing')) return 'purchasing';
     if (compact.startsWith('notescout')) return 'notescout';
     if (compact.startsWith('datascout')) return 'datascout';
+    if (compact.startsWith('matchscout')) return 'matchscout';
     if (compact.startsWith('teamview')) return 'teamview';
     if (compact.startsWith('pitscout')) return 'pitscout';
     if (compact.startsWith('powerranking')) return 'powerrankings';
@@ -278,6 +279,7 @@
     tasks: '/tasks',
     teamview: '/teamview',
     datascout: '/datascout',
+    matchscout: '/matchscout',
     pitscout: '/pitscout',
     'scouting-admin': '/scouting-admin',
     'cots-stocking': '/cots-stocking',
@@ -301,6 +303,7 @@
     tasks: Briefcase,
     teamview: Coins,
     datascout: Coins,
+    matchscout: ClipboardCheck,
     pitscout: Camera,
     'scouting-admin': Briefcase,
     'cots-stocking': Package,
@@ -324,6 +327,7 @@
     tasks: 'Tasks',
     teamview: 'Team View',
     datascout: 'Data Scouting',
+    matchscout: 'Match Scouting',
     pitscout: 'Pit Scouting',
     'scouting-admin': 'Scouting Admin',
     'cots-stocking': 'COTS Stocking',

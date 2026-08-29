@@ -6,6 +6,7 @@
     "cad": true,
     "purchasing": true,
     "scouting": true,
+    "matchscout": true,
     "powerrankings": true,
     "docs": true,
     "planner": true,
