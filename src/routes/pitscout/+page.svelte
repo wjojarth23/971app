@@ -138,7 +138,7 @@
     <section class="pit-workspace">
       {#if activeTab === 'profile'}
         <div class="section-heading">
-          <div><span class="eyebrow">Robot profile</span><h2>Start with the essentials</h2></div>
+          <div><span class="eyebrow">Robot profile</span></div>
           <span class="blank-chip">Blank record</span>
         </div>
 
