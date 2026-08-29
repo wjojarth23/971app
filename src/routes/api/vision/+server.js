@@ -1,7 +1,9 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { env } from '$env/dynamic/private';
 import { getSupabase } from '$lib/server/971bot.js';
+import { fetchTbaMatchRoster } from '$lib/server/vision_reference.js';
 import { summarizeVision } from '$lib/visionAnalytics.js';
 
 // Valid scout_data_events.event_type climb_pos values (see
@@ -139,7 +141,25 @@ export async function POST({ request }) {
 
   if (action === 'create-match') {
     if (!body.event_key || !body.match_key) return json({ error: 'event_key and match_key required' }, { status: 400 });
-    const { data, error } = await client.from('vision_matches').insert({ event_key: body.event_key, match_key: body.match_key, capture_notes: body.capture_notes || null, created_by: actor.id }).select('*').single();
+    // Best-effort: a missing TBA key or a match TBA doesn't know about yet
+    // must not block creating the match. Review falls back to free text.
+    const roster = await fetchTbaMatchRoster(body.match_key, env.TBA_API_KEY || env.PUBLIC_TBA_API_KEY);
+    const { data, error } = await client.from('vision_matches').insert({
+      event_key: body.event_key, match_key: body.match_key,
+      capture_notes: body.capture_notes || null, created_by: actor.id,
+      team_roster: roster || {}
+    }).select('*').single();
+    if (error) return json({ error: error.message }, { status: 400 });
+    return json({ success: true, data });
+  }
+
+  // Schedules change before a match is played, and a match created without a
+  // TBA key (or before TBA had the match) has an empty roster.
+  if (action === 'refresh-roster') {
+    if (!body.id || !body.match_key) return json({ error: 'match id and match_key required' }, { status: 400 });
+    const roster = await fetchTbaMatchRoster(body.match_key, env.TBA_API_KEY || env.PUBLIC_TBA_API_KEY);
+    if (!roster) return json({ error: 'The Blue Alliance had no roster for that match key' }, { status: 404 });
+    const { data, error } = await client.from('vision_matches').update({ team_roster: roster }).eq('id', body.id).select('*').single();
     if (error) return json({ error: error.message }, { status: 400 });
     return json({ success: true, data });
   }

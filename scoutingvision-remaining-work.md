@@ -27,11 +27,11 @@ views → queue a run → the DGX runner claims it → YOLO/ByteTrack tracking +
 classical-CV game-piece detection + Qwen3-VL clip analysis → discrepancy
 reconciliation against TBA → human review → release into `scout_data_events`.
 
-**What is genuinely verified:** 617 JS tests, 0 `svelte-check` errors, Python
+**What is genuinely verified:** 624 JS tests, 0 `svelte-check` errors, Python
 unit tests, and synthetic-fixture harnesses covering attribution, occlusion
 re-identification, clip-failure handling, and the track→observation identity
 chain. The homography solver is checked against `cv2.getPerspectiveTransform`.
-Nine vision migrations are applied to the live Supabase project; RLS on all
+Ten vision migrations are applied to the live Supabase project; RLS on all
 10 `vision_*` tables is gated on `approved_user()`.
 
 Vision now releases six scouting fields rather than two — `hub_fuel_override`,
@@ -149,7 +149,9 @@ There is now a click-to-draw calibrator (B2), so this is no longer hand-typed
 JSON: trace the field mask, outline goal zones, outline the named auto start
 zones, and click four landmarks to solve the homography. What stays human is
 knowing *which* four landmarks and what their real field coordinates are, and
-doing it once per venue per camera. HSV thresholds are still numeric fields on
+doing it once per venue per camera — though B4a would remove even that by
+solving the homography from the field's AprilTags. HSV thresholds are still
+numeric fields on
 the run form and will need tuning against real footage.
 
 Calibrating start zones is what makes `auto_start_position` reportable at all —
@@ -237,6 +239,37 @@ is not a substitute for the fixed camera in A5. Build it as a link-resolver
 plus optional fetch, and keep broadcast-sourced runs flagged as a distinct
 source so nobody mistakes their attribution for the calibrated pipeline's.
 
+### B4a. Solve the homography from AprilTags instead of by hand **[NEEDED]**
+
+The most valuable idea to come out of surveying other FRC vision work, and it
+removes most of A7.
+
+FRC fields carry AprilTags at surveyed positions, and WPILib publishes an
+`AprilTagFieldLayout` JSON giving **every tag's exact pose in metres** in the
+standard FRC field frame (NWU, origin at the blue alliance wall). So a camera
+that can see three or more tags has everything needed to compute its own
+homography — no clicking landmarks, no typing coordinates, no per-venue expert
+step.
+
+Two things this buys beyond convenience:
+
+- **Real units.** Today a homography is only as good as the field coordinates
+  someone typed, and if none is calibrated, trajectories are in *pixels*. That
+  makes every derived number — speed, distance, attribution distance, the
+  dead-auto threshold — arbitrary and un-comparable across venues. Tag-derived
+  calibration puts everything in metres in the real field frame, which is what
+  makes `medianSpeedMps` an actual speed.
+- **Drift detection.** Re-solving each run and comparing against the stored
+  matrix catches a camera that got bumped mid-event, which currently invalidates
+  a venue's calibration silently.
+
+Shape of the work: `cv2.aruco` detects the 36h11 family in the runner, each
+detected tag's corners pair with its known field corners from the layout JSON,
+and the existing `solveHomography` (or `cv2.findHomography` with more than four
+correspondences) does the rest. The layout file is game-year specific, so ship
+it as a config path rather than hardcoding tag positions. Keep the manual
+four-point tool as the fallback for venues or angles where no tags are visible.
+
 ### B4c. Analytics vision does better than a human **[NICE]**
 
 The pipeline stores a full trajectory per robot and `trajectoryMetrics`
@@ -285,6 +318,41 @@ Still needs a human to pick the window and schedule the sweep.
 `release_bridge.test.js` covers release-run and the `update-track` cascade.
 
 ---
+
+## What other FRC teams do that we now do too
+
+Surveyed against published FRC scouting and vision work — Team 334's
+"Building AI-Assisted FRC Scouting" write-up, the ScoutingPASS / QRScout
+family of scouting apps, PhotonVision, and the Roboflow FRC robot-detection
+datasets — to find conventions worth adopting rather than reinventing.
+
+- **Pre-populate team numbers from the match schedule.** Standard practice in
+  every established scouting app, and it was our slowest review step done the
+  worst way: free text, once per track, with nothing preventing a typo or a
+  red team typed onto a blue track. Now a dropdown of the three teams actually
+  on that track's alliance, cached from TBA on the match. **Adopted.**
+- **Sanity-check against the expected robot count.** Six robots play a match;
+  the roster tells us so. Materially more tracks means one robot split across
+  an occlusion, fewer means one was never picked up. Free signal, surfaced
+  before anyone assigns identities. **Adopted.**
+- **Human review is not optional.** Team 334's conclusion after a season of
+  this was that fully autonomous scouting was not reliable enough to trust.
+  That matches the design here — every model output lands `unreviewed` and
+  only accepted or corrected rows can be released — and is worth not drifting
+  away from as accuracy improves.
+- **AprilTag-derived field calibration.** See B4a; the single biggest thing
+  still worth borrowing.
+- **Field-zone occupancy.** Several scouting apps record robot position as a
+  coarse grid (one divides the field into 72 boxes). We store full
+  trajectories, so the grid is a presentation choice — worth matching their
+  vocabulary so vision output is comparable with hand-scouted position data.
+  Folded into B4c.
+
+Deliberately **not** adopted: bumper-number OCR for identity. It sounds like
+the obvious fix, but team numbers on bumpers are small, frequently occluded by
+other robots, and rotate out of view constantly — and the match roster already
+narrows identity to a three-way choice, which is a far cheaper way to get the
+same answer.
 
 ## Part C — known gaps and risks
 

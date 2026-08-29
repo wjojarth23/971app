@@ -50,7 +50,7 @@ the code and what does it do."
 
 ## Database
 
-Ten SQL files. Nine are applied; the runner-health cron migration is
+Eleven SQL files. Ten are applied; the runner-health cron migration is
 deliberately held until merge (see **Setup checklist** below).
 
 Three of them are hardening rather than schema:
@@ -70,6 +70,8 @@ Three of them are hardening rather than schema:
   for the opt-in retention sweep.
 - `20260829_vision_start_zones.sql` — `vision_views.start_zones`, the named
   auto starting regions that let vision report `auto_start_position` at all.
+- `20260829_vision_match_roster.sql` — `vision_matches.team_roster`, the six
+  teams in the match cached from TBA, which constrains identity assignment.
 
 ### `migrations/20260828_vision_system.sql`
 
@@ -225,6 +227,8 @@ below, which adds its own explicit `VISION_RELEASE` check.
   - `retry-run` — re-queues a `failed`/`cancelled` run's match as a *new* run
     rather than resetting the old one: model identity and config are immutable
     per run by design, and the failed attempt stays on the record.
+  - `refresh-roster` — re-caches the match's six teams from TBA. Schedules
+    change, and a match created without a TBA key has an empty roster.
   - `update-view` — saves calibration (field mask, goal zones, start zones,
     homography, sync offset) onto an already-uploaded view. Separate from `add-view`
     because calibration is drawn against the recording itself, which can't
@@ -530,6 +534,22 @@ different detectors run per frame, because the best tool differs by problem:
   nearby; this file's own smoke tests (see below) confirm a same-position,
   different-looking robot is correctly rejected rather than merged.
 
+### Match roster — constraining who a track can be
+
+`vision_matches.team_roster` caches the six teams in the match from TBA (the
+same payload `fetchTbaMatchReference` already reads), populated on
+`create-match` and refreshable. The identity editor uses it to offer the three
+teams on that track's alliance as a dropdown instead of a free-text box, which
+is what every established FRC scouting app does with the match schedule and
+removes the typo/wrong-alliance class of error entirely. With no roster cached
+— no TBA key, offline venue, a match TBA doesn't know yet — it falls back to
+free text rather than blocking review.
+
+The roster also gives a free quality signal: six robots play a match, so a run
+producing materially more tracks split a robot across an occlusion, and fewer
+means one was never picked up. The UI says so before anyone starts assigning
+identities.
+
 Team identity is never inferred from alliance color — a track only gets a
 `team_key` if the run's `config.identity_map` (an audited
 `"<view id>:<tracker id>": "frcNNNN"` mapping) contains an entry for it;
@@ -789,6 +809,7 @@ this establishes one.
    - `migrations/20260829_vision_release_atomic.sql` — applied
    - `migrations/20260829_vision_recording_retention.sql` — applied
    - `migrations/20260829_vision_start_zones.sql` — applied
+   - `migrations/20260829_vision_match_roster.sql` — applied
    - `migrations/20260829_vision_runner_health_cron.sql` — **apply on merge,
      not before.** Unlike the others (additive schema deployed code ignores),
      it schedules a `pg_cron` job that calls

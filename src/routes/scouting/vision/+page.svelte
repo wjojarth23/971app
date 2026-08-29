@@ -49,6 +49,34 @@
   // Observation timestamps are in match time (the runner already added the
   // view's sync offset), so subtract it back out to land on the right frame of
   // this particular recording.
+  // Constrains identity assignment to the teams actually in this match. An
+  // alliance-less track can be any of the six; with no roster cached the UI
+  // falls back to free text so a missing TBA key never blocks review.
+  function rosterFor(alliance) {
+    const roster = detail?.match?.team_roster || {};
+    if (alliance === 'red' || alliance === 'blue') return roster[alliance] || [];
+    return [...(roster.red || []), ...(roster.blue || [])];
+  }
+
+  // Six robots play a match. Materially more tracks than that means the
+  // tracker split one robot across an occlusion; materially fewer means it
+  // lost one entirely. Either way the identities below are suspect, and it
+  // costs nothing to say so before someone assigns them.
+  $: expectedRobots = (detail?.match?.team_roster?.red?.length || 0) + (detail?.match?.team_roster?.blue?.length || 0);
+  $: trackCountWarning = expectedRobots && detail?.tracks?.length && detail.tracks.length !== expectedRobots
+    ? `${detail.tracks.length} tracks for ${expectedRobots} robots — ${detail.tracks.length > expectedRobots ? 'a robot was probably split across an occlusion' : 'a robot was probably never picked up'}.`
+    : '';
+
+  async function refreshRoster() {
+    busy = true;
+    error = '';
+    try {
+      await post({ action: 'refresh-roster', id: detail.match.id, match_key: detail.match.match_key });
+      await loadDetail(selectedId);
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
+  }
+
   function calibrationSummary(view) {
     const parts = [];
     if (view.field_mask?.length) parts.push('mask');
@@ -434,9 +462,32 @@
       {#if detail.tracks.length}
         <section class="surface-card section">
           <h2>Robot tracks & mobility</h2>
+          <div class="roster-bar">
+            {#if expectedRobots}
+              <span>Match roster: {rosterFor('red').map((k) => k.replace(/^frc/i, '')).join(', ') || '—'} vs {rosterFor('blue').map((k) => k.replace(/^frc/i, '')).join(', ') || '—'}</span>
+            {:else}
+              <span>No match roster cached — team identity is free text until one is fetched.</span>
+            {/if}
+            <button class="btn btn-sm" on:click={refreshRoster} disabled={busy}>Refresh from TBA</button>
+          </div>
+          {#if trackCountWarning}<p class="track-warning">{trackCountWarning}</p>{/if}
           <div class="table-wrap"><table><thead><tr><th>Team identity</th><th>Alliance</th><th>Confidence</th><th>Distance</th><th>P90 speed</th><th>Turn rate</th></tr></thead><tbody>
             {#each detail.tracks as track}<tr>
-              <td><div class="identity-editor"><input class="form-input" placeholder="frc971" bind:value={trackTeamDraft[track.id]} /><button class="btn btn-sm" on:click={() => saveTrackIdentity(track)}>Save</button></div></td>
+              <td>
+                <div class="identity-editor">
+                  {#if rosterFor(track.alliance).length}
+                    <select class="form-input" bind:value={trackTeamDraft[track.id]} aria-label="Team identity">
+                      <option value="">unassigned</option>
+                      {#each rosterFor(track.alliance) as teamKey}
+                        <option value={teamKey}>{teamKey.replace(/^frc/i, '')}</option>
+                      {/each}
+                    </select>
+                  {:else}
+                    <input class="form-input" placeholder="frc971" bind:value={trackTeamDraft[track.id]} />
+                  {/if}
+                  <button class="btn btn-sm" on:click={() => saveTrackIdentity(track)}>Save</button>
+                </div>
+              </td>
               <td>{track.alliance || '—'}</td><td>{Math.round(track.tracking_confidence * 100)}%</td>
               <td>{track.metrics?.distanceMeters?.toFixed?.(1) ?? '—'} m</td><td>{track.metrics?.p90SpeedMps?.toFixed?.(2) ?? '—'} m/s</td><td>{track.metrics?.p90TurnRateRadS?.toFixed?.(2) ?? '—'} rad/s</td>
             </tr>{/each}
@@ -559,6 +610,8 @@
   .released-tag { color:var(--brand-gold-base,#d9a413); font-style:normal; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
   .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
   .identity-editor { display:flex; gap:var(--gap-1); }
+  .roster-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--gap-2); margin-bottom:var(--space-2); color:var(--text-muted); font-size:.82rem; }
+  .track-warning { margin:0 0 var(--space-2); color:var(--danger); font-size:.82rem; }
   .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); align-items:center; }
   .observation-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr)); gap:var(--gap-3); align-items:end; margin-bottom:var(--space-3); }
   .bulk-actions { display:flex; gap:var(--gap-2); flex-wrap:wrap; }

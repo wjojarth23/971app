@@ -39,6 +39,38 @@ export function referenceFromTbaMatch(match) {
   return output;
 }
 
+// The six teams in a match, per alliance, in driver-station order. Separate
+// from referenceFromTbaMatch because the roster is useful long before a match
+// is played (it drives identity assignment during review) while the score
+// breakdown only exists afterwards.
+export function rosterFromTbaMatch(match) {
+  const roster = {};
+  for (const color of ['red', 'blue']) {
+    const teamKeys = match?.alliances?.[color]?.team_keys;
+    roster[color] = Array.isArray(teamKeys) ? teamKeys.filter((key) => typeof key === 'string' && key) : [];
+  }
+  if (!roster.red.length && !roster.blue.length) return null;
+  roster.fetched_at = new Date().toISOString();
+  return roster;
+}
+
+export async function fetchTbaMatchRoster(matchKey, authKey, fetchImpl = fetch) {
+  if (!matchKey || !authKey) return null;
+  try {
+    const response = await fetchImpl(`https://www.thebluealliance.com/api/v3/match/${encodeURIComponent(matchKey)}`, {
+      headers: { 'X-TBA-Auth-Key': authKey }
+    });
+    if (!response.ok) return null;
+    return rosterFromTbaMatch(await response.json());
+  } catch (error) {
+    // A missing key, an offline venue, or a match TBA doesn't know about yet
+    // must never block creating the match - review just falls back to typing
+    // the team number by hand.
+    console.warn('fetchTbaMatchRoster failed', error?.message || error);
+    return null;
+  }
+}
+
 export async function fetchTbaMatchReference(matchKey, authKey, fetchImpl = fetch) {
   if (!matchKey || !authKey) return null;
   const response = await fetchImpl(`https://www.thebluealliance.com/api/v3/match/${encodeURIComponent(matchKey)}`, {
