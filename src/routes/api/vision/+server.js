@@ -1,6 +1,17 @@
 import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { getSupabase } from '$lib/server/971bot.js';
+import { summarizeVision } from '$lib/visionAnalytics.js';
+
+// Valid scout_data_events.event_type climb_pos values (see
+// src/lib/scoutingStats.js's CLIMB_LEVEL map) - vision's own climb value is
+// free-form (usually the literal string 'success' when no specific level was
+// configured; see vision_runner.py's default_climb_level), so only a value
+// that already matches this real vocabulary is safe to release. Anything
+// else is silently skipped rather than corrupting downstream power-ranking
+// aggregation with a value nothing else recognizes.
+const VALID_CLIMB_POS = new Set(['N/A', 'Failed', 'L1', 'L2', 'L3']);
 
 function clientFor(request) {
   return createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
@@ -15,10 +26,76 @@ async function actorFor(client) {
 
 const safeName = (value) => String(value || 'recording.mov').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(-100);
 
+// A runner is considered online if it's heartbeated more recently than this.
+// vision_runner.py's own default poll interval is 10s (VISION_POLL_SECONDS);
+// this is a generous multiple of that so one slow iteration (a big video
+// download, a GPU busy on inference) doesn't flap a healthy runner offline.
+const RUNNER_ONLINE_THRESHOLD_MS = 60_000;
+
 export async function GET({ request, url }) {
   const client = clientFor(request);
   const actor = await actorFor(client);
   if (!actor) return json({ error: 'Unauthorized' }, { status: 401 });
+
+  const dashboardEventKey = url.searchParams.get('dashboard');
+  if (dashboardEventKey) {
+    const { data: matches, error } = await client
+      .from('vision_matches')
+      .select('id, match_key, status, vision_runs(id, status, model_name, model_version, created_at, completed_at, released_at)')
+      .eq('event_key', dashboardEventKey)
+      .order('match_key');
+    if (error) return json({ error: error.message }, { status: 403 });
+
+    const runIds = [];
+    const runCounts = { total: 0, complete: 0, failed: 0, in_progress: 0, released: 0 };
+    for (const match of matches || []) {
+      for (const run of match.vision_runs || []) {
+        runCounts.total += 1;
+        runIds.push(run.id);
+        if (run.status === 'complete') runCounts.complete += 1;
+        else if (run.status === 'failed') runCounts.failed += 1;
+        else runCounts.in_progress += 1;
+        if (run.released_at) runCounts.released += 1;
+      }
+    }
+
+    const { data: discrepancies } = runIds.length
+      ? await client.from('vision_discrepancies').select('id, severity, status').in('vision_run_id', runIds)
+      : { data: [] };
+    const discrepancyCounts = { total: (discrepancies || []).length, open: 0, open_critical: 0, resolved: 0 };
+    for (const discrepancy of discrepancies || []) {
+      if (discrepancy.status === 'open') {
+        discrepancyCounts.open += 1;
+        if (discrepancy.severity === 'critical') discrepancyCounts.open_critical += 1;
+      } else {
+        discrepancyCounts.resolved += 1;
+      }
+    }
+
+    const [{ data: runners }, { count: queueDepth }] = await Promise.all([
+      client.from('vision_runners').select('*').order('runner_id'),
+      client.from('vision_runs').select('id', { count: 'exact', head: true }).eq('status', 'queued')
+    ]);
+    const now = Date.now();
+    const fleet = (runners || []).map((runner) => ({
+      ...runner,
+      online: runner.last_seen_at ? (now - new Date(runner.last_seen_at).getTime()) < RUNNER_ONLINE_THRESHOLD_MS : false
+    }));
+
+    return json({
+      success: true,
+      data: {
+        event_key: dashboardEventKey,
+        matches_total: (matches || []).length,
+        matches_complete: (matches || []).filter((match) => match.status === 'complete').length,
+        runs: runCounts,
+        discrepancies: discrepancyCounts,
+        queue_depth: queueDepth ?? 0,
+        runners: fleet
+      }
+    });
+  }
+
   const id = url.searchParams.get('id');
   if (!id) {
     const { data, error } = await client.from('vision_matches').select('*, vision_views(count), vision_runs(id,status,model_name,model_version,created_at)').order('created_at', { ascending: false });
@@ -119,5 +196,73 @@ export async function POST({ request }) {
     if (error) return json({ error: error.message }, { status: 400 });
     return json({ success: true, data });
   }
+
+  // Reviewed-result consumer: the one path that lets a project owner turn
+  // advisory vision output into real scouting data. Deliberately gated on a
+  // permission strictly above VISION_REVIEW (see permissions.js) - every
+  // other action above is available to any reviewer, this one is not.
+  if (action === 'release-run') {
+    if (!body.run_id) return json({ error: 'run_id required' }, { status: 400 });
+
+    const { data: actorProfile } = await client.from('user_profiles').select('role, permissions').eq('id', actor.id).single();
+    const canRelease = actorProfile?.role === 'admin' || (actorProfile?.permissions || []).includes('VISION_RELEASE');
+    if (!canRelease) return json({ error: 'VISION_RELEASE permission required' }, { status: 403 });
+
+    const db = getSupabase(); // service role: writes to scout_data_events, a
+    // table this actor's own RLS identity has no INSERT grant on (see
+    // scoutingvision.md) - the permission check above is the real gate.
+    const { data: run, error: runError } = await db.from('vision_runs').select('*, vision_matches(match_key)').eq('id', body.run_id).single();
+    if (runError) return json({ error: runError.message }, { status: 404 });
+    if (run.status !== 'complete') return json({ error: 'Only a completed run can be released' }, { status: 400 });
+    if (run.released_at) return json({ error: 'This run has already been released' }, { status: 409 });
+
+    const matchKey = run.vision_matches?.match_key;
+    if (!matchKey) return json({ error: 'Run has no associated match' }, { status: 400 });
+
+    const [{ data: tracks }, { data: observations }] = await Promise.all([
+      db.from('vision_tracks').select('*').eq('vision_run_id', run.id),
+      db.from('vision_observations').select('*').eq('vision_run_id', run.id)
+    ]);
+    const summary = summarizeVision(observations || [], tracks || []);
+
+    const nowIso = new Date().toISOString();
+    const rows = [];
+    for (const [teamKey, team] of Object.entries(summary.teams)) {
+      if (!teamKey) continue; // never release an alliance-only, unattributed result as a specific team's data
+      if (Number.isFinite(team.fuelScored)) {
+        rows.push({
+          match_key: matchKey, match_number: null, team_key: teamKey, phase: null,
+          event_type: 'hub_fuel_override', event_value: String(Math.round(team.fuelScored)),
+          role: 'vision', on_shift: null, created_by: actor.id, created_at: nowIso
+        });
+      }
+      if (team.climb && VALID_CLIMB_POS.has(team.climb)) {
+        rows.push({
+          match_key: matchKey, match_number: null, team_key: teamKey, phase: null,
+          event_type: 'climb_pos', event_value: team.climb,
+          role: 'vision', on_shift: null, created_by: actor.id, created_at: nowIso
+        });
+      }
+    }
+    if (!rows.length) {
+      return json({ error: 'No attributable team results to release yet - resolve at least one track/observation team identity first' }, { status: 400 });
+    }
+
+    const { data: inserted, error: insertError } = await db.from('scout_data_events').insert(rows).select('id');
+    if (insertError) return json({ error: insertError.message }, { status: 500 });
+
+    await Promise.all([
+      db.from('vision_runs').update({ released_at: nowIso, released_by: actor.id }).eq('id', run.id),
+      db.from('vision_release_log').insert({
+        vision_run_id: run.id,
+        released_by: actor.id,
+        scout_data_event_ids: (inserted || []).map((row) => row.id),
+        team_count: Object.keys(summary.teams).length
+      })
+    ]);
+
+    return json({ success: true, data: { released_count: rows.length } });
+  }
+
   return json({ error: 'Invalid action' }, { status: 400 });
 }

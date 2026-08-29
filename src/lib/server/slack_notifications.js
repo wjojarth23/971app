@@ -578,3 +578,75 @@ export async function sendStaleManufacturingReminders() {
   }
   return { ok: true, checked: parts.length, sent: sentCount };
 }
+
+// Vision alert recipients are an explicit admin-managed opt-in
+// (user_profiles.vision_notify, set from the admin panel's "Vision Alerts"
+// checkbox) rather than derived from a role - this is a small, restricted
+// project (see scoutingvision.md) and the recipient list is meant to stay a
+// short, deliberately-chosen set, not everyone with a given role.
+async function visionAlertRecipients(supa) {
+  const { data, error } = await supa
+    .from('user_profiles')
+    .select('id, email')
+    .eq('vision_notify', true);
+  if (error || !data) return [];
+  return data;
+}
+
+export async function notifyVisionRunFailed(runId) {
+  if (!runId) return { ok: false, reason: 'invalid-input' };
+  const supa = getSupabase();
+  const { data: run, error } = await supa
+    .from('vision_runs')
+    .select('id, model_name, model_version, error, vision_matches(match_key, event_key)')
+    .eq('id', runId)
+    .maybeSingle();
+  if (error || !run) return { ok: false, reason: 'no-run' };
+
+  const recipients = await visionAlertRecipients(supa);
+  if (!recipients.length) return { ok: false, reason: 'no-recipients' };
+
+  const matchLabel = run.vision_matches?.match_key || 'a match';
+  const text = `Vision run failed on ${matchLabel} (${run.model_name} ${run.model_version}): ${run.error || 'no error message recorded'}.`;
+  const results = [];
+  for (const recipient of recipients) {
+    results.push(await dispatchNotification({
+      userId: recipient.id,
+      notificationKey: NOTIFICATION_KEYS.VISION_ALERT,
+      entityKey: `vision_run:${run.id}:failed`,
+      text
+    }));
+  }
+  return { ok: true, sent: results };
+}
+
+export async function notifyVisionCriticalDiscrepancy(discrepancyId) {
+  if (!discrepancyId) return { ok: false, reason: 'invalid-input' };
+  const supa = getSupabase();
+  const { data: discrepancy, error } = await supa
+    .from('vision_discrepancies')
+    .select('id, metric, alliance, vision_value, reference_value, severity, vision_runs(vision_matches(match_key))')
+    .eq('id', discrepancyId)
+    .maybeSingle();
+  if (error || !discrepancy || discrepancy.severity !== 'critical') {
+    return { ok: false, reason: 'not-critical' };
+  }
+
+  const recipients = await visionAlertRecipients(supa);
+  if (!recipients.length) return { ok: false, reason: 'no-recipients' };
+
+  const matchLabel = discrepancy.vision_runs?.vision_matches?.match_key || 'a match';
+  const metricLabel = String(discrepancy.metric || '').replaceAll('_', ' ');
+  const allianceLabel = discrepancy.alliance ? `${discrepancy.alliance} alliance` : 'unattributed';
+  const text = `Critical vision discrepancy on ${matchLabel} (${allianceLabel}): ${metricLabel} - vision ${JSON.stringify(discrepancy.vision_value)} vs TBA ${JSON.stringify(discrepancy.reference_value)}.`;
+  const results = [];
+  for (const recipient of recipients) {
+    results.push(await dispatchNotification({
+      userId: recipient.id,
+      notificationKey: NOTIFICATION_KEYS.VISION_ALERT,
+      entityKey: `vision_discrepancy:${discrepancy.id}:critical`,
+      text
+    }));
+  }
+  return { ok: true, sent: results };
+}

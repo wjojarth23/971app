@@ -111,17 +111,33 @@ def run_job(model, run):
     api("complete", run_id=run["id"], tracks=all_tracks, observations=all_observations)
 
 
+def heartbeat(current_run_id=None, last_error=None):
+    # Fleet visibility only - a dashboard reads vision_runners to show
+    # online/offline instead of inferring it from "jobs stopped moving."
+    # Best-effort: a heartbeat failure (network blip, server restart) must
+    # never take down the actual processing loop over a status ping.
+    try:
+        api("heartbeat", runner_id=RUNNER_ID, model_path=WEIGHTS, current_run_id=current_run_id, last_error=last_error)
+    except Exception:
+        pass
+
+
 def main():
     model = YOLO(WEIGHTS)
+    last_error = None
     while True:
+        heartbeat(last_error=last_error)
         claimed = api("claim", runner_id=RUNNER_ID).get("run")
         if not claimed:
             time.sleep(POLL_SECONDS)
             continue
+        heartbeat(current_run_id=claimed["id"])
         try:
             run_job(model, claimed)
+            last_error = None
         except Exception as exc:  # runner must always terminate the claimed job
-            api("fail", run_id=claimed["id"], error=str(exc))
+            last_error = str(exc)
+            api("fail", run_id=claimed["id"], error=last_error)
 
 
 if __name__ == "__main__":

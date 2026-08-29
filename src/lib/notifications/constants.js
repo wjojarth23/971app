@@ -11,7 +11,8 @@ export const NOTIFICATION_KEYS = {
   MANUFACTURING_REQUEST: 'manufacturing_request',
   MANUFACTURING_REQUEST_STARTED: 'manufacturing_request_started',
   MANUFACTURING_REQUEST_READY: 'manufacturing_request_ready',
-  MANUFACTURING_REQUEST_STALE: 'manufacturing_request_stale'
+  MANUFACTURING_REQUEST_STALE: 'manufacturing_request_stale',
+  VISION_ALERT: 'vision_alert'
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS = {
@@ -27,7 +28,8 @@ export const DEFAULT_NOTIFICATION_SETTINGS = {
   [NOTIFICATION_KEYS.MANUFACTURING_REQUEST]: true,
   [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STARTED]: true,
   [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_READY]: true,
-  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STALE]: true
+  [NOTIFICATION_KEYS.MANUFACTURING_REQUEST_STALE]: true,
+  [NOTIFICATION_KEYS.VISION_ALERT]: true
 };
 
 export const NOTIFICATION_UI_OPTIONS = [
@@ -95,5 +97,10 @@ export const NOTIFICATION_UI_OPTIONS = [
     key: NOTIFICATION_KEYS.MANUFACTURING_REQUEST_READY,
     label: 'Your request is ready',
     description: 'DM when a manufacturing request you made is marked complete.'
+  },
+  {
+    key: NOTIFICATION_KEYS.VISION_ALERT,
+    label: 'Vision scouting alerts',
+    description: 'DM when a vision processing run fails or a new critical discrepancy is flagged. Only sent if an admin has signed you up for Vision Alerts.'
   }
 ];

@@ -35,3 +35,9 @@ for action classes). A model cannot identify a specific FRC team from alliance
 color alone. Queue configuration may provide an audited `identity_map` from
 `<view id>:<tracker id>` to `frcNNNN`; unidentified tracks are marked for human
 review instead of guessed.
+
+Every poll iteration - whether or not it claims a job - also sends a
+`heartbeat` (runner id, model path, current run, last error) so the event
+dashboard can show this runner as online/offline instead of that only being
+inferable from "jobs stopped moving." A heartbeat failure never blocks or
+crashes the actual processing loop.

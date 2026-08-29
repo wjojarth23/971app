@@ -1,8 +1,14 @@
 <script>
   import { onMount } from 'svelte';
-  import { Camera, ChevronRight, Eye, RefreshCw, ShieldAlert, Upload, Video } from 'lucide-svelte';
+  import { Camera, ChevronRight, Eye, RefreshCw, ShieldAlert, Upload, Video, LayoutDashboard, UploadCloud } from 'lucide-svelte';
   import { getAuthHeader, supabase } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+  import { userStore } from '$lib/stores/auth.js';
+  import { hasPermission } from '$lib/permissions.js';
+
+  let user = null;
+  userStore.subscribe((v) => { user = v; });
+  $: canRelease = hasPermission(user, 'VISION_RELEASE');
 
   let matches = [];
   let selectedId = '';
@@ -104,6 +110,22 @@
     finally { busy = false; }
   }
 
+  let releasingRunId = '';
+  async function releaseRun(run) {
+    if (!confirm(`Release ${run.model_name} ${run.model_version}'s results into real scouting data? This cannot be undone.`)) return;
+    releasingRunId = run.id;
+    error = '';
+    try {
+      const result = await post({ action: 'release-run', run_id: run.id });
+      await loadDetail(selectedId);
+      import('$lib/toast.js').then((m) => m.toastActions.show(`Released ${result.released_count} scout_data_events row(s).`));
+    } catch (exception) {
+      error = exception.message;
+    } finally {
+      releasingRunId = '';
+    }
+  }
+
   async function resolveFlag(flag, status) {
     await post({ action: 'review', id: flag.id, status, review_notes: reviewNotes[flag.id] || '' });
     await loadDetail(selectedId);
@@ -128,7 +150,10 @@
     <h1><Eye size={22} /> Vision Scouting</h1>
     <p>Post-match multi-view ML processing, TBA reconciliation, and evidence-backed human review.</p>
   </div>
-  <button class="btn btn-sm" on:click={loadMatches} disabled={loading}><RefreshCw size={14} /> Refresh</button>
+  <div class="actions">
+    <a class="btn btn-sm" href="/scouting/vision/dashboard{eventKey ? `?event_key=${encodeURIComponent(eventKey)}` : ''}"><LayoutDashboard size={14} /> Event dashboard</a>
+    <button class="btn btn-sm" on:click={loadMatches} disabled={loading}><RefreshCw size={14} /> Refresh</button>
+  </div>
 </div>
 
 {#if error}<div class="error-container"><p>{error}</p></div>{/if}
@@ -172,7 +197,11 @@
       <section class="surface-card section">
         <h2>ML processing</h2>
         <div class="run-controls"><input class="form-input" bind:value={modelName} /><input class="form-input" bind:value={modelVersion} /><label>Confidence <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={confidenceFloor} /></label><button class="btn btn-primary btn-sm" on:click={queueRun} disabled={busy || !detail.views.length}>Queue run</button></div>
-        <div class="run-list">{#each detail.runs as run}<span class={`status ${run.status}`}>{run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}</span>{/each}</div>
+        <div class="run-list">{#each detail.runs as run}<span class={`status ${run.status}`}>
+          {run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}
+          {#if run.released_at}<em class="released-tag">released</em>
+          {:else if run.status === 'complete' && canRelease}<button class="btn btn-sm btn-primary" on:click={() => releaseRun(run)} disabled={releasingRunId === run.id}><UploadCloud size={12} /> Release to scouting data</button>{/if}
+        </span>{/each}</div>
       </section>
 
       {#if detail.tracks.length}
@@ -217,8 +246,10 @@
   .upload-grid,.run-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap-2); margin-top:var(--space-3); }
   .run-controls { grid-template-columns:1fr 1fr 10rem auto; align-items:end; }
   .run-controls label { display:grid; gap:var(--space-1); }
-  .status { padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); background:var(--surface-2); }
+  .status { padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); background:var(--surface-2); display:inline-flex; align-items:center; gap:var(--gap-2); }
   .status.failed { color:var(--red,#c33); }
+  .status button { display:inline-flex; align-items:center; gap:4px; }
+  .released-tag { color:var(--brand-gold-base,#d9a413); font-style:normal; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
   .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
   .identity-editor { display:flex; gap:var(--gap-1); }
   .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); }

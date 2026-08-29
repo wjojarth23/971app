@@ -181,6 +181,65 @@
     updateUserRoles(user, { manufacturing_lead_workflows: next });
   }
 
+  // Vision alerts: a single opt-in flag (user_profiles.vision_notify),
+  // separate from the manufacturing per-workflow array above since there's
+  // only one vision alert category (run failures + new critical
+  // discrepancies - see notifyVisionRunFailed/notifyVisionCriticalDiscrepancy
+  // in slack_notifications.js) rather than a set of workflows to pick from.
+  function toggleVisionNotify(user, checked) {
+    updateUserRoles(user, { vision_notify: checked });
+  }
+
+  // Vision access is granted as real PERMISSIONS entries (VISION_REVIEW,
+  // VISION_RELEASE - see src/lib/permissions.js), not a role-derived one, so
+  // this writes user.permissions directly via the generic permission-update
+  // path api/admin/+server.js already exposes (POST with no `action`, just
+  // permissions[]) rather than going through update-roles, which only ever
+  // recomputes permissions from roles + whatever manual extras already
+  // existed - it has no way to accept a newly-added manual permission from
+  // the request body.
+  const visionPermissionOptions = [
+    { value: 'VISION_REVIEW', label: 'Vision Reviewer' },
+    { value: 'VISION_RELEASE', label: 'Vision Release' }
+  ];
+
+  async function toggleVisionPermission(user, perm, checked) {
+    if (!canEditRolesOf(user)) {
+      toastActions.show(
+        user?.id === $currentUser?.id
+          ? 'You cannot change your own permissions here'
+          : user?.is_dev
+            ? "Only a dev can change another dev's permissions"
+            : "Only an admin can change another admin's permissions"
+      );
+      users = [...users];
+      return;
+    }
+    const current = Array.isArray(user.permissions) ? user.permissions : [];
+    const next = checked
+      ? Array.from(new Set([...current, perm]))
+      : current.filter((p) => p !== perm);
+    setSaving(user.id, true);
+    const optimisticUsers = users.map((u) => (u.id === user.id ? { ...u, permissions: next } : u));
+    users = optimisticUsers;
+    try {
+      const res = await fetch('/api/admin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(await getAuthHeader()) },
+        body: JSON.stringify({ actor_id: await resolveActorId(), target_id: user.id, permissions: next })
+      });
+      const resBody = await res.json();
+      if (!res.ok) throw new Error(resBody.error || 'Failed to update permission');
+      toastActions.show('Vision permission updated');
+    } catch (err) {
+      console.error('Failed to update vision permission', err);
+      toastActions.show(err.message || 'Failed to update permission');
+      users = users.map((u) => (u.id === user.id ? { ...u, permissions: current } : u));
+    } finally {
+      setSaving(user.id, false);
+    }
+  }
+
   function formatRoleLabel(value) {
     if (!value) return 'Unassigned';
     return value
@@ -1640,6 +1699,15 @@
                         {opt.label}
                       </label>
                     {/each}
+                    <label class="notify-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={!!user.vision_notify}
+                        disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                        on:change={(e) => toggleVisionNotify(user, e.target.checked)}
+                      />
+                      Vision Alerts
+                    </label>
                   </div>
                 </div>
 
@@ -1652,6 +1720,23 @@
                   <div class="user-card-role">
                     <span class="role-label">Permissions</span>
                     <span class="chip chip-pill status-chip status-chip--admin-full">All Permissions</span>
+                  </div>
+                {:else}
+                  <div class="user-card-role">
+                    <span class="role-label">Vision Access</span>
+                    <div class="notify-checkboxes">
+                      {#each visionPermissionOptions as opt}
+                        <label class="notify-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={(user.permissions || []).includes(opt.value)}
+                            disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                            on:change={(e) => toggleVisionPermission(user, opt.value, e.target.checked)}
+                          />
+                          {opt.label}
+                        </label>
+                      {/each}
+                    </div>
                   </div>
                 {/if}
               </div>
@@ -1786,6 +1871,15 @@
                           {opt.label}
                         </label>
                       {/each}
+                      <label class="notify-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={!!user.vision_notify}
+                          disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                          on:change={(e) => toggleVisionNotify(user, e.target.checked)}
+                        />
+                        Vision Alerts
+                      </label>
                     </div>
                   </td>
                   <td class="all-permissions-cell">
@@ -1794,7 +1888,19 @@
                     {:else if user.role === 'admin'}
                       <span class="chip chip-pill status-chip status-chip--admin-full">All Permissions</span>
                     {:else}
-                      <span class="text-muted">—</span>
+                      <div class="notify-checkboxes">
+                        {#each visionPermissionOptions as opt}
+                          <label class="notify-checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={(user.permissions || []).includes(opt.value)}
+                              disabled={savingRoleIds.has(user.id) || !canEditRolesOf(user)}
+                              on:change={(e) => toggleVisionPermission(user, opt.value, e.target.checked)}
+                            />
+                            {opt.label}
+                          </label>
+                        {/each}
+                      </div>
                     {/if}
                   </td>
                   {#if showUserActions}

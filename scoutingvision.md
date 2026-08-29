@@ -3,14 +3,17 @@
 A restricted, post-match computer-vision pipeline that watches match video,
 detects robot positions and scoring events with a custom YOLO model, and
 cross-checks the result against The Blue Alliance's official match
-breakdown. It is a separate, secret project from the rest of scouting: not
-linked from any nav tab, gated behind a `VISION_REVIEW` permission, and its
-output never silently feeds `scout_data_events` or power rankings — a human
-has to review and release it. This doc is a file-by-file map of what's
-actually implemented, for anyone picking the feature up. For the design
-rationale and contracts (capture requirements, review states, model
-acceptance gates), see `implementations/vision-scouting-system.md` — this
-file focuses on "where is the code and what does it do."
+breakdown. It's a real tab now — **Vision Scouting** in the Competition nav
+folder — but still gated behind a `VISION_REVIEW` permission at both the nav
+layer and RLS, so anyone without it never sees it exists. Its output never
+*silently* feeds `scout_data_events` or power rankings: a separate,
+higher-tier `VISION_RELEASE` permission is required to explicitly push a
+completed run's results into real scouting data (see **Reviewed-result
+release bridge** below). This doc is a file-by-file map of what's actually
+implemented, for anyone picking the feature up. For the design rationale and
+contracts (capture requirements, review states, model acceptance gates), see
+`implementations/vision-scouting-system.md` — this file focuses on "where is
+the code and what does it do."
 
 ## End-to-end data flow
 
@@ -35,9 +38,13 @@ file focuses on "where is the code and what does it do."
    `dismissed`. Raw vision results are never overwritten by a review — only
    the resolution record is added alongside them.
 
-## Database (`migrations/20260828_vision_system.sql`)
+## Database
 
-One SQL file, not yet applied to production (see **Setup checklist** below).
+Two SQL files, neither yet applied to production (see **Setup checklist**
+below).
+
+### `migrations/20260828_vision_system.sql`
+
 Seven tables, all with RLS enabled:
 
 | Table | Purpose |
@@ -61,6 +68,27 @@ loop over all seven tables:
   server-side Supabase client uses.
 - The storage bucket gets a matching `authenticated` policy requiring the
   same permission.
+
+### `migrations/20260829_vision_notifications_release_fleet.sql`
+
+Three additions on top of the above:
+
+- **`user_profiles.vision_notify` boolean** (default `false`) — the Slack
+  alert opt-in list (see **Slack alerting** below). Seeded `true` for Yuvan
+  Shankar and Arin Rao by a best-effort `full_name ILIKE` match (free text,
+  not a real FK — same "skip gracefully if it doesn't match" stance already
+  used for `parts.requester` elsewhere in this codebase).
+- **`vision_runs.released_at` / `released_by`** plus a new
+  **`vision_release_log`** table (`vision_run_id`, `released_by`,
+  `scout_data_event_ids uuid[]`, `team_count`) — the audit trail for the
+  release bridge. Original vision evidence is never mutated by a release;
+  this just records what was produced and by whom.
+- **`vision_runners`** table (`runner_id` primary key, `last_seen_at`,
+  `model_path`, `current_run_id`, `last_error`) — runner fleet heartbeats.
+
+Both new tables are SELECT-only for `authenticated` + `VISION_REVIEW` (read
+for the dashboard); all writes go through `service_role` (the runner's own
+heartbeat call, and the release bridge's privileged insert — see below).
 
 ## Backend
 
@@ -106,12 +134,18 @@ actual HTTP call; `fetchImpl` is injectable for testing.
 Auth: per-request Supabase client built from the caller's own `Authorization`
 header (`clientFor`), so every query goes through RLS as that user — the
 route itself does no permission check beyond "is there a logged-in user";
-`VISION_REVIEW` enforcement lives entirely in the RLS policies above.
+`VISION_REVIEW` enforcement lives entirely in the RLS policies above (the one
+exception is `release-run`, below, which adds its own explicit check).
 
 - `GET` (no `id`): lists all `vision_matches` with view/run counts.
 - `GET ?id=`: full detail for one match — views (with freshly
   signed 15-minute playback URLs), runs, and (for the latest or a specified
   `run_id`) tracks/observations/discrepancies.
+- `GET ?dashboard=<event_key>`: event-level rollup — matches
+  total/complete, run counts by status (+ how many are released), open vs.
+  resolved discrepancy counts (with an `open_critical` breakout), the
+  current queue depth, and the runner fleet (see **Runner fleet visibility**
+  below). Powers `src/routes/scouting/vision/dashboard/+page.svelte`.
 - `POST` actions:
   - `create-match` — new `vision_matches` row.
   - `add-view` — inserts the `vision_views` row (storage path is
@@ -123,6 +157,8 @@ route itself does no permission check beyond "is there a logged-in user";
     stamping reviewer id and timestamp.
   - `update-track` / `update-observation` — human correction of a track's
     team identity or an observation's team/value/confidence.
+  - `release-run` — the reviewed-result release bridge; see its own section
+    below.
 
 ### Runner-facing API — `src/routes/api/vision-runner/+server.js`
 
@@ -133,6 +169,8 @@ avoid a timing side-channel on the token value. Uses a `service_role`
 Supabase client (`serviceClient`), bypassing RLS — this is the only code path
 allowed to bypass `VISION_REVIEW`.
 
+- `heartbeat` — upserts `vision_runners` with the runner's id, current run
+  (if any), model path, and last error. See **Runner fleet visibility**.
 - `claim` — atomically claims the oldest of up to 5 queued runs
   (`update ... eq('status','queued')` as the compare-and-swap so two runners
   can't double-claim), returns the run plus every view with a freshly signed
@@ -142,11 +180,108 @@ allowed to bypass `VISION_REVIEW`.
 - `complete` — accepts tracks/observations from the runner, inserts them,
   runs the same `summarizeVision` → `fetchTbaMatchReference` →
   `reconcileWithReference` pipeline the analytics module exposes, persists
-  any discrepancies and a reference snapshot, and flips the match to
-  `review` (if discrepancies exist) or `complete`.
-- `fail` — marks a claimed/processing run `failed` with an error message.
-  Every claimed run must terminate through `complete` or `fail` — same
-  invariant the AutoCAM Fusion runner uses.
+  any discrepancies and a reference snapshot, flips the match to `review`
+  (if discrepancies exist) or `complete`, and fires a Slack alert (see
+  below) for every newly inserted `critical` discrepancy.
+- `fail` — marks a claimed/processing run `failed` with an error message
+  (only if a row actually transitioned - a no-op CAS never alerts) and fires
+  a Slack alert. Every claimed run must terminate through `complete` or
+  `fail` — same invariant the AutoCAM Fusion runner uses.
+
+## Slack alerting
+
+`src/lib/server/slack_notifications.js` adds `notifyVisionRunFailed(runId)`
+and `notifyVisionCriticalDiscrepancy(discrepancyId)`, both following the same
+`dispatchNotification` pattern every other Slack DM in this app uses
+(per-notification-type opt-out via `user_profiles.notification_settings`,
+automatic dedup via `user_notification_logs`). What's different from every
+other notification category here: the recipient list isn't role-derived
+(there's no "Vision Lead" role) - it's an explicit, admin-managed opt-in list
+(`user_profiles.vision_notify`), because this is a small, deliberately
+restricted project and the point is a short, chosen set of people, not
+"everyone with some role." `NOTIFICATION_KEYS.VISION_ALERT` covers both
+trigger conditions (run failure, new critical discrepancy) under one
+category rather than splitting them - to a recipient, both mean the same
+thing: "go look at Vision Scouting."
+
+**Admin UI** (`src/routes/admin/+page.svelte`): a "Vision Alerts" checkbox
+sits next to the existing manufacturing-workflow notify checkboxes in the
+Notifications column, writing `vision_notify` through the same
+`update-roles` API path `manufacturing_lead_workflows` already uses. Yuvan
+Shankar and Arin Rao are seeded in via the migration (see above); anyone else
+needs an admin to check the box.
+
+**Vision access itself** (`VISION_REVIEW`, `VISION_RELEASE`) is a separate
+concept from alerting and is granted via its own two checkboxes in the same
+admin page's Permissions column - real entries in `src/lib/permissions.js`'s
+`PERMISSIONS` array (not role-derived), written through the generic
+`permissions[]` update path `api/admin/+server.js` already exposed. This
+closes the gap the first version of this doc flagged: there was previously
+no way to grant `VISION_REVIEW` through the app at all.
+
+## Reviewed-result release bridge
+
+`POST api/vision { action: 'release-run', run_id }` is the "actual payoff"
+path: it turns one completed run's advisory output into real
+`scout_data_events` rows, so a released match's vision-derived fuel/climb
+counts count toward power rankings like any human-scouted match would.
+
+Guardrails, in order:
+1. Requires `VISION_RELEASE` specifically (checked against the caller's own
+   `user_profiles.permissions`/`role`, via the caller's own RLS-scoped
+   client) - holding `VISION_REVIEW` alone is not enough.
+2. The run must be `status: 'complete'` and not already released
+   (`released_at IS NULL`) - a release is a one-time, explicit action, not
+   re-runnable.
+3. Once authorized, the actual write uses a `service_role` client
+   (`getSupabase()`), because `scout_data_events` INSERT is RLS-gated on
+   `DATA_SCOUT_ADMIN`/`DATA_SCOUT_MEMBER` - permissions a vision releaser
+   has no reason to also hold. The `VISION_RELEASE` check above is the real
+   gate; the service client is just how the already-authorized write
+   actually lands, the same "app-level permission check, then a privileged
+   write" shape `notifyManufacturingRequestById` and friends already use.
+4. Per team in the run's fused `summarizeVision()` output:
+   - Fuel count (if any observation resolved fuel for that team) becomes one
+     `hub_fuel_override` event - a single authoritative count rather than
+     emulating individual taps, matching what that event type already means
+     in `src/lib/scoutingStats.js`.
+   - Climb (`team.climb`) becomes a `climb_pos` event **only** if it's
+     exactly one of the real enum values (`N/A`/`Failed`/`L1`/`L2`/`L3`) -
+     vision's climb value is otherwise free-form (frequently the literal
+     string `'success'`, since `vision_runner.py` currently just echoes
+     `config.default_climb_level` rather than detecting a real level), and
+     anything that doesn't match is silently skipped rather than written as
+     garbage into a column power-ranking aggregation depends on.
+   - Alliance-only observations (no resolved `team_key`) are never released
+     as a specific team's data.
+   - Every released row is tagged `role: 'vision'`, so released rows stay
+     identifiable/filterable in `scout_data_events` after the fact, on top
+     of the `vision_release_log` audit row.
+5. If nothing is attributable yet (no track/observation has a resolved team
+   identity), the release is rejected outright rather than silently doing
+   nothing.
+
+UI: a "Release to scouting data" button appears per run on
+`/scouting/vision` once it's complete and unreleased, gated client-side on
+`hasPermission(user, 'VISION_RELEASE')` (the server enforces this
+regardless - the client check is purely to not show a button that would
+just 403). A confirm dialog warns it can't be undone before the request
+fires.
+
+## Runner fleet visibility
+
+`vision_runner.py`'s poll loop now calls a `heartbeat` action every
+iteration - whether or not it actually claims a job - reporting its
+`runner_id`, `model_path`, current `run_id` (if any), and last error.
+Heartbeat failures are swallowed (`except Exception: pass`): a status ping
+must never be able to take down the actual processing loop.
+
+The dashboard (`GET ?dashboard=`) reads `vision_runners` and marks a runner
+"online" if its last heartbeat is within `RUNNER_ONLINE_THRESHOLD_MS`
+(60s - a generous multiple of the runner's own 10s default poll interval,
+so one slow iteration - a big download, a busy GPU - doesn't flap a healthy
+runner offline). This makes a dead runner visible directly instead of only
+inferable from "the queue stopped draining."
 
 ## Frontend — `src/routes/scouting/vision/+page.svelte`
 
@@ -171,8 +306,24 @@ inline). Right pane, once a match is selected:
    vs. TBA values, a notes field, and one-click resolution buttons for each
    of the 5 outcomes.
 
+Each run in the "ML processing" list also shows a **Release to scouting
+data** button (complete + unreleased + `VISION_RELEASE` only) or a
+`released` tag once it's been pushed - see **Reviewed-result release
+bridge** above.
+
 The page's own header renders a `ShieldAlert` "Restricted project" label as a
-constant visual reminder of the permission gate.
+constant visual reminder of the permission gate, plus a link to the event
+dashboard (below).
+
+### Event dashboard — `src/routes/scouting/vision/dashboard/+page.svelte`
+
+A separate page (linked from the main Vision Scouting header) that answers
+"how's this event going" without clicking through matches one at a time:
+stat tiles for matches complete/total, runs by status (+ released count),
+open discrepancies (with a critical count called out), and current queue
+depth, plus a runner fleet table (online/offline, last-seen age, current run,
+model path, last error). Takes an `event_key` via `?event_key=` or a manual
+input; defaults to the active scouting event.
 
 ## External ML runner — `vision/runner/`
 
@@ -235,6 +386,32 @@ YOLO weights the runner needs:
   (alliance/fuel/climb extraction) and the negative case: total score must
   *not* be mistaken for a fuel count when no compatible breakdown field
   exists.
+- `src/routes/api/vision-runner/server.test.js` — token auth (missing/wrong/
+  wrong-length all reject before the constant-time compare even runs), the
+  claim compare-and-swap loop (a lost race on the first candidate correctly
+  falls through to the next one), heartbeat validation, and that `fail`
+  only fires a Slack alert when a row actually transitioned (not on a no-op
+  CAS). **Note the file name**: `server.test.js`, not `+server.test.js` -
+  SvelteKit reserves the `+` prefix for real route files
+  (`+page.svelte`/`+server.js`/etc.); a test file starting with `+` trips a
+  "Files prefixed with + are reserved" warning (surfaced as a Vite HMR
+  overlay in dev, and would very likely break `npm run build` too).
+- `src/routes/api/vision/server.test.js` — auth guard, dashboard aggregation
+  math (run/discrepancy counts, runner online/offline threshold), and the
+  full `release-run` guardrail chain (missing `run_id`, missing permission,
+  wrong run status, already-released, no-attributable-results, and the
+  happy path asserting the *exact* rows handed to `scout_data_events.insert`
+  - including that an unrecognized climb value is dropped rather than
+  written through).
+
+All four vision test files mock `@supabase/supabase-js`'s `createClient`
+(and `$lib/server/971bot.js`'s `getSupabase` for the two API-route files)
+with a small reusable chain-object mock: every query-builder method returns
+the same chain, and the chain itself is awaitable, resolving to a per-table
+queued `{data, error}` - because every code path in these routes builds one
+full chain and awaits it exactly once, never branching mid-chain. There was
+no prior precedent for testing a SvelteKit `+server.js` route in this repo;
+this establishes one.
 
 ## Access control & security summary
 
@@ -253,23 +430,28 @@ YOLO weights the runner needs:
 
 ## Setup checklist (nothing here works until these are done)
 
-1. Run `migrations/20260828_vision_system.sql` against the real Supabase
-   project — **not yet applied** as of this doc; the app currently has no
-   `vision_*` tables or `vision-recordings` bucket in production.
-2. **`VISION_REVIEW` is not wired into the app's own permission system** —
-   `src/lib/permissions.js` (`PERMISSIONS`, `GENERAL_ROLE_PERMISSIONS`, etc.)
-   has no `VISION_REVIEW` entry, and there's no admin-UI toggle for it. The
-   RLS policies call `public.has_permission('VISION_REVIEW')`, which assumes
-   that function and a way to grant the permission string already exist
-   Postgres-side — granting it to specific users today means doing so
-   directly against the database, not through this app.
+1. Run **both** migration files against the real Supabase project, in order
+   — **neither is applied yet** as of this doc; production currently has no
+   `vision_*` tables, no `vision-recordings` bucket, and no `vision_notify`
+   column:
+   - `migrations/20260828_vision_system.sql`
+   - `migrations/20260829_vision_notifications_release_fleet.sql`
+2. Grant `VISION_REVIEW` (and `VISION_RELEASE`, for whoever should be able to
+   release results) from the admin panel's Permissions column - this is now
+   possible through the app (see **Slack alerting** above for how the
+   checkbox UI works); it no longer requires a raw SQL edit. It still
+   assumes `public.has_permission()` already exists in the DB (it does -
+   confirmed against a real schema dump, `schema.sql`, which predates the
+   vision tables but already has this function).
 3. Set `VISION_RUNNER_TOKEN` (shared secret) and `TBA_API_KEY` in the web
    service's environment.
 4. Deploy `vision/runner/vision_runner.py` separately (GPU host), with
    `VISION_API_URL`, `VISION_RUNNER_TOKEN`, `VISION_RUNNER_ID`, and
    `VISION_MODEL_PATH` pointing at a locally trained model — no weights are
    committed to this repo.
-5. `/scouting/vision` is intentionally unlinked from every nav tab
-   (`src/routes/+layout.svelte`, `navigation.json`, `defaultTabs.js` all have
-   zero references to it) — reaching it requires typing the URL directly,
-   by design, on top of the permission gate.
+
+`/scouting/vision` **is** now linked - a real "Vision Scouting" tab in the
+Competition nav folder (`src/routes/+layout.svelte`, `navigation.json`,
+`defaultTabs.js`) - but `canRenderTabKey('vision')` hides it from anyone
+without `VISION_REVIEW` (or `VIEW_ADMIN_PANEL`), so step 2 above is still
+what actually determines who can see it, not the nav wiring itself.

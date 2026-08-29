@@ -62,7 +62,8 @@ export function defaultHeaderTabs(navConfig = navigation) {
       { key: 'datascout', label: 'Data Scouting' },
       { key: 'notescout', label: 'Note Scouting' },
       { key: 'teamview', label: 'Team View' },
-      { key: 'scouting-admin', label: 'Scouting Admin' }
+      { key: 'scouting-admin', label: 'Scouting Admin' },
+      { key: 'vision', label: 'Vision Scouting' }
     ]
   });
 
