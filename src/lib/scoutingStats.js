@@ -172,61 +172,10 @@ function weightedScore(parts) {
   return usable.reduce((sum, part) => sum + part.value * part.weight, 0) / weight;
 }
 
-const AUTO_POINTS_SCORE = { '0': 0, '1-2': 30, '3-4': 70, '5+': 100 };
-const STATUS_SCORE = { active: 100, disabled: 35, died: 0 };
-const PIT_CLIMB_SCORE = { 'No Climb': 0, L1: 35, 'L1 Auto': 45, L2: 70, L3: 100 };
-const PROBLEM_PENALTY = { low: 5, medium: 10, high: 20, critical: 30 };
-
-export function summarizeDecisionInputs(matchReports = [], pitEntry = null, problemReports = []) {
-  const reports = matchReports || [];
-  const matchValues = [];
-  const reliabilityValues = [];
-  let noteCount = (pitEntry?.additional_notes ? 1 : 0) + (pitEntry?.profile_notes ? 1 : 0);
-
-  for (const report of reports) {
-    for (const field of ['shot_accuracy', 'driver_awareness', 'cycle_speed', 'defense', 'driver_skill']) {
-      const value = Number(report?.[field]);
-      if (value >= 1 && value <= 5) matchValues.push(value * 20);
-    }
-    if (AUTO_POINTS_SCORE[report?.auto_points_band] != null) matchValues.push(AUTO_POINTS_SCORE[report.auto_points_band]);
-    if (typeof report?.auto_moved === 'boolean') matchValues.push(report.auto_moved ? 100 : 0);
-    const reliability = Number(report?.reliability);
-    if (reliability >= 1 && reliability <= 5) reliabilityValues.push(reliability * 20);
-    if (STATUS_SCORE[report?.robot_status] != null) reliabilityValues.push(STATUS_SCORE[report.robot_status]);
-    if (typeof report?.crash_or_break === 'boolean') reliabilityValues.push(report.crash_or_break ? 0 : 100);
-    if (report?.teleop_notes) noteCount += 1;
-    if (report?.post_notes) noteCount += 1;
-  }
-
-  const average = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-  const pitClimbs = Array.isArray(pitEntry?.climb_options) ? pitEntry.climb_options : [];
-  const pitCapabilityScore = pitClimbs.length ? Math.max(...pitClimbs.map((value) => PIT_CLIMB_SCORE[value] ?? 0)) : null;
-  const activeProblems = (problemReports || []).filter((problem) => ['open', 'acknowledged'].includes(problem?.status));
-  const baseReliability = average(reliabilityValues);
-  const penalty = activeProblems.reduce((sum, problem) => sum + (PROBLEM_PENALTY[problem?.severity] || 10), 0);
-  const reliabilityScore = baseReliability == null && !activeProblems.length ? null : Math.max(0, (baseReliability ?? 100) - Math.min(60, penalty));
-  const structuredMatchScore = average(matchValues);
-  const matchEvaluationScore = weightedScore([
-    { value: structuredMatchScore, weight: 0.85 },
-    { value: pitCapabilityScore, weight: 0.15 }
-  ]);
-
-  return {
-    matchReports: reports.length,
-    structuredMatchScore,
-    pitCapabilityScore,
-    matchEvaluationScore,
-    reliabilityScore,
-    openProblemCount: activeProblems.length,
-    noteCount,
-    robotArchetype: pitEntry?.robot_archetype || null
-  };
-}
-
 // Produces event-relative rankings from the team's own scouting observations.
 // Missing dimensions are omitted and the remaining weights are normalized,
 // never converted to fake zeroes.
-export function buildPowerRankings(teams, events, decisionInputs = {}) {
+export function buildPowerRankings(teams, events) {
   const eventsByTeam = new Map();
   for (const row of events || []) {
     if (!row?.team_key) continue;
@@ -239,38 +188,18 @@ export function buildPowerRankings(teams, events, decisionInputs = {}) {
     scoutSummary: summarizeTeamPerformance(eventsByTeam.get(team.key) || [])
   }));
   const metricValues = (key) => rows.map((row) => row.scoutSummary[key]);
-  const matchByTeam = new Map();
-  for (const report of decisionInputs.matchReports || []) {
-    if (!matchByTeam.has(report.team_key)) matchByTeam.set(report.team_key, []);
-    matchByTeam.get(report.team_key).push(report);
-  }
-  const pitByTeam = new Map((decisionInputs.pitEntries || []).map((entry) => [entry.team_key, entry]));
-  const problemsByTeam = new Map();
-  for (const problem of decisionInputs.problemReports || []) {
-    if (!problemsByTeam.has(problem.team_key)) problemsByTeam.set(problem.team_key, []);
-    problemsByTeam.get(problem.team_key).push(problem);
-  }
-
   const ranked = rows.map((row) => {
     const summary = row.scoutSummary;
-    const legacyPerformanceScore = weightedScore([
+    const scoutPower = weightedScore([
       { value: normalize(summary.avgFuel, metricValues('avgFuel')), weight: 0.4 },
       { value: normalize(summary.avgDrivingRank, metricValues('avgDrivingRank')), weight: 0.2 },
       { value: normalize(summary.avgAccuracy, metricValues('avgAccuracy')), weight: 0.15 },
       { value: normalize(summary.avgSpeed, metricValues('avgSpeed')), weight: 0.1 },
       { value: normalize(summary.avgClimbLevel, metricValues('avgClimbLevel')), weight: 0.15 }
     ]);
-    const decisionSummary = summarizeDecisionInputs(matchByTeam.get(row.key), pitByTeam.get(row.key), problemsByTeam.get(row.key));
-    const scoutPower = weightedScore([
-      { value: legacyPerformanceScore, weight: 0.6 },
-      { value: decisionSummary.matchEvaluationScore, weight: 0.3 },
-      { value: decisionSummary.reliabilityScore, weight: 0.1 }
-    ]);
     return {
       ...row,
-      scoutPower,
-      decisionSummary,
-      scoreBreakdown: { legacyPerformanceScore, matchEvaluationScore: decisionSummary.matchEvaluationScore, reliabilityScore: decisionSummary.reliabilityScore }
+      scoutPower
     };
   });
 
