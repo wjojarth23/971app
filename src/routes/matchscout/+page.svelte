@@ -1,12 +1,13 @@
 <script>
   import { onMount } from 'svelte';
   import { AlertTriangle, Check, ChevronRight, ClipboardCheck, Flag, MapPinned, Route, RotateCcw, Timer, Trophy } from 'lucide-svelte';
+  import { getAuthHeader } from '$lib/supabase.js';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
 
   const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
   const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
   const POINT_BANDS = ['0', '1-2', '3-4', '5+'];
   const RATING_FIELDS = ['Shot accuracy', 'Driver awareness', 'Cycle speed', 'Defense', 'Reliability'];
-  const PIT_PROBLEM_KEY = '971app.pit-problems';
 
   let phase = 'prematch';
   let matchNumber = '';
@@ -30,6 +31,9 @@
   let pitProblemDetails = '';
   let postNotes = '';
   let submitted = false;
+  let submitting = false;
+  let submitError = '';
+  let eventKey = '';
 
   $: assignmentReady = matchNumber.trim() && robotNumber.trim() && startingPosition;
   $: assignmentLabel = assignmentReady ? `Match ${matchNumber} · Robot ${robotNumber}` : 'Set your assignment';
@@ -70,37 +74,57 @@
     drawing = false;
   }
 
-  function finishScout() {
+  async function authFetch(url, options = {}) {
+    return fetch(url, { ...options, headers: { ...(options.headers || {}), ...(await getAuthHeader()) } });
+  }
+
+  async function finishScout() {
     if (!assignmentReady) {
       phase = 'prematch';
       return;
     }
-    if (pitProblem) queuePitProblem();
-    submitted = true;
-  }
-
-  function queuePitProblem() {
+    if (!eventKey) {
+      submitError = 'No active scouting event is configured.';
+      return;
+    }
+    submitting = true;
+    submitError = '';
     try {
-      const existing = JSON.parse(window.localStorage.getItem(PIT_PROBLEM_KEY) || '[]');
-      const reports = Array.isArray(existing) ? existing : [];
-      reports.unshift({
-        id: crypto.randomUUID(),
-        source: 'Match scout',
-        team: robotNumber.trim(),
-        match: matchNumber.trim(),
-        summary: pitProblemDetails.trim() || 'Mechanical issue flagged after match',
-        detail: postNotes.trim(),
-        severity: robotDisabled === 'died' || robotDisabled === 'disabled' ? 'urgent' : 'watch',
-        createdAt: new Date().toISOString(),
-        resolved: false
+      const reportResponse = await authFetch('/api/match-scout-reports', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+          event_key: eventKey, match_number: matchNumber, team_key: robotNumber, alliance_color: alliance,
+          starting_position: startingPosition, auto_start_zone: autoStartZone, auto_points_band: autoPoints,
+          auto_end_action: autoFinish, ball_sources: ballSources, auto_moved: autoMoved, auto_path: autoPath,
+          ratings, teleop_notes: teleopNotes, crash_or_break: crashOrBreak,
+          robot_status: robotDisabled === 'no' ? 'active' : robotDisabled, card, driver_skill: driverSkill,
+          pit_problem: pitProblem, pit_problem_details: pitProblemDetails, post_notes: postNotes
+        })
       });
-      window.localStorage.setItem(PIT_PROBLEM_KEY, JSON.stringify(reports));
-    } catch {
-      // Match reporting remains usable if browser storage is unavailable.
+      const reportBody = await reportResponse.json().catch(() => null);
+      if (!reportResponse.ok || !reportBody?.success) throw new Error(reportBody?.error || 'Match report failed to save.');
+
+      if (pitProblem) {
+        const problemResponse = await authFetch('/api/scouting-problems', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+            action: 'create-report', event_key: eventKey, match_key: `${eventKey}_qm${matchNumber}`,
+            match_number: matchNumber, team_key: robotNumber, alliance_color: alliance, source: 'match_scout',
+            severity: robotDisabled === 'died' || robotDisabled === 'disabled' ? 'critical' : 'high',
+            summary: pitProblemDetails.trim() || 'Mechanical issue flagged after match', details: postNotes
+          })
+        });
+        const problemBody = await problemResponse.json().catch(() => null);
+        if (!problemResponse.ok || !problemBody?.success) throw new Error(problemBody?.error || 'Pit problem failed to save.');
+      }
+      submitted = true;
+    } catch (error) {
+      submitError = error.message || 'Match report failed to save.';
+    } finally {
+      submitting = false;
     }
   }
 
   onMount(() => {
+    void fetchActiveScoutingEventKey().then((value) => eventKey = value || '');
     const query = new URLSearchParams(window.location.search);
     matchNumber = query.get('match') || '';
     robotNumber = query.get('team') || '';
@@ -183,7 +207,8 @@
           <label class="notes-label pit-report-field">Problem for pit crew<textarea class="form-input" rows="3" placeholder="What should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
         {/if}
         <label class="notes-label">Freeform notes<textarea class="form-input" rows="5" placeholder="Anything strategy should know?" bind:value={postNotes}></textarea></label>
-        <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" on:click={finishScout}>Finish match scouting <Check size={16} /></button></div>
+        {#if submitError}<p class="text-error">{submitError}</p>{/if}
+        <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" disabled={submitting} on:click={finishScout}>{submitting ? 'Saving…' : 'Finish match scouting'} <Check size={16} /></button></div>
       {/if}
     </section>
   </div>

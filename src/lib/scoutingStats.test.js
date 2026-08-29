@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   summarizeTeamEvents, summarizeTeamPerformance, buildPowerRankings,
-  fuelCountFromEvents, deriveMatchTeamRow
+  fuelCountFromEvents, deriveMatchTeamRow, summarizeDecisionInputs
 } from './scoutingStats.js';
 
 function event(overrides) {
@@ -163,6 +163,18 @@ describe('deriveMatchTeamRow', () => {
 });
 
 describe('power rankings', () => {
+  it('turns structured match reports and open pit problems into explainable decision scores', () => {
+    const summary = summarizeDecisionInputs([
+      { shot_accuracy: 5, driver_awareness: 4, cycle_speed: 5, defense: 3, driver_skill: 5, reliability: 4, robot_status: 'active', crash_or_break: false, auto_points_band: '5+', auto_moved: true, post_notes: 'Strong match' }
+    ], { climb_options: ['L3'], robot_archetype: 'Hybrid', additional_notes: 'Fast repair access' }, [
+      { status: 'open', severity: 'high' }
+    ]);
+    expect(summary.matchEvaluationScore).toBeGreaterThan(80);
+    expect(summary.reliabilityScore).toBeLessThan(100);
+    expect(summary.openProblemCount).toBe(1);
+    expect(summary.noteCount).toBe(2);
+  });
+
   it('aggregates fuel and climb results by match', () => {
     const events = [
       event({ event_type: 'hub_fuel' }),
@@ -192,5 +204,16 @@ describe('power rankings', () => {
     expect(ranked.find((row) => row.key === 'frc2').powerRank).toBe(1);
     expect(ranked.find((row) => row.key === 'frc3').scoutPower).toBeCloseTo(50, 5);
     expect(ranked.find((row) => row.key === 'frc3').scoutPower).not.toBe(0);
+  });
+
+  it('allows saved match reports and reliability to affect rank order', () => {
+    const teams = [{ key: 'frc1' }, { key: 'frc2' }];
+    const decisionInputs = { matchReports: [
+      { team_key: 'frc1', shot_accuracy: 2, driver_skill: 2, reliability: 2, robot_status: 'disabled', crash_or_break: true },
+      { team_key: 'frc2', shot_accuracy: 5, driver_skill: 5, reliability: 5, robot_status: 'active', crash_or_break: false }
+    ] };
+    const ranked = buildPowerRankings(teams, [], decisionInputs);
+    expect(ranked.find((row) => row.key === 'frc2').powerRank).toBe(1);
+    expect(ranked.find((row) => row.key === 'frc2').scoutPower).toBeGreaterThan(ranked.find((row) => row.key === 'frc1').scoutPower);
   });
 });

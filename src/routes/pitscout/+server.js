@@ -237,6 +237,11 @@ export async function POST({ request, url }) {
     const human_player_balls_in_auto = body?.human_player_balls_in_auto || null;
     const robot_archetype = sanitizeRobotArchetype(body?.robot_archetype);
     const additional_notes = sanitizePitAdditionalNotes(body?.additional_notes);
+    const robot_name = sanitizeLongText(body?.robot_name, 80);
+    const profile_notes = sanitizeLongText(body?.profile_notes, 2000);
+    const scoring_roles = Array.isArray(body?.scoring_roles)
+      ? body.scoring_roles.map((value) => sanitizeLongText(value, 60)).filter(Boolean).slice(0, 12)
+      : [];
     const likely_breaking_component = sanitizeLongText(body?.likely_breaking_component);
     const estimated_bps = sanitizeEstimatedBps(body?.estimated_bps);
     const climb_options = sanitizeClimbOptions(body?.climb_options);
@@ -257,6 +262,9 @@ export async function POST({ request, url }) {
       human_player_balls_in_auto,
       robot_archetype,
       additional_notes,
+      robot_name,
+      scoring_roles,
+      profile_notes,
       likely_breaking_component,
       estimated_bps,
       climb_options,

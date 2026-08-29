@@ -11,8 +11,10 @@ the existing pit-entry fields, profiles now store:
 - `robot_archetype`: one primary strategic role from the server-validated
   vocabulary.
 - `additional_notes`: up to 2,000 characters of freeform pit context.
+- `robot_name`, `scoring_roles`, and `profile_notes`: the remaining focused
+  profile fields.
 
-Both columns participate in the existing optional-column compatibility loop in
+All optional columns participate in the existing compatibility loop in
 `src/lib/server/pitScoutingSchema.js`. A deployment missing the newest migration
 therefore hides the fields and returns a warning instead of breaking the whole
 pit page.
@@ -32,10 +34,18 @@ them. The API supports the complete lifecycle:
 Reports may also be dismissed or reopened. Open and acknowledged reports sort
 ahead of closed work.
 
-`/api/scouting-problems` is authenticated and supports both pit-originated and
-future match-scout-originated reports. This change deliberately does not modify
-the Data Scouting UI; its future Problems button can submit `source:
-'match_scout'` to the same endpoint without another schema.
+`/api/scouting-problems` is authenticated and supports both pit- and
+match-originated reports. Finishing Match Scouting with its pit flag enabled
+creates a shared queue entry.
 
-Apply `migrations/20260829_pit_scouting_workflow.sql` before enabling the new
-fields in production.
+## Decision use
+
+Complete reports are persisted in `match_scout_reports`. Power Rankings combines
+60% legacy production observations, 30% structured match evaluation (including
+pit climb capability), and 10% reliability. Active problem severity reduces
+reliability. Missing categories are omitted and remaining weights normalize.
+Notes and archetypes stay visible for human review and are not converted into
+opaque sentiment scores.
+
+Apply `migrations/20260829_pit_scouting_workflow.sql` and
+`migrations/20260829_match_scout_reports.sql` before enabling this workflow.

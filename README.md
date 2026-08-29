@@ -32,8 +32,9 @@ reading code.
 - **Scouting**: the Competition menu exposes Pit Scouting (`/pitscout`), Match
   Scouting (`/matchscout`), and Vision Scouting (`/scouting/vision`). Pit
   Scouting provides robot archetypes, additional notes, and a durable shared
-  breakdown queue; Match Scouting can also hand off an immediate browser-local
-  pit problem report at post-match. Legacy scouting routes remain in the source
+  breakdown queue; Match Scouting persists complete reports and hands pit
+  problems into that shared queue. Power Rankings combines match production,
+  structured evaluations, and reliability signals. Legacy scouting routes remain in the source
   tree for future restoration but are not reachable through navigation. The
   scouting tools integrate with The Blue Alliance API for competition data.
   See `implementations/pit-scouting-workflow.md` for the persisted pit workflow.
@@ -231,9 +232,9 @@ own docs are all together in one place instead of scattered across
   webhooks/crons: `api/cam-generate` (synchronous G-code generation),
   `api/drive-watcher` (Drive input-sweep, cron-gated), `api/planner`
   (notification sweep, cron-gated), `api/onshape`, `api/tba`, `api/971bot`
-  (Slack), `api/attendance`, `api/scout-assignments`, `api/scouting-problems`,
-  `api/scouting-admin`, `api/scouting-config`, `api/tasks`, `api/admin`,
-  `api/notifications`.
+  (Slack), `api/attendance`, `api/scout-assignments`, `api/match-scout-reports`,
+  `api/scouting-problems`, `api/scouting-admin`, `api/scouting-config`,
+  `api/tasks`, `api/admin`, `api/notifications`.
 
 ## `src/lib` (shared code)
 

@@ -60,6 +60,9 @@
           drivebase_type: drivebase || null,
           robot_archetype: archetype || null,
           additional_notes: additionalNotes,
+          robot_name: robotName,
+          scoring_roles: scoringRoles,
+          profile_notes: profileNotes,
           climb_options: climb ? [climb] : []
         })
       });
