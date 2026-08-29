@@ -49,14 +49,12 @@ export async function GET({ request, url }) {
     if (error) return json({ error: error.message }, { status: 403 });
 
     const runIds = [];
-    const runCounts = { total: 0, complete: 0, failed: 0, in_progress: 0, released: 0 };
+    const runCounts = { total: 0, queued: 0, claimed: 0, processing: 0, complete: 0, failed: 0, cancelled: 0, released: 0 };
     for (const match of matches || []) {
       for (const run of match.vision_runs || []) {
         runCounts.total += 1;
         runIds.push(run.id);
-        if (run.status === 'complete') runCounts.complete += 1;
-        else if (run.status === 'failed') runCounts.failed += 1;
-        else runCounts.in_progress += 1;
+        if (Object.hasOwn(runCounts, run.status)) runCounts[run.status] += 1;
         if (run.released_at) runCounts.released += 1;
       }
     }

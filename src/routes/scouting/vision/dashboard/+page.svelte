@@ -75,7 +75,7 @@
     <div class="surface-card stat-card">
       <span class="stat-label">Runs</span>
       <span class="stat-value">{data.runs.complete}<span class="stat-of">/ {data.runs.total}</span></span>
-      <span class="stat-sub">{data.runs.failed} failed · {data.runs.in_progress} in progress · {data.runs.released} released</span>
+      <span class="stat-sub">{data.runs.queued} queued · {data.runs.claimed + data.runs.processing} active · {data.runs.failed} failed · {data.runs.released} released</span>
     </div>
     <div class="surface-card stat-card">
       <span class="stat-label">Discrepancies</span>

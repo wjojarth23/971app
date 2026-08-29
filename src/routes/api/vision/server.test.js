@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // full chain and await it exactly once.
 function makeMockClient(queues = {}, { user = { id: 'user-1' } } = {}) {
   const remaining = {};
+  const updateCalls = [];
   for (const [table, list] of Object.entries(queues)) remaining[table] = [...list];
 
   function nextFor(table) {
@@ -24,7 +25,7 @@ function makeMockClient(queues = {}, { user = { id: 'user-1' } } = {}) {
       order: () => chain,
       limit: () => chain,
       in: () => chain,
-      update: () => chain,
+      update: (values) => { updateCalls.push({ table, values }); return chain; },
       insert: () => chain,
       upsert: () => chain,
       delete: () => chain,
@@ -38,6 +39,7 @@ function makeMockClient(queues = {}, { user = { id: 'user-1' } } = {}) {
   const rpcCalls = [];
   return {
     from: (table) => makeChain(table),
+    updateCalls,
     // release-run does its scout_data_events insert, released_at claim and
     // audit entry inside one transaction via release_vision_run() (see
     // 20260829_vision_release_atomic.sql), so the rows to assert on arrive
@@ -127,7 +129,7 @@ describe('api/vision', () => {
       expect(body.success).toBe(true);
       expect(body.data.matches_total).toBe(2);
       expect(body.data.matches_complete).toBe(1);
-      expect(body.data.runs).toEqual({ total: 2, complete: 1, failed: 1, in_progress: 0, released: 1 });
+      expect(body.data.runs).toEqual({ total: 2, queued: 0, claimed: 0, processing: 0, complete: 1, failed: 1, cancelled: 0, released: 1 });
       expect(body.data.discrepancies).toEqual({ total: 2, open: 1, open_critical: 1, resolved: 1 });
       expect(body.data.queue_depth).toBe(2);
       expect(body.data.runners[0].online).toBe(true);
@@ -167,6 +169,17 @@ describe('api/vision', () => {
       const { POST } = await import('./+server.js');
       const res = await POST({ request: request({ action: 'queue-run', vision_match_id: 'm1', model_name: 'yolo', model_version: 'v1' }) });
       expect(res.status).toBe(400);
+    });
+
+    it('persists start zones drawn in the visual calibrator', async () => {
+      const startZones = [{ label: 'center', polygon: [[0.4, 0.1], [0.6, 0.1], [0.6, 0.3]] }];
+      mockClient = makeMockClient({ vision_views: [{ data: { id: 'view-1', start_zones: startZones }, error: null }] });
+      const { POST } = await import('./+server.js');
+      const res = await POST({ request: request({ action: 'update-view', id: 'view-1', start_zones: startZones }) });
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.data.start_zones).toEqual(startZones);
+      expect(mockClient.updateCalls).toContainEqual({ table: 'vision_views', values: { start_zones: startZones } });
     });
 
     it('review rejects an invalid status value', async () => {

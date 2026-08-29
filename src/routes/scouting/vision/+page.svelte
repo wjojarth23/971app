@@ -13,6 +13,7 @@
 
   let matches = [];
   let selectedId = '';
+  let selectedRunId = '';
   let detail = null;
   let loading = true;
   let error = '';
@@ -124,14 +125,26 @@
     }
   }
 
-  async function loadDetail(id) {
+  async function loadDetail(id, runId = selectedRunId) {
     selectedId = id;
-    detail = await api(`?id=${encodeURIComponent(id)}`);
+    const query = new URLSearchParams({ id });
+    if (runId) query.set('run_id', runId);
+    detail = await api(`?${query}`);
+    selectedRunId = detail.runs?.some((run) => run.id === runId) ? runId : (detail.runs?.[0]?.id || '');
     for (const track of detail.tracks || []) trackTeamDraft[track.id] = track.team_key || '';
     for (const observation of detail.observations || []) {
       observationTeamDraft[observation.id] = observation.team_key || '';
       observationValueDraft[observation.id] = JSON.stringify(observation.value || {});
     }
+  }
+
+  async function selectRun(run) {
+    busy = true;
+    error = '';
+    try {
+      await loadDetail(selectedId, run.id);
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
   }
 
   async function post(body) {
@@ -282,16 +295,72 @@
 
   let observationSource = 'all';
   let observationStatus = 'unreviewed';
+  let observationAttribution = 'all';
   let observationMinConfidence = 0;
+  let observationOrder = 'priority';
 
-  $: visibleObservations = (detail.observations || []).filter((observation) => {
+  function reviewPriority(observation) {
+    if (!observation.team_key) return 0;
+    if ((Number(observation.confidence) || 0) < 0.65) return 1;
+    if (observation.source === 'qwen3_vl') return 2;
+    return 3;
+  }
+
+  function applyObservationPreset(preset) {
+    if (preset === 'attention') {
+      observationStatus = 'unreviewed';
+      observationSource = 'all';
+      observationAttribution = 'all';
+      observationMinConfidence = 0;
+      observationOrder = 'priority';
+    } else if (preset === 'unreviewed') {
+      observationStatus = 'unreviewed';
+      observationSource = 'all';
+      observationAttribution = 'all';
+      observationMinConfidence = 0;
+      observationOrder = 'timeline';
+    } else if (preset === 'attributed') {
+      observationStatus = 'all';
+      observationSource = 'all';
+      observationAttribution = 'attributed';
+      observationMinConfidence = 0;
+      observationOrder = 'timeline';
+    } else {
+      observationStatus = 'all';
+      observationSource = 'all';
+      observationAttribution = 'all';
+      observationMinConfidence = 0;
+      observationOrder = 'timeline';
+    }
+  }
+
+  $: visibleObservations = (detail?.observations || []).filter((observation) => {
     if (observationSource !== 'all' && (observation.source || 'legacy') !== observationSource) return false;
     if (observationStatus !== 'all' && (observation.review_status || 'unreviewed') !== observationStatus) return false;
+    if (observationAttribution === 'attributed' && !observation.team_key) return false;
+    if (observationAttribution === 'unattributed' && observation.team_key) return false;
     return (Number(observation.confidence) || 0) >= Number(observationMinConfidence);
-  });
+  }).sort((left, right) => observationOrder === 'priority'
+    ? ((left.review_status || 'unreviewed') === 'unreviewed' ? 0 : 1) - ((right.review_status || 'unreviewed') === 'unreviewed' ? 0 : 1)
+      || reviewPriority(left) - reviewPriority(right) || left.started_ms - right.started_ms
+    : left.started_ms - right.started_ms);
   $: bulkReviewable = visibleObservations.filter(
     (observation) => (observation.review_status || 'unreviewed') === 'unreviewed'
   );
+  $: priorityReviewCount = bulkReviewable.filter((observation) => reviewPriority(observation) < 3).length;
+  $: readiness = (detail?.observations || []).reduce((summary, observation) => {
+    const status = observation.review_status || 'unreviewed';
+    summary[status] = (summary[status] || 0) + 1;
+    if (!observation.team_key) summary.unattributed += 1;
+    if (['accepted', 'corrected'].includes(status) && observation.team_key) summary.eligible += 1;
+    return summary;
+  }, { accepted: 0, corrected: 0, rejected: 0, unobservable: 0, unreviewed: 0, unattributed: 0, eligible: 0 });
+  $: selectedRun = detail?.runs?.find((run) => run.id === selectedRunId) || null;
+  $: sortedDiscrepancies = [...(detail?.discrepancies || [])].sort((left, right) => {
+    const open = Number(left.status !== 'open') - Number(right.status !== 'open');
+    const severity = (left.severity === 'critical' ? 0 : 1) - (right.severity === 'critical' ? 0 : 1);
+    return open || severity;
+  });
 
   async function reviewVisible(status) {
     if (!bulkReviewable.length) return;
@@ -319,6 +388,10 @@
     let value;
     try { value = JSON.parse(observationValueDraft[observation.id] || '{}'); }
     catch { error = 'Corrected observation value must be valid JSON.'; return; }
+    if (!value || Object.keys(value).length === 0) {
+      error = 'A correction needs an event value; review the original evidence before saving it.';
+      return;
+    }
     busy = true;
     error = '';
     try {
@@ -444,7 +517,9 @@
         <div class="run-list">
           {#each detail.runs as run (run.id)}
             <span class={`status ${run.status}`}>
-              {run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}
+              <span>{run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}</span>
+              <span class="run-actions">
+                <button class="btn btn-sm" class:active-run={selectedRunId === run.id} on:click={() => selectRun(run)} disabled={busy}>Review results</button>
               {#if run.released_at}
                 <em class="released-tag">released</em>
               {:else if run.status === 'complete' && canRelease}
@@ -454,10 +529,29 @@
               {:else if ['failed', 'cancelled'].includes(run.status)}
                 <button class="btn btn-sm" on:click={() => retryRun(run)} disabled={busy}><RefreshCw size={12} /> Retry</button>
               {/if}
+              </span>
             </span>
           {/each}
         </div>
       </section>
+
+      {#if selectedRun?.status === 'complete' && !selectedRun.released_at}
+        <section class="surface-card section release-readiness">
+          <div>
+            <h2>Release readiness</h2>
+            <p>Review state for the selected run. Only accepted or corrected, team-attributed actions can enter scouting data.</p>
+          </div>
+          <div class="readiness-grid">
+            <span><b>{readiness.eligible}</b> eligible</span>
+            <span class:needs-review={readiness.unreviewed > 0}><b>{readiness.unreviewed}</b> unreviewed</span>
+            <span class:needs-review={readiness.unattributed > 0}><b>{readiness.unattributed}</b> unattributed</span>
+            <span><b>{readiness.rejected + readiness.unobservable}</b> excluded</span>
+          </div>
+          {#if !readiness.eligible}
+            <p class="readiness-warning">Nothing can be released yet. Accept or correct an observation and assign it to a team.</p>
+          {/if}
+        </section>
+      {/if}
 
       {#if detail.tracks.length}
         <section class="surface-card section">
@@ -499,6 +593,13 @@
         <section class="surface-card section">
           <h2>Detected actions ({visibleObservations.length} of {detail.observations.length})</h2>
 
+          <div class="review-presets" aria-label="Observation filter presets">
+            <button class="btn btn-sm" on:click={() => applyObservationPreset('attention')}>Needs attention</button>
+            <button class="btn btn-sm" on:click={() => applyObservationPreset('unreviewed')}>Unreviewed</button>
+            <button class="btn btn-sm" on:click={() => applyObservationPreset('attributed')}>Attributed only</button>
+            <button class="btn btn-sm" on:click={() => applyObservationPreset('all')}>All results</button>
+          </div>
+
           <div class="observation-filters">
             <label>Source
               <select class="form-input" bind:value={observationSource}>
@@ -518,14 +619,31 @@
                 <option value="unobservable">Unobservable</option>
               </select>
             </label>
+            <label>Attribution
+              <select class="form-input" bind:value={observationAttribution}>
+                <option value="all">All</option>
+                <option value="attributed">Attributed</option>
+                <option value="unattributed">Unattributed</option>
+              </select>
+            </label>
             <label>Min confidence
               <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={observationMinConfidence} />
+            </label>
+            <label>Review order
+              <select class="form-input" bind:value={observationOrder}>
+                <option value="priority">Priority first</option>
+                <option value="timeline">Match timeline</option>
+              </select>
             </label>
             <div class="bulk-actions">
               <button class="btn btn-sm" on:click={() => reviewVisible('accepted')} disabled={busy || !bulkReviewable.length}>Accept {bulkReviewable.length} shown</button>
               <button class="btn btn-sm" on:click={() => reviewVisible('rejected')} disabled={busy || !bulkReviewable.length}>Reject shown</button>
             </div>
           </div>
+
+          {#if observationOrder === 'priority' && priorityReviewCount}
+            <p class="review-priority-note">{priorityReviewCount} unreviewed action{priorityReviewCount === 1 ? '' : 's'} need attention first: unattributed, low-confidence, or Qwen-proposed.</p>
+          {/if}
 
           {#if !visibleObservations.length}
             <p class="empty-state">No observations match these filters.</p>
@@ -552,7 +670,16 @@
                 </span>
                 {#if !['accepted', 'corrected', 'rejected', 'unobservable'].includes(observation.review_status)}
                   <div class="observation-correction">
-                    <input class="form-input" placeholder="frc971" bind:value={observationTeamDraft[observation.id]} />
+                    {#if rosterFor(observation.alliance).length}
+                      <select class="form-input" bind:value={observationTeamDraft[observation.id]} aria-label="Corrected observation team">
+                        <option value="">unassigned</option>
+                        {#each rosterFor(observation.alliance) as teamKey}
+                          <option value={teamKey}>{teamKey.replace(/^frc/i, '')}</option>
+                        {/each}
+                      </select>
+                    {:else}
+                      <input class="form-input" placeholder="frc971" bind:value={observationTeamDraft[observation.id]} />
+                    {/if}
                     <input class="form-input" aria-label="Corrected observation JSON" bind:value={observationValueDraft[observation.id]} />
                     <button class="btn btn-sm" on:click={() => correctObservation(observation)} disabled={busy}>Save correction</button>
                   </div>
@@ -575,7 +702,7 @@
       <section class="surface-card section">
         <h2>Human review ({detail.discrepancies.filter((flag) => flag.status === 'open').length} open)</h2>
         {#if !detail.discrepancies.length}<p class="text-muted">No discrepancies generated yet.</p>{/if}
-        <div class="flag-list">{#each detail.discrepancies as flag}<article class:resolved={flag.status !== 'open'}><header><b>{flag.metric.replaceAll('_', ' ')}</b><span class={`severity ${flag.severity}`}>{flag.severity}</span></header><p>{flag.reason}</p><div class="values"><span>Vision: {JSON.stringify(flag.vision_value)}</span><span>TBA: {JSON.stringify(flag.reference_value)}</span></div><textarea class="form-input" placeholder="Review notes" bind:value={reviewNotes[flag.id]} disabled={flag.status !== 'open'}></textarea>{#if flag.status === 'open'}<div class="review-actions"><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'accepted_vision')}>Accept Vision</button><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'accepted_reference')}>Accept TBA</button><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'unobservable')}>Unobservable</button><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'dismissed')}>Dismiss</button></div>{:else}<small>Resolved: {flag.status}</small>{/if}</article>{/each}</div>
+        <div class="flag-list">{#each sortedDiscrepancies as flag}<article class:resolved={flag.status !== 'open'}><header><b>{flag.metric.replaceAll('_', ' ')}</b><span class={`severity ${flag.severity}`}>{flag.severity}</span></header><p>{flag.reason}</p><div class="values"><span>Vision: <code>{JSON.stringify(flag.vision_value)}</code></span><span>TBA: <code>{JSON.stringify(flag.reference_value)}</code></span></div><textarea class="form-input" placeholder="Review notes" bind:value={reviewNotes[flag.id]} disabled={flag.status !== 'open'}></textarea>{#if flag.status === 'open'}<div class="review-actions"><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'accepted_vision')}>Accept Vision</button><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'accepted_reference')}>Accept TBA</button><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'unobservable')}>Unobservable</button><button class="btn btn-sm" on:click={() => resolveFlag(flag, 'dismissed')}>Dismiss</button></div>{:else}<small>Resolved: {flag.status}</small>{/if}</article>{/each}</div>
       </section>
     {/if}
   </main>
@@ -608,6 +735,8 @@
   .status { padding:var(--space-2); border-radius:var(--radius-sm); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:var(--gap-2); overflow-wrap:anywhere; }
   .status.failed { color:var(--red,#c33); }
   .status button { display:inline-flex; align-items:center; gap:4px; }
+  .run-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:var(--gap-2); }
+  .active-run { border-color:var(--brand-gold-base,#d9a413); background:var(--brand-gold-soft); }
   .released-tag { color:var(--brand-gold-base,#d9a413); font-style:normal; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
   .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
   .identity-editor { display:flex; gap:var(--gap-1); }
@@ -617,6 +746,16 @@
   .observation-list code { min-width:0; overflow-wrap:anywhere; white-space:pre-wrap; font-size:.78rem; color:var(--text-muted); }
   .observation-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr)); gap:var(--gap-3); align-items:end; margin-bottom:var(--space-3); }
   .bulk-actions { display:flex; gap:var(--gap-2); flex-wrap:wrap; }
+  .review-presets { display:flex; flex-wrap:wrap; gap:var(--gap-2); margin-bottom:var(--space-3); }
+  .review-priority-note { margin:calc(-1 * var(--space-1)) 0 var(--space-3); color:var(--text-muted); font-size:.8rem; }
+  .release-readiness { display:grid; grid-template-columns:minmax(14rem,1fr) auto; gap:var(--gap-4); align-items:center; }
+  .release-readiness h2 { margin-bottom:var(--space-1); }
+  .release-readiness p { margin:0; color:var(--text-muted); font-size:.82rem; }
+  .readiness-grid { display:grid; grid-template-columns:repeat(4, minmax(5rem,1fr)); gap:var(--gap-2); }
+  .readiness-grid span { display:grid; gap:2px; padding:var(--space-2); background:var(--surface-2); color:var(--text-muted); font-size:.75rem; text-align:center; }
+  .readiness-grid b { color:var(--text); font-size:1.1rem; }
+  .readiness-grid .needs-review b { color:var(--brand-gold-strong); }
+  .release-readiness .readiness-warning { grid-column:1/-1; color:var(--danger); }
   .calibrate-panel { border:1px solid var(--border); border-radius:var(--radius-md); padding:var(--space-2) var(--space-3); }
   .calibrate-panel summary { cursor:pointer; font-size:.85rem; color:var(--text-muted); }
   .calibrate-panel[open] summary { margin-bottom:var(--space-3); }
@@ -640,12 +779,15 @@
     .vision-layout { grid-template-columns:1fr; }
     .sidebar { position:static; max-height:none; }
     .run-controls,.upload-grid,.observation-correction { grid-template-columns:1fr; }
+    .release-readiness { grid-template-columns:1fr; }
     .observation-list > div { grid-template-columns:1fr; }
     .observation-actions { justify-content:flex-start; }
   }
   @media (max-width:560px) {
     .qwen-clip-list > div { grid-template-columns:1fr; }
     .status { align-items:flex-start; flex-direction:column; }
+    .run-actions { justify-content:flex-start; }
+    .readiness-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
     .identity-editor { flex-direction:column; }
   }
 </style>
