@@ -149,9 +149,9 @@ There is now a click-to-draw calibrator (B2), so this is no longer hand-typed
 JSON: trace the field mask, outline goal zones, outline the named auto start
 zones, and click four landmarks to solve the homography. What stays human is
 knowing *which* four landmarks and what their real field coordinates are, and
-doing it once per venue per camera — though B4a would remove even that by
-solving the homography from the field's AprilTags. HSV thresholds are still
-numeric fields on
+doing it once per venue per camera — though B4a now removes even that where
+the camera can see field AprilTags. HSV thresholds are still numeric fields
+on
 the run form and will need tuning against real footage.
 
 Calibrating start zones is what makes `auto_start_position` reportable at all —
@@ -239,36 +239,47 @@ is not a substitute for the fixed camera in A5. Build it as a link-resolver
 plus optional fetch, and keep broadcast-sourced runs flagged as a distinct
 source so nobody mistakes their attribution for the calibrated pipeline's.
 
-### B4a. Solve the homography from AprilTags instead of by hand **[NEEDED]**
+### ~~B4a. Solve the homography from AprilTags~~ **[DONE]**
 
-The most valuable idea to come out of surveying other FRC vision work, and it
-removes most of A7.
+`vision/runner/apriltag_calibration.py`. A camera that can see two or more
+field tags calibrates itself: detect 36h11 markers, look each one up in the
+WPILib `AprilTagFieldLayout` JSON, recover the camera pose with `solvePnP`,
+and derive the floor-plane homography from it. The runner tries this
+automatically for any view with no hand-drawn homography; the four-point tool
+remains the fallback.
 
-FRC fields carry AprilTags at surveyed positions, and WPILib publishes an
-`AprilTagFieldLayout` JSON giving **every tag's exact pose in metres** in the
-standard FRC field frame (NWU, origin at the blue alliance wall). So a camera
-that can see three or more tags has everything needed to compute its own
-homography — no clicking landmarks, no typing coordinates, no per-venue expert
-step.
+Not a plain four-point homography, because FRC tags are mounted upright on
+walls — their corners are not coplanar with the floor, so fitting a homography
+straight to them fits the wrong plane.
 
-Two things this buys beyond convenience:
+**Opt-in, and it refuses rather than guessing.** Needs
+`config.apriltag_layout_path` (the layout is game-year specific, so it's a
+path rather than baked-in constants) and the camera's horizontal FOV or real
+intrinsics. Three independent gates, each earned by an observed failure:
 
-- **Real units.** Today a homography is only as good as the field coordinates
-  someone typed, and if none is calibrated, trajectories are in *pixels*. That
-  makes every derived number — speed, distance, attribution distance, the
-  dead-auto threshold — arbitrary and un-comparable across venues. Tag-derived
-  calibration puts everything in metres in the real field frame, which is what
-  makes `medianSpeedMps` an actual speed.
-- **Drift detection.** Re-solving each run and comparing against the stored
-  matrix catches a camera that got bumped mid-event, which currently invalidates
-  a venue's calibration silently.
+- **Reprojection error.** Catches a wrong tag size or a badly overstated FOV.
+- **Physical plausibility of the recovered camera pose.** Catches what
+  reprojection cannot: an *understated* FOV reprojects at 1.9px — comfortably
+  inside the gate — while placing the camera 31 m behind the alliance wall.
+  The error lands in the pose, not the residual, so it takes a "is the camera
+  above the floor and near the field" check to see it.
+- **Planar ambiguity.** A camera seeing only one wall has a coplanar point
+  set, and coplanar PnP has a real two-fold ambiguity — the true pose and its
+  mirror both reproject perfectly. `solvePnPGeneric` returns every solution
+  and the plausibility check picks; taking whichever came back first put the
+  camera under the floor about half the time.
 
-Shape of the work: `cv2.aruco` detects the 36h11 family in the runner, each
-detected tag's corners pair with its known field corners from the layout JSON,
-and the existing `solveHomography` (or `cv2.findHomography` with more than four
-correspondences) does the rest. The layout file is game-year specific, so ship
-it as a config path rather than hardcoding tag positions. Keep the manual
-four-point tool as the fallback for venues or angles where no tags are visible.
+**Accuracy depends on tag spread, and the solve says so.** Measured on
+synthetic scenes at 0.3px corner noise: tags across three walls put a 3 m
+ground distance within 1 mm, while the same number on a single wall drifts to
+~6 cm, because depth is weakly constrained when everything is on one plane.
+Both are exact with perfect corners, so this is noise sensitivity rather than
+bias. When the visible tags are coplanar the diagnostics say so and suggest
+aiming to catch a side wall.
+
+Still wants a real field to confirm the corner-ordering convention against —
+that is the one assumption synthetic tests can't validate, and the
+reprojection gate is what would catch it being wrong.
 
 ### B4c. Analytics vision does better than a human **[NICE]**
 

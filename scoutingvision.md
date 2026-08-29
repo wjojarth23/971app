@@ -663,6 +663,51 @@ set goes wrong. Its output was checked against `cv2.getPerspectiveTransform`
 and agrees to ~10 significant figures; that equivalence matters because the
 runner consumes the matrix with `cv2.perspectiveTransform`.
 
+### AprilTag self-calibration — `vision/runner/apriltag_calibration.py`
+
+A camera that can see two or more field AprilTags calibrates itself, which
+removes the most expert-only step in the whole pipeline. `process_view` tries
+it automatically for any view with no hand-drawn homography, writes the result
+onto the view so every downstream `field_point()` picks it up, and records the
+diagnostics; the four-point tool stays as the fallback.
+
+Not a plain four-point homography: FRC tags are mounted **upright on walls**,
+so their corners are not coplanar with the floor and fitting a homography
+directly to them fits the wrong plane. Instead `solvePnP` recovers the camera
+pose from the tags' known 3D field positions, and the floor-plane homography
+falls out of that pose — for a point at z=0 the third rotation column drops
+out, leaving `K [r1 r2 t]`, which is inverted because `field_point()` goes
+image → field.
+
+Opt-in via `config.apriltag_layout_path` (the WPILib layout is game-year
+specific, so a path rather than baked-in constants) plus the camera's
+horizontal FOV or real intrinsics. It refuses rather than guessing, through
+three gates that each exist because something got past the previous one:
+
+1. **Reprojection error** — catches a wrong tag size or an overstated FOV.
+2. **Physical plausibility of the recovered pose** — catches what reprojection
+   cannot. An *understated* FOV reprojects at 1.9px, well inside the gate,
+   while placing the camera 31 m behind the alliance wall: the error lands in
+   the pose, not the residual. So the camera must solve to above the floor,
+   below a sane roof, and within a margin of the field bounds the layout
+   itself supplies.
+3. **Planar ambiguity** — a camera seeing one wall has a coplanar point set,
+   and coplanar PnP genuinely has two solutions: the true pose and its mirror
+   through the tag plane, both reprojecting perfectly. `solvePnPGeneric`
+   returns every candidate and the plausibility check picks the real one.
+   Taking whichever came back first put the camera under the floor about half
+   the time.
+
+Accuracy is dominated by how far apart the tags are in depth, and the solve
+reports it. Measured on synthetic scenes at 0.3px corner noise: tags spread
+over three walls put a 3 m ground distance within 1 mm; the same count on a
+single wall drifts to ~6 cm. Both are exact with perfect corners, so this is
+noise sensitivity, not bias. When the visible tags are coplanar the
+diagnostics say so and suggest aiming to catch a side wall.
+
+`main()` doubles as a CLI for calibrating a venue once from a recording,
+printing the homography and diagnostics as JSON.
+
 ### Calibration & tuning
 
 - **Field mask** (`vision_views.field_mask`) and **goal zones**

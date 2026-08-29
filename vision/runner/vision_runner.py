@@ -603,6 +603,50 @@ def attribute_scores(piece_trajectories, robot_tracks, goal_zones, frame_shape, 
     return observations
 
 
+def autocalibrate_view(view, config, video_path, max_frames=30):
+    """Solve this view's field homography from the AprilTags already on the
+    field, when nobody hand-calibrated one.
+
+    Opt-in: needs a WPILib field layout path and the camera's horizontal FOV
+    (or explicit intrinsics), because a homography derived from wrong
+    intrinsics is confidently wrong rather than obviously wrong. Returns
+    (homography_or_None, diagnostics) and never raises - a view that can't
+    self-calibrate falls back to pixel coordinates exactly as before.
+    """
+    layout_path = config.get("apriltag_layout_path")
+    if not layout_path:
+        return None, {"reason": "no apriltag_layout_path configured"}
+    try:
+        from apriltag_calibration import calibrate_from_frame, load_field_layout
+
+        layout = load_field_layout(layout_path)
+        if not layout.get("tags"):
+            return None, {"reason": f"no tags in layout {layout_path}"}
+
+        fov = config.get("camera_horizontal_fov_deg") or view.get("camera_horizontal_fov_deg")
+        tag_size = float(config.get("apriltag_size_m", 0.1651))
+        capture = cv2.VideoCapture(str(video_path))
+        best = (None, {"reason": "no frame yielded a solve", "tags_matched": 0})
+        for _ in range(max_frames):
+            ok, frame = capture.read()
+            if not ok:
+                break
+            solved, diagnostics = calibrate_from_frame(
+                frame, layout, horizontal_fov_deg=fov, tag_size_m=tag_size,
+            )
+            # More tags in view means a better-conditioned pose, so keep
+            # looking rather than taking the first frame that happens to work.
+            if solved is not None and diagnostics.get("tags_matched", 0) > best[1].get("tags_matched", 0):
+                best = (solved.tolist(), diagnostics)
+            elif best[0] is None:
+                best = (None, diagnostics)
+        capture.release()
+        return best
+    except Exception as error:
+        # Calibration is an enhancement, never a reason to fail a run.
+        return None, {"reason": f"apriltag calibration failed: {error}"}
+
+
 def process_view(model, view, config, video_path):
     tracks = {}
     identity_map = config.get("identity_map", {})
@@ -620,6 +664,17 @@ def process_view(model, view, config, video_path):
     fps = float(view.get("frame_rate") or capture.get(cv2.CAP_PROP_FPS) or 30)
     capture.release()
     names = model.names
+
+    if not view.get("homography"):
+        # Nothing hand-calibrated for this view, so try the field's own
+        # AprilTags. Without either, field_point() passes pixels straight
+        # through and every derived distance is in pixels rather than metres.
+        # Written back onto the view so every downstream field_point() call
+        # in this run picks it up.
+        solved, diagnostics = autocalibrate_view(view, config, video_path)
+        if solved is not None:
+            view["homography"] = solved
+        view["autocalibration"] = diagnostics
 
     reid = RobotReId()
     piece_tracker = PieceTracker()

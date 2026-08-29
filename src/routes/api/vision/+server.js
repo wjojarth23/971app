@@ -234,6 +234,7 @@ export async function POST({ request }) {
     const updates = {};
     if (body.field_mask !== undefined) updates.field_mask = body.field_mask || null;
     if (body.goal_zones !== undefined) updates.goal_zones = body.goal_zones || [];
+    if (body.start_zones !== undefined) updates.start_zones = body.start_zones || [];
     if (body.homography !== undefined) updates.homography = body.homography || null;
     if (body.calibration_points !== undefined) updates.calibration_points = body.calibration_points || [];
     if (body.sync_offset_ms !== undefined) updates.sync_offset_ms = Number(body.sync_offset_ms) || 0;

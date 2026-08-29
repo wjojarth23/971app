@@ -53,6 +53,27 @@ python3 -m venv .venv
 .venv/bin/python vision_runner.py
 ```
 
+## Self-calibrating a camera from field AprilTags
+
+A camera that can see two or more field tags can solve its own field
+homography, which removes the hand-clicked four-point calibration step:
+
+```bash
+python3 apriltag_calibration.py recordings/qm1_fullfield.mov \
+  --layout 2026-field.json --fov 65
+```
+
+Prints the homography and diagnostics as JSON. It refuses rather than
+guessing: a wrong tag size or overstated FOV fails the reprojection gate, an
+understated FOV fails the camera-pose plausibility check (it reprojects fine
+while placing the camera outside the venue), and a one-wall view's two-fold
+planar ambiguity is resolved by picking the physically possible solution.
+
+`process_view()` does this automatically for any view with no stored
+homography, when `apriltag_layout_path` and `camera_horizontal_fov_deg` are
+set in the run config. Accuracy improves sharply when the camera sees tags on
+more than one wall - the diagnostics say so when they are all coplanar.
+
 ## Deployment (long-running - pick one)
 
 This has to run continuously on the DGX Spark, not on Cloud Run
