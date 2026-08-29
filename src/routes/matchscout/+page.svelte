@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { AlertTriangle, Check, ChevronRight, ClipboardCheck, Flag, MapPinned, Route, RotateCcw } from 'lucide-svelte';
+  import { AlertTriangle, Check, ChevronRight, ClipboardCheck, Flag, MapPinned, Route, RotateCcw, Timer, Trophy } from 'lucide-svelte';
 
   const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
   const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
@@ -125,13 +125,13 @@
 
   <div class="scouting-shell">
     <aside class="stage-nav" aria-label="Match scouting stages">
-      <button class:active={phase === 'prematch'} on:click={() => selectPhase('prematch')}><span>01</span> Pre-match</button>
-      <button class:active={phase === 'auto'} on:click={() => selectPhase('auto')} disabled={!assignmentReady}><span>02</span> Auto</button>
-      <button class:active={phase === 'teleop'} on:click={() => selectPhase('teleop')} disabled={!assignmentReady}><span>03</span> Teleop</button>
-      <button class:active={phase === 'postmatch'} on:click={() => selectPhase('postmatch')} disabled={!assignmentReady}><span>04</span> Post-match</button>
+      <button class:active={phase === 'prematch'} on:click={() => selectPhase('prematch')}><MapPinned size={18} /><span>Pre-match</span><small>01</small></button>
+      <button class:active={phase === 'auto'} on:click={() => selectPhase('auto')} disabled={!assignmentReady}><Route size={18} /><span>Auto</span><small>02</small></button>
+      <button class:active={phase === 'teleop'} on:click={() => selectPhase('teleop')} disabled={!assignmentReady}><Timer size={18} /><span>Teleop</span><small>03</small></button>
+      <button class:active={phase === 'postmatch'} on:click={() => selectPhase('postmatch')} disabled={!assignmentReady}><Trophy size={18} /><span>Post-match</span><small>04</small></button>
     </aside>
 
-    <section class="surface-card workbench">
+    <section class="match-workspace">
       {#if submitted}
         <div class="submitted-state">
           <div class="submitted-icon"><Check size={28} /></div>
@@ -140,7 +140,7 @@
           <button class="btn btn-primary" on:click={() => { submitted = false; selectPhase('prematch'); }}>Next assignment</button>
         </div>
       {:else if phase === 'prematch'}
-        <div class="section-heading"><div><span class="eyebrow">Pre-match</span><h2>Assignment handoff</h2></div><MapPinned size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Pre-match</span><h2>Match assignment</h2><p>Set the robot and its opening location before the field goes live.</p></div><MapPinned size={20} /></div>
         <div class="assignment-grid">
           <label>Match #<input class="form-input" inputmode="numeric" placeholder="14" bind:value={matchNumber} /></label>
           <label>Robot #<input class="form-input" inputmode="numeric" placeholder="971" bind:value={robotNumber} /></label>
@@ -156,7 +156,7 @@
         </div>
         <div class="section-footer"><span>{assignmentReady ? `Robot ${robotNumber} is ready to scout.` : 'Match, robot, and starting position are required.'}</span><button class="btn btn-primary" disabled={!assignmentReady} on:click={() => selectPhase('auto')}>Begin auto <ChevronRight size={16} /></button></div>
       {:else if phase === 'auto'}
-        <div class="section-heading"><div><span class="eyebrow">Autonomous</span><h2>Auto report</h2></div><Route size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Autonomous</span><h2>Auto report</h2><p>Capture what the robot attempted and where it traveled.</p></div><Route size={20} /></div>
         <div class="auto-layout">
           <div class="auto-controls">
             <div class="control-group"><span class="field-label">Starting zone</span><div class="choice-grid">{#each AUTO_ZONES as zone}<button class:chosen={autoStartZone === zone} on:click={() => autoStartZone = zone}>{zone}</button>{/each}</div></div>
@@ -169,13 +169,13 @@
         </div>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('prematch')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('teleop')}>Continue to teleop <ChevronRight size={16} /></button></div>
       {:else if phase === 'teleop'}
-        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2></div><Flag size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2><p>Use the ratings for the details that separate similar robots.</p></div><Timer size={20} /></div>
         <div class="ratings-grid">{#each RATING_FIELDS as field}<div class="rating-row"><span>{field}</span><div class="rating-buttons">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings[field] === value} on:click={() => ratings = { ...ratings, [field]: value }}>{value}</button>{/each}</div></div>{/each}</div>
         <label class="notes-label">Additional notes<textarea class="form-input" rows="5" placeholder="What mattered during teleop?" bind:value={teleopNotes}></textarea></label>
         <label class="incident-toggle"><input type="checkbox" bind:checked={crashOrBreak} /><span><AlertTriangle size={17} /> Crash or mechanical break</span></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('auto')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('postmatch')}>Continue to post-match <ChevronRight size={16} /></button></div>
       {:else}
-        <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2></div><Flag size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2><p>Close out the report and flag anything the pit crew needs to inspect.</p></div><Trophy size={20} /></div>
         <div class="post-grid"><fieldset><legend>Robot status</legend><div class="choice-grid"><button class:chosen={robotDisabled === 'no'} on:click={() => robotDisabled = 'no'}>Stayed active</button><button class:chosen={robotDisabled === 'disabled'} on:click={() => robotDisabled = 'disabled'}>Disabled</button><button class:chosen={robotDisabled === 'died'} on:click={() => robotDisabled = 'died'}>Died</button></div></fieldset><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
         <div class="control-group"><span class="field-label">Driver skill</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={driverSkill === value} on:click={() => driverSkill = value}>{value}</button>{/each}</div></div>
         <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Flag a problem for pit scouting</span></label>
@@ -213,4 +213,46 @@
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
   @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .workbench { padding:var(--space-4); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four { grid-template-columns:repeat(2,1fr); } }
+
+  /* Match Scouting intentionally shares Pit Scouting's focused field-workspace language. */
+  .match-scouting-page { max-width:1160px; }
+  .match-scouting-page .page-header { margin-bottom:var(--space-5); }
+  .assignment-chip { min-height:2.7rem; background:var(--surface-1); border-radius:0; }
+  .assignment-chip.red { border-left:3px solid var(--red-base); }
+  .assignment-chip.blue { border-left:3px solid var(--blue-base); }
+  .scouting-shell { grid-template-columns:13.5rem minmax(0, 1fr); gap:var(--space-4); }
+  .stage-nav { gap:var(--space-1); padding:var(--space-2); border-radius:0; }
+  .stage-nav button { display:grid; grid-template-columns:1.4rem 1fr auto; min-height:3.2rem; padding:var(--space-2); border-bottom:0; }
+  .stage-nav button.active { box-shadow:inset 3px 0 0 var(--brand-gold-strong); }
+  .stage-nav button small { font-size:.7rem; color:var(--text-muted); }
+  .match-workspace { min-height:42rem; padding:var(--space-5); border:1px solid var(--border); background:var(--surface-1); }
+  .section-heading { margin-bottom:var(--space-5); }
+  .section-heading p { max-width:38rem; margin:.45rem 0 0; color:var(--text-muted); font-size:.87rem; line-height:1.45; }
+  .section-heading > :global(svg) { padding:.55rem; box-sizing:content-box; border:1px solid var(--border); color:var(--text-muted); }
+  .assignment-grid { grid-template-columns:1fr 1fr 1.25fr; padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .start-position-block { padding:var(--space-4); border:1px solid var(--border); border-top:0; margin-top:0; }
+  .position-grid button { position:relative; min-height:5.25rem; text-transform:capitalize; }
+  .position-grid button.chosen::after { content:''; position:absolute; left:50%; bottom:.65rem; width:.35rem; height:.35rem; border-radius:50%; background:var(--brand-gold-strong); transform:translateX(-50%); }
+  .auto-layout { padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .auto-controls { gap:var(--space-3); }
+  .control-group { margin-top:0; }
+  .path-panel { padding:var(--space-3); border:1px solid var(--border); background:var(--surface-1); }
+  .field-board { background:#e7eee3; }
+  .ratings-grid { padding:var(--space-4); border:1px solid var(--border); }
+  .rating-row:last-child { padding-bottom:0; border-bottom:0; }
+  .rating-buttons button { border-radius:50%; }
+  .notes-label { padding:var(--space-4); border:1px solid var(--border); }
+  .incident-toggle { padding:var(--space-3) var(--space-4); border-left:3px solid var(--red-base); background:var(--red-soft); }
+  .post-grid { padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .submitted-state { background:var(--surface-2); }
+  @media (max-width:850px) {
+    .scouting-shell { grid-template-columns:1fr; }
+    .stage-nav button { grid-template-columns:1fr; justify-items:center; text-align:center; }
+    .stage-nav button small { display:none; }
+  }
+  @media (max-width:560px) {
+    .match-workspace { padding:var(--space-4); }
+    .assignment-grid { grid-template-columns:1fr; }
+    .start-position-block { padding:var(--space-3); }
+  }
 </style>
