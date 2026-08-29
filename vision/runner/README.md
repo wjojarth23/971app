@@ -56,23 +56,93 @@ python3 -m venv .venv
 ## Self-calibrating a camera from field AprilTags
 
 A camera that can see two or more field tags can solve its own field
-homography, which removes the hand-clicked four-point calibration step:
+homography, which removes the hand-clicked four-point calibration step.
+
+**Why it matters beyond convenience:** with no homography at all,
+`field_point()` passes pixel coordinates straight through, so speed, distance,
+attribution thresholds and the dead-auto check are all in *pixels* and are not
+comparable between venues or even between cameras. A tag-derived solve puts
+them in metres in the real FRC field frame.
+
+### Setup
+
+1. Get the season's `AprilTagFieldLayout` JSON. It ships with WPILib
+   (`edu.wpi.first.apriltag`) and gives every tag's surveyed pose in metres.
+   Put it somewhere the runner host can read.
+2. Find the camera's **horizontal field of view** in degrees, from its spec
+   sheet. This is required — the runner will not guess a focal length, because
+   a homography from wrong intrinsics is confidently wrong rather than
+   obviously wrong (see the gates below). Real calibrated intrinsics, e.g.
+   from WPILib's `wpical`, are better if you have them.
+3. Enable it in the run config:
+
+```json
+{
+  "apriltag_autocalibrate": true,
+  "apriltag_layout_path": "/opt/vision/2026-field.json",
+  "camera_horizontal_fov_deg": 65
+}
+```
+
+Optional: `apriltag_family` (`36h11` default, also `36h10`/`25h9`/`16h5` for
+older seasons), `apriltag_size_m` (default `0.1651`, the 6.5in FRC tag), and
+`apriltag_max_reprojection_px` (default `6.0`).
+
+### Calibrating a venue once, by hand
 
 ```bash
 python3 apriltag_calibration.py recordings/qm1_fullfield.mov \
   --layout 2026-field.json --fov 65
 ```
 
-Prints the homography and diagnostics as JSON. It refuses rather than
-guessing: a wrong tag size or overstated FOV fails the reprojection gate, an
-understated FOV fails the camera-pose plausibility check (it reprojects fine
-while placing the camera outside the venue), and a one-wall view's two-fold
-planar ambiguity is resolved by picking the physically possible solution.
+Prints the homography and diagnostics as JSON, so a good result can be pasted
+into a view's stored calibration rather than re-solved every run.
 
-`process_view()` does this automatically for any view with no stored
-homography, when `apriltag_layout_path` and `camera_horizontal_fov_deg` are
-set in the run config. Accuracy improves sharply when the camera sees tags on
-more than one wall - the diagnostics say so when they are all coplanar.
+### Capture expectations
+
+- **The camera must be fixed.** Every calibration is invalidated if it moves.
+- **Tags need to be big enough in frame.** A 6.5in tag at 14 m spans roughly
+  15px at 1600px wide, and the detector misses about half of those. Closer, or
+  higher resolution.
+- **Try to see more than one wall.** Accuracy is dominated by tag spread in
+  depth: at 0.3px corner noise, tags across three walls put a 3 m ground
+  distance within 1 mm, while the same number on a single wall drifts to
+  ~6 cm. Both are exact with perfect corners, so this is noise sensitivity
+  rather than bias. The diagnostics say when the visible tags are coplanar.
+
+### What it refuses, and why
+
+Manual calibration always wins — if the view already has a homography, the
+solver is not even consulted. Beyond that there are three gates, each of which
+exists because something got past the previous one:
+
+| Gate | Catches |
+|---|---|
+| Reprojection error | Wrong tag size, wrong layout year, overstated FOV |
+| Camera-pose plausibility | An **understated** FOV, which reprojects at ~1.9px — well inside the error gate — while placing the camera 31 m behind the alliance wall. The error lands in the pose, not the residual. |
+| Planar-ambiguity resolution | A one-wall view has a coplanar point set, and coplanar PnP genuinely has two solutions — the true pose and its mirror, both reprojecting perfectly. Every candidate is evaluated and the physically possible one is picked. |
+
+Nothing here can fail a run. A missing layout, an OpenCV build without
+`cv2.aruco`, an unreadable recording, no tags in view, or a refused solve all
+fall back to pixel coordinates and record the reason in the run's per-view
+diagnostics.
+
+### Diagnostics
+
+Each view reports back with the run: tags detected and matched, reprojection
+error, recovered camera position, whether the tags were coplanar, whether
+calibration was accepted, and the fallback reason if not. A recording
+preflight also reports resolution, fps, frame count and duration, and warns
+about low resolution, low frame rate, or a clip shorter than a match.
+
+### Remaining real-world validation
+
+The solve is verified against synthetic ground truth and against real 36h11
+markers rendered into a scene and read by the actual detector. The one thing
+synthetic tests cannot confirm is that the **tag corner ordering convention
+matches real WPILib layout data**. If it were mirrored, the reprojection gate
+is what would catch it — so the first real-field run should be checked for a
+sane reported camera position before its numbers are trusted.
 
 ## Deployment (long-running - pick one)
 
