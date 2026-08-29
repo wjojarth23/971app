@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   PIT_SCOUT_OPTIONAL_COLUMNS,
+  ROBOT_ARCHETYPES,
   buildPitScoutSchema,
   buildPitScoutSelectColumns,
   missingPitScoutOptionalColumn,
   normalizePitScoutRow,
   normalizePitScoutRows,
   pitScoutSchemaWarning,
+  sanitizePitAdditionalNotes,
+  sanitizeRobotArchetype,
   selectPitScoutEntries,
   upsertPitScoutEntry
 } from './pitScoutingSchema.js';
@@ -23,6 +26,32 @@ describe('buildPitScoutSchema', () => {
     const schema = buildPitScoutSchema(['estimated_bps']);
     expect(schema.estimated_bps).toBe(true);
     expect(schema.climb_options).toBe(false);
+  });
+});
+
+describe('new pit scouting profile fields', () => {
+  it('accepts every declared robot archetype', () => {
+    for (const archetype of ROBOT_ARCHETYPES) {
+      expect(sanitizeRobotArchetype(archetype)).toBe(archetype);
+    }
+  });
+
+  it('rejects arbitrary robot archetypes', () => {
+    expect(sanitizeRobotArchetype('Definitely A Ferrari')).toBeNull();
+  });
+
+  it('trims and limits additional notes', () => {
+    expect(sanitizePitAdditionalNotes('  Good wiring  ')).toBe('Good wiring');
+    expect(sanitizePitAdditionalNotes('x'.repeat(2500))).toHaveLength(2000);
+  });
+
+  it('normalizes new fields when their migration is unavailable', () => {
+    const normalized = normalizePitScoutRow(
+      { robot_archetype: 'Shooter', additional_notes: 'note' },
+      buildPitScoutSchema([])
+    );
+    expect(normalized.robot_archetype).toBeNull();
+    expect(normalized.additional_notes).toBeNull();
   });
 });
 
@@ -90,7 +119,9 @@ describe('normalizePitScoutRow', () => {
     const a = normalizePitScoutRow({ id: '1' });
     const b = normalizePitScoutRow({ id: '2' });
     a.climb_options.push('x');
+    a.technical_details.drive = 'swerve';
     expect(b.climb_options).toEqual([]);
+    expect(b.technical_details).toEqual({});
   });
 });
 

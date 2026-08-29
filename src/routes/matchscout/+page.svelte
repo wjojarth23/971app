@@ -1,0 +1,283 @@
+<script>
+  import { onMount } from 'svelte';
+  import { AlertTriangle, Check, ChevronRight, ClipboardCheck, Flag, MapPinned, Route, RotateCcw, Timer, Trophy } from 'lucide-svelte';
+  import { getAuthHeader } from '$lib/supabase.js';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
+
+  const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
+  const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
+  const POINT_BANDS = ['0', '1-2', '3-4', '5+'];
+  const RATING_FIELDS = ['Shot accuracy', 'Driver awareness', 'Cycle speed', 'Defense', 'Reliability'];
+
+  let phase = 'prematch';
+  let matchNumber = '';
+  let robotNumber = '';
+  let alliance = 'red';
+  let startingPosition = '';
+  let autoStartZone = '';
+  let autoPoints = '';
+  let autoFinish = '';
+  let ballSources = [];
+  let autoMoved = '';
+  let autoPath = [];
+  let drawing = false;
+  let ratings = Object.fromEntries(RATING_FIELDS.map((field) => [field, 0]));
+  let teleopNotes = '';
+  let crashOrBreak = false;
+  let robotDisabled = '';
+  let card = '';
+  let driverSkill = 0;
+  let pitProblem = false;
+  let pitProblemDetails = '';
+  let postNotes = '';
+  let submitted = false;
+  let submitting = false;
+  let submitError = '';
+  let eventKey = '';
+
+  $: assignmentReady = matchNumber.trim() && robotNumber.trim() && startingPosition;
+  $: assignmentLabel = assignmentReady ? `Match ${matchNumber} · Robot ${robotNumber}` : 'Set your assignment';
+
+  function selectPhase(nextPhase) {
+    phase = nextPhase;
+    submitted = false;
+  }
+
+  function toggleBallSource(source) {
+    ballSources = ballSources.includes(source)
+      ? ballSources.filter((item) => item !== source)
+      : [...ballSources, source];
+  }
+
+  function pointFromEvent(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
+      Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100))
+    ];
+  }
+
+  function beginPath(event) {
+    const point = pointFromEvent(event);
+    drawing = true;
+    autoPath = [point];
+  }
+
+  function extendPath(event) {
+    if (!drawing) return;
+    const point = pointFromEvent(event);
+    const last = autoPath[autoPath.length - 1];
+    if (!last || Math.hypot(point[0] - last[0], point[1] - last[1]) > 1.5) autoPath = [...autoPath, point];
+  }
+
+  function completePath() {
+    drawing = false;
+  }
+
+  async function authFetch(url, options = {}) {
+    return fetch(url, { ...options, headers: { ...(options.headers || {}), ...(await getAuthHeader()) } });
+  }
+
+  async function finishScout() {
+    if (!assignmentReady) {
+      phase = 'prematch';
+      return;
+    }
+    if (!eventKey) {
+      submitError = 'No active scouting event is configured.';
+      return;
+    }
+    submitting = true;
+    submitError = '';
+    try {
+      const reportResponse = await authFetch('/api/match-scout-reports', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+          event_key: eventKey, match_number: matchNumber, team_key: robotNumber, alliance_color: alliance,
+          starting_position: startingPosition, auto_start_zone: autoStartZone, auto_points_band: autoPoints,
+          auto_end_action: autoFinish, ball_sources: ballSources, auto_moved: autoMoved, auto_path: autoPath,
+          ratings, teleop_notes: teleopNotes, crash_or_break: crashOrBreak,
+          robot_status: robotDisabled === 'no' ? 'active' : robotDisabled, card, driver_skill: driverSkill,
+          pit_problem: pitProblem, pit_problem_details: pitProblemDetails, post_notes: postNotes
+        })
+      });
+      const reportBody = await reportResponse.json().catch(() => null);
+      if (!reportResponse.ok || !reportBody?.success) throw new Error(reportBody?.error || 'Match report failed to save.');
+
+      if (pitProblem) {
+        const problemResponse = await authFetch('/api/scouting-problems', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+            action: 'create-report', event_key: eventKey, match_key: `${eventKey}_qm${matchNumber}`,
+            match_number: matchNumber, team_key: robotNumber, alliance_color: alliance, source: 'match_scout',
+            severity: robotDisabled === 'died' || robotDisabled === 'disabled' ? 'critical' : 'high',
+            summary: pitProblemDetails.trim() || 'Mechanical issue flagged after match', details: postNotes
+          })
+        });
+        const problemBody = await problemResponse.json().catch(() => null);
+        if (!problemResponse.ok || !problemBody?.success) throw new Error(problemBody?.error || 'Pit problem failed to save.');
+      }
+      submitted = true;
+    } catch (error) {
+      submitError = error.message || 'Match report failed to save.';
+    } finally {
+      submitting = false;
+    }
+  }
+
+  onMount(() => {
+    void fetchActiveScoutingEventKey().then((value) => eventKey = value || '');
+    const query = new URLSearchParams(window.location.search);
+    matchNumber = query.get('match') || '';
+    robotNumber = query.get('team') || '';
+    alliance = query.get('alliance') === 'blue' ? 'blue' : 'red';
+    startingPosition = query.get('start') || '';
+  });
+</script>
+
+<svelte:head><title>Match Scouting</title></svelte:head>
+
+<main class="match-scouting-page">
+  <header class="page-header">
+    <div class="header-content">
+      <h1><ClipboardCheck size={22} /> Match Scouting</h1>
+      <p>{assignmentReady ? 'Assigned robot ready for a match report.' : 'Enter the match handoff to begin.'}</p>
+    </div>
+    <div class="assignment-chip" class:red={alliance === 'red'} class:blue={alliance === 'blue'}>
+      <span>{assignmentLabel}</span>
+      {#if assignmentReady}<b>{alliance}</b>{/if}
+    </div>
+  </header>
+
+  <div class="scouting-shell">
+    <aside class="stage-nav" aria-label="Match scouting stages">
+      <button class:active={phase === 'prematch'} on:click={() => selectPhase('prematch')}><MapPinned size={18} /><span>Pre-match</span><small>01</small></button>
+      <button class:active={phase === 'auto'} on:click={() => selectPhase('auto')}><Route size={18} /><span>Auto</span><small>02</small></button>
+      <button class:active={phase === 'teleop'} on:click={() => selectPhase('teleop')}><Timer size={18} /><span>Teleop</span><small>03</small></button>
+      <button class:active={phase === 'postmatch'} on:click={() => selectPhase('postmatch')}><Trophy size={18} /><span>Post-match</span><small>04</small></button>
+    </aside>
+
+    <section class="match-workspace">
+      {#if submitted}
+        <div class="submitted-state">
+          <div class="submitted-icon"><Check size={28} /></div>
+          <h2>Match report ready</h2>
+          <p>Review the details or return to pre-match for the next assignment.</p>
+          <button class="btn btn-primary" on:click={() => { submitted = false; selectPhase('prematch'); }}>Next assignment</button>
+        </div>
+      {:else if phase === 'prematch'}
+        <div class="section-heading"><div><span class="eyebrow">Pre-match</span><h2>Match assignment</h2><p>Set the robot and its opening location before the field goes live.</p></div><MapPinned size={20} /></div>
+        <div class="assignment-grid">
+          <label>Match #<input class="form-input" inputmode="numeric" placeholder="14" bind:value={matchNumber} /></label>
+          <label>Robot #<input class="form-input" inputmode="numeric" placeholder="971" bind:value={robotNumber} /></label>
+          <fieldset><legend>Alliance</legend><div class="segmented"><button class:chosen={alliance === 'red'} class="red-choice" on:click={() => alliance = 'red'}>Red</button><button class:chosen={alliance === 'blue'} class="blue-choice" on:click={() => alliance = 'blue'}>Blue</button></div></fieldset>
+        </div>
+        <div class="start-position-block">
+          <span class="field-label">Starting position</span>
+          <div class="position-grid">
+            {#each START_POSITIONS as position}
+              <button class:chosen={startingPosition === position} on:click={() => startingPosition = position}>{position}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="section-footer"><span>{assignmentReady ? `Robot ${robotNumber} is ready to scout.` : 'Match, robot, and starting position are required.'}</span><button class="btn btn-primary" disabled={!assignmentReady} on:click={() => selectPhase('auto')}>Begin auto <ChevronRight size={16} /></button></div>
+      {:else if phase === 'auto'}
+        <div class="section-heading"><div><span class="eyebrow">Autonomous</span><h2>Auto report</h2><p>Capture what the robot attempted and where it traveled.</p></div><Route size={20} /></div>
+        <div class="auto-layout">
+          <div class="auto-controls">
+            <div class="control-group"><span class="field-label">Starting zone</span><div class="choice-grid">{#each AUTO_ZONES as zone}<button class:chosen={autoStartZone === zone} on:click={() => autoStartZone = zone}>{zone}</button>{/each}</div></div>
+            <div class="control-group"><span class="field-label">Estimated points</span><div class="choice-grid four">{#each POINT_BANDS as band}<button class:chosen={autoPoints === band} on:click={() => autoPoints = band}>{band}</button>{/each}</div></div>
+            <div class="control-group"><span class="field-label">End action</span><div class="choice-grid"><button class:chosen={autoFinish === 'shoot'} on:click={() => autoFinish = 'shoot'}>Shoot</button><button class:chosen={autoFinish === 'climb'} on:click={() => autoFinish = 'climb'}>Climb</button><button class:chosen={autoFinish === 'none'} on:click={() => autoFinish = 'none'}>Neither</button></div></div>
+            <div class="control-group"><span class="field-label">Ball source</span><div class="choice-grid">{#each ['alliance zone', 'neutral zone', 'human player'] as source}<button class:chosen={ballSources.includes(source)} on:click={() => toggleBallSource(source)}>{source}</button>{/each}</div></div>
+            <div class="control-group"><span class="field-label">Did it run?</span><div class="segmented"><button class:chosen={autoMoved === 'ran'} on:click={() => autoMoved = 'ran'}>Ran</button><button class:chosen={autoMoved === 'did-not-run'} on:click={() => autoMoved = 'did-not-run'}>Did not run</button></div></div>
+          </div>
+          <div class="path-panel"><div class="path-heading"><span class="field-label">Robot path</span><button class="btn btn-sm" on:click={() => autoPath = []} disabled={!autoPath.length}><RotateCcw size={14} /> Clear</button></div><div class="field-board" role="application" aria-label="Draw the robot's autonomous path" on:pointerdown={beginPath} on:pointermove={extendPath} on:pointerup={completePath} on:pointerleave={completePath}><div class="field-line midline"></div><div class="field-zone top-zone"></div><div class="field-zone bottom-zone"></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{#if autoPath.length > 1}<polyline points={autoPath.map(([x, y]) => `${x},${y}`).join(' ')} />{/if}{#if autoPath.length}<circle cx={autoPath[0][0]} cy={autoPath[0][1]} r="2.2" class="path-start" />{/if}</svg></div></div>
+        </div>
+        <div class="section-footer"><button class="btn" on:click={() => selectPhase('prematch')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('teleop')}>Continue to teleop <ChevronRight size={16} /></button></div>
+      {:else if phase === 'teleop'}
+        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2><p>Use the ratings for the details that separate similar robots.</p></div><Timer size={20} /></div>
+        <div class="ratings-grid">{#each RATING_FIELDS as field}<div class="rating-row"><span>{field}</span><div class="rating-buttons">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings[field] === value} on:click={() => ratings = { ...ratings, [field]: value }}>{value}</button>{/each}</div></div>{/each}</div>
+        <label class="notes-label">Additional notes<textarea class="form-input" rows="5" placeholder="What mattered during teleop?" bind:value={teleopNotes}></textarea></label>
+        <label class="incident-toggle"><input type="checkbox" bind:checked={crashOrBreak} /><span><AlertTriangle size={17} /> Crash or mechanical break</span></label>
+        <div class="section-footer"><button class="btn" on:click={() => selectPhase('auto')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('postmatch')}>Continue to post-match <ChevronRight size={16} /></button></div>
+      {:else}
+        <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2><p>Close out the report and flag anything the pit crew needs to inspect.</p></div><Trophy size={20} /></div>
+        <div class="post-grid"><fieldset><legend>Robot status</legend><div class="choice-grid"><button class:chosen={robotDisabled === 'no'} on:click={() => robotDisabled = 'no'}>Stayed active</button><button class:chosen={robotDisabled === 'disabled'} on:click={() => robotDisabled = 'disabled'}>Disabled</button><button class:chosen={robotDisabled === 'died'} on:click={() => robotDisabled = 'died'}>Died</button></div></fieldset><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
+        <div class="control-group"><span class="field-label">Driver skill</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={driverSkill === value} on:click={() => driverSkill = value}>{value}</button>{/each}</div></div>
+        <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Flag a problem for pit scouting</span></label>
+        {#if pitProblem}
+          <label class="notes-label pit-report-field">Problem for pit crew<textarea class="form-input" rows="3" placeholder="What should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
+        {/if}
+        <label class="notes-label">Freeform notes<textarea class="form-input" rows="5" placeholder="Anything strategy should know?" bind:value={postNotes}></textarea></label>
+        {#if submitError}<p class="text-error">{submitError}</p>{/if}
+        <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" disabled={submitting} on:click={finishScout}>{submitting ? 'Saving…' : 'Finish match scouting'} <Check size={16} /></button></div>
+      {/if}
+    </section>
+  </div>
+</main>
+
+<style>
+  .match-scouting-page { max-width:1200px; margin:0 auto; padding:var(--space-4); }
+  h1,h2 { margin:0; } h1 { display:flex; align-items:center; gap:var(--gap-2); } h2 { font-size:1.2rem; }
+  .assignment-chip { display:flex; align-items:center; gap:var(--gap-2); border:1px solid var(--border); padding:var(--space-2) var(--space-3); background:var(--surface-2); font-size:.85rem; }
+  .assignment-chip b { text-transform:uppercase; font-size:.72rem; } .assignment-chip.red b { color:var(--red-strong); } .assignment-chip.blue b { color:var(--blue-strong); }
+  .scouting-shell { display:grid; grid-template-columns:12rem minmax(0,1fr); gap:var(--gap-4); align-items:start; }
+  .stage-nav { position:sticky; top:var(--space-4); display:grid; border:1px solid var(--border); background:var(--surface-1); }
+  .stage-nav button { display:flex; gap:var(--gap-2); align-items:center; min-height:3.25rem; padding:var(--space-3); border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--text-muted); text-align:left; cursor:pointer; }
+  .stage-nav button:last-child { border-bottom:0; } .stage-nav button.active { color:var(--text); background:var(--brand-gold-soft); box-shadow:inset 3px 0 0 var(--brand-gold-base); } .stage-nav button:disabled { cursor:not-allowed; opacity:.5; }
+  .stage-nav span,.eyebrow,.field-label { color:var(--text-muted); font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; }
+  .workbench { padding:var(--space-5); min-height:40rem; } .section-heading { display:flex; align-items:start; justify-content:space-between; gap:var(--gap-3); margin-bottom:var(--space-5); } .section-heading :global(svg) { color:var(--text-muted); }
+  .assignment-grid,.post-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--gap-4); } label,fieldset { display:grid; gap:var(--space-2); color:var(--text-muted); font-size:.8rem; } fieldset { margin:0; padding:0; border:0; } legend { padding:0; }
+  .segmented,.choice-grid,.position-grid,.rating-buttons { display:flex; flex-wrap:wrap; gap:var(--gap-2); } .segmented button,.choice-grid button,.position-grid button,.rating-buttons button { min-height:var(--control-height); padding:0 var(--space-3); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-1); color:var(--text); cursor:pointer; }
+  .segmented button.chosen,.choice-grid button.chosen,.position-grid button.chosen,.rating-buttons button.chosen { border-color:var(--brand-gold-strong); background:var(--brand-gold-soft); color:var(--secondary); font-weight:600; } .segmented .red-choice.chosen { border-color:var(--red-base); background:var(--red-soft); } .segmented .blue-choice.chosen { border-color:var(--blue-base); background:var(--blue-soft); }
+  .start-position-block,.control-group,.notes-label,.incident-toggle { margin-top:var(--space-5); } .position-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); margin-top:var(--space-2); } .position-grid button { min-height:4rem; text-transform:capitalize; }
+  .section-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--gap-3); margin-top:var(--space-6); padding-top:var(--space-4); border-top:1px solid var(--border); color:var(--text-muted); font-size:.82rem; } .section-footer .btn { display:inline-flex; align-items:center; gap:var(--gap-2); }
+  .auto-layout { display:grid; grid-template-columns:minmax(18rem,.9fr) minmax(18rem,1.1fr); gap:var(--space-6); } .auto-controls { display:grid; align-content:start; gap:var(--space-1); } .choice-grid { margin-top:var(--space-2); } .choice-grid.four { display:grid; grid-template-columns:repeat(4,1fr); }
+  .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; } .field-board { position:relative; aspect-ratio:1.8; overflow:hidden; border:1px solid var(--border); background:#edf3e9; cursor:crosshair; touch-action:none; } .field-line { position:absolute; background:#a4b09d; } .midline { top:0; bottom:0; left:50%; width:1px; } .field-zone { position:absolute; width:22%; height:18%; border:1px solid #a4b09d; } .top-zone { top:7%; left:39%; } .bottom-zone { bottom:7%; left:39%; } .field-board svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; } .field-board polyline { fill:none; stroke:var(--brand-gold-strong); stroke-width:1.2; stroke-linecap:round; stroke-linejoin:round; } .field-board .path-start { fill:var(--blue-base); }
+  .ratings-grid { display:grid; gap:var(--space-3); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
+  .notes-label textarea { resize:vertical; min-height:7rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
+  .pit-report-field { margin-top:var(--space-3); }
+  .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
+  @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .workbench { padding:var(--space-4); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four { grid-template-columns:repeat(2,1fr); } }
+
+  /* Match Scouting intentionally shares Pit Scouting's focused field-workspace language. */
+  .match-scouting-page { max-width:1160px; }
+  .match-scouting-page .page-header { margin-bottom:var(--space-5); }
+  .assignment-chip { min-height:2.7rem; background:var(--surface-1); border-radius:0; }
+  .assignment-chip.red { border-left:3px solid var(--red-base); }
+  .assignment-chip.blue { border-left:3px solid var(--blue-base); }
+  .scouting-shell { grid-template-columns:13.5rem minmax(0, 1fr); gap:var(--space-4); }
+  .stage-nav { gap:var(--space-1); padding:var(--space-2); border-radius:0; }
+  .stage-nav button { display:grid; grid-template-columns:1.4rem 1fr auto; min-height:3.2rem; padding:var(--space-2); border-bottom:0; }
+  .stage-nav button.active { box-shadow:inset 3px 0 0 var(--brand-gold-strong); }
+  .stage-nav button small { font-size:.7rem; color:var(--text-muted); }
+  .match-workspace { min-height:42rem; padding:var(--space-5); border:1px solid var(--border); background:var(--surface-1); }
+  .section-heading { margin-bottom:var(--space-5); }
+  .section-heading p { max-width:38rem; margin:.45rem 0 0; color:var(--text-muted); font-size:.87rem; line-height:1.45; }
+  .section-heading > :global(svg) { padding:.55rem; box-sizing:content-box; border:1px solid var(--border); color:var(--text-muted); }
+  .assignment-grid { grid-template-columns:1fr 1fr 1.25fr; padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .start-position-block { padding:var(--space-4); border:1px solid var(--border); border-top:0; margin-top:0; }
+  .position-grid button { position:relative; min-height:5.25rem; text-transform:capitalize; }
+  .position-grid button.chosen::after { content:''; position:absolute; left:50%; bottom:.65rem; width:.35rem; height:.35rem; border-radius:50%; background:var(--brand-gold-strong); transform:translateX(-50%); }
+  .auto-layout { padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .auto-controls { gap:var(--space-3); }
+  .control-group { margin-top:0; }
+  .path-panel { padding:var(--space-3); border:1px solid var(--border); background:var(--surface-1); }
+  .field-board { background:#e7eee3; }
+  .ratings-grid { padding:var(--space-4); border:1px solid var(--border); }
+  .rating-row:last-child { padding-bottom:0; border-bottom:0; }
+  .rating-buttons button { border-radius:50%; }
+  .notes-label { padding:var(--space-4); border:1px solid var(--border); }
+  .incident-toggle { padding:var(--space-3) var(--space-4); border-left:3px solid var(--red-base); background:var(--red-soft); }
+  .post-grid { padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .submitted-state { background:var(--surface-2); }
+  @media (max-width:850px) {
+    .scouting-shell { grid-template-columns:1fr; }
+    .stage-nav button { grid-template-columns:1fr; justify-items:center; text-align:center; }
+    .stage-nav button small { display:none; }
+  }
+  @media (max-width:560px) {
+    .match-workspace { padding:var(--space-4); }
+    .assignment-grid { grid-template-columns:1fr; }
+    .start-position-block { padding:var(--space-3); }
+  }
+</style>

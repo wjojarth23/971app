@@ -50,9 +50,12 @@
     error = '';
     warning = '';
     const authHeaders = await getAuthHeader();
-    const [rosterResult, scoutResult] = await Promise.all([
+    const [rosterResult, scoutResult, matchResult, pitResult, problemResult] = await Promise.all([
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).then((response) => response.json()).catch(() => null),
-      fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null)
+      fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
+      fetch(`/api/match-scout-reports?event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
+      fetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
+      fetch(`/api/scouting-problems?event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null)
     ]);
 
     const scoutEvents = scoutResult?.success ? scoutResult.data : [];
@@ -75,7 +78,16 @@
       return;
     }
 
-    teams = buildPowerRankings(roster, scoutEvents);
+    teams = buildPowerRankings(roster, scoutEvents, {
+      matchReports: matchResult?.success ? matchResult.data : [],
+      pitEntries: pitResult?.success ? pitResult.data : [],
+      problemReports: problemResult?.success ? problemResult.data : []
+    });
+    const missing = [];
+    if (!matchResult?.success) missing.push('match reports');
+    if (!pitResult?.success) missing.push('pit profiles');
+    if (!problemResult?.success) missing.push('problem reports');
+    if (missing.length) warning = `${warning ? `${warning} ` : ''}Unavailable inputs: ${missing.join(', ')}.`;
     const ranked = [...teams].sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1));
     if (!compareLeftKey && ranked[0]) compareLeftKey = ranked[0].key;
     if (!compareRightKey && ranked[1]) compareRightKey = ranked[1].key;
@@ -112,7 +124,7 @@
   <div class="error-container"><p>{error}</p></div>
 {:else}
   {#if warning}<p class="text-muted">⚠ {warning}</p>{/if}
-  <p class="formula">Scout power weights average fuel per match 40%, driving 20%, accuracy 15%, climb level 15%, and speed 10%. Missing metrics are omitted and remaining weights are rebalanced.</p>
+  <p class="formula">Combined score: 60% legacy match production, 30% structured Match Scouting evaluation (including pit climb capability), and 10% reliability. Open pit problems reduce reliability. Missing categories are omitted and remaining weights are rebalanced.</p>
 
   <section class="surface-card comparison-card">
     <h2><Swords size={18} /> Head to Head</h2>
@@ -126,6 +138,10 @@
         <strong>#{compareLeft.team_number}</strong><span>Metric</span><strong>#{compareRight.team_number}</strong>
         <b>{compareLeft.powerRank ?? '—'}</b><span>Power rank</span><b>{compareRight.powerRank ?? '—'}</b>
         <b>{fmt(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmt(compareRight.scoutPower)}</b>
+        <b>{fmt(compareLeft.scoreBreakdown.matchEvaluationScore)}</b><span>Match evaluation</span><b>{fmt(compareRight.scoreBreakdown.matchEvaluationScore)}</b>
+        <b>{fmt(compareLeft.scoreBreakdown.reliabilityScore)}</b><span>Reliability</span><b>{fmt(compareRight.scoreBreakdown.reliabilityScore)}</b>
+        <b>{compareLeft.decisionSummary.openProblemCount}</b><span>Open pit problems</span><b>{compareRight.decisionSummary.openProblemCount}</b>
+        <b>{compareLeft.decisionSummary.noteCount}</b><span>Notes for review</span><b>{compareRight.decisionSummary.noteCount}</b>
         <b>{compareLeft.scoutSummary.matchesScouted}</b><span>Matches scouted</span><b>{compareRight.scoutSummary.matchesScouted}</b>
         <b>{fmt(compareLeft.scoutSummary.avgFuel)}</b><span>Avg fuel</span><b>{fmt(compareRight.scoutSummary.avgFuel)}</b>
         <b>{fmt(compareLeft.scoutSummary.avgDrivingRank)}</b><span>Driving</span><b>{fmt(compareRight.scoutSummary.avgDrivingRank)}</b>
@@ -143,11 +159,12 @@
         <th><button on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>
         <th><button on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
         <th>Name</th><th><button on:click={() => sortBy('scoutPower')}>Scout Power <ArrowUpDown size={11} /></button></th>
-        <th>Matches</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
+        <th>Matches</th><th>Match Eval</th><th>Reliability</th><th>Problems</th><th>Notes</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
       </tr></thead>
       <tbody>{#each filteredTeams as team (team.key)}<tr>
         <td class="strong">{team.powerRank ?? '—'}</td><td class="mono">{team.team_number}</td><td>{team.nickname}</td>
-        <td class="strong">{fmt(team.scoutPower)}</td><td>{team.scoutSummary.matchesScouted}</td><td>{fmt(team.scoutSummary.avgFuel)}</td>
+        <td class="strong">{fmt(team.scoutPower)}</td><td>{team.scoutSummary.matchesScouted + team.decisionSummary.matchReports}</td>
+        <td>{fmt(team.decisionSummary.matchEvaluationScore)}</td><td>{fmt(team.decisionSummary.reliabilityScore)}</td><td>{team.decisionSummary.openProblemCount}</td><td>{team.decisionSummary.noteCount}</td><td>{fmt(team.scoutSummary.avgFuel)}</td>
         <td>{fmt(team.scoutSummary.avgDrivingRank)}</td><td>{fmt(team.scoutSummary.avgAccuracy)}</td><td>{fmt(team.scoutSummary.avgSpeed)}</td><td>{fmtPercent(team.scoutSummary.climbSuccessRate)}</td>
       </tr>{/each}</tbody>
     </table>

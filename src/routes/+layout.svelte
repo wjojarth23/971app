@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, ClipboardCheck, Eye } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -253,6 +253,8 @@
     if (compact.startsWith('purchase') || compact.startsWith('purchasing')) return 'purchasing';
     if (compact.startsWith('notescout')) return 'notescout';
     if (compact.startsWith('datascout')) return 'datascout';
+    if (compact.startsWith('matchscout')) return 'matchscout';
+    if (compact.startsWith('vision')) return 'vision';
     if (compact.startsWith('teamview')) return 'teamview';
     if (compact.startsWith('pitscout')) return 'pitscout';
     if (compact.startsWith('powerranking')) return 'powerrankings';
@@ -272,12 +274,14 @@
     purchasing: '/cad/purchasing',
     scouting: '/scouting',
     powerrankings: '/powerrankings',
+    vision: '/scouting/vision',
     docs: '/docs',
     planner: '/planner',
     notescout: '/notescout',
     tasks: '/tasks',
     teamview: '/teamview',
     datascout: '/datascout',
+    matchscout: '/matchscout',
     pitscout: '/pitscout',
     'scouting-admin': '/scouting-admin',
     'cots-stocking': '/cots-stocking',
@@ -295,12 +299,14 @@
     purchasing: Receipt,
     scouting: Binoculars,
     powerrankings: Trophy,
+    vision: Eye,
     docs: FileText,
     planner: CalendarDays,
     notescout: Coins,
     tasks: Briefcase,
     teamview: Coins,
     datascout: Coins,
+    matchscout: ClipboardCheck,
     pitscout: Camera,
     'scouting-admin': Briefcase,
     'cots-stocking': Package,
@@ -316,14 +322,16 @@
     cad: 'CAD',
     build: 'Build',
     purchasing: 'Purchasing',
-    scouting: 'Scouting',
+    scouting: 'Data Scouting',
     powerrankings: 'Power Rankings',
+    vision: 'Vision Scouting',
     docs: 'Docs',
     planner: 'Planner',
     notescout: 'Note Scouting',
     tasks: 'Tasks',
     teamview: 'Team View',
     datascout: 'Data Scouting',
+    matchscout: 'Match Scouting',
     pitscout: 'Pit Scouting',
     'scouting-admin': 'Scouting Admin',
     'cots-stocking': 'COTS Stocking',
@@ -357,6 +365,7 @@
 
   function canRenderTabKey(key) {
     const k = normalizeKey(key);
+    if (navConfig?.tabs?.[k] === false) return false;
     if (k === 'admin') return hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
     // Scouting Admin: Competition Leads, or admins (who can access everything).
     if (k === 'scouting-admin') {
@@ -395,13 +404,21 @@
     }).filter(Boolean);
   }
 
+  const competitionTabs = [
+    { key: 'matchscout', label: 'Match Scouting' },
+    { key: 'pitscout', label: 'Pit Scouting' },
+    { key: 'vision', label: 'Vision Scouting' }
+  ];
+
   function sanitizeTabs(tabs) {
     if (!Array.isArray(tabs)) return null;
     return tabs.map(entry => {
       if (!entry || typeof entry !== 'object') return null;
       const copy = { ...entry };
       if (copy.type === 'folder') {
-        copy.children = Array.isArray(copy.children) ? copy.children.map(c => ({ ...c })) : [];
+        copy.children = normalizeKey(copy.label) === 'competition'
+          ? competitionTabs.map((tab) => ({ ...tab }))
+          : (Array.isArray(copy.children) ? copy.children.map(c => ({ ...c })) : []);
       }
       if (!copy.key && !copy.label) return null;
       return copy;
