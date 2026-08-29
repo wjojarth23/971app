@@ -404,13 +404,21 @@
     }).filter(Boolean);
   }
 
+  const competitionTabs = [
+    { key: 'pitscout', label: 'Pit Scouting' },
+    { key: 'matchscout', label: 'Match Scouting' },
+    { key: 'vision', label: 'Vision Scouting' }
+  ];
+
   function sanitizeTabs(tabs) {
     if (!Array.isArray(tabs)) return null;
     return tabs.map(entry => {
       if (!entry || typeof entry !== 'object') return null;
       const copy = { ...entry };
       if (copy.type === 'folder') {
-        copy.children = Array.isArray(copy.children) ? copy.children.map(c => ({ ...c })) : [];
+        copy.children = normalizeKey(copy.label) === 'competition'
+          ? competitionTabs.map((tab) => ({ ...tab }))
+          : (Array.isArray(copy.children) ? copy.children.map(c => ({ ...c })) : []);
       }
       if (!copy.key && !copy.label) return null;
       return copy;

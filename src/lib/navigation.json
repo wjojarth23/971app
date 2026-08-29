@@ -5,7 +5,7 @@
     "manufacture": true,
     "cad": true,
     "purchasing": true,
-    "scouting": true,
+    "scouting": false,
     "vision": true,
     "matchscout": true,
     "powerrankings": false,

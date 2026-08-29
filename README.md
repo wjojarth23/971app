@@ -29,9 +29,9 @@ reading code.
   is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
-- **Scouting**: the Competition menu exposes Data Scouting (`/scouting`),
-  Pit Scouting (`/pitscout`), Match Scouting (`/matchscout`), and Vision
-  Scouting (`/scouting/vision`). Legacy scouting routes remain in the source
+- **Scouting**: the Competition menu exposes Pit Scouting (`/pitscout`), Match
+  Scouting (`/matchscout`), and Vision Scouting (`/scouting/vision`). Legacy
+  scouting routes remain in the source
   tree for future restoration but are not reachable through navigation. The
   scouting tools integrate with The Blue Alliance API for competition data.
 - **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),
@@ -50,9 +50,9 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
-- **Data Scouting** (`scouting/`): a team-comparison / pick-list workspace for
-  the active event. It is distinct from the legacy collection routes it reads
-  from rather than replaces:
+- **Data Scouting** (`scouting/`): a retained legacy team-comparison / pick-list
+  workspace for the active event. It is distinct from the legacy collection
+  routes it reads from rather than replaces:
   - Sortable comparison table fusing The Blue Alliance's real team roster
     (authoritative - nothing else here ever narrows or redefines it), TBA's
     own OPR/rankings (`api/tba/event-oprs` - replaced the dead Statbotics EPA
@@ -211,11 +211,11 @@ own docs are all together in one place instead of scattered across
   (`wx-svelte-gantt`), Slack-driven prompts/notifications
   (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
   Supabase `pg_cron` job every 15 minutes.
-- **`scouting/`, `matchscout/`, `pitscout/`, `scouting/vision/`** - the active
-  FRC competition scouting routes: data/pick-list, match, pit, and vision
-  scouting. **`datascout/`, `notescout/`, `scouting-admin/`, `teamview/`,
-  `discover/`, `powerrankings/`** are retained legacy scouting routes and are
-  intentionally hidden from navigation.
+- **`matchscout/`, `pitscout/`, `scouting/vision/`** - the active FRC
+  competition scouting routes: match, pit, and vision scouting. **`scouting/`,
+  `datascout/`, `notescout/`, `scouting-admin/`, `teamview/`, `discover/`,
+  `powerrankings/`** are retained legacy scouting routes and are intentionally
+  hidden from navigation.
 - **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
   off-the-shelf) part stock tracking and kitting workflows.
 - **`tasks/`** - general task tracking, separate from the planner's
