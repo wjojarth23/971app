@@ -200,6 +200,29 @@
     finally { busy = false; }
   }
 
+  async function cancelRun(run) {
+    if (!confirm(`Cancel ${run.model_name} ${run.model_version}? A runner already working on it will fail the job when it finishes.`)) return;
+    busy = true;
+    error = '';
+    try {
+      await post({ action: 'cancel-run', id: run.id });
+      await loadDetail(selectedId);
+      await loadMatches();
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
+  }
+
+  async function retryRun(run) {
+    busy = true;
+    error = '';
+    try {
+      await post({ action: 'retry-run', id: run.id });
+      await loadDetail(selectedId);
+      await loadMatches();
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
+  }
+
   let releasingRunId = '';
   async function releaseRun(run) {
     if (!confirm(`Release ${run.model_name} ${run.model_version}'s results into real scouting data? This cannot be undone.`)) return;
@@ -390,11 +413,22 @@
             <label>Min circularity <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={minCircularity} /></label>
           </div>
         </details>
-        <div class="run-list">{#each detail.runs as run}<span class={`status ${run.status}`}>
-          {run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}
-          {#if run.released_at}<em class="released-tag">released</em>
-          {:else if run.status === 'complete' && canRelease}<button class="btn btn-sm btn-primary" on:click={() => releaseRun(run)} disabled={releasingRunId === run.id}><UploadCloud size={12} /> Release to scouting data</button>{/if}
-        </span>{/each}</div>
+        <div class="run-list">
+          {#each detail.runs as run (run.id)}
+            <span class={`status ${run.status}`}>
+              {run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}
+              {#if run.released_at}
+                <em class="released-tag">released</em>
+              {:else if run.status === 'complete' && canRelease}
+                <button class="btn btn-sm btn-primary" on:click={() => releaseRun(run)} disabled={releasingRunId === run.id}><UploadCloud size={12} /> Release to scouting data</button>
+              {:else if ['queued', 'claimed', 'processing'].includes(run.status)}
+                <button class="btn btn-sm" on:click={() => cancelRun(run)} disabled={busy}>Cancel</button>
+              {:else if ['failed', 'cancelled'].includes(run.status)}
+                <button class="btn btn-sm" on:click={() => retryRun(run)} disabled={busy}><RefreshCw size={12} /> Retry</button>
+              {/if}
+            </span>
+          {/each}
+        </div>
       </section>
 
       {#if detail.tracks.length}

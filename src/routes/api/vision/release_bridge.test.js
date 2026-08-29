@@ -154,7 +154,7 @@ describe('release-run', () => {
   it('releases a climb whose level is a real climb_pos value', async () => {
     const client = makeMockClient({
       run: RUN,
-      observations: [observation({ observation_type: 'climb_success', value: { level: 'L2' } })]
+      observations: [observation({ observation_type: 'climb_success', started_ms: 120000, ended_ms: 120000, value: { level: 'L2' } })]
     });
     mockClient = client;
     mockDb = client;
@@ -170,7 +170,7 @@ describe('release-run', () => {
       run: RUN,
       // 'success' is what summarizeVision falls back to when no level was set,
       // and is exactly the value that used to vanish without a word.
-      observations: [observation({ observation_type: 'climb_success', value: {} })]
+      observations: [observation({ observation_type: 'climb_success', started_ms: 120000, ended_ms: 120000, value: {} })]
     });
     mockClient = client;
     mockDb = client;
@@ -217,5 +217,48 @@ describe('update-track cascade', () => {
       .toMatchObject({ team_key: null, needs_review: true });
     expect(updates.find((entry) => entry.table === 'vision_observations').payload)
       .toEqual({ team_key: null });
+  });
+});
+
+describe('run cancel and retry', () => {
+  beforeEach(() => { updates = []; });
+
+  it('cancels a run that is still queued, claimed or processing', async () => {
+    const client = makeMockClient({ run: [{ id: 'run-1', status: 'cancelled' }] });
+    mockClient = client;
+    mockDb = client;
+    const { POST } = await import('./+server.js');
+    const res = await POST({ request: request({ action: 'cancel-run', id: 'run-1' }) });
+    expect(res.status).toBe(200);
+    const update = updates.find((entry) => entry.table === 'vision_runs');
+    expect(update.payload).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('refuses to cancel a run that already finished', async () => {
+    // The compare-and-swap matches no row, which is how a just-completed run
+    // avoids being stomped back to cancelled.
+    const client = makeMockClient({ run: [] });
+    mockClient = client;
+    mockDb = client;
+    const { POST } = await import('./+server.js');
+    const res = await POST({ request: request({ action: 'cancel-run', id: 'run-1' }) });
+    expect(res.status).toBe(409);
+  });
+
+  it('requires a run id to cancel', async () => {
+    const client = makeMockClient({});
+    mockClient = client;
+    mockDb = client;
+    const { POST } = await import('./+server.js');
+    expect((await POST({ request: request({ action: 'cancel-run' }) })).status).toBe(400);
+  });
+
+  it('only retries a failed or cancelled run', async () => {
+    const client = makeMockClient({ run: { ...RUN, status: 'complete' } });
+    mockClient = client;
+    mockDb = client;
+    const { POST } = await import('./+server.js');
+    const res = await POST({ request: request({ action: 'retry-run', id: 'run-1' }) });
+    expect(res.status).toBe(400);
   });
 });

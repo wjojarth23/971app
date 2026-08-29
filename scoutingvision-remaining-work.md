@@ -27,12 +27,16 @@ views → queue a run → the DGX runner claims it → YOLO/ByteTrack tracking +
 classical-CV game-piece detection + Qwen3-VL clip analysis → discrepancy
 reconciliation against TBA → human review → release into `scout_data_events`.
 
-**What is genuinely verified:** 604 JS tests, 0 `svelte-check` errors, Python
+**What is genuinely verified:** 617 JS tests, 0 `svelte-check` errors, Python
 unit tests, and synthetic-fixture harnesses covering attribution, occlusion
 re-identification, clip-failure handling, and the track→observation identity
 chain. The homography solver is checked against `cv2.getPerspectiveTransform`.
-Seven vision migrations are applied to the live Supabase project; RLS on all
+Nine vision migrations are applied to the live Supabase project; RLS on all
 10 `vision_*` tables is gated on `approved_user()`.
+
+Vision now releases six scouting fields rather than two — `hub_fuel_override`,
+`climb_pos`, `auto_climb_pos`, `dead_auto` and `auto_start_position` — closing
+most of the gap against what a human scout records by hand.
 
 **What is not:** *none of it has ever processed a real frame of match video.*
 Every threshold, the HSV range, the attribution distances, and the entire
@@ -134,11 +138,14 @@ exists.
 ### A7. Per-venue calibration **[NEEDED]**
 
 There is now a click-to-draw calibrator (B2), so this is no longer hand-typed
-JSON: trace the field mask, outline goal zones, and click four landmarks to
-solve the homography. What stays human is knowing *which* four landmarks and
-what their real field coordinates are, and doing it once per venue per camera.
-HSV thresholds are still numeric fields on the run form and will need tuning
-against real footage.
+JSON: trace the field mask, outline goal zones, outline the named auto start
+zones, and click four landmarks to solve the homography. What stays human is
+knowing *which* four landmarks and what their real field coordinates are, and
+doing it once per venue per camera. HSV thresholds are still numeric fields on
+the run form and will need tuning against real footage.
+
+Calibrating start zones is what makes `auto_start_position` reportable at all —
+without them vision stays silent on that field rather than guessing.
 
 ### A8. Decide the model-acceptance policy **[NEEDED — a decision, not a task]**
 
@@ -221,6 +228,26 @@ bootstrapping a labeling dataset (A6) where camera motion doesn't matter. It
 is not a substitute for the fixed camera in A5. Build it as a link-resolver
 plus optional fetch, and keep broadcast-sourced runs flagged as a distinct
 source so nobody mistakes their attribution for the calibrated pipeline's.
+
+### B4c. Analytics vision does better than a human **[NICE]**
+
+The pipeline stores a full trajectory per robot and `trajectoryMetrics`
+already derives distance, median/p90/max speed, acceleration, turn rate and
+moving-vs-stationary time from it — and none of that is shown anywhere. Also
+derivable from data already collected, with no model work:
+
+- **Defense played** — proximity between opposing-alliance trajectories over
+  time. Humans track this badly; vision doesn't.
+- **Cycle time and time-to-first-score** — from observation timestamps.
+- **Zone occupancy / heat map** — needs a homography, which the calibrator now
+  makes practical to obtain.
+
+Two things deliberately *not* mapped into the scouting vocabulary, having
+checked what those fields actually mean: `rank_speed` is **balls per second**,
+not robot speed, so releasing our m/s into it would be silently wrong; and
+`pushing` always writes the value `"outpost"`, whose game meaning isn't clear
+enough from the code to synthesize. Surface these as vision-native analytics
+instead of forcing them into fields that mean something else.
 
 ### B5. Keyboard-driven review **[NICE]**
 

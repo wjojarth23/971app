@@ -521,6 +521,22 @@ class PieceTracker:
         return self.finished + [track["points"] for track in self._active.values()]
 
 
+def resolve_auto_start_zone(pixel_center, start_zones, frame_shape):
+    """Name the region a robot was sitting in when auto began.
+
+    Done here rather than server-side because the comparison only makes sense
+    in this coordinate space: start_zones polygons are normalized 0-1, and
+    point_in_zone scales them by frame_shape to match a *pixel* centre. A
+    stored trajectory point is in field units whenever a homography is
+    calibrated, so the same check server-side would silently never match."""
+    if not start_zones or pixel_center is None or frame_shape is None:
+        return None
+    for zone in start_zones:
+        if point_in_zone(pixel_center, zone.get("polygon"), frame_shape):
+            return zone.get("label")
+    return None
+
+
 def attribute_climbs(detections, robot_tracks, view, config):
     """YOLO's climb classes fire on the climbing structure, not on a tracked
     robot, so they arrive with no identity of their own and used to be released
@@ -596,6 +612,8 @@ def process_view(model, view, config, video_path):
     min_piece_area = float(config.get("min_piece_area", DEFAULT_MIN_PIECE_AREA))
     min_circularity = float(config.get("min_circularity", DEFAULT_MIN_CIRCULARITY))
     goal_zones = view.get("goal_zones") or []
+    start_zones = view.get("start_zones") or []
+    auto_end_ms = int(config.get("auto_end_ms", 15_000))
     field_mask_polygon = view.get("field_mask")
 
     capture = cv2.VideoCapture(str(video_path))
@@ -654,6 +672,12 @@ def process_view(model, view, config, video_path):
                     })
                     track["needs_review"] = not bool(identity_map.get(key))
                     track["ended_ms"] = timestamp_ms
+                    # First pixel centre seen during auto, kept for start-zone
+                    # naming after the loop. Stored in pixels, not the
+                    # trajectory's (possibly field-space) coordinates, because
+                    # that is the space start_zones are compared in.
+                    if timestamp_ms < auto_end_ms and "auto_start_pixel" not in track:
+                        track["auto_start_pixel"] = center
                     track["tracking_confidence"] = min(track["tracking_confidence"], confidence)
                     track["trajectory"].append({"t": timestamp_ms, "x": x, "y": y, "confidence": confidence, "calibrated": calibrated})
 
@@ -692,6 +716,10 @@ def process_view(model, view, config, video_path):
         piece_tracker.update(timestamp_ms, pixel_pieces)
 
     finished_tracks = list(tracks.values())
+    for track in finished_tracks:
+        track["auto_start_zone"] = resolve_auto_start_zone(
+            track.pop("auto_start_pixel", None), start_zones, frame_shape,
+        )
     climb_observations = attribute_climbs(climb_detections, finished_tracks, view, config)
     fuel_observations = attribute_scores(piece_tracker.all_trajectories(), finished_tracks, goal_zones, frame_shape or (1, 1), view["id"])
     return finished_tracks, climb_observations + fuel_observations

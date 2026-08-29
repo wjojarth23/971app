@@ -50,7 +50,7 @@ the code and what does it do."
 
 ## Database
 
-Eight SQL files. Seven are applied; the runner-health cron migration is
+Ten SQL files. Nine are applied; the runner-health cron migration is
 deliberately held until merge (see **Setup checklist** below).
 
 Three of them are hardening rather than schema:
@@ -68,6 +68,8 @@ Three of them are hardening rather than schema:
   match's events. See **Reviewed-result release bridge**.
 - `20260829_vision_recording_retention.sql` — `vision_views.recording_deleted_at`,
   for the opt-in retention sweep.
+- `20260829_vision_start_zones.sql` — `vision_views.start_zones`, the named
+  auto starting regions that let vision report `auto_start_position` at all.
 
 ### `migrations/20260828_vision_system.sql`
 
@@ -215,8 +217,16 @@ below, which adds its own explicit `VISION_RELEASE` check.
   - `review-observations` — the same verdicts applied to up to 500 ids at
     once, for clearing a match's worth of proposals without a click per row.
     Deliberately excludes `corrected`, which needs a per-row value and team.
-  - `update-view` — saves calibration (field mask, goal zones, homography,
-    sync offset) onto an already-uploaded view. Separate from `add-view`
+  - `cancel-run` — abandons a `queued`/`claimed`/`processing` run. A runner
+    that crashes mid-job otherwise leaves the run wedged forever, since only
+    the worker actively holding a run ever terminates it. The status filter is
+    a compare-and-swap, so a run that just completed can't be stomped back to
+    cancelled (409 instead).
+  - `retry-run` — re-queues a `failed`/`cancelled` run's match as a *new* run
+    rather than resetting the old one: model identity and config are immutable
+    per run by design, and the failed attempt stays on the record.
+  - `update-view` — saves calibration (field mask, goal zones, start zones,
+    homography, sync offset) onto an already-uploaded view. Separate from `add-view`
     because calibration is drawn against the recording itself, which can't
     happen until the file exists.
   - `release-run` — the reviewed-result release bridge; see its own section
@@ -380,6 +390,18 @@ Guardrails, in order:
      dropping any `climb_level` outside `ALLOWED_CLIMB_LEVELS` back to null so
      an invented wording falls through to that default instead of being
      carried to release and rejected there.
+   - **`auto_climb_pos`** for a climb whose phase is `auto`. The runner has
+     always stamped each observation's phase; the release used to discard it
+     and file every climb as teleop.
+   - **`dead_auto`** (`"true"`/`"false"`) from the robot's measured
+     displacement during the auto window. Deliberately absent, rather than
+     `false`, when the robot was never seen in auto — "we didn't see it" and
+     "we saw it do nothing" are different claims and only the second is worth
+     releasing. Any view that saw movement overrules a view that lost the
+     robot behind a truss.
+   - **`auto_start_position`** from the named start zone the robot was sitting
+     in when auto began (see **Calibration UI**). Omitted entirely when no
+     start zones are calibrated for that view, rather than guessed.
    - Alliance-only observations (no resolved `team_key`) are never released
      as a specific team's data.
    - Every released row is tagged `role: 'vision'`, so released rows stay
@@ -587,9 +609,22 @@ Three behaviours are worth knowing before reading `analyze_view_with_qwen`:
 ### Calibration UI — `src/lib/components/VisionCalibrator.svelte`
 
 Click-to-draw calibration against a paused frame of the view's own recording,
-replacing hand-typed JSON. Three modes: trace the field mask, outline goal
-zones (each with a label and alliance), or click four field landmarks and type
-their real coordinates to solve the homography.
+replacing hand-typed JSON. Four modes: trace the field mask, outline goal
+zones (each with a label and alliance), outline **start zones**, or click four
+field landmarks and type their real coordinates to solve the homography.
+
+Start zones are picked from a fixed list — `left trench`, `left mound`,
+`center`, `right mound`, `right trench` — rather than free text, because the
+released `auto_start_position` has to be a value datascout also writes or it's
+unreadable next to a hand-scouted match.
+
+Naming which zone a robot started in happens in the **runner**
+(`resolve_auto_start_zone`), not at release time, and that placement is
+load-bearing: start-zone polygons are stored normalized 0-1 and `point_in_zone`
+scales them against a *pixel* centre, while a stored trajectory point is in
+field units whenever a homography is calibrated. Doing the same check
+server-side would silently never match. The runner records the answer in the
+track's `metrics.autoStartZone`, and `autoStartPosition()` just reads it.
 
 Two coordinate spaces, deliberately — this is the thing to get right when
 touching it. Mask and goal-zone polygons are stored **normalized 0-1** so one
@@ -753,6 +788,7 @@ this establishes one.
    - `migrations/20260829_vision_rls_approved_user.sql` — applied
    - `migrations/20260829_vision_release_atomic.sql` — applied
    - `migrations/20260829_vision_recording_retention.sql` — applied
+   - `migrations/20260829_vision_start_zones.sql` — applied
    - `migrations/20260829_vision_runner_health_cron.sql` — **apply on merge,
      not before.** Unlike the others (additive schema deployed code ignores),
      it schedules a `pg_cron` job that calls

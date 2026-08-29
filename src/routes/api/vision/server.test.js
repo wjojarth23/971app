@@ -180,7 +180,7 @@ describe('api/vision', () => {
     const run = { id: 'run-1', status: 'complete', released_at: null, vision_matches: { match_key: '2026casf_qm1' } };
     const observations = [
       { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 3 }, review_status: 'accepted' },
-      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'L2' }, review_status: 'accepted' }
+      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 120000, value: { level: 'L2' }, review_status: 'accepted' }
     ];
 
     it('requires run_id', async () => {
@@ -267,7 +267,7 @@ describe('api/vision', () => {
         vision_tracks: [{ data: [], error: null }],
         vision_observations: [{ data: [
           { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 1 }, review_status: 'accepted' },
-          { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'success' }, review_status: 'accepted' }
+          { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 120000, value: { level: 'success' }, review_status: 'accepted' }
         ], error: null }]
       });
       const { POST } = await import('./+server.js');

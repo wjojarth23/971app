@@ -87,7 +87,18 @@ export async function POST({ request }) {
     // instead of forcing a correction per observation. The key->id mapping
     // relies on INSERT ... RETURNING handing rows back in insertion order,
     // which Postgres guarantees for the single statement PostgREST issues.
-    const tracks = (body.tracks || []).map(({ track_key, ...track }) => ({ ...track, vision_run_id: run.id, metrics: track.metrics || trajectoryMetrics(track.trajectory) }));
+    // auto_start_zone rides along in metrics rather than as its own column:
+    // it's a derived per-track fact of exactly the same kind as the mobility
+    // numbers already stored there, and the runner is the only place it can be
+    // computed (see resolve_auto_start_zone for why).
+    const tracks = (body.tracks || []).map(({ track_key, auto_start_zone, ...track }) => ({
+      ...track,
+      vision_run_id: run.id,
+      metrics: {
+        ...(track.metrics || trajectoryMetrics(track.trajectory)),
+        autoStartZone: auto_start_zone || null
+      }
+    }));
     const trackKeys = (body.tracks || []).map((track) => track.track_key || null);
     const qwenClips = (body.qwen_clips || []).map((clip) => ({ ...clip, vision_run_id: run.id }));
     const trackIdByKey = new Map();

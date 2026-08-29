@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fuseObservations, reconcileVisionSources, reconcileWithReference, summarizeVision, trajectoryMetrics } from './visionAnalytics.js';
+import { autoStartPosition, deadAuto, fuseObservations, reconcileVisionSources, reconcileWithReference, summarizeVision, trajectoryMetrics } from './visionAnalytics.js';
 
 describe('vision analytics', () => {
   it('derives real-coordinate mobility metrics', () => {
@@ -47,5 +47,79 @@ describe('vision analytics', () => {
     const flags = reconcileVisionSources(pipeline, qwen);
     expect(flags).toEqual(expect.arrayContaining([expect.objectContaining({ metric: 'qwen_pipeline_fuel', severity: 'critical' })]));
     expect(pipeline.alliances.red.fuelScored).toBe(12);
+  });
+});
+
+describe('auto-phase derivations', () => {
+  const trackAt = (points, extra = {}) => ({
+    team_key: 'frc971', view_id: 'view-1', trajectory: points, ...extra
+  });
+
+  it('splits a climb into auto_climb vs teleop climb by its phase', () => {
+    const auto = summarizeVision([
+      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', phase: 'auto', started_ms: 8000, value: { level: 'L1' } }
+    ], []);
+    expect(auto.teams.frc971.autoClimb).toBe('L1');
+    expect(auto.teams.frc971.climb).toBeNull();
+
+    const teleop = summarizeVision([
+      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', phase: 'endgame', started_ms: 140000, value: { level: 'L3' } }
+    ], []);
+    expect(teleop.teams.frc971.climb).toBe('L3');
+    expect(teleop.teams.frc971.autoClimb).toBeNull();
+  });
+
+  it('falls back to the timestamp when an observation carries no phase', () => {
+    const summary = summarizeVision([
+      { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 9000, value: { level: 'L1' } }
+    ], []);
+    expect(summary.teams.frc971.autoClimb).toBe('L1');
+  });
+
+  it('honours a run-configured auto window', () => {
+    const observations = [{ observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 18000, value: { level: 'L1' } }];
+    expect(summarizeVision(observations, []).teams.frc971.climb).toBe('L1');
+    expect(summarizeVision(observations, [], { autoEndMs: 20000 }).teams.frc971.autoClimb).toBe('L1');
+  });
+
+  it('reports a robot that never moved in auto as dead', () => {
+    const still = trackAt([
+      { t: 500, x: 4, y: 2 }, { t: 3000, x: 4.01, y: 2.01 }, { t: 12000, x: 4, y: 2 }
+    ]);
+    expect(deadAuto(still)).toBe(true);
+    expect(summarizeVision([], [still]).teams.frc971.deadAuto).toBe(true);
+  });
+
+  it('reports a robot that drove in auto as not dead', () => {
+    const moved = trackAt([{ t: 500, x: 0, y: 0 }, { t: 8000, x: 5, y: 3 }]);
+    expect(deadAuto(moved)).toBe(false);
+  });
+
+  it('says nothing when the robot was never seen during auto', () => {
+    // "We never saw it" and "we saw it do nothing" are different claims, and
+    // only the second is worth releasing.
+    expect(deadAuto(trackAt([{ t: 60000, x: 1, y: 1 }, { t: 70000, x: 1, y: 1 }]))).toBeNull();
+    expect(deadAuto(trackAt([{ t: 500, x: 1, y: 1 }]))).toBeNull();
+    expect(summarizeVision([], [trackAt([{ t: 60000, x: 1, y: 1 }])]).teams.frc971.deadAuto).toBeNull();
+  });
+
+  it('lets any view that saw movement overrule a view that lost the robot', () => {
+    const blocked = trackAt([{ t: 500, x: 4, y: 2 }, { t: 6000, x: 4, y: 2 }], { view_id: 'view-1' });
+    const clear = trackAt([{ t: 500, x: 0, y: 0 }, { t: 6000, x: 6, y: 4 }], { view_id: 'view-2' });
+    expect(summarizeVision([], [blocked, clear]).teams.frc971.deadAuto).toBe(false);
+    expect(summarizeVision([], [clear, blocked]).teams.frc971.deadAuto).toBe(false);
+  });
+
+  it('reads the start zone the runner resolved, and stays silent without one', () => {
+    const named = trackAt([{ t: 500, x: 1, y: 1 }], { metrics: { autoStartZone: 'left mound' } });
+    expect(autoStartPosition(named)).toBe('left mound');
+    expect(summarizeVision([], [named]).teams.frc971.autoStartPosition).toBe('left mound');
+    expect(autoStartPosition(trackAt([{ t: 500, x: 1, y: 1 }]))).toBeNull();
+    expect(summarizeVision([], [trackAt([{ t: 500, x: 1, y: 1 }])]).teams.frc971.autoStartPosition).toBeNull();
+  });
+
+  it('ignores tracks with no resolved team, as everything else does', () => {
+    const orphan = { view_id: 'view-1', team_key: null, trajectory: [{ t: 500, x: 4, y: 2 }, { t: 6000, x: 4, y: 2 }], metrics: { autoStartZone: 'center' } };
+    expect(summarizeVision([], [orphan]).teams).toEqual({});
   });
 });

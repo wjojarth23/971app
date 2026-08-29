@@ -162,6 +162,50 @@ export async function POST({ request }) {
     return json({ success: true, data: { view, upload } });
   }
 
+  // A run that dies mid-processing otherwise sits in `processing` forever:
+  // the runner only terminates runs it is actively working, so a crashed or
+  // reassigned worker leaves one wedged with no way out and no way to try the
+  // match again. Cancelling is a compare-and-swap against the statuses that
+  // can still be abandoned, so it can't stomp a run that just completed.
+  if (action === 'cancel-run') {
+    if (!body.id) return json({ error: 'run id required' }, { status: 400 });
+    const { data, error } = await client.from('vision_runs')
+      .update({ status: 'cancelled', error: body.reason || 'Cancelled by a reviewer', completed_at: new Date().toISOString() })
+      .eq('id', body.id)
+      .in('status', ['queued', 'claimed', 'processing'])
+      .select('id, status');
+    if (error) return json({ error: error.message }, { status: 400 });
+    if (!data?.length) {
+      return json({ error: 'That run already finished - only a queued, claimed or processing run can be cancelled' }, { status: 409 });
+    }
+    return json({ success: true, data: data[0] });
+  }
+
+  // Re-queue a match after a failed or cancelled run. Deliberately a new run
+  // rather than resetting the old one: model identity and config are immutable
+  // per run by design, and the failed attempt stays on the record.
+  if (action === 'retry-run') {
+    if (!body.id) return json({ error: 'run id required' }, { status: 400 });
+    const { data: previous, error: readError } = await client.from('vision_runs').select('*').eq('id', body.id).single();
+    if (readError) return json({ error: readError.message }, { status: 404 });
+    if (!['failed', 'cancelled'].includes(previous.status)) {
+      return json({ error: 'Only a failed or cancelled run can be retried' }, { status: 400 });
+    }
+    const { data, error } = await client.from('vision_runs').insert({
+      vision_match_id: previous.vision_match_id,
+      model_name: previous.model_name,
+      model_version: previous.model_version,
+      qwen_model: previous.qwen_model,
+      qwen_revision: previous.qwen_revision,
+      qwen_dtype: previous.qwen_dtype,
+      config: previous.config || {},
+      created_by: actor.id
+    }).select('*').single();
+    if (error) return json({ error: error.message }, { status: 400 });
+    await client.from('vision_matches').update({ status: 'queued', updated_at: new Date().toISOString() }).eq('id', previous.vision_match_id);
+    return json({ success: true, data });
+  }
+
   // Calibration on an already-uploaded view. Separate from add-view because
   // calibration is drawn against the recording itself (see the Calibrate
   // panel), which by definition can't happen until the file is uploaded.
@@ -298,12 +342,20 @@ export async function POST({ request }) {
     const matchKey = run.vision_matches?.match_key;
     if (!matchKey) return json({ error: 'Run has no associated match' }, { status: 400 });
 
-    const [{ data: tracks }, { data: observations }] = await Promise.all([
+    const [{ data: tracks }, { data: observations }, { data: runViews }] = await Promise.all([
       db.from('vision_tracks').select('*').eq('vision_run_id', run.id),
-      db.from('vision_observations').select('*').eq('vision_run_id', run.id)
+      db.from('vision_observations').select('*').eq('vision_run_id', run.id),
+      db.from('vision_views').select('id, start_zones').eq('vision_match_id', run.vision_match_id)
     ]);
     const reviewedObservations = (observations || []).filter((observation) => ['accepted', 'corrected'].includes(observation.review_status));
-    const summary = summarizeVision(reviewedObservations, tracks || []);
+    // Start zones are per view because they're drawn against that camera's own
+    // image; a track only resolves to a named start position on a view that
+    // actually has them calibrated.
+    const startZonesByView = Object.fromEntries((runViews || []).map((view) => [view.id, view.start_zones || []]));
+    const summary = summarizeVision(reviewedObservations, tracks || [], {
+      autoEndMs: Number(run.config?.auto_end_ms) || undefined,
+      startZonesByView
+    });
 
     // Only the fields release_vision_run() actually reads. role, created_by
     // and created_at are set inside the function so every released row is
@@ -328,6 +380,31 @@ export async function POST({ request }) {
         // isn't: the release looks like it worked while that team's climb
         // quietly never lands. Name it so a reviewer can correct the value.
         skippedClimbs.push({ team_key: teamKey, value: team.climb });
+      }
+      // A climb during auto is its own scouting field. The runner already
+      // records each observation's phase; this is what stops that from being
+      // computed and then thrown away.
+      if (team.autoClimb && VALID_CLIMB_POS.has(team.autoClimb)) {
+        rows.push({
+          match_key: matchKey, team_key: teamKey,
+          event_type: 'auto_climb_pos', event_value: team.autoClimb
+        });
+      } else if (team.autoClimb) {
+        skippedClimbs.push({ team_key: teamKey, value: team.autoClimb, field: 'auto_climb_pos' });
+      }
+      // null means "we never saw enough of this robot in auto to say" - only
+      // a measured answer is worth releasing.
+      if (typeof team.deadAuto === 'boolean') {
+        rows.push({
+          match_key: matchKey, team_key: teamKey,
+          event_type: 'dead_auto', event_value: String(team.deadAuto)
+        });
+      }
+      if (team.autoStartPosition) {
+        rows.push({
+          match_key: matchKey, team_key: teamKey,
+          event_type: 'auto_start_position', event_value: team.autoStartPosition
+        });
       }
     }
     if (!rows.length) {

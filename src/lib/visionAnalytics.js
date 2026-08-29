@@ -71,11 +71,70 @@ export function fuseObservations(observations, { dedupeWindowMs = 350 } = {}) {
   return fused;
 }
 
-export function summarizeVision(observations, tracks) {
+// End of the autonomous period, in match milliseconds. Matches
+// vision_runner.py's phase_for_timestamp() default; both are overridable per
+// run via config.auto_end_ms, and both must agree or an observation's stored
+// phase and its derived auto/teleop split would disagree.
+export const DEFAULT_AUTO_END_MS = 15_000;
+
+// How far a robot must travel during auto before it counts as having moved.
+// Deliberately generous: tracker jitter on a stationary robot is on the order
+// of a bounding-box wobble, and calling a working robot "dead" is a much worse
+// error than staying quiet. Overridable via config.dead_auto_distance.
+const DEAD_AUTO_DISTANCE = 0.75;
+
+function autoTrajectory(track, autoEndMs) {
+  return (track?.trajectory || [])
+    .filter((point) => finite(point?.t) && finite(point?.x) && finite(point?.y) && point.t < autoEndMs)
+    .sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Where a robot was sitting when auto began, as one of the named start zones
+ * calibrated on its view.
+ *
+ * The zone lookup itself happens in the runner (vision_runner.py's
+ * resolve_auto_start_zone), not here, and deliberately so: start-zone polygons
+ * are stored normalized 0-1, while a trajectory point is in field units when a
+ * homography is calibrated and raw pixels when it isn't. Only the runner holds
+ * the frame dimensions and the un-projected pixel centre needed to compare
+ * those honestly. This reads the answer it recorded.
+ */
+export function autoStartPosition(track) {
+  return track?.metrics?.autoStartZone || null;
+}
+
+/**
+ * Whether a robot did nothing during auto. Distinguishes "measurably did not
+ * move" from "we never saw it", because those mean very different things to a
+ * strategist and only the first is worth releasing.
+ *
+ * Distance is summed within a single trajectory, so it needs no coordinate
+ * conversion - but the threshold's units follow whatever space that trajectory
+ * is in. The default suits calibrated field units; on an uncalibrated
+ * (pixel-space) view any real motion dwarfs it, which errs toward reporting a
+ * robot as having moved. That is the safe direction: calling a working robot
+ * dead is a much worse error than staying quiet.
+ */
+export function deadAuto(track, { autoEndMs = DEFAULT_AUTO_END_MS, minDistance = DEAD_AUTO_DISTANCE } = {}) {
+  const points = autoTrajectory(track, autoEndMs);
+  if (points.length < 2) return null;
+  let distance = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    distance += Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y);
+  }
+  return distance < minDistance;
+}
+
+export function summarizeVision(observations, tracks, options = {}) {
+  const autoEndMs = Number(options.autoEndMs) || DEFAULT_AUTO_END_MS;
   const fused = fuseObservations(observations);
   const teams = {};
   const alliances = { red: { fuelScored: 0, climbs: 0 }, blue: { fuelScored: 0, climbs: 0 } };
-  const ensure = (teamKey) => teams[teamKey] ||= { fuelScored: 0, fuelObservations: 0, climb: null, observations: 0, mobility: null };
+  const ensure = (teamKey) => teams[teamKey] ||= {
+    fuelScored: 0, fuelObservations: 0, climb: null, autoClimb: null,
+    observations: 0, mobility: null, autoStartPosition: null, deadAuto: null
+  };
   for (const observation of fused) {
     if (!observation.team_key) {
       const alliance = alliances[observation.alliance];
@@ -89,13 +148,31 @@ export function summarizeVision(observations, tracks) {
       team.fuelScored += Number(observation.value?.count) || 1;
       team.fuelObservations += 1;
     }
-    if (observation.observation_type === 'climb_success') team.climb = observation.value?.level || 'success';
+    if (observation.observation_type === 'climb_success') {
+      // A climb during auto is a different scouting field from a teleop one
+      // (auto_climb_pos vs climb_pos), and the runner already knows which is
+      // which - the phase was being computed and then discarded here.
+      const level = observation.value?.level || 'success';
+      const inAuto = observation.phase === 'auto'
+        || (!observation.phase && Number(observation.started_ms) < autoEndMs);
+      if (inAuto) team.autoClimb = level;
+      else team.climb = level;
+    }
   }
   for (const track of tracks || []) {
     if (!track.team_key) continue;
     const team = ensure(track.team_key);
     const metrics = track.metrics && Object.keys(track.metrics).length ? track.metrics : trajectoryMetrics(track.trajectory);
     if (!team.mobility || (metrics.coverageMs || 0) > (team.mobility.coverageMs || 0)) team.mobility = metrics;
+
+    const startPosition = autoStartPosition(track);
+    if (startPosition && !team.autoStartPosition) team.autoStartPosition = startPosition;
+
+    const dead = deadAuto(track, { autoEndMs });
+    // Any view that saw the robot move settles it - one camera losing the
+    // robot behind a truss shouldn't report a working robot as dead.
+    if (dead === false) team.deadAuto = false;
+    else if (dead === true && team.deadAuto == null) team.deadAuto = true;
   }
   return { teams, alliances, fusedObservations: fused };
 }
