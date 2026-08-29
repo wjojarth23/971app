@@ -122,7 +122,7 @@
 <style>
   .back-link { display:inline-flex; align-items:center; gap:var(--gap-2); color:var(--text-muted); text-decoration:none; font-size:.85rem; margin-bottom:var(--space-3); }
   .back-link:hover { color:var(--text); }
-  .header-content h1 { display:inline-flex; align-items:center; gap:var(--gap-2); white-space:nowrap; flex-shrink:0; }
+  .header-content h1 { display:inline-flex; align-items:center; gap:var(--gap-2); flex-shrink:0; }
   h2 { display:flex; gap:var(--gap-2); align-items:center; font-size:1rem; margin:0 0 var(--space-3); }
   .section { padding:var(--space-4); margin-top:var(--space-4); }
 
@@ -137,14 +137,21 @@
   .table-wrap { overflow:auto; }
   table { width:100%; border-collapse:collapse; }
   th, td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
-  .error-cell { white-space:normal; color:var(--danger); max-width:20rem; }
+  .error-cell { white-space:normal; overflow-wrap:anywhere; color:var(--danger); max-width:20rem; }
   .stale { color:var(--danger); }
 
   .fleet-status { padding:2px var(--space-2); border-radius:var(--radius-sm); font-size:.78rem; }
   .fleet-status.online { background:var(--status-ready-bg); color:var(--status-ready-text); }
   .fleet-status.offline { background:var(--status-risk-bg); color:var(--status-risk-text); }
 
-  @media (max-width:640px) {
+  @media (max-width:700px) {
     .actions { flex-direction:column; align-items:stretch; }
+    .actions .form-input { width:100%; }
+    .stat-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .stat-card { min-width:0; }
+    .stat-sub { overflow-wrap:anywhere; }
+  }
+  @media (max-width:420px) {
+    .stat-grid { grid-template-columns:1fr; }
   }
 </style>

@@ -251,8 +251,8 @@
   .calibrator-modes .active { border-color:var(--brand-gold-base,#d9a413); }
   .calibrator-hint { margin:0; color:var(--text-muted); font-size:.82rem; }
   .calibrator-message { margin:0; color:var(--text-muted); font-size:.82rem; }
-  .calibrator-stage { position:relative; display:inline-block; max-width:100%; }
-  .calibrator-stage video { display:block; max-width:100%; border-radius:var(--radius-md); }
+  .calibrator-stage { position:relative; display:inline-block; width:min(100%, 56rem); max-width:100%; background:#000; }
+  .calibrator-stage video { display:block; width:100%; max-width:100%; border-radius:var(--radius-md); }
   .calibrator-stage svg { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
   .drawn { fill:color-mix(in srgb, var(--brand-gold-base,#d9a413) 22%, transparent); stroke:var(--brand-gold-base,#d9a413); stroke-width:.4; }
   .drawn.other { fill:color-mix(in srgb, var(--text-muted) 12%, transparent); stroke:var(--text-muted); }
@@ -266,5 +266,6 @@
   .zone-count { color:var(--text-muted); font-size:.78rem; }
   @media (max-width:700px) {
     .zone-row, .homography-row { grid-template-columns:1fr; }
+    .calibrator-modes .btn { flex:1 1 8rem; }
   }
 </style>
