@@ -52,8 +52,10 @@ reading code.
   heartbeat) across a whole event. Run failures and new critical
   discrepancies Slack-DM an admin-managed opt-in list
   (`user_profiles.vision_notify`, toggled from the admin panel). See
-  `implementations/vision-scouting-system.md` for the design/contracts and
-  `scoutingvision.md` for the full file-by-file implementation reference.
+  `implementations/vision-scouting-system.md` for the design/contracts,
+  `scoutingvision.md` for the full file-by-file implementation reference, and
+  `scoutingvision-remaining-work.md` for what still has to happen before it is
+  usable (it is not deployed or running against real footage yet).
 - **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),
   Slack-driven prompts and reminders on a 15-minute cron sweep.
 - **Purchasing/Budget**: COTS (commercial off-the-shelf) part stock

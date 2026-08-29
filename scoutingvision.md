@@ -1,5 +1,11 @@
 # Scouting Vision — implementation reference
 
+> **This file is "where is the code and what does it do."** For what is still
+> missing before the system is usable — split by whether a human, hardware, or
+> more code is required — see
+> [`scoutingvision-remaining-work.md`](scoutingvision-remaining-work.md).
+> Keep both current; neither is allowed to go stale (see `CONTRIBUTING.md`).
+
 A post-match computer-vision pipeline that watches match video, combines
 full-BF16 Qwen3-VL semantic review with deterministic YOLO/classical CV, and
 cross-checks the result against The Blue Alliance's official match

@@ -1,155 +1,52 @@
-# Vision Scouting — what's left before this actually works
+# Vision Scouting — everything left before this is functional
 
-This doc tracks the gap between "the code exists" and "this produces a
-trustworthy scouting number for a real match." Updated after doing as much of
-the groundwork as is actually possible from a repo checkout alone — the
-remaining items genuinely need a human with GCP console access, physical
-hardware, or real match footage; nothing left here is something more code
-could resolve on its own.
+Companion to `scoutingvision.md` (which is the file-by-file "where is the code
+and what does it do" reference). This doc is the gap between *"the code
+exists"* and *"this produces a scouting number someone would trust."*
 
-## DGX Spark / Qwen3-VL-30B addition
+It is organised by **who can actually do the thing**, because that is the only
+distinction that matters for planning:
 
-The repository now has a concrete DGX Spark stack for the full BF16
-`Qwen/Qwen3-VL-30B-A3B-Instruct` checkpoint:
+- **[Part A — human/hardware only](#part-a--only-a-human-can-do-these).**
+  GCP console access, physical hardware, real match footage, labeling time.
+  No amount of further code closes these.
+- **[Part B — still doable in code](#part-b--still-doable-in-code).** Real
+  work an agent or contributor can pick up today without any hardware.
+- **[Part C — known gaps and risks](#part-c--known-gaps-and-risks)** worth a
+  decision rather than a task.
 
-- `vision/qwen/` is an authenticated, single-concurrency inference service
-  using the MoE-specific Transformers class and BF16 weights with no
-  BitsAndBytes quantization.
-- `vision/runner/docker-compose.yml` starts Qwen and the dense tracking
-  runner together from configurable NVIDIA NGC PyTorch ARM64/CUDA images,
-  persists the Hugging Face cache, and blocks the runner until Qwen is ready.
-- The dense runner sends bounded timestamped JPEG sequences, stores Qwen
-  source/model/latency evidence, and reports Qwen health on its fleet
-  heartbeat.
-- `20260829_vision_qwen30b_dgx.sql` (**applied**) makes every model
-  observation explicitly reviewable. The release bridge now excludes anything
-  not human-accepted or corrected.
+Status key: **[BLOCKER]** nothing works until this is done · **[NEEDED]**
+required before competition use · **[NICE]** improves it, not load-bearing.
 
-Note there is no LM Studio anywhere in this design, and no inbound path from
-the internet to anyone's personal machine: Qwen and the runner are two
-containers on the same DGX host talking over a private Compose network
-(`http://qwen:8000`). So there is no inbound rate limiting to add, and no
-Qwen API key that needs to reach GCP Secret Manager — `VISION_QWEN_TOKEN`
-only ever exists on the DGX box. `VISION_RUNNER_TOKEN` remains the one secret
-the deployed web app actually needs.
+---
 
-Still requiring operator action: provision the DGX Spark, replace both
-example secrets, pin `VISION_QWEN_REVISION`, authenticate Docker to NVIDIA
-NGC, download the 60+ GB model cache, and run a real-video acceptance pass.
-Code cannot truthfully certify hardware it cannot access.
+## Where it stands today
 
-## Fixed since the Qwen pipeline landed
+The whole path exists in code and is unit-tested: create match → upload camera
+views → queue a run → the DGX runner claims it → YOLO/ByteTrack tracking +
+classical-CV game-piece detection + Qwen3-VL clip analysis → discrepancy
+reconciliation against TBA → human review → release into `scout_data_events`.
 
-Four defects found by reading the merged Qwen work, all fixed and verified
-against synthetic fixtures (see `scoutingvision.md` for the design detail):
+**What is genuinely verified:** 565 JS tests, 0 `svelte-check` errors, Python
+unit tests, and synthetic-fixture harnesses covering attribution, occlusion
+re-identification, clip-failure handling, and the track→observation identity
+chain. Four vision migrations are applied to the live Supabase project and all
+9 `vision_*` tables exist.
 
-- **One malformed clip no longer discards an entire run.** `/analyze` returns
-  422 whenever the model emits unparseable JSON; the per-clip request had no
-  error handling, so a single bad response threw away every YOLO track and
-  classical-CV observation for all views and failed the run. Failed clips are
-  now recorded `clip_quality='unusable'` with the error body and skipped —
-  but an all-clips-failed run still fails loudly, so an outage can't
-  masquerade as Qwen agreeing with the pipeline.
-- **Qwen climb/disabled events are now team-attributable.** Every Qwen
-  observation was hardcoded `team_key: None`, and the release bridge skips
-  team-less rows — so "Accept" contributed nothing and a human had to retype a
-  team on every event. Robot-centric events now match against the YOLO tracks
-  that already carry `team_key`. `fuel_scored` is deliberately still excluded
-  (its box is at the goal, not the shooter).
-- **A busy runner no longer reads as offline.** The runner never heartbeated
-  during `run_job`, which runs for many minutes, while the dashboard's online
-  cutoff is 60s — so a runner was shown Offline for exactly as long as it was
-  working. It now heartbeats per view and per Qwen clip.
-- **Runner outages now alert.** A runner that loses Qwen stops claiming work
-  and reported it nowhere but its own row. `api/notifications/vision-stale-runners`
-  plus a 5-minute `pg_cron` sweep now DMs the `vision_notify` list.
+**What is not:** *none of it has ever processed a real frame of match video.*
+Every threshold, the HSV range, the attribution distances, and the entire
+throughput model are educated guesses until footage exists. Treat every number
+in the config as a starting point, not a tuned value.
 
-Also swapped several hardcoded hex colours on the vision pages for real
-design tokens — `var(--red, #c33)` never resolved, because no `--red` token
-exists, so those elements silently ignored dark theme.
+---
 
-## Fixed since: the review-to-release path
+## Part A — only a human can do these
 
-The pipeline could run without producing anything releasable. Three further
-defects, all fixed:
+### A1. Create `VISION_RUNNER_TOKEN` in Secret Manager **[BLOCKER]**
 
-- **Naming a robot did nothing.** `identity_map` is keyed by tracker IDs that
-  don't exist until a run finishes, so a first run attributes nothing, and the
-  identity editor was the intended recovery. But `update-track` wrote only to
-  `vision_tracks`, `vision_observations.track_id` was a designed-but-never-
-  populated column, and `summarizeVision` reads team identity solely off
-  observations — so a carefully identified track released nothing, and the
-  only working path was correcting every observation by hand. Observations now
-  carry the `track_key` of the robot they were attributed to, `complete`
-  resolves those into real `track_id` FKs, and `update-track` cascades the team
-  to that track's unreviewed observations. Naming one robot now attributes all
-  of its events.
-- **YOLO climbs were never attributed at all.** They fire on the climbing
-  structure rather than a tracked robot and were hardcoded `team_key: None`.
-  `attribute_climbs` now resolves each to the nearest same-alliance robot
-  track, deferred until after the frame loop so the tracks are complete.
-- **Every climb was silently dropped at release.** `release-run` only accepts
-  a real `climb_pos` value, but nothing could produce one: no UI field set
-  `default_climb_level`, so the value fell back to the literal `'success'`,
-  which is refused. There is now a Default climb level select on the run form,
-  Qwen is told the real vocabulary and has invented values clamped away, and
-  refusals are reported in the response and the UI instead of vanishing.
-
-Plus a bulk review path (`review-observations`, up to 500 ids) with source /
-status / confidence filters, since clearing a match's proposals one click at a
-time was slower than scouting the match by hand.
-
-## 1. Done in this pass
-
-- **`VISION_RUNNER_TOKEN` deploy wiring is ready, not yet live.**
-  `cloudbuild.yaml` now has a `!!! REMINDER !!!` block (mirroring the
-  existing `CRON_NOTIFICATION_TOKEN` one) with the exact `gcloud secrets
-  create` + IAM-binding commands, deliberately **not** wired into
-  `--set-secrets` yet — adding the reference before the secret exists would
-  break the next deploy the same way the cron gap already did once. Someone
-  with `spartanshub` GCP project access needs to actually run those two
-  `gcloud` commands (verified this session's own `gcloud` auth points at an
-  unrelated project, `geminiapi-469220` — not something to run blind
-  against), then move the one line from the comment into `--set-secrets`.
-- **`vision/runner/.env.example`** — a ready-to-copy local config template
-  (runner, Qwen, memory-bound, and model-revision vars; one generated example token for illustration
-  only — not a real secret, must be regenerated with `openssl rand -hex 32`).
-- **A real deployment target for the runner now exists**, three ways,
-  because it wasn't clear which hardware this will end up on:
-  - `vision/runner/Dockerfile` + `vision/runner/docker-compose.yml`, for a
-    host with Docker + the NVIDIA Container Toolkit.
-  - `vision/runner/vision-runner.service`, a fallback systemd unit for
-    running the dense tracker directly on the DGX host.
-  - Manual `venv` + `python vision_runner.py`, already documented, now with
-    an actual `.env.example` to copy instead of hand-assembling four vars.
-  None of these are *running* anywhere yet — there's still no actual
-  provisioned host — but the "how would we even deploy this" question now
-  has three concrete, ready-to-use answers instead of zero.
-- **A working placeholder-model script**, `vision/training/create_placeholder_model.py`
-  — and this was actually run, not just written. It builds a real 6-class
-  YOLO checkpoint (`robot_red`/`robot_blue`/`climb_attempt_red`/
-  `climb_attempt_blue`/`climb_success_red`/`climb_success_blue`) from a
-  stock `yolo11n.pt` base via one throwaway epoch on synthetic data purely
-  to force the detection head to reshape — confirmed the output actually
-  loads with `ultralytics.YOLO()` and survives a real `model.track(source=...,
-  stream=True, ...)` call the exact way `vision_runner.py`'s `process_view()`
-  calls it. Its detections are meaningless noise (never trained on anything
-  real) — it exists solely to test `claim`/`heartbeat`/`complete` plumbing
-  before investing in real data.
-- **That test run surfaced a real, separate bug**: `model.track()` needs the
-  `lap` package, which wasn't in `vision/runner/requirements.txt` — it
-  silently auto-installed itself mid-run in testing, which would mean an
-  unexpected network dependency and a slower first inference on a real
-  deploy host, or an outright failure on a host without open internet
-  access. Now pinned (`lap==0.5.13`) so a plain `pip install -r
-  requirements.txt` is actually sufficient.
-- `*.pt` files and `vision/**/models/` are now gitignored — placeholder or
-  real, model weights were never meant to be committed (already stated in
-  `scoutingvision.md`); now actually enforced.
-
-## 2. Still blocked on something only a human can do
-
-### Run the two `gcloud` commands (5 minutes, needs GCP console access)
+Nothing works at all until this exists. `api/vision-runner` is fail-closed, so
+it rejects **every** runner request while the secret is missing — claim,
+heartbeat, complete, all of it.
 
 ```bash
 openssl rand -hex 32 | gcloud secrets create VISION_RUNNER_TOKEN --project=spartanshub --data-file=-
@@ -158,99 +55,216 @@ gcloud secrets add-iam-policy-binding VISION_RUNNER_TOKEN --project=spartanshub 
   --role="roles/secretmanager.secretAccessor"
 ```
 
-Then move `VISION_RUNNER_TOKEN=VISION_RUNNER_TOKEN:latest` from the comment
-block into `cloudbuild.yaml`'s `--set-secrets` line, and put the same secret
-value into whichever host ends up running the runner. Until this happens,
-`api/vision-runner` rejects every request — this is still the single
-hardest blocker, just now fully spelled out with the exact commands.
+Then move `VISION_RUNNER_TOKEN=VISION_RUNNER_TOKEN:latest` from the
+`!!! REMINDER !!!` comment block in `cloudbuild.yaml` into the `--set-secrets`
+line, and put the **same value** into the runner host's `.env`.
 
-### Measure Qwen throughput before trusting the clip schedule
+The order matters: referencing a secret before it exists breaks every
+subsequent deploy, which is exactly how the `CRON_NOTIFICATION_TOKEN` gap
+(still open, see C1) started.
 
-Nothing here can be settled without the actual Spark, and it may force a
-design change rather than a tuning tweak. Clips are analyzed strictly
-serially: roughly 30 per view for a 150-second match at the default 5-second
-clip length, each a blocking HTTP call carrying 8 images at 1280x720, and the
-service holds a single inference lock so nothing overlaps. At a plausible
-30-60s per clip that is 15-30 minutes per view, multiplied by the number of
-camera views per match. A qualification day running a match every ~7 minutes
-would fall behind immediately.
+### A2. Provision the DGX Spark host **[BLOCKER]**
 
-Time one real clip on the Spark first, then decide. The cheap levers, roughly
-in order of what they cost you:
+The Compose stack and systemd units are written and ready; no host is running
+them. Needed: current DGX OS, NVIDIA Container Toolkit, `docker login` against
+NVIDIA NGC (the base image is `nvcr.io/nvidia/pytorch`), the ~60+ GB
+Qwen3-VL-30B checkpoint downloaded into the persistent cache, both example
+secrets in `vision/runner/.env.example` replaced with real generated values,
+and a decision about who owns uptime and cache maintenance.
 
-- `VISION_QWEN_FRAMES_PER_CLIP` (8 -> 4) and `VISION_QWEN_JPEG_WIDTH`
-  (1280 -> 960) — straight latency reduction, some loss of small-object
-  detail.
-- `VISION_QWEN_CLIP_SECONDS` (5 -> 10) — halves the request count, at the
-  cost of coarser event timestamps.
-- Only send clips where the deterministic pipeline already saw activity. This
-  is the big one — most of a match is not a scoring or climbing moment — and
-  it would cut hallucination surface as well as time. It is a real behaviour
-  change, so it wants real footage to validate against, not a guess.
+### A3. Apply the cron migration **on merge** **[NEEDED]**
 
-`sample_qwen_clip` also reopens and re-seeks the video file for every clip,
-which is wasteful but irrelevant next to inference time; don't bother
-optimizing it until the numbers above say it matters.
+`migrations/20260829_vision_runner_health_cron.sql` is deliberately **not**
+applied. Unlike the other four (additive schema deployed code ignores), it
+schedules a `pg_cron` job that calls `/api/notifications/vision-stale-runners`
+— a route that only exists on this branch. Applying it early just 404s against
+production every 5 minutes. Apply it right after PR #84 merges and deploys.
 
-### Provision the DGX Spark runner host
+### A4. Time one Qwen clip on the real hardware **[NEEDED]**
 
-The Docker/Compose and systemd units exist, but they are not running on the
-planned DGX Spark yet. Install current DGX OS updates, NVIDIA Container
-Toolkit/NGC credentials, copy the runner `.env`, pin the model revision, and
-decide who owns uptime and model-cache maintenance.
+This is the highest-information cheap experiment available, and it may force a
+design change rather than a tuning tweak — so do it before optimising
+anything.
 
-### Real training data and a real YOLO tracker model
+Clips run strictly serially: ~30 per view for a 150-second match at the
+5-second default, each a blocking call carrying 8 images at 1280×720, with a
+single inference lock on the service side. At a plausible 30–60s per clip
+that is **15–30 minutes per view**, times the number of cameras. A qual day
+running a match every ~7 minutes falls behind immediately.
 
-The Qwen checkpoint is pretrained and does not need local training to begin
-reviewed trials. `create_placeholder_model.py` proves the dense tracker
-plumbing works; it does not
-produce anything that detects a real robot or game piece. Getting a real
-model still needs, in order: actual match recordings from a fixed elevated
-camera (no camera is procured yet either), frame extraction + manual
-labeling (CVAT or similar — no labeled dataset exists), a real
-`train_model.py` run, and evaluation against the acceptance gates already
-documented in `implementations/vision-scouting-system.md`. None of this is
-skippable by more scripting — it's real data collection and human labeling
-time.
+Measure one clip, then pick from the levers in [B1](#b1-cut-qwen-throughput-cost-needed).
 
-### No visual calibration tool
+### A5. Camera hardware and a real recording **[BLOCKER for useful output]**
 
-Field mask, goal zones, homography, and HSV thresholds are still hand-typed
-JSON/numbers on the upload and run-queue forms — nothing built this pass
-changes that. Someone has to compute a homography matrix and polygon
-coordinates by hand per venue. Flagged again because it compounds with "no
-camera yet" — even once a camera exists, calibrating it will be a manual,
-somewhat expert-only step until a click-to-draw tool exists.
+The pipeline assumes a fixed, elevated view of the field. Nothing in this repo
+records what camera exists or where it would mount. The single most valuable
+next step after A1/A2 is getting **one** real recording — a phone on a tripod
+is genuinely enough — through the pipeline by hand, to see what the detection
+actually produces before investing in labeling.
 
-### The hybrid pipeline has still never touched real footage
+Hardware note from the source Chief Delphi work: prioritise **shutter speed
+over frame rate**. Motion-blurred robots at 60fps are worse than sharp ones at
+30fps.
 
-Everything new (`detect_game_pieces`, `PieceTracker`, `attribute_scores`,
-`RobotReId`) is verified correct in isolation (synthetic fixtures, and now
-also confirmed to survive real `ultralytics` calls, not just pass in a
-mocked test) — but zero of it has processed an actual robot or an actual
-game piece yet. Expect the default HSV range and every threshold constant
-to need retuning once real footage exists.
+### A6. A labeled dataset and a trained YOLO model **[BLOCKER for useful output]**
 
-### Model acceptance gates are still a human process, not a code gate
+`create_placeholder_model.py` produces a real, loadable 6-class checkpoint that
+exercises the claim/heartbeat/complete plumbing — its detections are
+meaningless noise. A real model needs, in order: recordings (A5), frame
+extraction, manual labeling in CVAT or similar (no labeled dataset exists),
+a real `train_model.py` run, and evaluation against the acceptance gates in
+`implementations/vision-scouting-system.md`. This is data-collection and
+human-labeling time; no scripting shortcut exists.
 
-Unchanged from before: nothing in `release-run` checks model quality before
-allowing a release. Still worth a decision — keep it a documented,
-trust-based process, or add an actual `approved_for_release` check.
+Note the Qwen checkpoint is pretrained and needs **no** local training — Qwen
+review trials can begin as soon as A1/A2 are done, before any YOLO model
+exists.
+
+### A7. Per-venue calibration **[NEEDED]**
+
+Field mask, goal zones, homography matrix, and HSV thresholds are currently
+hand-typed JSON. Someone has to work out polygon coordinates and a 3×3
+homography per venue, per camera. B2 would make this dramatically less
+painful, but the underlying "point at the four field corners" step is always
+human.
+
+### A8. Decide the model-acceptance policy **[NEEDED — a decision, not a task]**
+
+Nothing in `release-run` checks model quality before allowing a release. Either
+keep it a documented trust-based process, or say the word and B6 adds a real
+`approved_for_release` gate.
+
+---
+
+## Part B — still doable in code
+
+Ordered by value per unit of effort. None of these need hardware.
+
+### B1. Cut Qwen throughput cost **[NEEDED]**
+
+Depends on A4's measurement for validation, but the code can land first.
+Cheapest first:
+
+- `VISION_QWEN_FRAMES_PER_CLIP` 8→4, `VISION_QWEN_JPEG_WIDTH` 1280→960 —
+  already env-tunable, no code needed.
+- `VISION_QWEN_CLIP_SECONDS` 5→10 — halves request count, coarsens timestamps.
+- **Activity-gated clips** — only send Qwen the clips where the deterministic
+  pipeline already saw a robot near a goal or climbing structure. Most of a
+  match is not a scoring moment, so this is potentially a 3–5× reduction *and*
+  it cuts hallucination surface. This is the real fix and the one worth
+  writing. It is a behaviour change, so it wants real footage to validate.
+- `sample_qwen_clip` reopens and re-seeks the video for every clip; reuse one
+  `VideoCapture`. Wasteful but trivial next to inference time — do it last.
+
+### B2. A visual calibration tool **[NEEDED]**
+
+Replace the hand-typed JSON in A7 with click-to-draw on a still frame from the
+uploaded video: click the field outline for the mask, drag rectangles for goal
+zones, click four known field points for the homography. Pure frontend plus
+the existing `field_mask`/`goal_zones`/`homography` JSON columns — no schema
+change, no new backend. This is the biggest usability win available in code.
+
+### B3. Jump the video to an observation's timestamp **[NEEDED]**
+
+Each camera view already renders a `<video>` player, but nothing connects a
+review row to the moment it describes — so verifying a model claim means
+scrubbing by hand. Wire each observation's `started_ms` (minus the view's
+`sync_offset_ms`) to a seek on that view's player. Small change, and it is the
+difference between review being possible and being practical.
+
+### B4. Persist reviewed identities so a re-run starts attributed **[NEEDED]**
+
+`identity_map` is still only ever empty. Reviewed track identities now cascade
+to observations within a run (fixed), but re-running the same match throws all
+of it away and starts from nothing. Write the reviewed `track_key → team_key`
+mapping back onto the match so a subsequent run is pre-attributed. Matters as
+soon as anyone re-runs a match with retuned thresholds — which, given every
+threshold is currently a guess, will be constant early on.
+
+### B5. Keyboard-driven review **[NICE]**
+
+Bulk accept and filters exist now. A j/k/a/r keyboard loop over the filtered
+list would make a match's worth of proposals genuinely fast to clear.
+
+### B6. `approved_for_release` gate **[NICE — pending A8]**
+
+If the answer to A8 is "enforce it": a flag on the model/run that
+`release-run` checks, so an unvalidated model physically cannot reach
+`scout_data_events`.
+
+### B7. Storage retention **[NICE]**
+
+Nothing ever deletes from the `vision-recordings` bucket. Match video is large
+and accumulates forever. A retention sweep — or at minimum a documented manual
+cleanup — before this runs at a multi-day event.
+
+### B8. Test coverage for the release bridge **[NICE]**
+
+`release-run` and the `update-track` cascade are the two paths that write real
+scouting data, and neither has a route test yet. `track_linking.test.js` is the
+pattern to copy.
+
+---
+
+## Part C — known gaps and risks
+
+### C1. The cron trust boundary is currently fail-open
+
+`cron_auth.js`'s `isAuthorizedCronRequest()` accepts **any** request when none
+of `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` is configured — and
+`CRON_NOTIFICATION_TOKEN` is currently commented out of `cloudbuild.yaml`'s
+`--set-secrets` (tracked as frc971/spartanshub issue #5). The new
+`/api/notifications/vision-stale-runners` endpoint inherits that gap.
+
+Practical impact is low — the endpoint only sends alerts for genuinely stale
+runners, and `dispatchNotification` dedups by entity key, so hammering it is a
+no-op — but it is unauthenticated on the live service, and it is one more
+reason to close issue #5.
+
+### C2. Attribution is proximity-based and will need retuning
+
+Every attribution path picks the nearest same-alliance robot track within a
+500 ms window. That is sound for climbs (the box is on the robot) and for fuel
+(the trajectory is traced back to its *origin*, deliberately not the goal).
+But no distance ceiling is set by default, so a lone robot far from an event
+can still win it. `qwen_attribution_max_distance` and
+`climb_attribution_max_distance` exist for exactly this and are unset — they
+want real footage to choose a value.
+
+Mitigating this: every model observation lands `review_status=unreviewed`, and
+only `accepted`/`corrected` rows can be released. Attribution is a suggestion
+a human confirms, never a silent write.
+
+### C3. Multi-camera fusion is time-based only
+
+`fuseObservations` merges observations of the same type/team/alliance within
+350 ms across views and keeps the highest-confidence one. It does not
+geometrically verify that two cameras saw the *same physical event*. With
+correct sync offsets this is fine; with drifting offsets it will silently
+double-count. Worth revisiting once real multi-camera footage exists.
+
+### C4. Everything downstream of the model is only as good as the sync offsets
+
+`sync_offset_ms` per view is hand-entered and unverified. Phase assignment,
+multi-camera fusion, and attribution windows all depend on it. There is no
+tooling to check that two views are actually aligned.
+
+---
 
 ## Suggested order
 
-1. Run the two `gcloud` commands above. (The Qwen/DGX migration is already
-   applied; `20260829_vision_runner_health_cron.sql` is the one to hold until
-   this branch merges.)
-2. Stand up the DGX Spark Compose stack, pin the Qwen revision, point the
-   dense runner at the placeholder model, and confirm a full `queue-run` →
-   `claim` → Qwen analysis → `complete` cycle against the deployed app.
-3. Time a single Qwen clip on that stack before anything else — the answer
-   decides whether the current clip schedule is viable at a competition or
-   needs the activity-gating change described above.
-4. Get one real recording (any camera, even a phone) through the pipeline
-   by hand to see what the hybrid detection actually produces before
-   investing in labeling/training.
-5. Only then: real camera hardware, a labeled dataset, an actual trained
-   model, and a visual calibration tool if hand-typed JSON proves too
-   painful in practice.
+1. **A1** — the two `gcloud` commands. Nothing runs until this is done.
+2. **A2** — stand up the Compose stack; confirm a full `queue-run` → `claim` →
+   Qwen → `complete` cycle against the deployed app using the placeholder
+   model. This proves the plumbing without needing a trained model.
+3. **A4** — time one clip. The answer decides whether B1's activity-gating is
+   urgent or optional.
+4. **A5** — one real recording through the pipeline by hand. Expect the HSV
+   range and every threshold to be wrong; this is where they get tuned.
+5. **B2 + B3** — calibration tool and video seeking. Both become obviously
+   necessary the moment a human sits down to review real footage.
+6. **A6** — labeling and a real trained model, once you know from step 4 what
+   the detector actually needs to handle.
+7. Everything else in Part B as it earns its place.
+
+`A3` happens whenever PR #84 merges, independently of this sequence.
