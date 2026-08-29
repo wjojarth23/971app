@@ -1,1785 +1,230 @@
 <script>
   import { onMount } from 'svelte';
-  import { supabase, getAuthHeader } from '$lib/supabase.js';
-  import { fetchActiveScoutingEventKey, fetchAvailableScoutingEvents } from '$lib/scoutingEvent.js';
-  import SeasonFilter from '$lib/components/SeasonFilter.svelte';
+  import { AlertTriangle, Bot, Check, ClipboardPlus, FileText, Plus, Trash2, Wrench } from 'lucide-svelte';
 
-  const DRIVEBASE_OPTIONS = ['Mechanum', 'Swerve', 'Tank'];
-  const SHOOTER_OPTIONS = ['Single Fixed', 'Multi Fixed', 'Wide', 'Turret', 'Double Turret'];
-  const HOPPER_OPTIONS = ['Spindexer', 'Dye Rotor', 'Belted'];
-  const HUMAN_PLAYER_AUTO_OPTIONS = ['0-10', '10-20', '20+'];
-  const NO_CLIMB_OPTION = 'No Climb';
-  const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
-  const MAX_AUTO_OPTIONS = 8;
-  const MAX_AUTO_NAME_LENGTH = 60;
-  const MAX_AUTO_DESCRIPTION_LENGTH = 220;
-  const MAX_BREAKING_COMPONENT_LENGTH = 240;
-  const PIT_STATUS = Object.freeze({
-    pending: { label: 'Pending', className: 'status-pending', sort: 0 },
-    needs_photo: { label: 'Needs photo', className: 'status-needs-photo', sort: 1 },
-    completed: { label: 'Completed', className: 'status-complete', sort: 2 }
-  });
-  const YES_NO_OPTIONS = ['Yes', 'No'];
-  const INTAKE_STYLE_OPTIONS = ['Slapdown Intake', 'Linkage Intake', 'Other'];
-  const MAIN_BREAKER_OPTIONS = ['Bussmann', 'OptiFuse', 'Other'];
-  const SB_CONNECTOR_OPTIONS = ['SB60', 'SB40', 'Other'];
-  const WIRE_INSULATION_OPTIONS = ['Silicone', 'Other'];
-  const ELECTRICAL_CONNECTOR_OPTIONS = [
-    'Molex SL CAN',
-    'WAGO CAN',
-    'WAGO Power',
-    'Anderson Power',
-    'Ring Terminal Power',
-    'Ring Terminal CAN',
-    'Non-locking CAN',
-    'WCP Powerpole Board',
-    'Custom Powerpole Board',
-    'Custom PCBs',
-    'Other'
-  ];
-  const BATTERY_OPTIONS = ['Energizer', 'Duracell', 'MK Battery', 'Other'];
-  const MOTOR_CONTROLLER_OPTIONS = ['Talon FX', 'Victor SPX', 'Spark MAX', 'Redux', 'Thrifty'];
-  const MOTOR_TYPE_OPTIONS = ['X60', 'X44', '550', 'Vortex', 'Thrifty', 'CIM'];
-  const AUTO_TOOL_OPTIONS = ['Bline', 'PathPlanner', 'Choreo', 'Custom'];
-  const VISION_OPTIONS = ['PhotonVision', 'Limelight', 'Custom'];
-  const COPROCESSOR_OPTIONS = ['Orin', 'Limelight', 'Orange Pi', 'Raspberry Pi', 'Mac Mini', 'Other'];
-  const PROGRAMMING_LANGUAGE_OPTIONS = ['Java', 'C++', 'Python'];
-  const GRIP_TAPE_OPTIONS = ['Cat Tongue', 'Silicone', 'Other'];
-  const SWERVE_MODULE_OPTIONS = [
-    'MK5n',
-    'MK5i',
-    'MK4i',
-    'MK4n',
-    'MK4',
-    'WCP X2i',
-    'X2t',
-    'X2c',
-    'X2',
-    'ThriftySwerve',
-    'Other'
-  ];
-  const HOPPER_WALL_OPTIONS = ['Reinforced Corners', 'Polycarbonate Flanges', 'Other'];
-  const BUMPER_FOAM_OPTIONS = ['Pool Noodle', 'EVA', 'XPE', 'Other'];
-  const HARDWARE_STANDARD_OPTIONS = ['E-clip', 'Metric Fasteners', 'Metric Bearings'];
-  const ENCODER_TYPE_OPTIONS = ['PWM', 'CAN Through Bore', 'Other'];
-  const TECHNICAL_MULTI_FIELD_OPTIONS = {
-    electrical_connectors: ELECTRICAL_CONNECTOR_OPTIONS,
-    motor_controllers: MOTOR_CONTROLLER_OPTIONS,
-    motor_types: MOTOR_TYPE_OPTIONS,
-    auto_tools: AUTO_TOOL_OPTIONS,
-    vision: VISION_OPTIONS,
-    programming_language: PROGRAMMING_LANGUAGE_OPTIONS,
-    hardware_standards: HARDWARE_STANDARD_OPTIONS,
-    encoder_types: ENCODER_TYPE_OPTIONS
-  };
-  const TECHNICAL_SINGLE_FIELD_OPTIONS = {
-    use_net: YES_NO_OPTIONS,
-    intake_style: INTAKE_STYLE_OPTIONS,
-    main_breaker_brand: MAIN_BREAKER_OPTIONS,
-    sb_connector: SB_CONNECTOR_OPTIONS,
-    main_breaker_shroud: YES_NO_OPTIONS,
-    wire_insulation: WIRE_INSULATION_OPTIONS,
-    battery_type: BATTERY_OPTIONS,
-    ground_intake_kicker: YES_NO_OPTIONS,
-    uses_canivore: YES_NO_OPTIONS,
-    coprocessor: COPROCESSOR_OPTIONS,
-    uses_wpilib: YES_NO_OPTIONS,
-    grip_tape: GRIP_TAPE_OPTIONS,
-    swerve_module: SWERVE_MODULE_OPTIONS,
-    hopper_wall_reinforcement: HOPPER_WALL_OPTIONS,
-    fits_under_trench: YES_NO_OPTIONS,
-    drives_over_mound: YES_NO_OPTIONS,
-    bumper_foam: BUMPER_FOAM_OPTIONS,
-    printed_roller_hubs: YES_NO_OPTIONS
-  };
-  const DEFAULT_TECHNICAL_DETAILS = Object.freeze({
-    use_net: '',
-    intake_style: '',
-    ground_roller_motor_count: undefined,
-    bumper_length: undefined,
-    bumper_width: undefined,
-    bumper_height: undefined,
-    main_breaker_brand: '',
-    sb_connector: '',
-    main_breaker_shroud: '',
-    mostly_used_wire_gauge: '',
-    wire_insulation: '',
-    electrical_connectors: [],
-    battery_type: '',
-    ground_intake_kicker: '',
-    motor_controllers: [],
-    motor_types: [],
-    uses_canivore: '',
-    can_bus_count: undefined,
-    auto_tools: [],
-    vision: [],
-    coprocessor: '',
-    programming_language: [],
-    uses_wpilib: '',
-    grip_tape: '',
-    swerve_module: '',
-    hopper_wall_reinforcement: '',
-    fits_under_trench: '',
-    drives_over_mound: '',
-    drivebase_tube_thickness: '',
-    bumper_foam: '',
-    hardware_standards: [],
-    encoder_types: [],
-    printed_roller_hubs: '',
-    roller_hub_material: '',
-    electrical_rating: undefined,
-    drivebase_rating: undefined,
-    overall_reliability_rating: undefined
-  });
+  const PIT_PROBLEM_KEY = '971app.pit-problems';
+  const PIT_DRAFT_KEY = '971app.pit-scout-draft';
+  const ARCHETYPES = ['Cycle robot', 'Shooter', 'Defender', 'Climber', 'Hybrid'];
+  const DRIVEBASES = ['Swerve', 'Tank', 'Other'];
+  const SCORING_ROLES = ['Floor intake', 'Human player', 'Speaker', 'Amp', 'Defense'];
 
-  let eventKey = ''; // globally active scouting event - writes always target this
-  let selectedEventKey = null; // event being browsed for reading, if different from active
-  let availableEvents = [];
-  let lastLoadedEventKeyForTeams = null;
+  let activeTab = 'profile';
+  let teamNumber = '';
+  let robotName = '';
+  let archetype = '';
+  let drivebase = '';
+  let scoringRoles = [];
+  let climb = '';
+  let profileNotes = '';
+  let additionalNotes = '';
+  let problems = [];
+  let saved = false;
+  let newProblem = { summary: '', detail: '', severity: 'watch' };
 
-  // Reads (team roster, pit entries) use this so a lead can browse a past
-  // event's pit data. Saves intentionally keep targeting the active eventKey
-  // below, not this - see saveEntry().
-  $: resolvedEventKey = selectedEventKey || eventKey;
-  $: isViewingPastEvent = !!selectedEventKey && selectedEventKey !== eventKey;
+  $: hasTeam = teamNumber.trim().length > 0;
+  $: activeProblems = problems.filter((problem) => !problem.resolved);
+  $: resolvedProblems = problems.filter((problem) => problem.resolved);
 
-  let loading = false;
-  let saving = false;
-  let uploading = false;
-  let apiNote = '';
-
-  let teams = [];
-  let entriesByTeam = {};
-  let selectedTeam = '';
-  let teamSearch = '';
-
-  let drivebase_type = '';
-  let shooter_type = '';
-  let hopper_type = '';
-  let human_player_balls_in_auto = '';
-  let pitSchema = {
-    likely_breaking_component: true,
-    estimated_bps: true,
-    climb_options: true,
-    auto_options: true,
-    technical_details: true
-  };
-  let schemaWarning = '';
-  let likely_breaking_component = '';
-  let estimated_bps = undefined;
-  let climb_options = [];
-  let autoOptions = [];
-  let technical_details = createDefaultTechnicalDetails();
-  let editablePhotoPaths = [];
-  let pendingFiles = [];
-  let photoInputKey = 0;
-  let photoInput;
-  let prefersCameraCapture = false;
-
-  function normalizeAutoOptions(input) {
-    if (!Array.isArray(input)) return [];
-    return input.slice(0, MAX_AUTO_OPTIONS).map((option) => ({
-      name: String(option?.name || '').trim().slice(0, MAX_AUTO_NAME_LENGTH),
-      description: String(option?.description || '').trim().slice(0, MAX_AUTO_DESCRIPTION_LENGTH)
-    }));
+  function toggleRole(role) {
+    scoringRoles = scoringRoles.includes(role)
+      ? scoringRoles.filter((item) => item !== role)
+      : [...scoringRoles, role];
   }
 
-  function getFilledAutoOptions(input) {
-    return normalizeAutoOptions(input).filter((option) => option.name || option.description);
+  function saveDraft() {
+    const draft = { teamNumber, robotName, archetype, drivebase, scoringRoles, climb, profileNotes, additionalNotes };
+    window.localStorage.setItem(PIT_DRAFT_KEY, JSON.stringify(draft));
+    saved = true;
+    window.setTimeout(() => saved = false, 2200);
   }
 
-  function normalizeClimbOptions(input) {
-    if (!Array.isArray(input)) return [];
-    const selected = new Set(
-      input
-        .map((option) => String(option || '').trim())
-        .filter((option) => CLIMB_OPTIONS.includes(option))
-    );
-    if (selected.has(NO_CLIMB_OPTION)) return [NO_CLIMB_OPTION];
-    return CLIMB_OPTIONS.filter((option) => option !== NO_CLIMB_OPTION && selected.has(option));
-  }
-
-  function createDefaultTechnicalDetails() {
-    return Object.fromEntries(
-      Object.entries(DEFAULT_TECHNICAL_DETAILS).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])
-    );
-  }
-
-  function normalizeTechnicalNumber(value, { min = 0, max = null, integer = false } = {}) {
-    if (value === '' || value === null || value === undefined) return undefined;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < min || (max !== null && parsed > max)) return undefined;
-    return integer ? Math.round(parsed) : Math.round(parsed * 1000) / 1000;
-  }
-
-  function normalizeTechnicalDetails(input) {
-    const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-    const normalized = createDefaultTechnicalDetails();
-
-    for (const [field, options] of Object.entries(TECHNICAL_SINGLE_FIELD_OPTIONS)) {
-      const value = String(source[field] || '').trim();
-      normalized[field] = options.includes(value) ? value : '';
-    }
-
-    for (const [field, options] of Object.entries(TECHNICAL_MULTI_FIELD_OPTIONS)) {
-      const selected = new Set(Array.isArray(source[field]) ? source[field].map((value) => String(value || '').trim()) : []);
-      normalized[field] = options.filter((option) => selected.has(option));
-    }
-
-    normalized.mostly_used_wire_gauge = String(source.mostly_used_wire_gauge || '').trim().slice(0, 80);
-    normalized.drivebase_tube_thickness = String(source.drivebase_tube_thickness || '').trim().slice(0, 80);
-    normalized.roller_hub_material = String(source.roller_hub_material || '').trim().slice(0, 80);
-
-    normalized.ground_roller_motor_count = normalizeTechnicalNumber(source.ground_roller_motor_count, { integer: true });
-    normalized.bumper_length = normalizeTechnicalNumber(source.bumper_length);
-    normalized.bumper_width = normalizeTechnicalNumber(source.bumper_width);
-    normalized.bumper_height = normalizeTechnicalNumber(source.bumper_height);
-    normalized.can_bus_count = normalizeTechnicalNumber(source.can_bus_count, { integer: true });
-    normalized.electrical_rating = normalizeTechnicalNumber(source.electrical_rating, { min: 1, max: 10, integer: true });
-    normalized.drivebase_rating = normalizeTechnicalNumber(source.drivebase_rating, { min: 1, max: 10, integer: true });
-    normalized.overall_reliability_rating = normalizeTechnicalNumber(source.overall_reliability_rating, {
-      min: 1,
-      max: 10,
-      integer: true
-    });
-
-    return normalized;
-  }
-
-  function setClimbOption(option, checked) {
-    if (option === NO_CLIMB_OPTION) {
-      climb_options = checked ? [NO_CLIMB_OPTION] : [];
-      return;
-    }
-
-    const selected = new Set(normalizeClimbOptions(climb_options));
-    selected.delete(NO_CLIMB_OPTION);
-    if (checked) selected.add(option);
-    else selected.delete(option);
-    climb_options = CLIMB_OPTIONS.filter((value) => value !== NO_CLIMB_OPTION && selected.has(value));
-  }
-
-  function setTechnicalMulti(field, option, checked) {
-    const allowed = TECHNICAL_MULTI_FIELD_OPTIONS[field] || [];
-    const selected = new Set(Array.isArray(technical_details[field]) ? technical_details[field] : []);
-    if (checked) selected.add(option);
-    else selected.delete(option);
-    technical_details = {
-      ...technical_details,
-      [field]: allowed.filter((value) => selected.has(value))
-    };
-  }
-
-  function hasTechnicalMulti(field, option) {
-    return Array.isArray(technical_details[field]) && technical_details[field].includes(option);
-  }
-
-  function normalizeLikelyBreakingComponent(value) {
-    return String(value || '').trim().slice(0, MAX_BREAKING_COMPONENT_LENGTH);
-  }
-
-  function hasEstimatedBps(value) {
-    return value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value));
-  }
-
-  function displayTeam(teamKey) {
-    return teamKey ? String(teamKey).replace(/^frc/i, '') : '';
-  }
-
-  function teamSort(a, b) {
-    const an = Number(displayTeam(a));
-    const bn = Number(displayTeam(b));
-    if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
-    return String(a).localeCompare(String(b));
-  }
-
-  function teamListSort(a, b) {
-    const aStatus = getPitScoutStatus(entriesByTeam[a]);
-    const bStatus = getPitScoutStatus(entriesByTeam[b]);
-    if (aStatus !== bStatus) return PIT_STATUS[aStatus].sort - PIT_STATUS[bStatus].sort;
-    return teamSort(a, b);
-  }
-
-  function hasAnyPitData(entry) {
-    if (!entry) return false;
-    const technicalDetails = entry.technical_details && typeof entry.technical_details === 'object'
-      ? entry.technical_details
-      : {};
-    return Boolean(
-      entry.drivebase_type &&
-      String(entry.drivebase_type).trim() ||
-      entry.shooter_type &&
-      String(entry.shooter_type).trim() ||
-      entry.hopper_type &&
-      String(entry.hopper_type).trim() ||
-      entry.human_player_balls_in_auto &&
-      String(entry.human_player_balls_in_auto).trim() ||
-      normalizeLikelyBreakingComponent(entry.likely_breaking_component) ||
-      hasEstimatedBps(entry.estimated_bps) ||
-      normalizeClimbOptions(entry.climb_options).length ||
-      getFilledAutoOptions(entry.auto_options).length ||
-      Object.values(technicalDetails).some((value) => (
-        Array.isArray(value)
-          ? value.filter(Boolean).length
-          : value !== '' && value !== null && value !== undefined
-      ))
-    );
-  }
-
-  function getPitScoutStatus(entry) {
-    if (!hasAnyPitData(entry)) return 'pending';
-    const photoPaths = Array.isArray(entry?.photo_paths) ? entry.photo_paths.filter(Boolean) : [];
-    return photoPaths.length ? 'completed' : 'needs_photo';
-  }
-
-  function getPitScoutStatusLabel(entry) {
-    return PIT_STATUS[getPitScoutStatus(entry)].label;
-  }
-
-  function getPitScoutStatusClass(entry) {
-    return PIT_STATUS[getPitScoutStatus(entry)].className;
-  }
-
-  function photoUrl(path) {
-    if (!path) return '';
-    return supabase.storage.from('pit-scout-photos').getPublicUrl(path)?.data?.publicUrl || '';
-  }
-
-  function applyTeamEntry(teamKey) {
-    const entry = entriesByTeam[teamKey] || null;
-    drivebase_type = entry?.drivebase_type || '';
-    shooter_type = entry?.shooter_type || '';
-    hopper_type = entry?.hopper_type || '';
-    human_player_balls_in_auto = entry?.human_player_balls_in_auto || '';
-    likely_breaking_component = entry?.likely_breaking_component || '';
-    estimated_bps = hasEstimatedBps(entry?.estimated_bps) ? Number(entry.estimated_bps) : undefined;
-    climb_options = normalizeClimbOptions(entry?.climb_options || []);
-    autoOptions = normalizeAutoOptions(entry?.auto_options || []);
-    technical_details = normalizeTechnicalDetails(entry?.technical_details || {});
-    editablePhotoPaths = [...(entry?.photo_paths || [])];
-    pendingFiles = [];
-    photoInputKey += 1;
-  }
-
-  function syncSelectedTeam() {
-    if (!teams.length) {
-      selectedTeam = '';
-      return;
-    }
-
-    if (selectedTeam && teams.includes(selectedTeam)) {
-      applyTeamEntry(selectedTeam);
-      return;
-    }
-
-    selectedTeam = '';
-  }
-
-  async function authFetch(url, options = {}) {
-    const headers = {
-      ...(options.headers || {}),
-      ...(await getAuthHeader())
-    };
-    return fetch(url, { ...options, headers });
-  }
-
-  async function loadTeams() {
-    if (!resolvedEventKey) {
-      return [];
-    }
-
-    const [eventTeamsRes, eventMatchesRes] = await Promise.all([
-      fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(resolvedEventKey)}`).catch(() => null),
-      fetch(`/api/tba/event-matches?event_key=${encodeURIComponent(resolvedEventKey)}&comp_level=qm`).catch(() => null)
-    ]);
-
-    const [eventTeamsData, eventMatchesData] = await Promise.all([
-      eventTeamsRes?.json().catch(() => null),
-      eventMatchesRes?.json().catch(() => null)
-    ]);
-
-    const set = new Set();
-
-    for (const row of eventTeamsData?.success ? eventTeamsData.data || [] : []) {
-      if (row?.key) set.add(row.key);
-    }
-
-    for (const match of eventMatchesData?.success ? eventMatchesData.data || [] : []) {
-      for (const teamKey of match?.alliances?.red?.team_keys || []) set.add(teamKey);
-      for (const teamKey of match?.alliances?.blue?.team_keys || []) set.add(teamKey);
-    }
-
-    if (!set.size && !eventTeamsData?.success && !eventMatchesData?.success) {
-      const error = eventTeamsData?.error || eventMatchesData?.error || 'Failed to load event teams.';
-      throw new Error(error);
-    }
-
-    return [...set].sort(teamSort);
-  }
-
-  async function loadEntries() {
-    if (!resolvedEventKey) {
-      entriesByTeam = {};
-      return {};
-    }
-
-    const res = await authFetch(`/pitscout?event_key=${encodeURIComponent(resolvedEventKey)}`);
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.success) {
-      throw new Error(data?.error || `Failed to load pit entries (${res.status})`);
-    }
-
-    pitSchema = {
-      ...pitSchema,
-      ...(data?.meta?.schema || {})
-    };
-    schemaWarning = data?.meta?.warning || '';
-
-    const next = {};
-    for (const row of data.data || []) {
-      if (row?.team_key) next[row.team_key] = row;
-    }
-    entriesByTeam = next;
-    return next;
-  }
-
-  async function loadEventOptions() {
-    eventKey = (await fetchActiveScoutingEventKey()) || '';
-    availableEvents = await fetchAvailableScoutingEvents();
-  }
-
-  async function loadAll() {
-    loading = true;
-    apiNote = '';
-
+  function loadProblems() {
     try {
-      if (!resolvedEventKey) {
-        teams = [];
-        entriesByTeam = {};
-        selectedTeam = '';
-        schemaWarning = '';
-        apiNote = 'No event configured.';
-        return;
-      }
-
-      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries()]);
-      teams = [...new Set([...loadedTeams, ...Object.keys(loadedEntries)])].sort(teamSort);
-      syncSelectedTeam();
-    } catch (e) {
-      apiNote = e.message || 'Load error';
-    } finally {
-      loading = false;
+      const stored = JSON.parse(window.localStorage.getItem(PIT_PROBLEM_KEY) || '[]');
+      problems = Array.isArray(stored) ? stored : [];
+    } catch {
+      problems = [];
     }
   }
 
-  function scrollToTop() {
-    if (typeof window !== 'undefined') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  }
-
-  function openEntry(teamKey) {
-    if (!teamKey) return;
-    selectedTeam = teamKey;
-    teamSearch = '';
-    applyTeamEntry(teamKey);
-    scrollToTop();
-  }
-
-  function goToTeamPicker() {
-    selectedTeam = '';
-    teamSearch = '';
-    scrollToTop();
-  }
-
-  function handleTeamSearchInput(event) {
-    const digitsOnly = String(event.currentTarget?.value || '').replace(/\D/g, '').slice(0, 6);
-    teamSearch = digitsOnly;
-
-    if (!digitsOnly) return;
-
-    const exactMatch = teams.find((teamKey) => displayTeam(teamKey) === digitsOnly);
-    if (exactMatch) openEntry(exactMatch);
-  }
-
-  function sanitizeFileName(name) {
-    return String(name || 'photo').replace(/[^A-Za-z0-9._-]/g, '_');
-  }
-
-  function openPhotoPicker() {
-    if (!photoSlotsRemaining) return;
-    photoInput?.click();
-  }
-
-  function onFilesSelected(event) {
-    const files = Array.from(event.currentTarget?.files || []);
-    const slotsRemaining = Math.max(0, 3 - editablePhotoPaths.length - pendingFiles.length);
-
-    if (!files.length || !slotsRemaining) {
-      photoInputKey += 1;
-      return;
-    }
-
-    pendingFiles = [...pendingFiles, ...files.slice(0, slotsRemaining)];
-    photoInputKey += 1;
-  }
-
-  function removeExistingPhoto(path) {
-    editablePhotoPaths = editablePhotoPaths.filter((photoPath) => photoPath !== path);
-  }
-
-  function removePendingPhoto(idx) {
-    pendingFiles = pendingFiles.filter((_, i) => i !== idx);
-  }
-
-  function addAutoOption() {
-    if (autoOptions.length >= MAX_AUTO_OPTIONS) return;
-    autoOptions = [...autoOptions, { name: '', description: '' }];
-  }
-
-  function updateAutoOption(idx, field, value) {
-    autoOptions = autoOptions.map((option, i) => (
-      i === idx
-        ? {
-            ...option,
-            [field]: String(value || '').slice(
-              0,
-              field === 'name' ? MAX_AUTO_NAME_LENGTH : MAX_AUTO_DESCRIPTION_LENGTH
-            )
-          }
-        : option
-    ));
-  }
-
-  function removeAutoOption(idx) {
-    autoOptions = autoOptions.filter((_, i) => i !== idx);
-  }
-
-  async function uploadPendingPhotos(teamKey) {
-    if (!pendingFiles.length) return [];
-
-    uploading = true;
-    const uploadedPaths = [];
-
+  function loadDraft() {
     try {
-      for (let i = 0; i < pendingFiles.length; i += 1) {
-        const file = pendingFiles[i];
-        const fileName = `${Date.now()}-${i}-${sanitizeFileName(file.name)}`;
-        const path = `${eventKey}/${teamKey}/${fileName}`;
-
-        const { error } = await supabase.storage
-          .from('pit-scout-photos')
-          .upload(path, file, { upsert: false, contentType: file.type || 'image/jpeg' });
-
-        if (error) throw new Error(error.message || 'Upload failed');
-        uploadedPaths.push(path);
-      }
-
-      return uploadedPaths;
-    } finally {
-      uploading = false;
+      const draft = JSON.parse(window.localStorage.getItem(PIT_DRAFT_KEY) || '{}');
+      if (!draft || typeof draft !== 'object') return;
+      teamNumber = String(draft.teamNumber || '');
+      robotName = String(draft.robotName || '');
+      archetype = ARCHETYPES.includes(draft.archetype) ? draft.archetype : '';
+      drivebase = DRIVEBASES.includes(draft.drivebase) ? draft.drivebase : '';
+      scoringRoles = Array.isArray(draft.scoringRoles) ? SCORING_ROLES.filter((role) => draft.scoringRoles.includes(role)) : [];
+      climb = ['None', 'Level 1', 'Level 2', 'Level 3'].includes(draft.climb) ? draft.climb : '';
+      profileNotes = String(draft.profileNotes || '');
+      additionalNotes = String(draft.additionalNotes || '');
+    } catch {
+      // A malformed local draft should not block a new pit record.
     }
   }
 
-  async function saveEntry() {
-    if (!selectedTeam || !eventKey) return;
-
-    const normalizedLikelyBreakingComponent = normalizeLikelyBreakingComponent(likely_breaking_component);
-    const normalizedEstimatedBps = hasEstimatedBps(estimated_bps) ? Math.round(Number(estimated_bps) * 100) / 100 : null;
-    const normalizedClimbOptions = normalizeClimbOptions(climb_options);
-    const normalizedTechnicalDetails = normalizeTechnicalDetails(technical_details);
-
-    const normalizedAutoOptions = getFilledAutoOptions(autoOptions);
-    if (normalizedAutoOptions.some((option) => !option.name || !option.description)) {
-      alert('Each auto option needs both a name and description.');
-      return;
-    }
-
-    if (editablePhotoPaths.length + pendingFiles.length > 3) {
-      alert('You can only save up to 3 photos.');
-      return;
-    }
-
-    saving = true;
-    apiNote = '';
-
-    try {
-      const uploadedPaths = await uploadPendingPhotos(selectedTeam);
-      const photo_paths = [...editablePhotoPaths, ...uploadedPaths].slice(0, 3);
-      const payload = {
-        action: 'save-entry',
-        event_key: eventKey,
-        team_key: selectedTeam,
-        drivebase_type,
-        shooter_type,
-        hopper_type,
-        human_player_balls_in_auto,
-        ...(pitSchema.likely_breaking_component
-          ? { likely_breaking_component: normalizedLikelyBreakingComponent }
-          : {}),
-        ...(pitSchema.estimated_bps ? { estimated_bps: normalizedEstimatedBps } : {}),
-        ...(pitSchema.climb_options ? { climb_options: normalizedClimbOptions } : {}),
-        ...(pitSchema.auto_options ? { auto_options: normalizedAutoOptions } : {}),
-        ...(pitSchema.technical_details ? { technical_details: normalizedTechnicalDetails } : {}),
-        photo_paths
-      };
-
-      const res = await authFetch('/pitscout', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `Save failed (${res.status})`);
-      }
-
-      pitSchema = {
-        ...pitSchema,
-        ...(data?.meta?.schema || {})
-      };
-      schemaWarning = data?.meta?.warning || schemaWarning;
-      entriesByTeam[selectedTeam] = data.data;
-      entriesByTeam = { ...entriesByTeam };
-      apiNote = `Saved pit data for Team ${displayTeam(selectedTeam)}.`;
-      goToTeamPicker();
-    } catch (e) {
-      apiNote = e.message || 'Save failed';
-    } finally {
-      saving = false;
-    }
+  function persistProblems(nextProblems) {
+    problems = nextProblems;
+    window.localStorage.setItem(PIT_PROBLEM_KEY, JSON.stringify(nextProblems));
   }
 
-  function detectCameraCapturePreference() {
-    if (typeof navigator === 'undefined') return false;
-    const mobileUserAgent = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      navigator.userAgent || ''
-    );
-    return Boolean(navigator.userAgentData?.mobile || mobileUserAgent);
+  function addProblem() {
+    if (!newProblem.summary.trim()) return;
+    persistProblems([{
+      id: crypto.randomUUID(),
+      source: 'Pit scout',
+      team: teamNumber.trim() || 'Unassigned',
+      match: '',
+      summary: newProblem.summary.trim(),
+      detail: newProblem.detail.trim(),
+      severity: newProblem.severity,
+      createdAt: new Date().toISOString(),
+      resolved: false
+    }, ...problems]);
+    newProblem = { summary: '', detail: '', severity: 'watch' };
   }
 
-  $: pitStatusCounts = teams.reduce(
-    (counts, teamKey) => {
-      const status = getPitScoutStatus(entriesByTeam[teamKey]);
-      counts[status] += 1;
-      return counts;
-    },
-    { pending: 0, needs_photo: 0, completed: 0 }
-  );
-  $: pendingCount = pitStatusCounts.pending;
-  $: needsPhotoCount = pitStatusCounts.needs_photo;
-  $: completeCount = pitStatusCounts.completed;
-  $: filteredTeams = teams
-    .filter((teamKey) => !teamSearch || displayTeam(teamKey).includes(teamSearch))
-    .sort(teamListSort);
-  $: selectedEntry = selectedTeam ? entriesByTeam[selectedTeam] || null : null;
-  $: photoSlotsRemaining = Math.max(0, 3 - editablePhotoPaths.length - pendingFiles.length);
-  $: photoButtonLabel = prefersCameraCapture ? 'Take Photo' : 'Add Photos';
+  function setResolved(id, resolved) {
+    persistProblems(problems.map((problem) => problem.id === id ? { ...problem, resolved } : problem));
+  }
+
+  function removeProblem(id) {
+    persistProblems(problems.filter((problem) => problem.id !== id));
+  }
+
+  function formatTime(value) {
+    return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
+  }
 
   onMount(() => {
-    prefersCameraCapture = detectCameraCapturePreference();
-    loadEventOptions();
+    loadDraft();
+    loadProblems();
+    const onStorage = (event) => {
+      if (event.key === PIT_PROBLEM_KEY) loadProblems();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   });
-
-  // Re-fetch teams/entries whenever the resolved (browsed) event changes -
-  // covers both the initial async load of the active event key and the user
-  // switching the event dropdown afterward.
-  $: {
-    if (resolvedEventKey !== lastLoadedEventKeyForTeams) {
-      lastLoadedEventKeyForTeams = resolvedEventKey;
-      loadAll();
-    }
-  }
 </script>
 
-<div class="page-header card">
-  <div>
-    <h2 style="margin:0">Pit Scouting</h2>
-    {#if resolvedEventKey}
-      <div class="form-label" style="margin-top:0.25rem">Event: {resolvedEventKey}</div>
-    {/if}
-    {#if apiNote}
-      <div class="note" style="margin-top:0.5rem">{apiNote}</div>
-    {/if}
-    {#if schemaWarning}
-      <div class="note" style="margin-top:0.5rem">{schemaWarning}</div>
-    {/if}
-  </div>
+<svelte:head><title>Pit Scouting</title></svelte:head>
 
-  <div class="page-summary">
-    <SeasonFilter
-      options={availableEvents}
-      bind:value={selectedEventKey}
-      allLabel={`Current Event (${eventKey || 'none set'})`}
-    />
-    <div class="summary-pill">
-      <span>Pending</span>
-      <strong>{pendingCount}</strong>
+<main class="pit-page">
+  <header class="page-header">
+    <div class="header-content">
+      <h1><Wrench size={22} /> Pit Scouting</h1>
+      <p>Start a fresh robot profile, triage breakdown reports, and keep the pit crew aligned.</p>
     </div>
-    <div class="summary-pill">
-      <span>Needs photo</span>
-      <strong>{needsPhotoCount}</strong>
+    <div class="team-status" class:ready={hasTeam}>
+      <Bot size={17} />
+      <span>{hasTeam ? `Team ${teamNumber}` : 'No robot selected'}</span>
     </div>
-    <div class="summary-pill">
-      <span>Completed</span>
-      <strong>{completeCount}</strong>
-    </div>
-    <button class="btn btn-secondary" type="button" on:click={loadAll} disabled={loading}>
-      Refresh
-    </button>
-  </div>
-</div>
+  </header>
 
-{#if !selectedTeam}
-  <div class="card picker-card">
-    <div class="form-group" style="margin-bottom:0">
-      <label class="form-label" for="teamSearch">Team</label>
-      <input
-        id="teamSearch"
-        class="form-input team-search"
-        type="text"
-        inputmode="numeric"
-        pattern="[0-9]*"
-        autocomplete="off"
-        enterkeyhint="go"
-        placeholder="Type team number"
-        value={teamSearch}
-        on:input={handleTeamSearchInput}
-      />
-    </div>
+  <div class="pit-layout">
+    <aside class="pit-nav" aria-label="Pit scouting sections">
+      <button class:active={activeTab === 'profile'} on:click={() => activeTab = 'profile'}>
+        <ClipboardPlus size={18} /><span>Robot profile</span><small>01</small>
+      </button>
+      <button class:active={activeTab === 'problems'} on:click={() => activeTab = 'problems'}>
+        <AlertTriangle size={18} /><span>Problems</span>{#if activeProblems.length}<b>{activeProblems.length}</b>{/if}
+      </button>
+      <button class:active={activeTab === 'notes'} on:click={() => activeTab = 'notes'}>
+        <FileText size={18} /><span>Additional notes</span><small>03</small>
+      </button>
+    </aside>
 
-    {#if loading}
-      <div class="empty">Loading teams...</div>
-    {:else if !teams.length}
-      <div class="empty">No teams loaded for this event.</div>
-    {:else if !filteredTeams.length}
-      <div class="empty">No teams match Team {teamSearch}.</div>
-    {:else}
-      <div class="team-list">
-        {#each filteredTeams as teamKey}
-          <button class="team-row" type="button" on:click={() => openEntry(teamKey)}>
-            <span class="team-row-main">Team {displayTeam(teamKey)}</span>
-            <span class={getPitScoutStatusClass(entriesByTeam[teamKey])}>{getPitScoutStatusLabel(entriesByTeam[teamKey])}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-{:else}
-  <form class="card entry-card" on:submit|preventDefault={saveEntry}>
-    <div class="entry-header">
-      <button class="btn btn-secondary" type="button" on:click={goToTeamPicker}>Back</button>
+    <section class="pit-workspace">
+      {#if activeTab === 'profile'}
+        <div class="section-heading">
+          <div><span class="eyebrow">Robot profile</span><h2>Start with the essentials</h2></div>
+          <span class="blank-chip">Blank record</span>
+        </div>
 
-      <div>
-        <h3 style="margin:0">Team {displayTeam(selectedTeam)}</h3>
-        <div class="entry-subtitle">
-          {#if selectedEntry}
-            Existing pit entry loaded. Submitting again will update it.
+        <div class="identity-grid">
+          <label>Team number<input class="form-input" inputmode="numeric" placeholder="971" bind:value={teamNumber} /></label>
+          <label>Robot name <span class="optional">optional</span><input class="form-input" placeholder="Robot nickname" bind:value={robotName} /></label>
+        </div>
+
+        <div class="form-section">
+          <span class="field-label">Robot archetype</span>
+          <p>Choose the role the robot is built to play most often.</p>
+          <div class="choice-grid archetypes">
+            {#each ARCHETYPES as option}
+              <button class:chosen={archetype === option} on:click={() => archetype = option}>{option}</button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="form-section split-section">
+          <div>
+            <span class="field-label">Drivetrain</span>
+            <div class="choice-grid compact">{#each DRIVEBASES as option}<button class:chosen={drivebase === option} on:click={() => drivebase = option}>{option}</button>{/each}</div>
+          </div>
+          <div>
+            <span class="field-label">Climb</span>
+            <div class="choice-grid compact">{#each ['None', 'Level 1', 'Level 2', 'Level 3'] as option}<button class:chosen={climb === option} on:click={() => climb = option}>{option}</button>{/each}</div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <span class="field-label">Scoring capabilities</span>
+          <div class="choice-grid">{#each SCORING_ROLES as option}<button class:chosen={scoringRoles.includes(option)} on:click={() => toggleRole(option)}>{option}</button>{/each}</div>
+        </div>
+
+        <label class="notes-field">Pit notes<textarea class="form-input" rows="6" placeholder="Mechanisms, strengths, limitations, and anything worth remembering." bind:value={profileNotes}></textarea></label>
+        <footer class="workspace-footer"><span>{saved ? 'Draft kept in this browser.' : 'No team data is sent to the server.'}</span><button class="btn btn-primary" on:click={saveDraft}><Check size={16} /> Save local draft</button></footer>
+
+      {:else if activeTab === 'problems'}
+        <div class="section-heading">
+          <div><span class="eyebrow">Problem desk</span><h2>Keep breakdowns visible</h2></div>
+          <span class="problem-count">{activeProblems.length} open</span>
+        </div>
+
+        <div class="report-banner"><AlertTriangle size={18} /><div><strong>Match scout handoff</strong><span>Reports created in Match Scouting appear here on this device.</span></div></div>
+
+        <div class="problem-list">
+          {#if activeProblems.length}
+            {#each activeProblems as problem}
+              <article class="problem-card" class:urgent={problem.severity === 'urgent'}>
+                <div class="problem-meta"><span class="severity {problem.severity}">{problem.severity}</span><span>{problem.source} · Team {problem.team}{problem.match ? ` · Match ${problem.match}` : ''}</span><time>{formatTime(problem.createdAt)}</time></div>
+                <h3>{problem.summary}</h3>
+                {#if problem.detail}<p>{problem.detail}</p>{/if}
+                <div class="problem-actions"><button class="btn btn-sm" on:click={() => setResolved(problem.id, true)}><Check size={14} /> Mark resolved</button><button class="icon-button" title="Delete report" on:click={() => removeProblem(problem.id)}><Trash2 size={16} /></button></div>
+              </article>
+            {/each}
           {:else}
-            New pit entry.
+            <div class="empty-state"><AlertTriangle size={28} /><h3>No active problems</h3><p>Match scout reports and pit issues will collect here.</p></div>
           {/if}
         </div>
-      </div>
-    </div>
 
-    {#if isViewingPastEvent}
-      <div class="note">
-        Viewing past event {selectedEventKey}. This form shows that event's pit data, but submitting will
-        save under the active event ({eventKey || 'none set'}) instead — switch back to "Current Event" to
-        edit this team's live pit entry.
-      </div>
-    {/if}
-
-    <div class="form-group">
-      <label class="form-label" for="drivebaseSelect">Drivebase Type</label>
-      <select id="drivebaseSelect" class="form-select" bind:value={drivebase_type}>
-        <option value="">-- Select --</option>
-        {#each DRIVEBASE_OPTIONS as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="form-group">
-      <label class="form-label" for="shooterSelect">Shooter Type</label>
-      <select id="shooterSelect" class="form-select" bind:value={shooter_type}>
-        <option value="">-- Select --</option>
-        {#each SHOOTER_OPTIONS as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="form-group">
-      <label class="form-label" for="hopperSelect">Hopper Type</label>
-      <select id="hopperSelect" class="form-select" bind:value={hopper_type}>
-        <option value="">-- Select --</option>
-        {#each HOPPER_OPTIONS as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="form-group">
-      <label class="form-label" for="humanPlayerBallsSelect">Human Player Balls In Auto</label>
-      <select id="humanPlayerBallsSelect" class="form-select" bind:value={human_player_balls_in_auto}>
-        <option value="">-- Select --</option>
-        {#each HUMAN_PLAYER_AUTO_OPTIONS as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
-    </div>
-
-    {#if pitSchema.technical_details}
-      <section class="question-section">
-        <h4>Robot and Mechanisms</h4>
-
-        <div class="field-grid">
-          <div class="form-group">
-            <label class="form-label" for="useNetSelect">Do they use a net?</label>
-            <select id="useNetSelect" class="form-select" bind:value={technical_details.use_net}>
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="intakeStyleSelect">Ground intake style</label>
-            <select id="intakeStyleSelect" class="form-select" bind:value={technical_details.intake_style}>
-              <option value="">-- Select --</option>
-              {#each INTAKE_STYLE_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="groundRollerMotorCountInput">Motors powering ground roller</label>
-            <input
-              id="groundRollerMotorCountInput"
-              class="form-input"
-              type="number"
-              min="0"
-              step="1"
-              bind:value={technical_details.ground_roller_motor_count}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="groundIntakeKickerSelect">Ground intake has a kicker?</label>
-            <select
-              id="groundIntakeKickerSelect"
-              class="form-select"
-              bind:value={technical_details.ground_intake_kicker}
-            >
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
+        <div class="manual-problem">
+          <div><span class="eyebrow">Pit report</span><h3>Add a problem directly</h3></div>
+          <div class="manual-grid"><label>Problem<input class="form-input" placeholder="Example: intake belt slipping" bind:value={newProblem.summary} /></label><label>Severity<select class="form-input" bind:value={newProblem.severity}><option value="watch">Watch</option><option value="urgent">Urgent</option></select></label></div>
+          <label class="notes-field">Details<textarea class="form-input" rows="3" placeholder="What failed, and what should the pit crew check?" bind:value={newProblem.detail}></textarea></label>
+          <button class="btn btn-primary" on:click={addProblem} disabled={!newProblem.summary.trim()}><Plus size={16} /> Add problem</button>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Motor controllers used</label>
-          <div class="option-grid compact">
-            {#each MOTOR_CONTROLLER_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('motor_controllers', option)}
-                  on:change={(event) => setTechnicalMulti('motor_controllers', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
+        {#if resolvedProblems.length}<div class="resolved-list"><span class="field-label">Resolved today</span>{#each resolvedProblems as problem}<div><Check size={15} /> Team {problem.team}: {problem.summary}<button class="icon-button" title="Delete report" on:click={() => removeProblem(problem.id)}><Trash2 size={15} /></button></div>{/each}</div>{/if}
 
-        <div class="form-group">
-          <label class="form-label">Motor types used</label>
-          <div class="option-grid compact">
-            {#each MOTOR_TYPE_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('motor_types', option)}
-                  on:change={(event) => setTechnicalMulti('motor_types', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-      </section>
-
-      <section class="question-section">
-        <h4>Electrical</h4>
-
-        <div class="field-grid">
-          <div class="form-group">
-            <label class="form-label" for="mainBreakerBrandSelect">Main breaker brand</label>
-            <select id="mainBreakerBrandSelect" class="form-select" bind:value={technical_details.main_breaker_brand}>
-              <option value="">-- Select --</option>
-              {#each MAIN_BREAKER_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="sbConnectorSelect">SB connector</label>
-            <select id="sbConnectorSelect" class="form-select" bind:value={technical_details.sb_connector}>
-              <option value="">-- Select --</option>
-              {#each SB_CONNECTOR_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="mainBreakerShroudSelect">Main breaker shroud?</label>
-            <select id="mainBreakerShroudSelect" class="form-select" bind:value={technical_details.main_breaker_shroud}>
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="wireGaugeInput">Wire gauge mostly used</label>
-            <input
-              id="wireGaugeInput"
-              class="form-input"
-              type="text"
-              maxlength="80"
-              placeholder="e.g. 6 AWG, 12 AWG"
-              bind:value={technical_details.mostly_used_wire_gauge}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="wireInsulationSelect">Wire insulation</label>
-            <select id="wireInsulationSelect" class="form-select" bind:value={technical_details.wire_insulation}>
-              <option value="">-- Select --</option>
-              {#each WIRE_INSULATION_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="batteryTypeSelect">Battery type</label>
-            <select id="batteryTypeSelect" class="form-select" bind:value={technical_details.battery_type}>
-              <option value="">-- Select --</option>
-              {#each BATTERY_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Connectors and boards used</label>
-          <div class="option-grid">
-            {#each ELECTRICAL_CONNECTOR_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('electrical_connectors', option)}
-                  on:change={(event) => setTechnicalMulti('electrical_connectors', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-      </section>
-
-      <section class="question-section">
-        <h4>Controls and Software</h4>
-
-        <div class="field-grid">
-          <div class="form-group">
-            <label class="form-label" for="usesCanivoreSelect">Uses CANivore?</label>
-            <select id="usesCanivoreSelect" class="form-select" bind:value={technical_details.uses_canivore}>
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="canBusCountInput">Number of CAN buses</label>
-            <input
-              id="canBusCountInput"
-              class="form-input"
-              type="number"
-              min="0"
-              step="1"
-              bind:value={technical_details.can_bus_count}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="coprocessorSelect">Coprocessor</label>
-            <select id="coprocessorSelect" class="form-select" bind:value={technical_details.coprocessor}>
-              <option value="">-- Select --</option>
-              {#each COPROCESSOR_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="usesWpilibSelect">Uses WPILib?</label>
-            <select id="usesWpilibSelect" class="form-select" bind:value={technical_details.uses_wpilib}>
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Auto tools used</label>
-          <div class="option-grid compact">
-            {#each AUTO_TOOL_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('auto_tools', option)}
-                  on:change={(event) => setTechnicalMulti('auto_tools', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Vision used</label>
-          <div class="option-grid compact">
-            {#each VISION_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('vision', option)}
-                  on:change={(event) => setTechnicalMulti('vision', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Programming language</label>
-          <div class="option-grid compact">
-            {#each PROGRAMMING_LANGUAGE_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('programming_language', option)}
-                  on:change={(event) => setTechnicalMulti('programming_language', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-      </section>
-
-      <section class="question-section">
-        <h4>Drivebase and Structure</h4>
-
-        <div class="field-grid">
-          <div class="form-group">
-            <label class="form-label" for="swerveModuleSelect">Swerve module</label>
-            <select id="swerveModuleSelect" class="form-select" bind:value={technical_details.swerve_module}>
-              <option value="">-- Select --</option>
-              {#each SWERVE_MODULE_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="gripTapeSelect">Grip tape</label>
-            <select id="gripTapeSelect" class="form-select" bind:value={technical_details.grip_tape}>
-              <option value="">-- Select --</option>
-              {#each GRIP_TAPE_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="hopperWallSelect">Hopper wall reinforcement</label>
-            <select
-              id="hopperWallSelect"
-              class="form-select"
-              bind:value={technical_details.hopper_wall_reinforcement}
-            >
-              <option value="">-- Select --</option>
-              {#each HOPPER_WALL_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="fitsUnderTrenchSelect">Can fit under the trench?</label>
-            <select id="fitsUnderTrenchSelect" class="form-select" bind:value={technical_details.fits_under_trench}>
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="drivesOverMoundSelect">Can drive over the mound?</label>
-            <select id="drivesOverMoundSelect" class="form-select" bind:value={technical_details.drives_over_mound}>
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="drivebaseTubeThicknessInput">Drivebase tube thickness</label>
-            <input
-              id="drivebaseTubeThicknessInput"
-              class="form-input"
-              type="text"
-              maxlength="80"
-              placeholder="e.g. 1/8 in, 0.090 in"
-              bind:value={technical_details.drivebase_tube_thickness}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="bumperFoamSelect">Bumper foam</label>
-            <select id="bumperFoamSelect" class="form-select" bind:value={technical_details.bumper_foam}>
-              <option value="">-- Select --</option>
-              {#each BUMPER_FOAM_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <div class="dimension-grid">
-          <div class="form-group">
-            <label class="form-label" for="bumperLengthInput">Bumper length</label>
-            <input
-              id="bumperLengthInput"
-              class="form-input"
-              type="number"
-              min="0"
-              step="0.01"
-              bind:value={technical_details.bumper_length}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="bumperWidthInput">Bumper width</label>
-            <input
-              id="bumperWidthInput"
-              class="form-input"
-              type="number"
-              min="0"
-              step="0.01"
-              bind:value={technical_details.bumper_width}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="bumperHeightInput">Bumper height</label>
-            <input
-              id="bumperHeightInput"
-              class="form-input"
-              type="number"
-              min="0"
-              step="0.01"
-              bind:value={technical_details.bumper_height}
-            />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Hardware standards used</label>
-          <div class="option-grid compact">
-            {#each HARDWARE_STANDARD_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('hardware_standards', option)}
-                  on:change={(event) => setTechnicalMulti('hardware_standards', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Encoder types used</label>
-          <div class="option-grid compact">
-            {#each ENCODER_TYPE_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('encoder_types', option)}
-                  on:change={(event) => setTechnicalMulti('encoder_types', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
-        </div>
-
-        <div class="field-grid">
-          <div class="form-group">
-            <label class="form-label" for="printedRollerHubsSelect">3D printed roller hubs?</label>
-            <select
-              id="printedRollerHubsSelect"
-              class="form-select"
-              bind:value={technical_details.printed_roller_hubs}
-            >
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="rollerHubMaterialInput">Roller hub print material</label>
-            <input
-              id="rollerHubMaterialInput"
-              class="form-input"
-              type="text"
-              maxlength="80"
-              placeholder="e.g. PLA, PETG, Onyx"
-              bind:value={technical_details.roller_hub_material}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section class="question-section">
-        <h4>Subjective Ratings</h4>
-        <div class="rating-grid">
-          <div class="form-group">
-            <label class="form-label" for="electricalRatingInput">Electrical rating (1-10)</label>
-            <input
-              id="electricalRatingInput"
-              class="form-input"
-              type="number"
-              min="1"
-              max="10"
-              step="1"
-              bind:value={technical_details.electrical_rating}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="drivebaseRatingInput">Drivebase rating (1-10)</label>
-            <input
-              id="drivebaseRatingInput"
-              class="form-input"
-              type="number"
-              min="1"
-              max="10"
-              step="1"
-              bind:value={technical_details.drivebase_rating}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="overallReliabilityRatingInput">Overall reliability rating (1-10)</label>
-            <input
-              id="overallReliabilityRatingInput"
-              class="form-input"
-              type="number"
-              min="1"
-              max="10"
-              step="1"
-              bind:value={technical_details.overall_reliability_rating}
-            />
-          </div>
-        </div>
-      </section>
-    {/if}
-
-    {#if pitSchema.estimated_bps}
-      <div class="form-group">
-        <label class="form-label" for="estimatedBpsInput">Estimated BPS</label>
-        <input
-          id="estimatedBpsInput"
-          class="form-input"
-          type="number"
-          min="0"
-          step="0.1"
-          bind:value={estimated_bps}
-          placeholder="e.g. 2.4"
-        />
-      </div>
-    {/if}
-
-    {#if pitSchema.likely_breaking_component}
-      <div class="form-group">
-        <label class="form-label" for="likelyBreakingComponentInput">What is most likely to break on the robot?</label>
-        <textarea
-          id="likelyBreakingComponentInput"
-          class="form-input break-risk-input"
-          rows="3"
-          maxlength={MAX_BREAKING_COMPONENT_LENGTH}
-          bind:value={likely_breaking_component}
-          placeholder="Describe the most likely failure point"
-        />
-      </div>
-    {/if}
-
-    {#if pitSchema.climb_options}
-      <div class="form-group">
-        <label class="form-label">Climb Options</label>
-        <div class="climb-options-grid">
-          {#each CLIMB_OPTIONS as option}
-            <label class="form-checkbox climb-option">
-              <input
-                type="checkbox"
-                checked={climb_options.includes(option)}
-                disabled={option !== NO_CLIMB_OPTION && climb_options.includes(NO_CLIMB_OPTION)}
-                on:change={(event) => setClimbOption(option, event.currentTarget.checked)}
-              />
-              <span>{option}</span>
-            </label>
-          {/each}
-        </div>
-        <small class="form-help">{climb_options.length}/{CLIMB_OPTIONS.length} selected</small>
-      </div>
-    {/if}
-
-    {#if pitSchema.auto_options}
-      <div class="form-group">
-        <div class="auto-options-header">
-          <label class="form-label">Auto Options</label>
-          <button
-            class="btn btn-outline"
-            type="button"
-            on:click={addAutoOption}
-            disabled={autoOptions.length >= MAX_AUTO_OPTIONS}
-          >
-            Add Auto
-          </button>
-        </div>
-        <small class="form-help">{autoOptions.length}/{MAX_AUTO_OPTIONS} autos listed</small>
-
-        {#if !autoOptions.length}
-          <div class="auto-options-empty">No named auto options added.</div>
-        {:else}
-          <div class="auto-option-editor-list">
-            {#each autoOptions as option, idx}
-              <div class="card auto-option-editor">
-                <div class="auto-option-editor-header">
-                  <strong>Auto {idx + 1}</strong>
-                  <button class="btn btn-outline" type="button" on:click={() => removeAutoOption(idx)}>
-                    Remove
-                  </button>
-                </div>
-
-                <input
-                  class="form-input"
-                  type="text"
-                  maxlength={MAX_AUTO_NAME_LENGTH}
-                  placeholder="Auto name"
-                  value={option.name}
-                  on:input={(event) => updateAutoOption(idx, 'name', event.currentTarget.value)}
-                />
-
-                <textarea
-                  class="form-input auto-option-description"
-                  rows="3"
-                  maxlength={MAX_AUTO_DESCRIPTION_LENGTH}
-                  placeholder="Short description of the path, starting spot, and scoring plan"
-                  value={option.description}
-                  on:input={(event) => updateAutoOption(idx, 'description', event.currentTarget.value)}
-                />
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <div class="form-group">
-      <div class="photo-header">
-        <label class="form-label" for="photoUpload">Pit Photos (up to 3)</label>
-        <button
-          class="btn btn-outline"
-          type="button"
-          on:click={openPhotoPicker}
-          disabled={!photoSlotsRemaining || saving || uploading}
-        >
-          {photoButtonLabel}
-        </button>
-      </div>
-
-      {#key photoInputKey}
-        <input
-          bind:this={photoInput}
-          id="photoUpload"
-          type="file"
-          class="visually-hidden"
-          accept="image/*"
-          multiple={!prefersCameraCapture}
-          capture={prefersCameraCapture ? 'environment' : undefined}
-          disabled={!photoSlotsRemaining}
-          on:change={onFilesSelected}
-        />
-      {/key}
-
-      <small class="form-help">{editablePhotoPaths.length + pendingFiles.length}/3 selected</small>
-      {#if prefersCameraCapture && photoSlotsRemaining > 0}
-        <small class="form-help">Tap the button again to add the next photo.</small>
+      {:else}
+        <div class="section-heading"><div><span class="eyebrow">Additional notes</span><h2>What else should the drive team know?</h2></div><FileText size={20} /></div>
+        <label class="large-notes">Freeform notes<textarea class="form-input" rows="14" placeholder="Add observations, strategic notes, pit conversations, or follow-up questions." bind:value={additionalNotes}></textarea></label>
+        <footer class="workspace-footer"><span>{saved ? 'Draft kept in this browser.' : 'No team data is sent to the server.'}</span><button class="btn btn-primary" on:click={saveDraft}><Check size={16} /> Save local draft</button></footer>
       {/if}
-    </div>
-
-    {#if editablePhotoPaths.length || pendingFiles.length}
-      <div class="photo-grid">
-        {#each editablePhotoPaths as path}
-          <div class="photo-item">
-            <img src={photoUrl(path)} alt="Pit robot" />
-            <button class="btn btn-outline" type="button" on:click={() => removeExistingPhoto(path)}>
-              Remove
-            </button>
-          </div>
-        {/each}
-
-        {#each pendingFiles as file, idx}
-          <div class="pending-file-card">
-            <div class="form-label">Ready to upload</div>
-            <div class="pending-file-name">{file.name || `Photo ${idx + 1}`}</div>
-            <button class="btn btn-outline" type="button" on:click={() => removePendingPhoto(idx)}>
-              Remove
-            </button>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <div class="submit-row">
-      <button class="btn btn-primary submit-btn" type="submit" disabled={saving || uploading}>
-        {#if uploading}
-          Uploading...
-        {:else if saving}
-          Submitting...
-        {:else}
-          Submit Pit Entry
-        {/if}
-      </button>
-    </div>
-  </form>
-{/if}
+    </section>
+  </div>
+</main>
 
 <style>
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .page-summary {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.75rem;
-  }
-
-  .summary-pill {
-    display: flex;
-    align-items: baseline;
-    gap: 0.45rem;
-    padding: 0.6rem 0.8rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-  }
-
-  .summary-pill strong {
-    font-size: 1.1rem;
-  }
-
-  .picker-card,
-  .entry-card {
-    display: grid;
-    gap: 1rem;
-    max-width: 760px;
-    margin: 0 auto;
-  }
-
-  .team-search {
-    font-size: 1.05rem;
-  }
-
-  .team-list {
-    display: grid;
-    gap: 0.45rem;
-    max-height: 70vh;
-    overflow: auto;
-  }
-
-  .team-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
-    width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    padding: 0.7rem 0.8rem;
-    cursor: pointer;
-  }
-
-  .team-row-main {
-    font-weight: 600;
-  }
-
-  .status-pending {
-    color: var(--danger);
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-
-  .status-needs-photo {
-    color: var(--warning);
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-
-  .status-complete {
-    color: var(--success);
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-
-  .entry-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .entry-subtitle {
-    margin-top: 0.3rem;
-    color: var(--text-muted);
-    font-size: 0.9rem;
-  }
-
-  .question-section {
-    display: grid;
-    gap: 0.85rem;
-    border-top: 1px solid var(--border);
-    padding-top: 1rem;
-  }
-
-  .question-section h4 {
-    margin: 0;
-    font-size: 1rem;
-  }
-
-  .field-grid,
-  .dimension-grid,
-  .rating-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-    gap: 0.75rem;
-  }
-
-  .option-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.55rem;
-    margin-top: 0.5rem;
-  }
-
-  .option-grid.compact {
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  }
-
-  .option-tile {
-    min-height: 44px;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-  }
-
-  .auto-options-header,
-  .auto-option-editor-header,
-  .photo-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .auto-options-empty {
-    margin-top: 0.5rem;
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-    padding: 0.8rem;
-    color: var(--text-muted);
-    background: color-mix(in srgb, var(--surface) 90%, transparent);
-  }
-
-  .auto-option-editor-list {
-    display: grid;
-    gap: 0.75rem;
-    margin-top: 0.55rem;
-  }
-
-  .auto-option-editor {
-    display: grid;
-    gap: 0.6rem;
-    padding: 0.75rem;
-  }
-
-  .auto-option-description {
-    min-height: 88px;
-    resize: vertical;
-  }
-
-  .break-risk-input {
-    min-height: 88px;
-    resize: vertical;
-  }
-
-  .climb-options-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.6rem;
-    margin-top: 0.5rem;
-  }
-
-  .climb-option {
-    min-height: 48px;
-    padding: 0.7rem 0.8rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-  }
-
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
-  .photo-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 0.6rem;
-  }
-
-  .photo-item,
-  .pending-file-card {
-    display: grid;
-    gap: 0.45rem;
-  }
-
-  .photo-item img {
-    width: 100%;
-    height: 140px;
-    object-fit: cover;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-  }
-
-  .pending-file-card {
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-    padding: 0.75rem;
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-  }
-
-  .pending-file-name {
-    word-break: break-word;
-    font-size: 0.92rem;
-  }
-
-  .submit-row {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 0.5rem;
-  }
-
-  .submit-btn {
-    min-width: 190px;
-  }
-
-  @media (max-width: 768px) {
-    .page-header,
-    .entry-header,
-    .auto-options-header,
-    .auto-option-editor-header,
-    .photo-header {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .page-summary {
-      width: 100%;
-      justify-content: flex-start;
-    }
-
-    .summary-pill {
-      flex: 1 1 140px;
-      justify-content: space-between;
-    }
-
-    .team-list {
-      max-height: none;
-    }
-
-    .photo-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .submit-row {
-      justify-content: stretch;
-    }
-
-    .submit-btn {
-      width: 100%;
-    }
-  }
-
-  @media (max-width: 480px) {
-    .team-row {
-      flex-wrap: wrap;
-      align-items: flex-start;
-    }
-
-    .photo-grid {
-      grid-template-columns: 1fr;
-    }
-  }
+  .pit-page { max-width:1160px; margin:0 auto; padding:var(--space-4); }
+  h1,h2,h3,p { margin-top:0; } h1 { display:flex; align-items:center; gap:var(--gap-2); } h2 { margin-bottom:0; font-size:1.3rem; } h3 { margin-bottom:var(--space-2); font-size:1rem; }
+  .team-status { display:flex; align-items:center; gap:var(--gap-2); border:1px solid var(--border); padding:var(--space-2) var(--space-3); color:var(--text-muted); font-size:.84rem; background:var(--surface-1); } .team-status.ready { border-color:var(--brand-gold-strong); color:var(--text); background:var(--brand-gold-soft); }
+  .pit-layout { display:grid; grid-template-columns:13.5rem minmax(0,1fr); gap:var(--space-4); align-items:start; } .pit-nav { position:sticky; top:var(--space-4); display:grid; gap:var(--space-1); padding:var(--space-2); border:1px solid var(--border); background:var(--surface-1); } .pit-nav button { min-height:3.2rem; display:grid; grid-template-columns:1.4rem 1fr auto; align-items:center; gap:var(--gap-2); padding:var(--space-2); border:0; background:transparent; text-align:left; color:var(--text-muted); cursor:pointer; } .pit-nav button:hover,.pit-nav button.active { color:var(--text); background:var(--brand-gold-soft); } .pit-nav button.active { box-shadow:inset 3px 0 0 var(--brand-gold-strong); } .pit-nav small { font-size:.7rem; } .pit-nav b { min-width:1.35rem; height:1.35rem; display:grid; place-items:center; border-radius:50%; background:var(--red-base); color:white; font-size:.7rem; }
+  .pit-workspace { min-height:42rem; padding:var(--space-5); border:1px solid var(--border); background:var(--surface-1); } .section-heading { display:flex; align-items:start; justify-content:space-between; gap:var(--gap-3); margin-bottom:var(--space-5); } .eyebrow,.field-label { color:var(--text-muted); font-size:.73rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; } .blank-chip,.problem-count { padding:.3rem .55rem; border:1px solid var(--border); color:var(--text-muted); font-size:.75rem; } .optional { font-weight:400; color:var(--text-muted); }
+  label { display:grid; gap:var(--space-2); color:var(--text-muted); font-size:.8rem; } .identity-grid,.manual-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-4); } .form-section { margin-top:var(--space-5); } .form-section p { margin:.35rem 0 var(--space-3); color:var(--text-muted); font-size:.86rem; } .split-section { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-5); } .choice-grid { display:flex; flex-wrap:wrap; gap:var(--gap-2); margin-top:var(--space-2); } .choice-grid button { min-height:var(--control-height); padding:0 var(--space-3); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-1); color:var(--text); cursor:pointer; } .choice-grid button.chosen { border-color:var(--brand-gold-strong); background:var(--brand-gold-soft); font-weight:600; } .archetypes button { min-width:8.5rem; } .compact button { min-width:5rem; } .notes-field { margin-top:var(--space-5); } textarea { min-height:7rem; resize:vertical; } .workspace-footer { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-3); margin-top:var(--space-6); padding-top:var(--space-4); border-top:1px solid var(--border); color:var(--text-muted); font-size:.82rem; } .workspace-footer .btn,.problem-actions .btn,.manual-problem .btn { display:inline-flex; align-items:center; gap:var(--gap-2); }
+  .report-banner { display:flex; gap:var(--gap-3); align-items:start; padding:var(--space-3); border-left:3px solid var(--brand-gold-strong); background:var(--brand-gold-soft); margin-bottom:var(--space-4); } .report-banner strong,.report-banner span { display:block; } .report-banner span { margin-top:.15rem; color:var(--text-muted); font-size:.82rem; } .problem-list { display:grid; gap:var(--space-3); } .problem-card { padding:var(--space-4); border:1px solid var(--border); } .problem-card.urgent { border-left:3px solid var(--red-base); } .problem-card p { margin-bottom:var(--space-3); color:var(--text-muted); } .problem-meta { display:flex; flex-wrap:wrap; align-items:center; gap:var(--gap-2); margin-bottom:var(--space-3); color:var(--text-muted); font-size:.75rem; } .problem-meta time { margin-left:auto; } .severity { padding:.15rem .45rem; text-transform:uppercase; font-size:.65rem; font-weight:700; background:var(--surface-2); } .severity.urgent { background:var(--red-soft); color:var(--red-strong); } .severity.watch { background:var(--brand-gold-soft); } .problem-actions { display:flex; justify-content:space-between; align-items:center; } .icon-button { display:grid; place-items:center; width:2rem; height:2rem; border:0; background:transparent; color:var(--text-muted); cursor:pointer; } .icon-button:hover { color:var(--red-base); background:var(--surface-2); }
+  .empty-state { min-height:12rem; display:grid; place-content:center; justify-items:center; text-align:center; border:1px dashed var(--border); color:var(--text-muted); } .empty-state h3 { margin:var(--space-2) 0 .2rem; color:var(--text); } .empty-state p { margin:0; font-size:.84rem; } .manual-problem { margin-top:var(--space-5); padding-top:var(--space-5); border-top:1px solid var(--border); } .manual-problem .btn { margin-top:var(--space-4); } .resolved-list { display:grid; gap:var(--space-2); margin-top:var(--space-5); } .resolved-list > div { display:flex; align-items:center; gap:var(--gap-2); color:var(--text-muted); font-size:.85rem; } .resolved-list .icon-button { margin-left:auto; }
+  .large-notes textarea { min-height:24rem; } @media (max-width:760px) { .pit-page { padding:var(--space-3); } .pit-layout { grid-template-columns:1fr; } .pit-nav { position:static; grid-template-columns:repeat(3,1fr); } .pit-nav button { grid-template-columns:1fr; justify-items:center; text-align:center; min-height:4rem; } .pit-nav small,.pit-nav b { display:none; } .pit-workspace { padding:var(--space-4); } } @media (max-width:520px) { .page-header { align-items:flex-start; } .team-status { width:100%; justify-content:center; } .identity-grid,.manual-grid,.split-section { grid-template-columns:1fr; } .pit-nav span { font-size:.75rem; } .workspace-footer { align-items:stretch; flex-direction:column; } .workspace-footer .btn { justify-content:center; } .problem-meta time { width:100%; margin-left:0; } }
 </style>

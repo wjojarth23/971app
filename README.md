@@ -30,8 +30,10 @@ reading code.
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
 - **Scouting**: the Competition menu exposes Pit Scouting (`/pitscout`), Match
-  Scouting (`/matchscout`), and Vision Scouting (`/scouting/vision`). Legacy
-  scouting routes remain in the source
+  Scouting (`/matchscout`), and Vision Scouting (`/scouting/vision`). Pit
+  Scouting provides a fresh robot profile, browser-local breakdown triage, and
+  notes; Match Scouting can hand off a browser-local pit problem report at
+  post-match. Legacy scouting routes remain in the source
   tree for future restoration but are not reachable through navigation. The
   scouting tools integrate with The Blue Alliance API for competition data.
 - **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),

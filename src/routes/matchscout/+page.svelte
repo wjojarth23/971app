@@ -6,6 +6,7 @@
   const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
   const POINT_BANDS = ['0', '1-2', '3-4', '5+'];
   const RATING_FIELDS = ['Shot accuracy', 'Driver awareness', 'Cycle speed', 'Defense', 'Reliability'];
+  const PIT_PROBLEM_KEY = '971app.pit-problems';
 
   let phase = 'prematch';
   let matchNumber = '';
@@ -26,6 +27,7 @@
   let card = '';
   let driverSkill = 0;
   let pitProblem = false;
+  let pitProblemDetails = '';
   let postNotes = '';
   let submitted = false;
 
@@ -73,7 +75,29 @@
       phase = 'prematch';
       return;
     }
+    if (pitProblem) queuePitProblem();
     submitted = true;
+  }
+
+  function queuePitProblem() {
+    try {
+      const existing = JSON.parse(window.localStorage.getItem(PIT_PROBLEM_KEY) || '[]');
+      const reports = Array.isArray(existing) ? existing : [];
+      reports.unshift({
+        id: crypto.randomUUID(),
+        source: 'Match scout',
+        team: robotNumber.trim(),
+        match: matchNumber.trim(),
+        summary: pitProblemDetails.trim() || 'Mechanical issue flagged after match',
+        detail: postNotes.trim(),
+        severity: robotDisabled === 'died' || robotDisabled === 'disabled' ? 'urgent' : 'watch',
+        createdAt: new Date().toISOString(),
+        resolved: false
+      });
+      window.localStorage.setItem(PIT_PROBLEM_KEY, JSON.stringify(reports));
+    } catch {
+      // Match reporting remains usable if browser storage is unavailable.
+    }
   }
 
   onMount(() => {
@@ -155,6 +179,9 @@
         <div class="post-grid"><fieldset><legend>Robot status</legend><div class="choice-grid"><button class:chosen={robotDisabled === 'no'} on:click={() => robotDisabled = 'no'}>Stayed active</button><button class:chosen={robotDisabled === 'disabled'} on:click={() => robotDisabled = 'disabled'}>Disabled</button><button class:chosen={robotDisabled === 'died'} on:click={() => robotDisabled = 'died'}>Died</button></div></fieldset><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
         <div class="control-group"><span class="field-label">Driver skill</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={driverSkill === value} on:click={() => driverSkill = value}>{value}</button>{/each}</div></div>
         <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Flag a problem for pit scouting</span></label>
+        {#if pitProblem}
+          <label class="notes-label pit-report-field">Problem for pit crew<textarea class="form-input" rows="3" placeholder="What should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
+        {/if}
         <label class="notes-label">Freeform notes<textarea class="form-input" rows="5" placeholder="Anything strategy should know?" bind:value={postNotes}></textarea></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" on:click={finishScout}>Finish match scouting <Check size={16} /></button></div>
       {/if}
@@ -182,6 +209,7 @@
   .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; } .field-board { position:relative; aspect-ratio:1.8; overflow:hidden; border:1px solid var(--border); background:#edf3e9; cursor:crosshair; touch-action:none; } .field-line { position:absolute; background:#a4b09d; } .midline { top:0; bottom:0; left:50%; width:1px; } .field-zone { position:absolute; width:22%; height:18%; border:1px solid #a4b09d; } .top-zone { top:7%; left:39%; } .bottom-zone { bottom:7%; left:39%; } .field-board svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; } .field-board polyline { fill:none; stroke:var(--brand-gold-strong); stroke-width:1.2; stroke-linecap:round; stroke-linejoin:round; } .field-board .path-start { fill:var(--blue-base); }
   .ratings-grid { display:grid; gap:var(--space-3); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
   .notes-label textarea { resize:vertical; min-height:7rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
+  .pit-report-field { margin-top:var(--space-3); }
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
   @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .workbench { padding:var(--space-4); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four { grid-template-columns:repeat(2,1fr); } }
