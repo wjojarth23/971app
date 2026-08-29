@@ -46,10 +46,11 @@
 
 <svelte:head><title>Vision Dashboard | Scouting</title></svelte:head>
 
+<a class="back-link" href="/scouting/vision"><ArrowLeft size={14} /> Vision Scouting</a>
+
 <div class="page-header">
   <div class="header-content">
-    <a class="back-link" href="/scouting/vision"><ArrowLeft size={14} /> Vision Scouting</a>
-    <h1><LayoutDashboard size={22} /> Vision Event Dashboard</h1>
+    <h1><LayoutDashboard size={22} /> Event Dashboard</h1>
     <p>Rollup across every match in an event - processing throughput, discrepancy rate, and runner fleet health, instead of clicking through matches one at a time.</p>
   </div>
   <div class="actions">
@@ -117,8 +118,9 @@
 {/if}
 
 <style>
-  .back-link { display:flex; align-items:center; gap:var(--gap-2); color:var(--text-muted); text-decoration:none; font-size:.85rem; margin:var(--space-2) 0; }
-  h1 { display:flex; gap:var(--gap-2); align-items:center; }
+  .back-link { display:inline-flex; align-items:center; gap:var(--gap-2); color:var(--text-muted); text-decoration:none; font-size:.85rem; margin-bottom:var(--space-3); }
+  .back-link:hover { color:var(--text); }
+  .header-content h1 { display:inline-flex; align-items:center; gap:var(--gap-2); white-space:nowrap; flex-shrink:0; }
   h2 { display:flex; gap:var(--gap-2); align-items:center; font-size:1rem; margin:0 0 var(--space-3); }
   .section { padding:var(--space-4); margin-top:var(--space-4); }
 

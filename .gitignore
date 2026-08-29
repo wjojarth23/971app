@@ -43,3 +43,9 @@ secrets.txt
 __pycache__/
 *.pyc
 .venv/
+
+# Trained/placeholder model weights - deliberately never committed (see
+# scoutingvision.md); vision/training/create_placeholder_model.py writes
+# here by default.
+vision/**/*.pt
+vision/**/models/

@@ -225,20 +225,30 @@
         <h2>{detail.match.match_key} · Camera views</h2>
         <div class="view-list">{#each detail.views as view}<div><Video size={16} /><span><b>{view.label}</b><small>{view.camera_position || 'Position not recorded'} · offset {view.sync_offset_ms}ms</small></span>{#if view.signed_url}<video controls muted preload="metadata" src={view.signed_url} aria-label={`${view.label} evidence recording`}></video>{/if}</div>{/each}</div>
         <div class="upload-grid">
-          <input class="form-input" placeholder="View label" bind:value={cameraLabel} />
-          <input class="form-input" placeholder="Camera position" bind:value={cameraPosition} />
-          <input class="form-input" type="number" bind:value={syncOffsetMs} title="Synchronization offset in milliseconds" />
-          <input class="form-input" placeholder="3×3 homography JSON (optional)" bind:value={homographyText} />
-          <input class="form-input" placeholder="Field mask [[x,y],...] normalized 0-1 (optional)" bind:value={fieldMaskText} title="Region of interest excluding audience/background - see scoutingvision.md" />
-          <input class="form-input" placeholder='Goal zones [{"label","alliance","polygon"}] (optional)' bind:value={goalZonesText} title="Where a scored game piece's trajectory ends - required for automatic fuel attribution" />
-          <input class="form-input" type="file" accept="video/*" multiple on:change={(event) => files = [...event.currentTarget.files]} />
-          <button class="btn btn-sm" on:click={uploadViews} disabled={busy || !files.length}><Upload size={14} /> Upload {files.length || ''} view{files.length === 1 ? '' : 's'}</button>
+          <label>View label <input class="form-input" placeholder="Full field" bind:value={cameraLabel} /></label>
+          <label>Camera position <input class="form-input" placeholder="Elevated fixed tripod" bind:value={cameraPosition} /></label>
+          <label>Sync offset (ms) <input class="form-input" type="number" bind:value={syncOffsetMs} /></label>
+          <label>Recording file(s) <input class="form-input" type="file" accept="video/*" multiple on:change={(event) => files = [...event.currentTarget.files]} /></label>
         </div>
+        <details class="hybrid-cv-config">
+          <summary>Calibration (optional)</summary>
+          <div class="upload-grid">
+            <label>3×3 homography JSON <input class="form-input" placeholder="[[1,0,0],[0,1,0],[0,0,1]]" bind:value={homographyText} /></label>
+            <label>Field mask JSON <input class="form-input" placeholder="[[x,y], ...] normalized 0-1" bind:value={fieldMaskText} title="Region of interest excluding audience/background - see scoutingvision.md" /></label>
+            <label>Goal zones JSON <input class="form-input" placeholder='[{"label","alliance","polygon"}]' bind:value={goalZonesText} title="Where a scored game piece's trajectory ends - required for automatic fuel attribution" /></label>
+          </div>
+        </details>
+        <button class="btn btn-sm upload-button" on:click={uploadViews} disabled={busy || !files.length}><Upload size={14} /> Upload {files.length || ''} view{files.length === 1 ? '' : 's'}</button>
       </section>
 
       <section class="surface-card section">
         <h2>ML processing</h2>
-        <div class="run-controls"><input class="form-input" bind:value={modelName} /><input class="form-input" bind:value={modelVersion} /><label>Confidence <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={confidenceFloor} /></label><button class="btn btn-primary btn-sm" on:click={queueRun} disabled={busy || !detail.views.length}>Queue run</button></div>
+        <div class="run-controls">
+          <label>Model name <input class="form-input" bind:value={modelName} /></label>
+          <label>Version <input class="form-input" bind:value={modelVersion} /></label>
+          <label>Confidence <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={confidenceFloor} /></label>
+          <button class="btn btn-primary btn-sm" on:click={queueRun} disabled={busy || !detail.views.length}>Queue run</button>
+        </div>
         <details class="hybrid-cv-config">
           <summary>Hybrid game-piece detection tuning (optional)</summary>
           <div class="run-controls">
@@ -293,12 +303,13 @@
   small { color:var(--text-muted); }
   .view-list > div { display:flex; align-items:center; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); }
   .view-list video { margin-left:auto; width:min(18rem,40%); max-height:10rem; background:#000; }
-  .upload-grid,.run-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap-2); margin-top:var(--space-3); }
-  .run-controls { grid-template-columns:1fr 1fr 10rem auto; align-items:end; }
-  .run-controls label { display:grid; gap:var(--space-1); }
-  .hybrid-cv-config { margin-top:var(--space-3); }
-  .hybrid-cv-config summary { cursor:pointer; color:var(--text-muted); font-size:.85rem; }
-  .hybrid-cv-config .run-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .upload-grid,.run-controls { display:grid; grid-template-columns:repeat(auto-fit,minmax(13rem,1fr)); gap:var(--gap-4); margin-top:var(--space-4); }
+  .upload-grid label,.run-controls label { display:grid; gap:var(--space-1); font-size:.8rem; color:var(--text-muted); }
+  .run-controls { align-items:end; }
+  .upload-button { margin-top:var(--space-4); }
+  .hybrid-cv-config { margin-top:var(--space-4); }
+  .hybrid-cv-config summary { cursor:pointer; color:var(--text-muted); font-size:.85rem; padding:var(--space-1) 0; }
+  .hybrid-cv-config .upload-grid,.hybrid-cv-config .run-controls { margin-top:var(--space-3); }
   .status { padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); background:var(--surface-2); display:inline-flex; align-items:center; gap:var(--gap-2); }
   .status.failed { color:var(--red,#c33); }
   .status button { display:inline-flex; align-items:center; gap:4px; }

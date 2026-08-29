@@ -39,13 +39,39 @@ VISION_RUNNER_ID=vision-runner-gpu-1
 VISION_MODEL_PATH=/models/frc-vision-v1.pt
 ```
 
-Install and run:
+Manual install and run (quickest way to test on a machine you already have
+a shell on):
 
 ```bash
+cp .env.example .env   # then fill in real values
+set -a; source .env; set +a
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python vision_runner.py
 ```
+
+## Deployment (long-running - pick one)
+
+This has to run continuously on a real machine somewhere, not on Cloud Run
+(no GPU support there, and this polls for work rather than serving inbound
+requests). No such host is provisioned yet as of this doc - see
+`../../scoutingvision-remaining-work.md`. Three ready-to-use options,
+depending on what hardware ends up hosting this:
+
+- **`Dockerfile`** + **`docker-compose.yml`** - if the host has Docker and
+  the NVIDIA Container Toolkit set up. `cp .env.example .env`, fill it in,
+  `mkdir models` and drop a `.pt` file in it, then `docker compose up -d
+  --build`.
+- **`vision-runner.service`** - a systemd unit for running directly on a
+  bare-metal/VM GPU host without Docker (e.g. a repurposed gaming PC).
+  Install steps are in the file's own header comment.
+
+Either way, `VISION_RUNNER_TOKEN` must be set to the *same* value as the web
+service's `VISION_RUNNER_TOKEN` secret (not yet created in Secret Manager -
+see the reminder block in `../../cloudbuild.yaml`), and `VISION_MODEL_PATH`
+must point at real trained weights (also not built yet - see
+`../training/create_placeholder_model.py` for a non-functional stand-in
+that at least exercises the claim/heartbeat/complete plumbing).
 
 The supplied weights must define `robot_red`, `robot_blue`, `climb_attempt`,
 and `climb_success` classes (alliance suffixes supported for action classes).

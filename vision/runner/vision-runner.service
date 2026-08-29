@@ -1,0 +1,43 @@
+# systemd unit for running vision_runner.py directly on a bare-metal/VM GPU
+# host (no Docker) - e.g. a spare gaming PC with an NVIDIA GPU already
+# sitting on the team's network. Alternative to Dockerfile/docker-compose.yml
+# in this same directory; use whichever fits the actual host you have.
+#
+# Install:
+#   sudo useradd --system --home /opt/vision-runner --create-home vision-runner
+#   sudo -u vision-runner python3 -m venv /opt/vision-runner/.venv
+#   sudo -u vision-runner /opt/vision-runner/.venv/bin/pip install -r requirements.txt
+#   sudo cp vision_runner.py /opt/vision-runner/
+#   sudo cp .env.example /opt/vision-runner/.env   # then edit real values in
+#   sudo cp vision-runner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vision-runner
+#
+# Logs: journalctl -u vision-runner -f
+
+[Unit]
+Description=Vision Scouting ML runner (spartanshub)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vision-runner
+WorkingDirectory=/opt/vision-runner
+EnvironmentFile=/opt/vision-runner/.env
+ExecStart=/opt/vision-runner/.venv/bin/python /opt/vision-runner/vision_runner.py
+
+# The runner's own main() loop already keeps running indefinitely and
+# reports failures per-job via the API's `fail` action rather than crashing
+# the process - a systemd restart is for the process dying outright (OOM,
+# unhandled exception outside the per-job try/except, host reboot), not
+# normal operation.
+Restart=always
+RestartSec=10
+
+# Loud-failure-over-silent-bypass extends to the deploy too: don't let a
+# misconfigured unit silently run as root on a shared host.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

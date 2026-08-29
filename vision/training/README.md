@@ -1,5 +1,21 @@
 # Vision model training
 
+No real trained model exists yet (see `../../scoutingvision-remaining-work.md`).
+Before investing in the real labeling/training workflow below, prove the
+runner<->API plumbing works end to end with a placeholder:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python create_placeholder_model.py --output /tmp/placeholder.pt
+```
+
+This produces a **non-functional** but structurally valid `.pt` file (right
+6-class vocabulary, correctly shaped detection head - verified to actually
+load and survive a real `model.track()` call) for pointing `VISION_MODEL_PATH`
+at while testing `claim`/`heartbeat`/`complete`. Its detections are
+meaningless noise; never use it for anything but plumbing verification.
+
 Label reviewed frames in YOLO format using the class vocabulary in
 `data.example.yaml`. Split by complete match and preferably by event/camera
 position; random frame splits leak nearly identical adjacent images into the
