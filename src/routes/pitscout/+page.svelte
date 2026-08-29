@@ -1,10 +1,12 @@
 <script>
   import { onMount } from 'svelte';
   import { AlertTriangle, Bot, Check, ClipboardPlus, FileText, Plus, Trash2, Wrench } from 'lucide-svelte';
+  import { getAuthHeader } from '$lib/supabase.js';
+  import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
 
   const PIT_PROBLEM_KEY = '971app.pit-problems';
   const PIT_DRAFT_KEY = '971app.pit-scout-draft';
-  const ARCHETYPES = ['Cycle robot', 'Shooter', 'Defender', 'Climber', 'Hybrid'];
+  const ARCHETYPES = ['Shooter', 'Shuttler', 'Defender', 'Climber', 'Hybrid', 'Support / Feeder', 'Unknown'];
   const DRIVEBASES = ['Swerve', 'Tank', 'Other'];
   const SCORING_ROLES = ['Floor intake', 'Human player', 'Speaker', 'Amp', 'Defense'];
 
@@ -19,6 +21,9 @@
   let additionalNotes = '';
   let problems = [];
   let saved = false;
+  let eventKey = '';
+  let statusMessage = '';
+  let saving = false;
   let newProblem = { summary: '', detail: '', severity: 'watch' };
 
   $: hasTeam = teamNumber.trim().length > 0;
@@ -31,19 +36,78 @@
       : [...scoringRoles, role];
   }
 
-  function saveDraft() {
-    const draft = { teamNumber, robotName, archetype, drivebase, scoringRoles, climb, profileNotes, additionalNotes };
-    window.localStorage.setItem(PIT_DRAFT_KEY, JSON.stringify(draft));
-    saved = true;
-    window.setTimeout(() => saved = false, 2200);
+  async function authFetch(url, options = {}) {
+    return fetch(url, { ...options, headers: { ...(options.headers || {}), ...(await getAuthHeader()) } });
   }
 
-  function loadProblems() {
+  async function saveDraft() {
+    const draft = { teamNumber, robotName, archetype, drivebase, scoringRoles, climb, profileNotes, additionalNotes };
+    window.localStorage.setItem(PIT_DRAFT_KEY, JSON.stringify(draft));
+    if (!eventKey || !hasTeam) {
+      statusMessage = eventKey ? 'Enter a team number before saving.' : 'Saved locally; no active scouting event is configured.';
+      return;
+    }
+    saving = true;
+    statusMessage = '';
+    try {
+      const response = await authFetch('/pitscout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save-entry',
+          event_key: eventKey,
+          team_key: `frc${teamNumber.replace(/\D/g, '')}`,
+          drivebase_type: drivebase || null,
+          robot_archetype: archetype || null,
+          additional_notes: additionalNotes,
+          climb_options: climb ? [climb] : []
+        })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success) throw new Error(body?.error || `Save failed (${response.status})`);
+      saved = true;
+      statusMessage = `Saved Team ${teamNumber} to ${eventKey}.`;
+      window.setTimeout(() => saved = false, 2200);
+    } catch (error) {
+      statusMessage = error.message || 'Save failed.';
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function loadProblems() {
+    let localProblems = [];
     try {
       const stored = JSON.parse(window.localStorage.getItem(PIT_PROBLEM_KEY) || '[]');
-      problems = Array.isArray(stored) ? stored : [];
+      localProblems = Array.isArray(stored) ? stored.map((problem) => ({ ...problem, localOnly: true })) : [];
     } catch {
-      problems = [];
+      localProblems = [];
+    }
+    if (!eventKey) {
+      problems = localProblems;
+      return;
+    }
+    try {
+      const response = await authFetch(`/api/scouting-problems?event_key=${encodeURIComponent(eventKey)}`);
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success) throw new Error(body?.error || 'Problem queue failed to load.');
+      const serverProblems = (body.data || []).map((problem) => ({
+        id: problem.id,
+        source: String(problem.source || 'pit_scout').replace('_', ' '),
+        team: String(problem.team_key || '').replace(/^frc/, ''),
+        match: problem.match_key || '',
+        summary: problem.summary,
+        detail: problem.details || '',
+        severity: ['high', 'critical'].includes(problem.severity) ? 'urgent' : 'watch',
+        createdAt: problem.created_at,
+        resolved: ['resolved', 'dismissed'].includes(problem.status),
+        status: problem.status,
+        localOnly: false
+      }));
+      problems = [...serverProblems, ...localProblems];
+    } catch (error) {
+      problems = localProblems;
+      statusMessage = error.message || 'Problem queue failed to load.';
     }
   }
 
@@ -56,7 +120,7 @@
       archetype = ARCHETYPES.includes(draft.archetype) ? draft.archetype : '';
       drivebase = DRIVEBASES.includes(draft.drivebase) ? draft.drivebase : '';
       scoringRoles = Array.isArray(draft.scoringRoles) ? SCORING_ROLES.filter((role) => draft.scoringRoles.includes(role)) : [];
-      climb = ['None', 'Level 1', 'Level 2', 'Level 3'].includes(draft.climb) ? draft.climb : '';
+      climb = ['No Climb', 'L1', 'L2', 'L3'].includes(draft.climb) ? draft.climb : '';
       profileNotes = String(draft.profileNotes || '');
       additionalNotes = String(draft.additionalNotes || '');
     } catch {
@@ -69,28 +133,57 @@
     window.localStorage.setItem(PIT_PROBLEM_KEY, JSON.stringify(nextProblems));
   }
 
-  function addProblem() {
+  async function addProblem() {
     if (!newProblem.summary.trim()) return;
-    persistProblems([{
-      id: crypto.randomUUID(),
-      source: 'Pit scout',
-      team: teamNumber.trim() || 'Unassigned',
-      match: '',
-      summary: newProblem.summary.trim(),
-      detail: newProblem.detail.trim(),
-      severity: newProblem.severity,
-      createdAt: new Date().toISOString(),
-      resolved: false
-    }, ...problems]);
-    newProblem = { summary: '', detail: '', severity: 'watch' };
+    if (!eventKey || !hasTeam) {
+      statusMessage = 'An active event and team number are required.';
+      return;
+    }
+    saving = true;
+    try {
+      const response = await authFetch('/api/scouting-problems', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'create-report', event_key: eventKey, team_key: teamNumber, source: 'pit_scout', severity: newProblem.severity === 'urgent' ? 'high' : 'medium', summary: newProblem.summary, details: newProblem.detail })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success) throw new Error(body?.error || 'Problem report failed.');
+      newProblem = { summary: '', detail: '', severity: 'watch' };
+      await loadProblems();
+    } catch (error) {
+      statusMessage = error.message || 'Problem report failed.';
+    } finally {
+      saving = false;
+    }
   }
 
-  function setResolved(id, resolved) {
-    persistProblems(problems.map((problem) => problem.id === id ? { ...problem, resolved } : problem));
+  async function setResolved(id, resolved) {
+    const problem = problems.find((item) => item.id === id);
+    if (problem?.localOnly) {
+      const local = problems.filter((item) => item.localOnly).map(({ localOnly, ...item }) => item.id === id ? { ...item, resolved } : item);
+      persistProblems(local);
+      await loadProblems();
+      return;
+    }
+    await updateServerProblem(id, resolved ? 'resolved' : 'open');
   }
 
-  function removeProblem(id) {
-    persistProblems(problems.filter((problem) => problem.id !== id));
+  async function updateServerProblem(id, status) {
+    try {
+      const response = await authFetch('/api/scouting-problems', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'update-status', id, status }) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success) throw new Error(body?.error || 'Problem update failed.');
+      await loadProblems();
+    } catch (error) {
+      statusMessage = error.message || 'Problem update failed.';
+    }
+  }
+
+  async function removeProblem(id) {
+    const problem = problems.find((item) => item.id === id);
+    if (!problem?.localOnly) return updateServerProblem(id, 'dismissed');
+    persistProblems(problems.filter((item) => item.localOnly && item.id !== id).map(({ localOnly, ...item }) => item));
+    await loadProblems();
   }
 
   function formatTime(value) {
@@ -99,9 +192,12 @@
 
   onMount(() => {
     loadDraft();
-    loadProblems();
+    void (async () => {
+      eventKey = (await fetchActiveScoutingEventKey()) || '';
+      await loadProblems();
+    })();
     const onStorage = (event) => {
-      if (event.key === PIT_PROBLEM_KEY) loadProblems();
+      if (event.key === PIT_PROBLEM_KEY) void loadProblems();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -164,7 +260,7 @@
           </div>
           <div>
             <span class="field-label">Climb</span>
-            <div class="choice-grid compact">{#each ['None', 'Level 1', 'Level 2', 'Level 3'] as option}<button class:chosen={climb === option} on:click={() => climb = option}>{option}</button>{/each}</div>
+            <div class="choice-grid compact">{#each ['No Climb', 'L1', 'L2', 'L3'] as option}<button class:chosen={climb === option} on:click={() => climb = option}>{option}</button>{/each}</div>
           </div>
         </div>
 
@@ -174,7 +270,7 @@
         </div>
 
         <label class="notes-field">Pit notes<textarea class="form-input" rows="6" placeholder="Mechanisms, strengths, limitations, and anything worth remembering." bind:value={profileNotes}></textarea></label>
-        <footer class="workspace-footer"><span>{saved ? 'Draft kept in this browser.' : 'No team data is sent to the server.'}</span><button class="btn btn-primary" on:click={saveDraft}><Check size={16} /> Save local draft</button></footer>
+        <footer class="workspace-footer"><span>{statusMessage || (saved ? 'Team profile saved.' : `Active event: ${eventKey || 'not configured'}`)}</span><button class="btn btn-primary" on:click={saveDraft} disabled={saving || !hasTeam}><Check size={16} /> {saving ? 'Saving…' : 'Save team profile'}</button></footer>
 
       {:else if activeTab === 'problems'}
         <div class="section-heading">
@@ -203,7 +299,7 @@
           <div><span class="eyebrow">Pit report</span><h3>Add a problem directly</h3></div>
           <div class="manual-grid"><label>Problem<input class="form-input" placeholder="Example: intake belt slipping" bind:value={newProblem.summary} /></label><label>Severity<select class="form-input" bind:value={newProblem.severity}><option value="watch">Watch</option><option value="urgent">Urgent</option></select></label></div>
           <label class="notes-field">Details<textarea class="form-input" rows="3" placeholder="What failed, and what should the pit crew check?" bind:value={newProblem.detail}></textarea></label>
-          <button class="btn btn-primary" on:click={addProblem} disabled={!newProblem.summary.trim()}><Plus size={16} /> Add problem</button>
+          <button class="btn btn-primary" on:click={addProblem} disabled={saving || !hasTeam || !newProblem.summary.trim()}><Plus size={16} /> {saving ? 'Saving…' : 'Add problem'}</button>
         </div>
 
         {#if resolvedProblems.length}<div class="resolved-list"><span class="field-label">Resolved today</span>{#each resolvedProblems as problem}<div><Check size={15} /> Team {problem.team}: {problem.summary}<button class="icon-button" title="Delete report" on:click={() => removeProblem(problem.id)}><Trash2 size={15} /></button></div>{/each}</div>{/if}
@@ -211,7 +307,7 @@
       {:else}
         <div class="section-heading"><div><span class="eyebrow">Additional notes</span><h2>What else should the drive team know?</h2></div><FileText size={20} /></div>
         <label class="large-notes">Freeform notes<textarea class="form-input" rows="14" placeholder="Add observations, strategic notes, pit conversations, or follow-up questions." bind:value={additionalNotes}></textarea></label>
-        <footer class="workspace-footer"><span>{saved ? 'Draft kept in this browser.' : 'No team data is sent to the server.'}</span><button class="btn btn-primary" on:click={saveDraft}><Check size={16} /> Save local draft</button></footer>
+        <footer class="workspace-footer"><span>{statusMessage || (saved ? 'Additional notes saved.' : `Active event: ${eventKey || 'not configured'}`)}</span><button class="btn btn-primary" on:click={saveDraft} disabled={saving || !hasTeam}><Check size={16} /> {saving ? 'Saving…' : 'Save team profile'}</button></footer>
       {/if}
     </section>
   </div>

@@ -2,7 +2,12 @@ import { json } from '@sveltejs/kit';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
 import { getSupabase } from '$lib/server/971bot.js';
-import { selectPitScoutEntries, upsertPitScoutEntry } from '$lib/server/pitScoutingSchema.js';
+import {
+  sanitizePitAdditionalNotes,
+  sanitizeRobotArchetype,
+  selectPitScoutEntries,
+  upsertPitScoutEntry
+} from '$lib/server/pitScoutingSchema.js';
 
 const NO_CLIMB_OPTION = 'No Climb';
 const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
@@ -230,6 +235,8 @@ export async function POST({ request, url }) {
     const shooter_type = body?.shooter_type || null;
     const hopper_type = body?.hopper_type || null;
     const human_player_balls_in_auto = body?.human_player_balls_in_auto || null;
+    const robot_archetype = sanitizeRobotArchetype(body?.robot_archetype);
+    const additional_notes = sanitizePitAdditionalNotes(body?.additional_notes);
     const likely_breaking_component = sanitizeLongText(body?.likely_breaking_component);
     const estimated_bps = sanitizeEstimatedBps(body?.estimated_bps);
     const climb_options = sanitizeClimbOptions(body?.climb_options);
@@ -248,6 +255,8 @@ export async function POST({ request, url }) {
       shooter_type,
       hopper_type,
       human_player_balls_in_auto,
+      robot_archetype,
+      additional_notes,
       likely_breaking_component,
       estimated_bps,
       climb_options,

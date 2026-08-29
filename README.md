@@ -31,11 +31,12 @@ reading code.
   **AutoCAM** section below for the code-level detail on all three.
 - **Scouting**: the Competition menu exposes Pit Scouting (`/pitscout`), Match
   Scouting (`/matchscout`), and Vision Scouting (`/scouting/vision`). Pit
-  Scouting provides a fresh robot profile, browser-local breakdown triage, and
-  notes; Match Scouting can hand off a browser-local pit problem report at
-  post-match. Legacy scouting routes remain in the source
+  Scouting provides robot archetypes, additional notes, and a durable shared
+  breakdown queue; Match Scouting can also hand off an immediate browser-local
+  pit problem report at post-match. Legacy scouting routes remain in the source
   tree for future restoration but are not reachable through navigation. The
   scouting tools integrate with The Blue Alliance API for competition data.
+  See `implementations/pit-scouting-workflow.md` for the persisted pit workflow.
 - **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),
   Slack-driven prompts and reminders on a 15-minute cron sweep.
 - **Purchasing/Budget**: COTS (commercial off-the-shelf) part stock
@@ -230,8 +231,9 @@ own docs are all together in one place instead of scattered across
   webhooks/crons: `api/cam-generate` (synchronous G-code generation),
   `api/drive-watcher` (Drive input-sweep, cron-gated), `api/planner`
   (notification sweep, cron-gated), `api/onshape`, `api/tba`, `api/971bot`
-  (Slack), `api/attendance`, `api/scout-assignments`, `api/scouting-admin`,
-  `api/scouting-config`, `api/tasks`, `api/admin`, `api/notifications`.
+  (Slack), `api/attendance`, `api/scout-assignments`, `api/scouting-problems`,
+  `api/scouting-admin`, `api/scouting-config`, `api/tasks`, `api/admin`,
+  `api/notifications`.
 
 ## `src/lib` (shared code)
 
@@ -240,7 +242,8 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 
 - **`server/`** - server-only modules (`$lib/server/...`, never bundled to
   the client): `971bot.js` (Slack), `cron_auth.js` (shared auth check for
-  cron-triggered endpoints - see **Known gaps**), `planner_notifications.js`.
+  cron-triggered endpoints - see **Known gaps**), `planner_notifications.js`,
+  pit-schema compatibility helpers, and scouting-problem normalization.
 - **`planner/`** - planner domain logic (scheduling, interaction rules,
   timezone handling - Pacific time throughout, see `PACIFIC_TIME_ZONE` in
   `src/lib/timezone.js`).

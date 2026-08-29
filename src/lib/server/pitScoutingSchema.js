@@ -1,4 +1,6 @@
 const PIT_SCOUT_OPTIONAL_COLUMN_DEFAULTS = Object.freeze({
+  robot_archetype: null,
+  additional_notes: null,
   likely_breaking_component: null,
   estimated_bps: null,
   climb_options: [],
@@ -22,13 +24,36 @@ const BASE_PIT_SCOUT_SELECT_COLUMNS = [
 
 export const PIT_SCOUT_OPTIONAL_COLUMNS = Object.keys(PIT_SCOUT_OPTIONAL_COLUMN_DEFAULTS);
 
+export const ROBOT_ARCHETYPES = Object.freeze([
+  'Shooter',
+  'Shuttler',
+  'Defender',
+  'Climber',
+  'Hybrid',
+  'Support / Feeder',
+  'Unknown'
+]);
+
+export function sanitizeRobotArchetype(value) {
+  const clean = String(value || '').trim();
+  return ROBOT_ARCHETYPES.includes(clean) ? clean : null;
+}
+
+export function sanitizePitAdditionalNotes(value) {
+  return String(value || '').trim().slice(0, 2000) || null;
+}
+
 function cloneDefaultValue(value) {
-  return Array.isArray(value) ? [...value] : value;
+  if (Array.isArray(value)) return [...value];
+  if (value && typeof value === 'object') return { ...value };
+  return value;
 }
 
 export function buildPitScoutSchema(supportedColumns = PIT_SCOUT_OPTIONAL_COLUMNS) {
   const supported = new Set((supportedColumns || []).map(String));
   return {
+    robot_archetype: supported.has('robot_archetype'),
+    additional_notes: supported.has('additional_notes'),
     likely_breaking_component: supported.has('likely_breaking_component'),
     estimated_bps: supported.has('estimated_bps'),
     climb_options: supported.has('climb_options'),
@@ -83,6 +108,8 @@ export function normalizePitScoutRows(rows, schema = buildPitScoutSchema()) {
 
 export function pitScoutSchemaWarning(schema = buildPitScoutSchema()) {
   const missing = [];
+  if (!schema?.robot_archetype) missing.push('robot archetype');
+  if (!schema?.additional_notes) missing.push('additional notes');
   if (!schema?.likely_breaking_component) missing.push('likely breaking component');
   if (!schema?.estimated_bps) missing.push('estimated BPS');
   if (!schema?.climb_options) missing.push('climb options');
