@@ -48,23 +48,102 @@ origin        https://github.com/wjojarth23/971app.git    — legacy/unrelated f
   the `scoutingvision.md` postmortem on PR #78 for a real example of
   exactly this happening).
 
-## Branching & PRs
+## GitHub workflow
 
-- Branch names: kebab-case, optionally `username/kebab-case`, optionally
-  with a trailing unix-timestamp suffix for uniqueness
-  (`feature-name-1787284800`). No fixed rule — match whichever of these
-  patterns the branch you're extending already uses.
-- PR titles: a short, plain, descriptive sentence — no `feat:`/`fix:`
-  Conventional Commits prefixes (not the convention here; check recent
-  merged PR titles with `gh pr list --state merged --limit 15` if unsure).
-- PR body: a `## Summary` (bullet points, what changed and why) and a
-  `## Test plan` (checklist — what you actually ran, checked off truthfully;
-  leave unchecked items unchecked rather than claiming untested work
-  passed).
-- No CI is configured on this repo (no `.github/workflows/`) — there are no
-  automated checks gating a merge. That means **you** are the check: run
-  the verification steps below yourself before opening or updating a PR,
-  every time. Nothing else will catch a regression for you.
+**Every change goes through a branch and a PR. Never push directly to
+`spartanshub`'s `main` — no exceptions for "it's small" or "it's just
+docs."** `main` has no branch-protection rule configured on GitHub
+enforcing this — nothing will technically stop a direct push — which is
+exactly why it matters that you enforce it yourself. (`stormcoded` is the
+one remote where direct pushes are actually fine; see **Remotes** above.
+Don't confuse the two.)
+
+### Creating a branch and opening a PR
+
+```bash
+git fetch spartanshub main
+git checkout -b your-branch-name spartanshub/main   # always branch from an up-to-date main
+
+# ... make changes, verify (see below), commit ...
+
+git push -u spartanshub your-branch-name
+gh pr create --repo frc971/spartanshub \
+  --title "Short, plain, descriptive title" \
+  --body "$(cat <<'BODY'
+## Summary
+- What changed and why, as bullet points.
+
+## Test plan
+- [x] Things you actually ran and confirmed
+- [ ] Things you didn't get to (leave unchecked, don't claim it passed)
+BODY
+)"
+```
+
+If you're picking up an existing branch instead of starting a new one,
+`git fetch` + `git checkout <branch>` — and see **Before you touch
+anything** above: check its PR and comments first, every time, even if you
+opened that PR yourself in an earlier session.
+
+### Branch naming
+
+kebab-case, optionally `username/kebab-case`, optionally with a trailing
+unix-timestamp suffix for uniqueness (`feature-name-1787284800`). No single
+fixed rule — match whichever of these patterns the branch you're extending
+already uses.
+
+### PR titles & bodies
+
+- Title: a short, plain, descriptive sentence — no `feat:`/`fix:`
+  Conventional Commits prefixes (not the convention here; check
+  `gh pr list --repo frc971/spartanshub --state merged --limit 15` if
+  unsure).
+- Body: a `## Summary` (bullet points, what changed and why) and a
+  `## Test plan` (checklist of what you actually ran — leave unchecked
+  items unchecked rather than claiming untested work passed).
+- Link the issue it fixes if there is one — `Fixes #80` or `Closes #80`
+  anywhere in the body auto-links it and auto-closes it on merge (real
+  example: PR #81's body opens with `Fixes #80`).
+- **Stacking on another open PR**: if your branch depends on a change
+  that's already an open PR but not yet merged to `main`, branch from
+  *that* PR's branch instead of `main`, and say so explicitly in your PR
+  body (real example: PR #81 branched from `feature/scouting-power-rankings`
+  (#78) instead of `main`, and stated why in its own description). Don't
+  silently base work on an unmerged branch without noting it — whoever
+  reviews your PR needs to know it isn't independently mergeable yet.
+- No PR template is configured (no `.github/`) — the Summary/Test plan
+  shape above is convention, not something GitHub enforces for you.
+
+### Labels
+
+A small label set exists on the repo (`bug`, `documentation`,
+`enhancement`, `security`, `gcp`, `ci`, plus GitHub's defaults like
+`good first issue`/`help wanted`/`question`/`wontfix`/`duplicate`/`invalid`).
+Used somewhat consistently on **issues**, rarely applied to PRs in
+practice — don't feel obligated to label a PR, but do label an issue you
+file if one of these genuinely fits.
+
+### Merging
+
+- No CI is configured on this repo (no `.github/workflows/`) and `main`
+  has no required status checks or required-review branch-protection rule.
+  That means **you** are the check: run the verification steps in the next
+  section yourself before opening *or* updating a PR, every time — nothing
+  else will catch a regression for you.
+- Real merges on this repo use GitHub's plain "Merge pull request" (a merge
+  commit, `git log --merges` shows `Merge pull request #N from ...`) — not
+  squash, not rebase. Match that: `gh pr merge <number> --repo
+  frc971/spartanshub --merge`.
+- Merging into `main` is a shared-repo action, same as a direct push would
+  be — treat it with the same care. Don't merge your own PR (or anyone
+  else's) without the user's explicit go-ahead for that specific merge,
+  even if you were the one who opened it. "You can open a PR for this" is
+  not the same authorization as "you can merge it" — they're separate
+  asks unless stated together.
+- Branches are **never deleted** after merge on `spartanshub` (see
+  **Remotes** above) — don't delete a branch after merging its PR, and
+  don't be alarmed by the long tail of old merged-branch names already in
+  `git branch -r`.
 - Never co-author Claude (or any AI tool) in commit messages/trailers on
   this project.
 - Prefer creating a new commit over amending, and a new PR comment over
