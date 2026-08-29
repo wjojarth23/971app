@@ -362,7 +362,7 @@
   .identity-editor { display:flex; gap:var(--gap-1); }
   .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); align-items:center; }
   .observation-review { font-size:.7rem; text-transform:uppercase; color:var(--text-muted); }
-  .observation-review.accepted,.observation-review.corrected { color:#16a34a; }
+  .observation-review.accepted,.observation-review.corrected { color:var(--green-strong); }
   .observation-correction { grid-column:1/-1; display:grid; grid-template-columns:minmax(7rem,.4fr) minmax(12rem,1fr) auto; gap:var(--gap-2); }
   .flag-list article { border:1px solid var(--border); border-left:4px solid var(--brand-gold-base,#d9a413); border-radius:var(--radius-md); padding:var(--space-3); }
   .flag-list article.resolved { opacity:.65; }
