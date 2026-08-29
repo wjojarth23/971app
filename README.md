@@ -33,10 +33,10 @@ reading code.
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.
-- **Vision Scouting (restricted)**: a real Competition-folder nav tab (not a
-  hidden URL - `canRenderTabKey` still hides it from anyone without
-  `VISION_REVIEW`), running secret post-match, multi-camera ML processing at
-  `/scouting/vision` for robot trajectories/mobility, fuel, and climbing.
+- **Vision Scouting**: a real Competition-folder nav tab, open to every
+  approved user like the rest of Competition (no special permission needed),
+  running post-match, multi-camera ML processing at `/scouting/vision` for
+  robot trajectories/mobility, fuel, and climbing.
   Qwen3-VL proposes semantic events from bounded multi-camera clips; a
   separate versioned YOLO/ByteTrack runner supplies dense tracking and
   mobility. Both feed a human-reviewed evidence queue rather than silently
@@ -64,9 +64,10 @@ reading code.
 - **Admin & permissions**: user/role/permission management (including a
   per-workflow "Notifications" role controlling who gets Slack-DMed for
   new manufacturing requests, plus a "Vision Alerts" opt-in checkbox for
-  Vision Scouting run failures/critical discrepancies), manual grants for
-  the two Vision Scouting permissions (`VISION_REVIEW`, `VISION_RELEASE`),
-  an activity log, attendance location/schedule configuration.
+  Vision Scouting run failures/critical discrepancies), a manual grant for
+  the `VISION_RELEASE` permission (the one gated Vision Scouting action -
+  pushing results into real scouting data), an activity log, attendance
+  location/schedule configuration.
 - **Attendance**: attendance logging against configured locations/schedules,
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
@@ -242,11 +243,12 @@ own docs are all together in one place instead of scattered across
   discovery/analysis, and the local-scouting-only power rankings +
   head-to-head comparison view (own top-level tab, not nested under
   `scouting/`).
-- **`scouting/vision/`, `scouting/vision/dashboard/`** - restricted post-match
+- **`scouting/vision/`, `scouting/vision/dashboard/`** - post-match
   multi-view ML processing, TBA discrepancy review, and the release bridge
-  into `scout_data_events`; the event-level fleet/throughput dashboard is a
-  sub-route. External worker lives in `vision/runner/`; offline training
-  toolchain in `vision/training/`.
+  into `scout_data_events` (the release action itself is `VISION_RELEASE`-
+  gated; everything else is open to any approved user); the event-level
+  fleet/throughput dashboard is a sub-route. External worker lives in
+  `vision/runner/`; offline training toolchain in `vision/training/`.
 - **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
   off-the-shelf) part stock tracking and kitting workflows.
 - **`tasks/`** - general task tracking, separate from the planner's

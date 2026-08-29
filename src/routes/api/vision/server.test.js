@@ -180,7 +180,7 @@ describe('api/vision', () => {
     });
 
     it('rejects an actor without VISION_RELEASE', async () => {
-      mockClient = makeMockClient({ user_profiles: [{ data: { role: 'member', permissions: ['VISION_REVIEW'] }, error: null }] });
+      mockClient = makeMockClient({ user_profiles: [{ data: { role: 'member', permissions: ['CAN_SEE_ROUTES'] }, error: null }] });
       const { POST } = await import('./+server.js');
       const res = await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
       expect(res.status).toBe(403);

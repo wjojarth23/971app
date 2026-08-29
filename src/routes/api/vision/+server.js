@@ -199,9 +199,9 @@ export async function POST({ request }) {
   }
 
   // Reviewed-result consumer: the one path that lets a project owner turn
-  // advisory vision output into real scouting data. Deliberately gated on a
-  // permission strictly above VISION_REVIEW (see permissions.js) - every
-  // other action above is available to any reviewer, this one is not.
+  // advisory vision output into real scouting data. Every other action
+  // above is available to any approved user; this one requires the
+  // separate VISION_RELEASE permission (see permissions.js).
   if (action === 'release-run') {
     if (!body.run_id) return json({ error: 'run_id required' }, { status: 400 });
 

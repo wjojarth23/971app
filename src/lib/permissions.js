@@ -19,12 +19,10 @@ export const PERMISSIONS = [
   'DATA_SCOUT_MEMBER', // eligible to be assigned to data scouting
   'VIDEO_SCOUT_MEMBER', // eligible for future video scouting workflows
   'MANAGE_ATTENDANCE',
-  // Vision scouting (restricted project, see scoutingvision.md): reviewer
-  // tier can see/upload recordings, queue runs, and resolve discrepancies.
-  // Release tier is strictly higher - it's the only thing allowed to push
-  // vision results into real scout_data_events/power rankings, so it's kept
-  // separate rather than folded into VISION_REVIEW.
-  'VISION_REVIEW',
+  // Vision scouting (see scoutingvision.md) is open to every approved user,
+  // same as the rest of Competition - only the "push results into real
+  // scout_data_events/power rankings" action is gated, since that's a
+  // meaningfully higher-stakes action than just using the tool.
   'VISION_RELEASE'
 ];
 

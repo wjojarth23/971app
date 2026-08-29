@@ -1,15 +1,17 @@
 # Scouting Vision — implementation reference
 
-A restricted, post-match computer-vision pipeline that watches match video,
-detects robot positions and scoring events with a custom YOLO model, and
+A post-match computer-vision pipeline that watches match video, detects
+robot positions and scoring events with a custom YOLO model, and
 cross-checks the result against The Blue Alliance's official match
-breakdown. It's a real tab now — **Vision Scouting** in the Competition nav
-folder — but still gated behind a `VISION_REVIEW` permission at both the nav
-layer and RLS, so anyone without it never sees it exists. Its output never
-*silently* feeds `scout_data_events` or power rankings: a separate,
-higher-tier `VISION_RELEASE` permission is required to explicitly push a
-completed run's results into real scouting data (see **Reviewed-result
-release bridge** below). This doc is a file-by-file map of what's actually
+breakdown. It's **Vision Scouting** in the Competition nav folder, open to
+every approved team member — same as Pit/Data/Note Scouting, no special
+permission required just to see or use it. Its output never *silently*
+feeds `scout_data_events` or power rankings, though: a separate
+`VISION_RELEASE` permission is required to explicitly push a completed
+run's results into real scouting data (see **Reviewed-result release
+bridge** below) - that's the one part of this feature that stays gated,
+since it's a meaningfully higher-stakes action than just using the tool.
+This doc is a file-by-file map of what's actually
 implemented, for anyone picking the feature up. For the design rationale and
 contracts (capture requirements, review states, model acceptance gates), see
 `implementations/vision-scouting-system.md` — this file focuses on "where is
@@ -59,15 +61,16 @@ Seven tables, all with RLS enabled:
 
 Also creates a private `vision-recordings` storage bucket (`public: false`).
 
-Access control is entirely RLS-driven, applied via a `DO $$ ... FOREACH $$`
-loop over all seven tables:
-- `authenticated` role: full access gated by `public.has_permission('VISION_REVIEW')`
-  (a Postgres function assumed to already exist in the DB — this migration
-  doesn't define it).
+Access control is RLS-driven, applied via a `DO $$ ... FOREACH $$` loop over
+all seven tables:
+- `authenticated` role: full access, no permission check (`USING (true)`) -
+  any approved team member can use Vision Scouting, same as the rest of
+  Competition.
 - `service_role`: unrestricted (`USING (true)`) — this is what the runner's
   server-side Supabase client uses.
-- The storage bucket gets a matching `authenticated` policy requiring the
-  same permission.
+- The storage bucket gets a matching `authenticated` policy (no permission
+  check either) - private in the sense of "not directly browsable, signed
+  URLs only," not "hidden from teammates."
 
 ### `migrations/20260829_vision_notifications_release_fleet.sql`
 
@@ -86,9 +89,10 @@ Three additions on top of the above:
 - **`vision_runners`** table (`runner_id` primary key, `last_seen_at`,
   `model_path`, `current_run_id`, `last_error`) — runner fleet heartbeats.
 
-Both new tables are SELECT-only for `authenticated` + `VISION_REVIEW` (read
-for the dashboard); all writes go through `service_role` (the runner's own
-heartbeat call, and the release bridge's privileged insert — see below).
+Both new tables are SELECT-only for `authenticated` (no permission check -
+read for the dashboard, same open-to-everyone stance as the rest of Vision
+Scouting); all writes go through `service_role` (the runner's own heartbeat
+call, and the release bridge's privileged insert — see below).
 
 ### `migrations/20260829_vision_field_mask_goal_zones.sql`
 
@@ -144,9 +148,9 @@ actual HTTP call; `fetchImpl` is injectable for testing.
 
 Auth: per-request Supabase client built from the caller's own `Authorization`
 header (`clientFor`), so every query goes through RLS as that user — the
-route itself does no permission check beyond "is there a logged-in user";
-`VISION_REVIEW` enforcement lives entirely in the RLS policies above (the one
-exception is `release-run`, below, which adds its own explicit check).
+route itself does no permission check beyond "is there a logged-in user"
+(matching the open-to-everyone RLS above). The one exception is `release-run`
+below, which adds its own explicit `VISION_RELEASE` check.
 
 - `GET` (no `id`): lists all `vision_matches` with view/run counts.
 - `GET ?id=`: full detail for one match — views (with freshly
@@ -176,9 +180,10 @@ exception is `release-run`, below, which adds its own explicit check).
 Separate endpoint, separate auth: a shared-secret bearer token
 (`VISION_RUNNER_TOKEN`) checked with a constant-time comparison
 (`checkToken`, XOR-accumulate over `TextEncoder` bytes) rather than `===`, to
-avoid a timing side-channel on the token value. Uses a `service_role`
-Supabase client (`serviceClient`), bypassing RLS — this is the only code path
-allowed to bypass `VISION_REVIEW`.
+avoid a timing side-channel on the token value. This is a machine-to-machine
+credential for the GPU worker (which also needs `service_role` DB access to
+write tracks/observations) - unrelated to whether a human teammate needs a
+permission to use the feature; they don't.
 
 - `heartbeat` — upserts `vision_runners` with the runner's id, current run
   (if any), model path, and last error. See **Runner fleet visibility**.
@@ -208,9 +213,10 @@ and `notifyVisionCriticalDiscrepancy(discrepancyId)`, both following the same
 automatic dedup via `user_notification_logs`). What's different from every
 other notification category here: the recipient list isn't role-derived
 (there's no "Vision Lead" role) - it's an explicit, admin-managed opt-in list
-(`user_profiles.vision_notify`), because this is a small, deliberately
-restricted project and the point is a short, chosen set of people, not
-"everyone with some role." `NOTIFICATION_KEYS.VISION_ALERT` covers both
+(`user_profiles.vision_notify`), deliberately separate from who can *use* the
+feature (everyone) - alerting is opt-in regardless, the same way match
+reminders or task assignments are, not a permission gate.
+`NOTIFICATION_KEYS.VISION_ALERT` covers both
 trigger conditions (run failure, new critical discrepancy) under one
 category rather than splitting them - to a recipient, both mean the same
 thing: "go look at Vision Scouting."
@@ -222,13 +228,12 @@ Notifications column, writing `vision_notify` through the same
 Shankar and Arin Rao are seeded in via the migration (see above); anyone else
 needs an admin to check the box.
 
-**Vision access itself** (`VISION_REVIEW`, `VISION_RELEASE`) is a separate
-concept from alerting and is granted via its own two checkboxes in the same
-admin page's Permissions column - real entries in `src/lib/permissions.js`'s
-`PERMISSIONS` array (not role-derived), written through the generic
-`permissions[]` update path `api/admin/+server.js` already exposed. This
-closes the gap the first version of this doc flagged: there was previously
-no way to grant `VISION_REVIEW` through the app at all.
+**`VISION_RELEASE`** (the release-into-real-scouting-data permission, not
+general access - see below) is a separate concept from alerting and is
+granted via its own checkbox in the same admin page's Permissions column - a
+real entry in `src/lib/permissions.js`'s `PERMISSIONS` array (not
+role-derived), written through the generic `permissions[]` update path
+`api/admin/+server.js` already exposed.
 
 ## Reviewed-result release bridge
 
@@ -240,7 +245,8 @@ counts count toward power rankings like any human-scouted match would.
 Guardrails, in order:
 1. Requires `VISION_RELEASE` specifically (checked against the caller's own
    `user_profiles.permissions`/`role`, via the caller's own RLS-scoped
-   client) - holding `VISION_REVIEW` alone is not enough.
+   client) - just being able to use Vision Scouting (everyone) is not
+   enough for this one action.
 2. The run must be `status: 'complete'` and not already released
    (`released_at IS NULL`) - a release is a one-time, explicit action, not
    re-runnable.
@@ -328,9 +334,7 @@ data** button (complete + unreleased + `VISION_RELEASE` only) or a
 `released` tag once it's been pushed - see **Reviewed-result release
 bridge** above.
 
-The page's own header renders a `ShieldAlert` "Restricted project" label as a
-constant visual reminder of the permission gate, plus a link to the event
-dashboard (below).
+The page's own header links to the event dashboard (below).
 
 ### Event dashboard — `src/routes/scouting/vision/dashboard/+page.svelte`
 
@@ -497,8 +501,9 @@ this establishes one.
 ## Access control & security summary
 
 - App-level auth: every `api/vision` call requires a signed-in Supabase user
-  (401 otherwise); all authorization beyond that is RLS, gated on the
-  `VISION_REVIEW` permission string.
+  (401 otherwise); beyond that, RLS grants any approved user full access -
+  no special permission needed to use the feature. `release-run` is the one
+  action with its own additional `VISION_RELEASE` check.
 - Runner auth: a separate bearer-token secret (`VISION_RUNNER_TOKEN`),
   constant-time compared, never exposed to the browser client.
 - Raw recordings live in a private bucket; every playback/download URL is
@@ -518,13 +523,10 @@ this establishes one.
    - `migrations/20260828_vision_system.sql`
    - `migrations/20260829_vision_notifications_release_fleet.sql`
    - `migrations/20260829_vision_field_mask_goal_zones.sql`
-2. Grant `VISION_REVIEW` (and `VISION_RELEASE`, for whoever should be able to
-   release results) from the admin panel's Permissions column - this is now
-   possible through the app (see **Slack alerting** above for how the
-   checkbox UI works); it no longer requires a raw SQL edit. It still
-   assumes `public.has_permission()` already exists in the DB (it does -
-   confirmed against a real schema dump, `schema.sql`, which predates the
-   vision tables but already has this function).
+2. No permission grant is needed for basic access - every approved user can
+   already use Vision Scouting once the migrations run. Grant `VISION_RELEASE`
+   (from the admin panel's Permissions column) only to whoever should be able
+   to release results into real scouting data.
 3. Set `VISION_RUNNER_TOKEN` (shared secret) and `TBA_API_KEY` in the web
    service's environment.
 4. Deploy `vision/runner/vision_runner.py` separately (GPU host), with
@@ -532,8 +534,14 @@ this establishes one.
    `VISION_MODEL_PATH` pointing at a locally trained model — no weights are
    committed to this repo.
 
-`/scouting/vision` **is** now linked - a real "Vision Scouting" tab in the
-Competition nav folder (`src/routes/+layout.svelte`, `navigation.json`,
-`defaultTabs.js`) - but `canRenderTabKey('vision')` hides it from anyone
-without `VISION_REVIEW` (or `VIEW_ADMIN_PANEL`), so step 2 above is still
-what actually determines who can see it, not the nav wiring itself.
+`/scouting/vision` is a real "Vision Scouting" tab in the Competition nav
+folder (`src/routes/+layout.svelte`, `navigation.json`, `defaultTabs.js`),
+visible to every approved user with no extra `canRenderTabKey` gate - same
+as Pit/Data/Note Scouting.
+
+One caveat specific to *existing* accounts: a user who already customized
+their own nav (`user_profiles.header_tabs`) keeps their saved layout
+verbatim and won't automatically pick up a newly-added default tab -
+they (or an admin, directly via SQL) need to add it once, the same
+pre-existing limitation `defaultTabs.js` already documents for any new tab
+added to the defaults. New/uncustomized accounts get it automatically.

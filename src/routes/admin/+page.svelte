@@ -190,16 +190,17 @@
     updateUserRoles(user, { vision_notify: checked });
   }
 
-  // Vision access is granted as real PERMISSIONS entries (VISION_REVIEW,
-  // VISION_RELEASE - see src/lib/permissions.js), not a role-derived one, so
-  // this writes user.permissions directly via the generic permission-update
-  // path api/admin/+server.js already exposes (POST with no `action`, just
-  // permissions[]) rather than going through update-roles, which only ever
-  // recomputes permissions from roles + whatever manual extras already
-  // existed - it has no way to accept a newly-added manual permission from
-  // the request body.
+  // Vision Scouting itself is open to every approved user (see
+  // scoutingvision.md) - VISION_RELEASE is the only gated action, for
+  // pushing results into real scout_data_events/power rankings. Granted as
+  // a real PERMISSIONS entry (see src/lib/permissions.js), not role-derived,
+  // so this writes user.permissions directly via the generic permission-
+  // update path api/admin/+server.js already exposes (POST with no
+  // `action`, just permissions[]) rather than going through update-roles,
+  // which only ever recomputes permissions from roles + whatever manual
+  // extras already existed - it has no way to accept a newly-added manual
+  // permission from the request body.
   const visionPermissionOptions = [
-    { value: 'VISION_REVIEW', label: 'Vision Reviewer' },
     { value: 'VISION_RELEASE', label: 'Vision Release' }
   ];
 

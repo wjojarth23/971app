@@ -367,13 +367,6 @@
       return activeProfile?.team_role === 'Competition Lead'
         || hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
     }
-    // Vision Scouting: restricted project, VISION_REVIEW-only (or admins).
-    // Still hidden from anyone without the permission even though it's now
-    // a real Competition tab, not just an unlinked URL.
-    if (k === 'vision') {
-      return hasPermission(activeProfile, 'VISION_REVIEW')
-        || hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
-    }
     return true;
   }
 

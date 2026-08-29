@@ -1,7 +1,11 @@
--- Secret post-match multi-view computer-vision scouting system.
--- Raw video stays in a private bucket; only explicitly authorized reviewers
--- can read or mutate metadata. ML runners use service_role through a
--- server-side claim/complete API and never receive database credentials.
+-- Post-match multi-view computer-vision scouting system. Open to every
+-- approved team member, same as the rest of Competition scouting tools -
+-- only the separate "release a run's results into real scout_data_events"
+-- action (api/vision's release-run, gated on VISION_RELEASE) is restricted.
+-- Raw video sits in a private bucket (signed URLs, not a secrecy measure -
+-- same handling any large-file bucket in this app gets). ML runners use
+-- service_role through a server-side claim/complete API and never receive
+-- database credentials.
 
 CREATE TABLE IF NOT EXISTS public.vision_matches (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -136,7 +140,8 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY['vision_matches','vision_views','vision_runs','vision_tracks','vision_observations','vision_discrepancies','vision_reference_snapshots']
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS vision_secret_access ON public.%I', table_name);
-    EXECUTE format('CREATE POLICY vision_secret_access ON public.%I TO authenticated USING (public.has_permission(''VISION_REVIEW'')) WITH CHECK (public.has_permission(''VISION_REVIEW''))', table_name);
+    EXECUTE format('DROP POLICY IF EXISTS vision_authenticated_access ON public.%I', table_name);
+    EXECUTE format('CREATE POLICY vision_authenticated_access ON public.%I TO authenticated USING (true) WITH CHECK (true)', table_name);
     EXECUTE format('DROP POLICY IF EXISTS vision_service_access ON public.%I', table_name);
     EXECUTE format('CREATE POLICY vision_service_access ON public.%I TO service_role USING (true) WITH CHECK (true)', table_name);
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO authenticated, service_role', table_name);
@@ -145,5 +150,5 @@ END $$;
 
 DROP POLICY IF EXISTS vision_recordings_authenticated ON storage.objects;
 CREATE POLICY vision_recordings_authenticated ON storage.objects TO authenticated
-  USING (bucket_id = 'vision-recordings' AND public.has_permission('VISION_REVIEW'))
-  WITH CHECK (bucket_id = 'vision-recordings' AND public.has_permission('VISION_REVIEW'));
+  USING (bucket_id = 'vision-recordings')
+  WITH CHECK (bucket_id = 'vision-recordings');

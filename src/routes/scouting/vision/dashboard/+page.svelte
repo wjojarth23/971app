@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { ArrowLeft, LayoutDashboard, RefreshCw, Server, ShieldAlert } from 'lucide-svelte';
+  import { ArrowLeft, LayoutDashboard, RefreshCw, Server } from 'lucide-svelte';
   import { getAuthHeader } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
 
@@ -48,7 +48,6 @@
 
 <div class="page-header">
   <div class="header-content">
-    <div class="secret-label"><ShieldAlert size={14} /> Restricted project</div>
     <a class="back-link" href="/scouting/vision"><ArrowLeft size={14} /> Vision Scouting</a>
     <h1><LayoutDashboard size={22} /> Vision Event Dashboard</h1>
     <p>Rollup across every match in an event - processing throughput, discrepancy rate, and runner fleet health, instead of clicking through matches one at a time.</p>
@@ -118,7 +117,6 @@
 {/if}
 
 <style>
-  .secret-label { display:inline-flex; gap:6px; align-items:center; color:var(--red, #c33); font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; }
   .back-link { display:flex; align-items:center; gap:var(--gap-2); color:var(--text-muted); text-decoration:none; font-size:.85rem; margin:var(--space-2) 0; }
   h1 { display:flex; gap:var(--gap-2); align-items:center; }
   h2 { display:flex; gap:var(--gap-2); align-items:center; font-size:1rem; margin:0 0 var(--space-3); }

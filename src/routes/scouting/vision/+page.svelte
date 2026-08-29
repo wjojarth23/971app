@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Camera, ChevronRight, Eye, RefreshCw, ShieldAlert, Upload, Video, LayoutDashboard, UploadCloud } from 'lucide-svelte';
+  import { Camera, ChevronRight, Eye, RefreshCw, Upload, Video, LayoutDashboard, UploadCloud } from 'lucide-svelte';
   import { getAuthHeader, supabase } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import { userStore } from '$lib/stores/auth.js';
@@ -187,7 +187,6 @@
 
 <div class="page-header">
   <div class="header-content">
-    <div class="secret-label"><ShieldAlert size={14} /> Restricted project</div>
     <h1><Eye size={22} /> Vision Scouting</h1>
     <p>Post-match multi-view ML processing, TBA reconciliation, and evidence-backed human review.</p>
   </div>
@@ -220,7 +219,7 @@
 
   <main class="vision-main">
     {#if !detail}
-      <div class="empty-state"><Video size={40} /><h3>Select or create a match</h3><p>Raw recordings and results are permission-restricted.</p></div>
+      <div class="empty-state"><Video size={40} /><h3>Select or create a match</h3><p>Pick a match on the left, or create one to get started.</p></div>
     {:else}
       <section class="surface-card section">
         <h2>{detail.match.match_key} · Camera views</h2>
@@ -283,7 +282,6 @@
 </div>
 
 <style>
-  .secret-label { display:inline-flex; gap:6px; align-items:center; color:var(--red, #c33); font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; }
   h1 { display:flex; gap:var(--gap-2); align-items:center; }
   h2 { font-size:1rem; margin:0 0 var(--space-3); }
   .vision-layout { display:grid; grid-template-columns:18rem minmax(0,1fr); gap:var(--gap-4); }

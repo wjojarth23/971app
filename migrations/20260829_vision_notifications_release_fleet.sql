@@ -49,11 +49,12 @@ CREATE TABLE IF NOT EXISTS public.vision_runners (
 );
 
 -- --- RLS -------------------------------------------------------------------
--- Both new tables are read-only from the authenticated side (reviewers see
--- them on the event dashboard) - all writes come from service_role: the
--- runner's own heartbeat call, and api/vision's release-run action (which
--- checks VISION_RELEASE itself before ever reaching the service client, the
--- same "app-level gate, then a privileged write" shape already used for
+-- Both new tables are read-only from the authenticated side (any approved
+-- user sees them on the event dashboard, same as the rest of Vision
+-- Scouting) - all writes come from service_role: the runner's own heartbeat
+-- call, and api/vision's release-run action (which checks VISION_RELEASE
+-- itself before ever reaching the service client, the same "app-level gate,
+-- then a privileged write" shape already used for
 -- notifyManufacturingRequestById etc., since a release additionally needs to
 -- write to scout_data_events - a table this project's reviewers don't
 -- otherwise have INSERT rights on, and shouldn't need to for this one
@@ -67,7 +68,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY['vision_release_log', 'vision_runners']
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS vision_fleet_read ON public.%I', table_name);
-    EXECUTE format('CREATE POLICY vision_fleet_read ON public.%I FOR SELECT TO authenticated USING (public.has_permission(''VISION_REVIEW''))', table_name);
+    EXECUTE format('CREATE POLICY vision_fleet_read ON public.%I FOR SELECT TO authenticated USING (true)', table_name);
     EXECUTE format('DROP POLICY IF EXISTS vision_fleet_service ON public.%I', table_name);
     EXECUTE format('CREATE POLICY vision_fleet_service ON public.%I TO service_role USING (true) WITH CHECK (true)', table_name);
     EXECUTE format('GRANT SELECT ON public.%I TO authenticated', table_name);

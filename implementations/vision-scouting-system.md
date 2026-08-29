@@ -1,10 +1,12 @@
 # Vision scouting system
 
-Restricted post-match ML analysis at `/scouting/vision`, now a real
-Competition-nav tab ("Vision Scouting") - but `canRenderTabKey` still hides
-it from anyone without the `VISION_REVIEW` permission, so it reads as
-unlinked to everyone else. Raw recordings use the private
-`vision-recordings` Supabase bucket.
+Post-match ML analysis at `/scouting/vision`, a real Competition-nav tab
+("Vision Scouting") open to every approved user - no special permission
+needed, same as Pit/Data/Note Scouting. Raw recordings use the private
+`vision-recordings` Supabase bucket (signed URLs, not an access-control
+measure). Only the separate **release** action (pushing a run's results
+into real `scout_data_events`) is permission-gated, on `VISION_RELEASE` -
+see **Model acceptance gates** below.
 
 ## Capture contract
 
@@ -138,10 +140,10 @@ VISION_RUNNER_ID=vision-runner-gpu-1
 VISION_MODEL_PATH=/models/frc-vision-v1.pt
 ```
 
-Run all three `migrations/2026082*_vision_*.sql` files, grant `VISION_REVIEW`
-(and `VISION_RELEASE`, more sparingly) from the admin panel to the small
-project group, then deploy the worker separately. No Vision route or bucket
-is useful—or intentionally accessible—before those steps.
+Run all three `migrations/2026082*_vision_*.sql` files, grant `VISION_RELEASE`
+from the admin panel to whoever should be able to release results (basic use
+needs no grant - every approved user already has it), then deploy the worker
+separately. No Vision route or bucket is useful before those steps.
 
 ## Model acceptance gates
 
@@ -154,9 +156,9 @@ Before a model version can affect scouting rankings:
 - Review every critical discrepancy for the initial event.
 - Keep model output advisory by default: nothing writes to `scout_data_events`
   or power rankings on its own. A completed run can be explicitly released
-  (`POST api/vision {action: 'release-run'}`) by whoever holds the separate,
-  stricter `VISION_RELEASE` permission (not granted by `VISION_REVIEW` alone)
-  - one-time per run, fully audited (`vision_release_log`), and only for
+  (`POST api/vision {action: 'release-run'}`) by whoever holds the
+  `VISION_RELEASE` permission - the one part of this feature that stays
+  gated - one-time per run, fully audited (`vision_release_log`), and only for
   team-attributed results with a recognized climb value. This is the
   project-owner-controlled consumer this section used to describe as
   future work; it now exists.
