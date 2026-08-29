@@ -1,0 +1,16 @@
+# Copy to data.yaml and replace paths with an exported, reviewed dataset.
+# Split entire matches/events between train/val/test; never randomly split
+# neighboring frames from the same recording across sets.
+path: /datasets/frc-vision-v1
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: robot_red
+  1: robot_blue
+  2: fuel_scored_red
+  3: fuel_scored_blue
+  4: climb_attempt_red
+  5: climb_attempt_blue
+  6: climb_success_red
+  7: climb_success_blue

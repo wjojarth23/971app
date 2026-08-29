@@ -1,0 +1,57 @@
+# Vision model training
+
+Label reviewed frames in YOLO format using the class vocabulary in
+`data.example.yaml`. Split by complete match and preferably by event/camera
+position; random frame splits leak nearly identical adjacent images into the
+test set and produce fraudulent metrics.
+
+Extract deterministic frames for labeling (the source filename should include
+the match key and view label):
+
+```bash
+.venv/bin/python extract_frames.py recordings/2026casf_qm1_fullfield.mov \
+  --output labeling/2026casf_qm1_fullfield --sample-fps 2
+```
+
+After labeling, move whole match/view groups into `train`, `val`, or `test`
+and verify that no source leaks across splits:
+
+```bash
+.venv/bin/python validate_splits.py /datasets/frc-vision-v1
+```
+
+Qwen3-VL can bootstrap semantic proposals directly from any number of camera
+recordings. On an 8 GB NVIDIA GPU, use the default 4-bit configuration:
+
+```bash
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python bootstrap_annotate.py recordings/qm1_fullfield.mov \
+  recordings/qm1_red_goal.mov recordings/qm1_climb.mov \
+  --view-names full-field red-goal climb \
+  --output labeling/qm1-qwen-review.json --match-key 2026casf_qm1
+```
+
+The output contains timestamped, grounded Qwen proposals for robot, fuel,
+climb, and immobility evidence. It is always marked unreviewed and is not a
+training dataset until a human corrects it. Qwen analyzes bounded five-second
+clips rather than blindly consuming an entire match in one context.
+
+After reviewed seed YOLO weights exist, `bootstrap_yolo_annotate.py` provides
+the faster dense pseudo-labeling pass. The hybrid is intentional: Qwen handles
+semantic event reasoning, while YOLO/ByteTrack handles repeatable boxes and
+trajectories.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp data.example.yaml data.yaml
+# edit data.yaml paths, then:
+.venv/bin/python train_model.py --data data.yaml --version v1
+```
+
+The script trains from a declared base model, evaluates the held-out `test`
+split, and emits immutable best weights plus `model-manifest.json`. Detection
+mAP is necessary but insufficient: separately evaluate tracker identity
+switches, calibrated trajectory error, alliance fuel error, and climb
+confusion on whole videos before changing `approved_for_rankings` through a
+human-controlled release process.

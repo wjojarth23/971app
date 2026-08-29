@@ -33,6 +33,16 @@ reading code.
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.
+- **Vision scouting (restricted)**: secret post-match, multi-camera ML
+  processing at `/scouting/vision` for robot trajectories/mobility, fuel, and
+  climbing. Qwen3-VL proposes semantic events from bounded multi-camera clips;
+  a separate versioned YOLO/ByteTrack runner supplies dense tracking and
+  mobility. Both feed a human-reviewed evidence queue rather than silently
+  treating model predictions as ground truth;
+  compatible alliance totals are reconciled with TBA and material differences
+  enter an evidence-backed human-review queue. The route, tables, and private
+  storage bucket require `VISION_REVIEW` and are deliberately absent from
+  normal navigation. See `implementations/vision-scouting-system.md`.
 - **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),
   Slack-driven prompts and reminders on a 15-minute cron sweep.
 - **Purchasing/Budget**: COTS (commercial off-the-shelf) part stock
@@ -220,6 +230,8 @@ own docs are all together in one place instead of scattered across
   discovery/analysis, and the local-scouting-only power rankings +
   head-to-head comparison view (own top-level tab, not nested under
   `scouting/`).
+- **`scouting/vision/`** - restricted post-match multi-view ML processing and
+  TBA discrepancy review; external worker lives in `vision/runner/`.
 - **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
   off-the-shelf) part stock tracking and kitting workflows.
 - **`tasks/`** - general task tracking, separate from the planner's
