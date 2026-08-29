@@ -405,8 +405,8 @@
   }
 
   const competitionTabs = [
-    { key: 'pitscout', label: 'Pit Scouting' },
     { key: 'matchscout', label: 'Match Scouting' },
+    { key: 'pitscout', label: 'Pit Scouting' },
     { key: 'vision', label: 'Vision Scouting' }
   ];
 
