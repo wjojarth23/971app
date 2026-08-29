@@ -9,6 +9,10 @@ ALLOWED_EVENT_TYPES = {
     "disabled_or_immobile",
 }
 ALLOWED_ALLIANCES = {"red", "blue", "unknown"}
+# Must stay in step with VALID_CLIMB_POS in src/routes/api/vision/+server.js.
+# A climb_level outside this set is dropped back to null here rather than
+# carried all the way to release-run, which would silently discard it.
+ALLOWED_CLIMB_LEVELS = {"N/A", "Failed", "L1", "L2", "L3"}
 
 SYSTEM_PROMPT = """You assist human reviewers with FRC match-video analysis.
 Never invent an event hidden by blur or occlusion. Return only valid JSON.
@@ -21,10 +25,15 @@ climb attempts, completed climbs, and disabled or immobile robots. Do not infer 
 score merely because a robot shoots. Do not count one event twice across adjacent
 frames. Use the absolute timestamp_ms printed before each frame.
 
+For a climb event, set climb_level to exactly one of "L1", "L2", "L3",
+"Failed" or "N/A" - never any other wording, and null if the level is not
+clearly visible. Any other value is discarded.
+
 Return exactly this JSON shape:
 {"events":[{"type":"robot|fuel_scored|climb_attempt|climb_success|disabled_or_immobile",
 "timestamp_ms":0,"alliance":"red|blue|unknown","box":[0,0,0,0],
-"confidence":0.0,"evidence":"brief visible reason","climb_level":null}],
+"confidence":0.0,"evidence":"brief visible reason",
+"climb_level":"L1|L2|L3|Failed|N/A|null"}],
 "clip_quality":"good|limited|unusable","review_notes":"brief text"}"""
 
 
@@ -69,7 +78,7 @@ def normalize_result(parsed, clip_start_ms: int, clip_end_ms: int):
             "box_0_1000": box,
             "confidence": confidence,
             "evidence": str(event.get("evidence", ""))[:500],
-            "climb_level": str(event["climb_level"])[:20] if event.get("climb_level") else None,
+            "climb_level": str(event["climb_level"]) if str(event.get("climb_level")) in ALLOWED_CLIMB_LEVELS else None,
             "review_status": "unreviewed",
         })
     quality = parsed.get("clip_quality")

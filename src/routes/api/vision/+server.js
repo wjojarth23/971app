@@ -196,7 +196,21 @@ export async function POST({ request }) {
       needs_review: !body.team_key
     }).eq('id', body.id).select('*').single();
     if (error) return json({ error: error.message }, { status: 400 });
-    return json({ success: true, data });
+
+    // Naming a robot is the whole point of the identity editor, so push it
+    // down to that robot's own events. Without this the assignment only ever
+    // reached vision_tracks, summarizeVision reads team identity off the
+    // observations, and release-run would emit nothing for a track a human
+    // had just carefully identified. Observations already reviewed are left
+    // alone - a human decision outranks a later bulk re-attribution.
+    const { data: attributed, error: cascadeError } = await client
+      .from('vision_observations')
+      .update({ team_key: body.team_key || null })
+      .eq('track_id', body.id)
+      .eq('review_status', 'unreviewed')
+      .select('id');
+    if (cascadeError) return json({ error: cascadeError.message }, { status: 400 });
+    return json({ success: true, data, attributed_observations: attributed?.length || 0 });
   }
   if (action === 'update-observation') {
     if (!body.id) return json({ error: 'observation id required' }, { status: 400 });
@@ -207,6 +221,26 @@ export async function POST({ request }) {
     }).eq('id', body.id).select('*').single();
     if (error) return json({ error: error.message }, { status: 400 });
     return json({ success: true, data });
+  }
+  // Bulk review. A single match can produce dozens of observations across
+  // several views, and clearing them one click at a time is slower than
+  // scouting the match by hand - which would defeat the point of the tool.
+  // Deliberately limited to the non-destructive verdicts: 'corrected' needs a
+  // per-observation value and team, so it stays single-row only.
+  if (action === 'review-observations') {
+    const allowed = ['accepted', 'rejected', 'unobservable'];
+    const ids = Array.isArray(body.ids) ? body.ids.filter(Boolean) : [];
+    if (!ids.length || !allowed.includes(body.status)) {
+      return json({ error: 'ids[] and a status of accepted, rejected or unobservable are required' }, { status: 400 });
+    }
+    if (ids.length > 500) return json({ error: 'Too many observations in one request (max 500)' }, { status: 400 });
+    const { data, error } = await client.from('vision_observations').update({
+      review_status: body.status,
+      reviewer_id: actor.id,
+      reviewed_at: new Date().toISOString()
+    }).in('id', ids).select('id');
+    if (error) return json({ error: error.message }, { status: 400 });
+    return json({ success: true, data: { reviewed: data?.length || 0 } });
   }
   if (action === 'review-observation') {
     const allowed = ['accepted','corrected','rejected','unobservable'];
@@ -256,6 +290,7 @@ export async function POST({ request }) {
 
     const nowIso = new Date().toISOString();
     const rows = [];
+    const skippedClimbs = [];
     for (const [teamKey, team] of Object.entries(summary.teams)) {
       if (!teamKey) continue; // never release an alliance-only, unattributed result as a specific team's data
       if (team.fuelObservations > 0 && Number.isFinite(team.fuelScored)) {
@@ -271,10 +306,20 @@ export async function POST({ request }) {
           event_type: 'climb_pos', event_value: team.climb,
           role: 'vision', on_shift: null, created_by: actor.id, created_at: nowIso
         });
+      } else if (team.climb) {
+        // Refusing an unrecognized climb value is right, but doing it silently
+        // isn't: the release looks like it worked while that team's climb
+        // quietly never lands. Name it so a reviewer can correct the value.
+        skippedClimbs.push({ team_key: teamKey, value: team.climb });
       }
     }
     if (!rows.length) {
-      return json({ error: 'No reviewed, attributable team results to release yet - accept/correct observations and resolve team identity first' }, { status: 400 });
+      return json({
+        error: skippedClimbs.length
+          ? `No releasable results: ${skippedClimbs.length} climb(s) have a level that isn't one of ${[...VALID_CLIMB_POS].join(', ')} - correct them in review, or set a default climb level on the run.`
+          : 'No reviewed, attributable team results to release yet - accept/correct observations and resolve team identity first',
+        skipped_climbs: skippedClimbs
+      }, { status: 400 });
     }
 
     const { data: inserted, error: insertError } = await db.from('scout_data_events').insert(rows).select('id');
@@ -290,7 +335,7 @@ export async function POST({ request }) {
       })
     ]);
 
-    return json({ success: true, data: { released_count: rows.length } });
+    return json({ success: true, data: { released_count: rows.length, skipped_climbs: skippedClimbs } });
   }
 
   return json({ error: 'Invalid action' }, { status: 400 });

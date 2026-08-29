@@ -80,19 +80,32 @@ export async function POST({ request }) {
   if (action === 'complete') {
     const { data: run } = await db.from('vision_runs').select('*, vision_matches(match_key)').eq('id', body.run_id).single();
     if (!run || run.status !== 'processing') return json({ error: 'Run is not processing' }, { status: 409 });
-    const tracks = (body.tracks || []).map((track) => ({ ...track, vision_run_id: run.id, metrics: track.metrics || trajectoryMetrics(track.trajectory) }));
-    const observations = (body.observations || []).map((observation) => ({
+    // track_key is the runner's own run-scoped handle for a robot
+    // ("<view id>:<tracker id>"), not a column. Insert the tracks first, then
+    // swap each observation's track_key for the real vision_tracks UUID, so
+    // naming one robot in review can attribute every event it produced
+    // instead of forcing a correction per observation. The key->id mapping
+    // relies on INSERT ... RETURNING handing rows back in insertion order,
+    // which Postgres guarantees for the single statement PostgREST issues.
+    const tracks = (body.tracks || []).map(({ track_key, ...track }) => ({ ...track, vision_run_id: run.id, metrics: track.metrics || trajectoryMetrics(track.trajectory) }));
+    const trackKeys = (body.tracks || []).map((track) => track.track_key || null);
+    const qwenClips = (body.qwen_clips || []).map((clip) => ({ ...clip, vision_run_id: run.id }));
+    const trackIdByKey = new Map();
+    if (tracks.length) {
+      const { data: insertedTracks, error } = await db.from('vision_tracks').insert(tracks).select('id');
+      if (error) return json({ error: error.message }, { status: 500 });
+      (insertedTracks || []).forEach((row, index) => {
+        if (trackKeys[index]) trackIdByKey.set(trackKeys[index], row.id);
+      });
+    }
+    const observations = (body.observations || []).map(({ track_key, ...observation }) => ({
       ...observation,
       vision_run_id: run.id,
       model_version: run.model_version,
       source: observation.source || 'legacy',
-      review_status: 'unreviewed'
+      review_status: 'unreviewed',
+      track_id: (track_key && trackIdByKey.get(track_key)) || null
     }));
-    const qwenClips = (body.qwen_clips || []).map((clip) => ({ ...clip, vision_run_id: run.id }));
-    if (tracks.length) {
-      const { error } = await db.from('vision_tracks').insert(tracks);
-      if (error) return json({ error: error.message }, { status: 500 });
-    }
     if (observations.length) {
       const { error } = await db.from('vision_observations').insert(observations);
       if (error) return json({ error: error.message }, { status: 500 });

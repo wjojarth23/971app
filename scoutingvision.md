@@ -181,9 +181,15 @@ below, which adds its own explicit `VISION_RELEASE` check.
   - `review` — resolves a discrepancy (one of the 5 allowed statuses),
     stamping reviewer id and timestamp.
   - `update-track` / `update-observation` — human correction of a track's
-    team identity or an observation's team/value/confidence.
+    team identity or an observation's team/value/confidence. `update-track`
+    also cascades the team down to that track's unreviewed observations (see
+    **How identity actually reaches released data**) and reports how many it
+    touched as `attributed_observations`.
   - `review-observation` — accepts, corrects, rejects, or marks an individual
     model observation unobservable. Release ignores unreviewed/rejected rows.
+  - `review-observations` — the same verdicts applied to up to 500 ids at
+    once, for clearing a match's worth of proposals without a click per row.
+    Deliberately excludes `corrected`, which needs a per-row value and team.
   - `release-run` — the reviewed-result release bridge; see its own section
     below.
 
@@ -294,12 +300,21 @@ Guardrails, in order:
      emulating individual taps, matching what that event type already means
      in `src/lib/scoutingStats.js`.
    - Climb (`team.climb`) becomes a `climb_pos` event **only** if it's
-     exactly one of the real enum values (`N/A`/`Failed`/`L1`/`L2`/`L3`) -
-     vision's climb value is otherwise free-form (frequently the literal
-     string `'success'`, since `vision_runner.py` currently just echoes
-     `config.default_climb_level` rather than detecting a real level), and
-     anything that doesn't match is silently skipped rather than written as
-     garbage into a column power-ranking aggregation depends on.
+     exactly one of the real enum values (`N/A`/`Failed`/`L1`/`L2`/`L3`),
+     rather than being written as garbage into a column power-ranking
+     aggregation depends on. Anything else is refused *and reported* — the
+     response carries `skipped_climbs` and the UI names the count, because a
+     silent refusal made a release look successful while a team's climb
+     quietly never landed.
+
+     Two things now make that path actually reachable. The run config carries
+     a **Default climb level** (a real select on the queue-run form, defaulting
+     to `L1`); without it `value.level` is null, `summarizeVision` falls back
+     to the literal `'success'`, and *every* climb is refused. And Qwen is
+     told the exact vocabulary in `TASK_PROMPT`, with `normalize_result`
+     dropping any `climb_level` outside `ALLOWED_CLIMB_LEVELS` back to null so
+     an invented wording falls through to that default instead of being
+     carried to release and rejected there.
    - Alliance-only observations (no resolved `team_key`) are never released
      as a specific team's data.
    - Every released row is tagged `role: 'vision'`, so released rows stay
@@ -422,10 +437,35 @@ different detectors run per frame, because the best tool differs by problem:
 
 Team identity is never inferred from alliance color — a track only gets a
 `team_key` if the run's `config.identity_map` (an audited
-`"<view id>:<tracker id>": "frcNNNN"` mapping, presumably built by a human
-during review) contains an entry for it; otherwise `needs_review: true`. No
-model weights are committed to the repo — `VISION_MODEL_PATH` must point to
-a locally trained/versioned `.pt` file (see training pipeline below).
+`"<view id>:<tracker id>": "frcNNNN"` mapping) contains an entry for it;
+otherwise `needs_review: true`. No model weights are committed to the repo —
+`VISION_MODEL_PATH` must point to a locally trained/versioned `.pt` file (see
+training pipeline below).
+
+### How identity actually reaches released data
+
+`identity_map` is keyed by tracker IDs that don't exist until a run has
+finished, so on a first run it is necessarily empty and nothing is
+attributed. Naming robots afterwards, in review, is the real path — and it
+works because every observation is linked to the track that produced it:
+
+1. `process_view` gives each robot track a run-scoped `track_key`
+   (`"<view id>:<tracker id>"`) and every observation it derives carries the
+   `track_key` of the robot it was attributed to. All three sources
+   participate: classical-CV fuel via trajectory origin, YOLO climbs via
+   `attribute_climbs`, and Qwen events via `attribute_qwen_event`.
+2. The `complete` handler inserts tracks first, then rewrites each
+   observation's `track_key` into the real `vision_observations.track_id`
+   FK. `track_key` is a wire-only field and never reaches the database.
+3. `update-track` — the identity editor — cascades the assigned `team_key`
+   to that track's still-`unreviewed` observations. Already-reviewed rows are
+   left alone, because a human decision outranks a later bulk re-attribution.
+
+That chain is what makes naming one robot attribute all of its events at
+once. Before it existed, `track_id` was an unpopulated column,
+`summarizeVision` read team identity only off observations, and a carefully
+identified track released nothing — the only working path was correcting
+every observation by hand.
 
 ## Qwen service — `vision/qwen/`
 

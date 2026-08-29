@@ -29,6 +29,10 @@
   let modelVersion = 'qwen3-vl-30b-a3b-bf16+yolo-v1';
   let qwenModel = 'Qwen/Qwen3-VL-30B-A3B-Instruct';
   let qwenRevision = '9c4b90e1e4ba969fd3b5378b57d966d725f1b86c';
+  // Must match VALID_CLIMB_POS in api/vision - anything else is refused at
+  // release rather than corrupting power-ranking aggregation.
+  const CLIMB_LEVELS = ['L1', 'L2', 'L3', 'Failed', 'N/A'];
+  let defaultClimbLevel = 'L1';
   let confidenceFloor = 0.35;
   let hsvLowerText = '20,100,100';
   let hsvUpperText = '35,255,255';
@@ -152,7 +156,12 @@
           hsv_lower: parseHsv(hsvLowerText, undefined),
           hsv_upper: parseHsv(hsvUpperText, undefined),
           min_piece_area: Number(minPieceArea) || undefined,
-          min_circularity: Number(minCircularity) || undefined
+          min_circularity: Number(minCircularity) || undefined,
+          // Detected climbs carry no level of their own unless Qwen reads one
+          // off the video. Without a fallback the value defaults to the
+          // literal 'success', which isn't a real climb_pos, so release-run
+          // drops every climb. This is what makes them releasable.
+          default_climb_level: defaultClimbLevel || undefined
         }
       });
       await loadMatches();
@@ -168,7 +177,10 @@
     try {
       const result = await post({ action: 'release-run', run_id: run.id });
       await loadDetail(selectedId);
-      import('$lib/toast.js').then((m) => m.toastActions.show(`Released ${result.released_count} scout_data_events row(s).`));
+      const skipped = result.skipped_climbs?.length
+        ? ` ${result.skipped_climbs.length} climb(s) skipped for an unrecognized level.`
+        : '';
+      import('$lib/toast.js').then((m) => m.toastActions.show(`Released ${result.released_count} scout_data_events row(s).${skipped}`));
     } catch (exception) {
       error = exception.message;
     } finally {
@@ -184,6 +196,31 @@
   async function saveTrackIdentity(track) {
     await post({ action: 'update-track', id: track.id, team_key: trackTeamDraft[track.id] });
     await loadDetail(selectedId);
+  }
+
+  let observationSource = 'all';
+  let observationStatus = 'unreviewed';
+  let observationMinConfidence = 0;
+
+  $: visibleObservations = (detail.observations || []).filter((observation) => {
+    if (observationSource !== 'all' && (observation.source || 'legacy') !== observationSource) return false;
+    if (observationStatus !== 'all' && (observation.review_status || 'unreviewed') !== observationStatus) return false;
+    return (Number(observation.confidence) || 0) >= Number(observationMinConfidence);
+  });
+  $: bulkReviewable = visibleObservations.filter(
+    (observation) => (observation.review_status || 'unreviewed') === 'unreviewed'
+  );
+
+  async function reviewVisible(status) {
+    if (!bulkReviewable.length) return;
+    if (!confirm(`Mark ${bulkReviewable.length} shown observation(s) as ${status}?`)) return;
+    busy = true;
+    error = '';
+    try {
+      await post({ action: 'review-observations', ids: bulkReviewable.map((o) => o.id), status });
+      await loadDetail(selectedId);
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
   }
 
   async function reviewObservation(observation, status) {
@@ -284,6 +321,11 @@
           <label>Qwen model <input class="form-input" bind:value={qwenModel} /></label>
           <label>Qwen revision <input class="form-input" bind:value={qwenRevision} /></label>
           <label>Confidence <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={confidenceFloor} /></label>
+          <label>Default climb level
+            <select class="form-input" bind:value={defaultClimbLevel}>
+              {#each CLIMB_LEVELS as level}<option value={level}>{level}</option>{/each}
+            </select>
+          </label>
           <button class="btn btn-primary btn-sm" on:click={queueRun} disabled={busy || !detail.views.length}>Queue run</button>
         </div>
         <details class="hybrid-cv-config">
@@ -316,7 +358,71 @@
       {/if}
 
       {#if detail.observations.length}
-        <section class="surface-card section"><h2>Detected actions</h2><div class="observation-list">{#each detail.observations as observation}<div><b>{observation.observation_type.replaceAll('_', ' ')}</b><span>{observation.team_key || observation.alliance || 'unattributed'} · {(observation.started_ms / 1000).toFixed(1)}s · {Math.round(observation.confidence * 100)}% · {observation.source || 'legacy'}</span><code>{JSON.stringify(observation.value)}</code><span class={`observation-review ${observation.review_status || 'unreviewed'}`}>{observation.review_status || 'unreviewed'}</span>{#if !['accepted','corrected','rejected','unobservable'].includes(observation.review_status)}<div class="observation-correction"><input class="form-input" placeholder="frc971" bind:value={observationTeamDraft[observation.id]} /><input class="form-input" aria-label="Corrected observation JSON" bind:value={observationValueDraft[observation.id]} /><button class="btn btn-sm" on:click={() => correctObservation(observation)} disabled={busy}>Save correction</button></div><div class="review-actions"><button class="btn btn-sm" on:click={() => reviewObservation(observation, 'accepted')} disabled={busy}>Accept</button><button class="btn btn-sm" on:click={() => reviewObservation(observation, 'rejected')} disabled={busy}>Reject</button><button class="btn btn-sm" on:click={() => reviewObservation(observation, 'unobservable')} disabled={busy}>Unobservable</button></div>{/if}</div>{/each}</div></section>
+        <section class="surface-card section">
+          <h2>Detected actions ({visibleObservations.length} of {detail.observations.length})</h2>
+
+          <div class="observation-filters">
+            <label>Source
+              <select class="form-input" bind:value={observationSource}>
+                <option value="all">All</option>
+                <option value="qwen3_vl">Qwen</option>
+                <option value="yolo">YOLO</option>
+                <option value="classical_cv">Classical CV</option>
+              </select>
+            </label>
+            <label>Status
+              <select class="form-input" bind:value={observationStatus}>
+                <option value="unreviewed">Unreviewed</option>
+                <option value="all">All</option>
+                <option value="accepted">Accepted</option>
+                <option value="corrected">Corrected</option>
+                <option value="rejected">Rejected</option>
+                <option value="unobservable">Unobservable</option>
+              </select>
+            </label>
+            <label>Min confidence
+              <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={observationMinConfidence} />
+            </label>
+            <div class="bulk-actions">
+              <button class="btn btn-sm" on:click={() => reviewVisible('accepted')} disabled={busy || !bulkReviewable.length}>Accept {bulkReviewable.length} shown</button>
+              <button class="btn btn-sm" on:click={() => reviewVisible('rejected')} disabled={busy || !bulkReviewable.length}>Reject shown</button>
+            </div>
+          </div>
+
+          {#if !visibleObservations.length}
+            <p class="empty-state">No observations match these filters.</p>
+          {/if}
+
+          <div class="observation-list">
+            {#each visibleObservations as observation (observation.id)}
+              <div>
+                <b>{observation.observation_type.replaceAll('_', ' ')}</b>
+                <span>
+                  {observation.team_key || observation.alliance || 'unattributed'} ·
+                  {(observation.started_ms / 1000).toFixed(1)}s ·
+                  {Math.round(observation.confidence * 100)}% ·
+                  {observation.source || 'legacy'}
+                </span>
+                <code>{JSON.stringify(observation.value)}</code>
+                <span class={`observation-review ${observation.review_status || 'unreviewed'}`}>
+                  {observation.review_status || 'unreviewed'}
+                </span>
+                {#if !['accepted', 'corrected', 'rejected', 'unobservable'].includes(observation.review_status)}
+                  <div class="observation-correction">
+                    <input class="form-input" placeholder="frc971" bind:value={observationTeamDraft[observation.id]} />
+                    <input class="form-input" aria-label="Corrected observation JSON" bind:value={observationValueDraft[observation.id]} />
+                    <button class="btn btn-sm" on:click={() => correctObservation(observation)} disabled={busy}>Save correction</button>
+                  </div>
+                  <div class="review-actions">
+                    <button class="btn btn-sm" on:click={() => reviewObservation(observation, 'accepted')} disabled={busy}>Accept</button>
+                    <button class="btn btn-sm" on:click={() => reviewObservation(observation, 'rejected')} disabled={busy}>Reject</button>
+                    <button class="btn btn-sm" on:click={() => reviewObservation(observation, 'unobservable')} disabled={busy}>Unobservable</button>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </section>
       {/if}
 
       {#if detail.qwenClips?.length}
@@ -362,6 +468,8 @@
   .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
   .identity-editor { display:flex; gap:var(--gap-1); }
   .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); align-items:center; }
+  .observation-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr)); gap:var(--gap-3); align-items:end; margin-bottom:var(--space-3); }
+  .bulk-actions { display:flex; gap:var(--gap-2); flex-wrap:wrap; }
   .observation-review { font-size:.7rem; text-transform:uppercase; color:var(--text-muted); }
   .observation-review.accepted,.observation-review.corrected { color:var(--green-strong); }
   .observation-correction { grid-column:1/-1; display:grid; grid-template-columns:minmax(7rem,.4fr) minmax(12rem,1fr) auto; gap:var(--gap-2); }

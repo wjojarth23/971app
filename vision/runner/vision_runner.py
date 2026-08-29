@@ -132,6 +132,27 @@ def qwen_box_point(box_0_1000, frame_shape, homography):
 ROBOT_CENTRED_QWEN_EVENTS = {"climb_attempt", "climb_success", "disabled_or_immobile"}
 
 
+def nearest_track(point, robot_tracks, timestamp_ms, alliance=None, max_distance=None, window_ms=500):
+    """The robot track closest to `point` at `timestamp_ms`, as (track,
+    distance). Shared by every attribution path so they agree on what "the
+    robot this happened to" means: same alliance if one is known, a trajectory
+    sample within `window_ms`, then nearest by distance in whatever space
+    field_point() put both in."""
+    best_track, best_distance = None, None
+    for track in robot_tracks:
+        if alliance and track.get("alliance") != alliance:
+            continue
+        closest = min(track["trajectory"], key=lambda p: abs(p["t"] - timestamp_ms), default=None)
+        if not closest or abs(closest["t"] - timestamp_ms) > window_ms:
+            continue
+        distance = math.hypot(closest["x"] - point[0], closest["y"] - point[1])
+        if best_distance is None or distance < best_distance:
+            best_track, best_distance = track, distance
+    if best_track is not None and max_distance is not None and best_distance > float(max_distance):
+        return None, best_distance
+    return best_track, best_distance
+
+
 def attribute_qwen_event(event, robot_tracks, timestamp_ms, frame_shape, homography, max_distance):
     """Resolve a Qwen event to the robot track it happened on. Returns
     (track, distance); track is None when nothing matched. Attribution is only
@@ -144,19 +165,7 @@ def attribute_qwen_event(event, robot_tracks, timestamp_ms, frame_shape, homogra
     if point is None:
         return None, None
     alliance = event.get("alliance") if event.get("alliance") in {"red", "blue"} else None
-    best_track, best_distance = None, None
-    for track in robot_tracks:
-        if alliance and track.get("alliance") != alliance:
-            continue
-        closest = min(track["trajectory"], key=lambda p: abs(p["t"] - timestamp_ms), default=None)
-        if not closest or abs(closest["t"] - timestamp_ms) > 500:
-            continue
-        distance = math.hypot(closest["x"] - point[0], closest["y"] - point[1])
-        if best_distance is None or distance < best_distance:
-            best_track, best_distance = track, distance
-    if best_track is not None and max_distance is not None and best_distance > float(max_distance):
-        return None, best_distance
-    return best_track, best_distance
+    return nearest_track(point, robot_tracks, timestamp_ms, alliance, max_distance)
 
 
 def qwen_event_to_observation(event, view, config, clip, response, robot_tracks=(), frame_shape=None):
@@ -181,6 +190,7 @@ def qwen_event_to_observation(event, view, config, clip, response, robot_tracks=
     return {
         "view_id": view["id"],
         "team_key": track["team_key"] if track else None,
+        "track_key": track.get("track_key") if track else None,
         "alliance": alliance or (track["alliance"] if track else None),
         "phase": phase_for_timestamp(timestamp_ms, config),
         "observation_type": observation_type, "value": value,
@@ -511,6 +521,39 @@ class PieceTracker:
         return self.finished + [track["points"] for track in self._active.values()]
 
 
+def attribute_climbs(detections, robot_tracks, view, config):
+    """YOLO's climb classes fire on the climbing structure, not on a tracked
+    robot, so they arrive with no identity of their own and used to be released
+    as permanently unattributed. Resolve each to the robot track nearest it at
+    that moment, which gives it a team as soon as that robot is named."""
+    homography = view.get("homography")
+    max_distance = config.get("climb_attribution_max_distance")
+    observations = []
+    for detection in detections:
+        x, y, _calibrated = field_point(detection["center"], homography)
+        track, distance = nearest_track(
+            (x, y), robot_tracks, detection["timestamp_ms"], detection["alliance"], max_distance,
+        )
+        observations.append({
+            "view_id": view["id"],
+            "team_key": track["team_key"] if track else None,
+            "track_key": track.get("track_key") if track else None,
+            "alliance": detection["alliance"] or (track["alliance"] if track else None),
+            "phase": None, "observation_type": detection["event_type"],
+            "value": {"level": config.get("default_climb_level")},
+            "started_ms": detection["timestamp_ms"], "ended_ms": detection["timestamp_ms"],
+            "confidence": detection["confidence"],
+            "source": "yolo", "review_status": "unreviewed",
+            "evidence": {
+                "source": "yolo", "frame": detection["frame_index"],
+                "box": detection["coords"], "class_name": detection["class_name"],
+                "attribution_distance": distance, "attributed_from_track": bool(track),
+                "review_required": True,
+            },
+        })
+    return observations
+
+
 def attribute_scores(piece_trajectories, robot_tracks, goal_zones, frame_shape, view_id):
     """A piece is "scored" once its trajectory ends inside a goal zone.
     Attribution walks back to the trajectory's *origin* point (where the
@@ -526,17 +569,11 @@ def attribute_scores(piece_trajectories, robot_tracks, goal_zones, frame_shape, 
         if not scoring_zone:
             continue
         start_t, start_x, start_y = trajectory[0]
-        best_track, best_distance = None, None
-        for track in robot_tracks:
-            closest_point = min(track["trajectory"], key=lambda p: abs(p["t"] - start_t), default=None)
-            if not closest_point or abs(closest_point["t"] - start_t) > 500:
-                continue
-            distance = math.hypot(closest_point["x"] - start_x, closest_point["y"] - start_y)
-            if best_distance is None or distance < best_distance:
-                best_track, best_distance = track, distance
+        best_track, best_distance = nearest_track((start_x, start_y), robot_tracks, start_t)
         observations.append({
             "view_id": view_id,
             "team_key": best_track["team_key"] if best_track else None,
+            "track_key": best_track.get("track_key") if best_track else None,
             "alliance": best_track["alliance"] if best_track else scoring_zone.get("alliance"),
             "phase": None,
             "observation_type": "fuel_scored",
@@ -568,7 +605,7 @@ def process_view(model, view, config, video_path):
 
     reid = RobotReId()
     piece_tracker = PieceTracker()
-    climb_observations = []
+    climb_detections = []
     mask = None
     frame_shape = None
     # Per-canonical-id last-known snapshot, kept live regardless of whether
@@ -606,6 +643,11 @@ def process_view(model, view, config, video_path):
                     x, y, calibrated = field_point(center, view.get("homography"))
                     track = tracks.setdefault(key, {
                         "view_id": view["id"], "team_key": identity_map.get(key),
+                        # Local, run-scoped handle for this robot. The server
+                        # swaps it for the real vision_tracks UUID once the
+                        # rows are inserted, which is what lets naming one
+                        # robot attribute every event it produced.
+                        "track_key": key,
                         "alliance": alliance, "started_ms": timestamp_ms,
                         "ended_ms": timestamp_ms, "identity_confidence": 1 if identity_map.get(key) else 0,
                         "tracking_confidence": confidence, "trajectory": []
@@ -622,16 +664,14 @@ def process_view(model, view, config, video_path):
                     )
                     robot_state[canonical_id] = {"position": center, "velocity": velocity, "histogram": histogram, "alliance": alliance}
                 elif class_name.startswith(("climb_attempt", "climb_success")):
-                    event_type = "climb_success" if class_name.startswith("climb_success") else "climb_attempt"
-                    alliance = "red" if class_name.endswith("_red") else "blue" if class_name.endswith("_blue") else None
-                    climb_observations.append({
-                        "view_id": view["id"], "team_key": None, "alliance": alliance,
-                        "phase": None, "observation_type": event_type,
-                        "value": {"level": config.get("default_climb_level")},
-                        "started_ms": timestamp_ms, "ended_ms": timestamp_ms,
-                        "confidence": confidence,
-                        "source": "yolo", "review_status": "unreviewed",
-                        "evidence": {"source": "yolo", "frame": frame_index, "box": coords, "class_name": class_name, "review_required": True}
+                    # Held raw and attributed after the loop: these classes fire
+                    # on the climbing structure rather than on a tracked robot,
+                    # so they need the finished tracks to find an owner.
+                    climb_detections.append({
+                        "event_type": "climb_success" if class_name.startswith("climb_success") else "climb_attempt",
+                        "alliance": "red" if class_name.endswith("_red") else "blue" if class_name.endswith("_blue") else None,
+                        "timestamp_ms": timestamp_ms, "center": center, "coords": coords,
+                        "confidence": confidence, "frame_index": frame_index, "class_name": class_name,
                     })
                 # fuel_scored is deliberately not handled here even if legacy
                 # weights still emit it - the classical-CV pipeline below is
@@ -651,8 +691,10 @@ def process_view(model, view, config, video_path):
         pixel_pieces = detect_game_pieces(frame, mask, hsv_lower, hsv_upper, min_piece_area, min_circularity)
         piece_tracker.update(timestamp_ms, pixel_pieces)
 
-    fuel_observations = attribute_scores(piece_tracker.all_trajectories(), list(tracks.values()), goal_zones, frame_shape or (1, 1), view["id"])
-    return list(tracks.values()), climb_observations + fuel_observations
+    finished_tracks = list(tracks.values())
+    climb_observations = attribute_climbs(climb_detections, finished_tracks, view, config)
+    fuel_observations = attribute_scores(piece_tracker.all_trajectories(), finished_tracks, goal_zones, frame_shape or (1, 1), view["id"])
+    return finished_tracks, climb_observations + fuel_observations
 
 
 def run_job(model, run):

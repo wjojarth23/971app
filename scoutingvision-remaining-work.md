@@ -68,6 +68,37 @@ Also swapped several hardcoded hex colours on the vision pages for real
 design tokens — `var(--red, #c33)` never resolved, because no `--red` token
 exists, so those elements silently ignored dark theme.
 
+## Fixed since: the review-to-release path
+
+The pipeline could run without producing anything releasable. Three further
+defects, all fixed:
+
+- **Naming a robot did nothing.** `identity_map` is keyed by tracker IDs that
+  don't exist until a run finishes, so a first run attributes nothing, and the
+  identity editor was the intended recovery. But `update-track` wrote only to
+  `vision_tracks`, `vision_observations.track_id` was a designed-but-never-
+  populated column, and `summarizeVision` reads team identity solely off
+  observations — so a carefully identified track released nothing, and the
+  only working path was correcting every observation by hand. Observations now
+  carry the `track_key` of the robot they were attributed to, `complete`
+  resolves those into real `track_id` FKs, and `update-track` cascades the team
+  to that track's unreviewed observations. Naming one robot now attributes all
+  of its events.
+- **YOLO climbs were never attributed at all.** They fire on the climbing
+  structure rather than a tracked robot and were hardcoded `team_key: None`.
+  `attribute_climbs` now resolves each to the nearest same-alliance robot
+  track, deferred until after the frame loop so the tracks are complete.
+- **Every climb was silently dropped at release.** `release-run` only accepts
+  a real `climb_pos` value, but nothing could produce one: no UI field set
+  `default_climb_level`, so the value fell back to the literal `'success'`,
+  which is refused. There is now a Default climb level select on the run form,
+  Qwen is told the real vocabulary and has invented values clamped away, and
+  refusals are reported in the response and the UI instead of vanishing.
+
+Plus a bulk review path (`review-observations`, up to 500 ids) with source /
+status / confidence filters, since clearing a match's proposals one click at a
+time was slower than scouting the match by hand.
+
 ## 1. Done in this pass
 
 - **`VISION_RUNNER_TOKEN` deploy wiring is ready, not yet live.**

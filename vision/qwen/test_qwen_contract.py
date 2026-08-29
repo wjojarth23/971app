@@ -27,6 +27,24 @@ class QwenContractTest(unittest.TestCase):
         self.assertEqual(result["events"][0]["review_status"], "unreviewed")
         self.assertEqual(result["clip_quality"], "limited")
 
+    def test_keeps_a_climb_level_from_the_real_vocabulary(self):
+        for level in ("L1", "L2", "L3", "Failed", "N/A"):
+            result, _ = normalize_result({"events": [{
+                "type": "climb_success", "timestamp_ms": 2000,
+                "confidence": 0.9, "climb_level": level,
+            }]}, 0, 5000)
+            self.assertEqual(result["events"][0]["climb_level"], level)
+
+    def test_drops_a_climb_level_outside_the_vocabulary(self):
+        # Anything else would be carried to release-run and silently refused
+        # there, so it is better to fall back to the run's configured default.
+        for level in ("level 3", "deep", "success", "3", ""):
+            result, _ = normalize_result({"events": [{
+                "type": "climb_success", "timestamp_ms": 2000,
+                "confidence": 0.9, "climb_level": level,
+            }]}, 0, 5000)
+            self.assertIsNone(result["events"][0]["climb_level"], msg=level)
+
 
 if __name__ == "__main__":
     unittest.main()
