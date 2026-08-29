@@ -38,8 +38,45 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# FRC has used the 36h11 family since 2023.
-TAG_DICTIONARY = cv2.aruco.DICT_APRILTAG_36h11
+# FRC has used the 36h11 family since 2023; 2022 and earlier used 16h5. Named
+# rather than hardcoded so an older recording is still calibratable, and so a
+# bad family name is a clear failure reason instead of an AttributeError.
+TAG_FAMILIES = {
+    "36h11": "DICT_APRILTAG_36h11",
+    "36h10": "DICT_APRILTAG_36h10",
+    "25h9": "DICT_APRILTAG_25h9",
+    "16h5": "DICT_APRILTAG_16h5",
+}
+DEFAULT_TAG_FAMILY = "36h11"
+
+
+def aruco_unavailable():
+    """Why AprilTag detection can't run in this build, or None if it can.
+
+    opencv-python-headless ships aruco, but a slimmed or older build may not,
+    and that has to degrade to "no automatic calibration" rather than taking
+    down ordinary vision processing.
+    """
+    if not hasattr(cv2, "aruco"):
+        return "this OpenCV build has no cv2.aruco module"
+    for required in ("getPredefinedDictionary", "ArucoDetector", "DetectorParameters"):
+        if not hasattr(cv2.aruco, required):
+            return f"this OpenCV build's cv2.aruco is missing {required}"
+    return None
+
+
+def tag_dictionary(family=DEFAULT_TAG_FAMILY):
+    """Resolve a family name to an aruco dictionary. Returns (dictionary, reason);
+    dictionary is None when unsupported and reason says why."""
+    unavailable = aruco_unavailable()
+    if unavailable:
+        return None, unavailable
+    attribute = TAG_FAMILIES.get(str(family or DEFAULT_TAG_FAMILY).lower())
+    if not attribute:
+        return None, f"unknown tag family {family!r} (known: {', '.join(sorted(TAG_FAMILIES))})"
+    if not hasattr(cv2.aruco, attribute):
+        return None, f"this OpenCV build has no {attribute}"
+    return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, attribute)), None
 
 # Printed size of the black square, in metres. FRC's are 6.5in since 2024.
 DEFAULT_TAG_SIZE_M = 0.1651
@@ -60,6 +97,64 @@ DEFAULT_MAX_REPROJECTION_PX = 6.0
 DEFAULT_MIN_CAMERA_HEIGHT_M = 0.5
 DEFAULT_MAX_CAMERA_HEIGHT_M = 15.0
 DEFAULT_FIELD_MARGIN_M = 12.0
+
+
+def probe_recording(video_path, capture_factory=None):
+    """What we can learn about a recording before spending GPU time on it.
+
+    Reports resolution, fps, frame count and duration where the container
+    exposes them, plus warnings for the things that make a recording useless
+    or the results untrustworthy. Purely advisory - it never refuses to
+    process, because a container that under-reports its metadata is common and
+    is not itself a reason to discard footage.
+    """
+    open_capture = capture_factory or (lambda path: cv2.VideoCapture(str(path)))
+    report = {
+        "path": str(video_path), "readable": False, "width": 0, "height": 0,
+        "fps": 0.0, "frame_count": 0, "duration_seconds": None, "warnings": [],
+    }
+    try:
+        capture = open_capture(video_path)
+    except Exception as error:
+        report["warnings"].append(f"could not open recording: {error}")
+        return report
+    try:
+        report["readable"] = bool(capture.isOpened()) if hasattr(capture, "isOpened") else True
+        report["width"] = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        report["height"] = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        report["fps"] = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        report["frame_count"] = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    finally:
+        try:
+            capture.release()
+        except Exception:
+            pass
+
+    if not report["readable"]:
+        report["warnings"].append("recording could not be opened - wrong codec, or a truncated upload")
+        return report
+    if report["fps"] > 0 and report["frame_count"] > 0:
+        report["duration_seconds"] = report["frame_count"] / report["fps"]
+
+    if not report["width"] or not report["height"]:
+        report["warnings"].append("no frame dimensions reported - AprilTag calibration will be skipped")
+    elif report["width"] < 1280:
+        # A 6.5in tag ~14m away spans roughly 15px at 1600px wide, which the
+        # detector already misses about half the time. Below 720p it is
+        # hopeless, and small robots downfield suffer for the same reason.
+        report["warnings"].append(
+            f"low resolution ({report['width']}x{report['height']}) - "
+            "distant tags and robots may be too small to detect reliably"
+        )
+    if report["fps"] and report["fps"] < 15:
+        report["warnings"].append(f"low frame rate ({report['fps']:.1f} fps) - tracking may break across gaps")
+    if not report["frame_count"]:
+        report["warnings"].append("container reports no frame count - duration and phase timing may be unreliable")
+    elif report["duration_seconds"] is not None and report["duration_seconds"] < 30:
+        report["warnings"].append(
+            f"recording is only {report['duration_seconds']:.0f}s - shorter than a match, so it is probably partial"
+        )
+    return report
 
 
 def quaternion_to_matrix(w, x, y, z):
@@ -141,9 +236,17 @@ def camera_matrix_from_fov(width, height, horizontal_fov_deg):
     ])
 
 
-def detect_field_tags(frame):
-    """Detect 36h11 tags, as [{"id", "corners"}] with corners in detector order."""
-    dictionary = cv2.aruco.getPredefinedDictionary(TAG_DICTIONARY)
+def detect_field_tags(frame, family=DEFAULT_TAG_FAMILY):
+    """Detect field tags, as [{"id", "corners"}] with corners in detector order.
+
+    Returns an empty list when detection isn't possible at all - an
+    unsupported family, or an OpenCV build without aruco - because "saw no
+    tags" and "couldn't look" both mean the same thing to the caller, which
+    reports the reason separately via tag_dictionary().
+    """
+    dictionary, _reason = tag_dictionary(family)
+    if dictionary is None or frame is None:
+        return []
     detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
     corners, ids, _rejected = detector.detectMarkers(frame)
     if ids is None:
@@ -308,12 +411,18 @@ def implausible_camera_pose(
     return None
 
 
-def calibrate_from_frame(frame, layout, horizontal_fov_deg=None, camera_matrix=None, **kwargs):
+def calibrate_from_frame(
+    frame, layout, horizontal_fov_deg=None, camera_matrix=None,
+    family=DEFAULT_TAG_FAMILY, **kwargs,
+):
     """Convenience wrapper: detect tags in one frame and solve."""
+    dictionary, family_reason = tag_dictionary(family)
+    if dictionary is None:
+        return None, {"reason": family_reason, "tags_detected": 0, "tags_matched": 0}
     if camera_matrix is None:
         height, width = frame.shape[:2]
         camera_matrix = camera_matrix_from_fov(width, height, horizontal_fov_deg)
-    return solve_field_homography(detect_field_tags(frame), layout, camera_matrix, **kwargs)
+    return solve_field_homography(detect_field_tags(frame, family), layout, camera_matrix, **kwargs)
 
 
 def main():
@@ -324,6 +433,8 @@ def main():
     parser.add_argument("--layout", required=True, help="WPILib AprilTagFieldLayout JSON")
     parser.add_argument("--fov", type=float, help="Horizontal field of view in degrees")
     parser.add_argument("--tag-size", type=float, default=DEFAULT_TAG_SIZE_M)
+    parser.add_argument("--family", default=DEFAULT_TAG_FAMILY, choices=sorted(TAG_FAMILIES))
+    parser.add_argument("--max-reprojection-px", type=float, default=DEFAULT_MAX_REPROJECTION_PX)
     parser.add_argument("--frames", type=int, default=30, help="How many frames to try")
     args = parser.parse_args()
 
@@ -336,6 +447,7 @@ def main():
             break
         homography, diagnostics = calibrate_from_frame(
             frame, layout, horizontal_fov_deg=args.fov, tag_size_m=args.tag_size,
+            family=args.family, max_reprojection_px=args.max_reprojection_px,
         )
         # Prefer the frame that matched the most tags; more spread means a
         # better-conditioned pose.

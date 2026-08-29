@@ -28,6 +28,8 @@ import numpy as np
 import requests
 from ultralytics import YOLO
 
+from apriltag_calibration import probe_recording
+
 API = os.environ["VISION_API_URL"].rstrip("/") + "/api/vision-runner"
 TOKEN = os.environ["VISION_RUNNER_TOKEN"]
 RUNNER_ID = os.environ.get("VISION_RUNNER_ID", "vision-runner-local")
@@ -607,44 +609,97 @@ def autocalibrate_view(view, config, video_path, max_frames=30):
     """Solve this view's field homography from the AprilTags already on the
     field, when nobody hand-calibrated one.
 
-    Opt-in: needs a WPILib field layout path and the camera's horizontal FOV
-    (or explicit intrinsics), because a homography derived from wrong
-    intrinsics is confidently wrong rather than obviously wrong. Returns
-    (homography_or_None, diagnostics) and never raises - a view that can't
-    self-calibrate falls back to pixel coordinates exactly as before.
+    Explicitly opt-in twice over. It requires `apriltag_autocalibrate: true`
+    AND a layout path, because a homography derived from a guessed focal
+    length is confidently wrong rather than obviously wrong, and silently
+    swapping pixel coordinates for slightly-wrong metres is worse than leaving
+    a view uncalibrated. Manual calibration always wins - the caller only
+    reaches here when the view has no stored homography.
+
+    Returns (homography_or_None, diagnostics) and never raises: automatic
+    calibration is an enhancement, and no failure in it may take down ordinary
+    vision processing.
     """
+    diagnostics = {"attempted": False, "tags_matched": 0}
+    if not config.get("apriltag_autocalibrate"):
+        diagnostics["reason"] = "automatic calibration not enabled (set config.apriltag_autocalibrate)"
+        return None, diagnostics
     layout_path = config.get("apriltag_layout_path")
     if not layout_path:
-        return None, {"reason": "no apriltag_layout_path configured"}
+        diagnostics["reason"] = "no apriltag_layout_path configured"
+        return None, diagnostics
+
+    diagnostics["attempted"] = True
     try:
-        from apriltag_calibration import calibrate_from_frame, load_field_layout
+        from apriltag_calibration import (
+            DEFAULT_MAX_REPROJECTION_PX, DEFAULT_TAG_FAMILY, DEFAULT_TAG_SIZE_M,
+            aruco_unavailable, calibrate_from_frame, load_field_layout, tag_dictionary,
+        )
+
+        family = config.get("apriltag_family", DEFAULT_TAG_FAMILY)
+        diagnostics["tag_family"] = family
+        unavailable = aruco_unavailable() or tag_dictionary(family)[1]
+        if unavailable:
+            diagnostics["reason"] = unavailable
+            return None, diagnostics
 
         layout = load_field_layout(layout_path)
         if not layout.get("tags"):
-            return None, {"reason": f"no tags in layout {layout_path}"}
+            diagnostics["reason"] = f"no tags in layout {layout_path}"
+            return None, diagnostics
+        diagnostics["layout_tags"] = len(layout["tags"])
 
         fov = config.get("camera_horizontal_fov_deg") or view.get("camera_horizontal_fov_deg")
-        tag_size = float(config.get("apriltag_size_m", 0.1651))
+        if not fov:
+            diagnostics["reason"] = "no camera_horizontal_fov_deg configured, and intrinsics can't be guessed"
+            return None, diagnostics
+
+        tag_size = float(config.get("apriltag_size_m", DEFAULT_TAG_SIZE_M))
+        max_error = float(config.get("apriltag_max_reprojection_px", DEFAULT_MAX_REPROJECTION_PX))
         capture = cv2.VideoCapture(str(video_path))
-        best = (None, {"reason": "no frame yielded a solve", "tags_matched": 0})
-        for _ in range(max_frames):
-            ok, frame = capture.read()
-            if not ok:
-                break
-            solved, diagnostics = calibrate_from_frame(
-                frame, layout, horizontal_fov_deg=fov, tag_size_m=tag_size,
-            )
-            # More tags in view means a better-conditioned pose, so keep
-            # looking rather than taking the first frame that happens to work.
-            if solved is not None and diagnostics.get("tags_matched", 0) > best[1].get("tags_matched", 0):
-                best = (solved.tolist(), diagnostics)
-            elif best[0] is None:
-                best = (None, diagnostics)
-        capture.release()
+        best = (None, dict(diagnostics, reason="no frame in the sampled window contained enough tags"))
+        frames_read = 0
+        try:
+            for _ in range(max_frames):
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                frames_read += 1
+                solved, result = calibrate_from_frame(
+                    frame, layout, horizontal_fov_deg=fov, tag_size_m=tag_size,
+                    family=family, max_reprojection_px=max_error,
+                )
+                merged = dict(diagnostics, **result)
+                # More tags in view means a better-conditioned pose, so keep
+                # looking rather than taking the first frame that happens to
+                # work. A frame that saw nothing never displaces a real
+                # failure reason from one that did.
+                if solved is not None and merged.get("tags_matched", 0) > best[1].get("tags_matched", 0):
+                    best = (solved.tolist(), merged)
+                elif best[0] is None and merged.get("tags_detected", 0) >= best[1].get("tags_detected", 0):
+                    best = (None, merged)
+        finally:
+            capture.release()
+        best[1]["frames_sampled"] = frames_read
+        if not frames_read:
+            best[1]["reason"] = "recording produced no readable frames"
         return best
     except Exception as error:
-        # Calibration is an enhancement, never a reason to fail a run.
-        return None, {"reason": f"apriltag calibration failed: {error}"}
+        diagnostics["reason"] = f"apriltag calibration failed: {error}"
+        return None, diagnostics
+
+
+def resolve_view_calibration(view, config, video_path, solver=None):
+    """Decide this view's homography, manual first.
+
+    Split out from process_view so the precedence rule is directly testable:
+    a human who measured this camera outranks anything solved from tags, and
+    the solver must not even be consulted when a manual homography exists.
+    Returns (homography_or_None, diagnostics).
+    """
+    if view.get("homography"):
+        return view["homography"], {"attempted": False, "reason": "manual homography already set"}
+    return (solver or autocalibrate_view)(view, config, video_path)
 
 
 def process_view(model, view, config, video_path):
@@ -665,16 +720,31 @@ def process_view(model, view, config, video_path):
     capture.release()
     names = model.names
 
-    if not view.get("homography"):
-        # Nothing hand-calibrated for this view, so try the field's own
-        # AprilTags. Without either, field_point() passes pixels straight
-        # through and every derived distance is in pixels rather than metres.
-        # Written back onto the view so every downstream field_point() call
-        # in this run picks it up.
-        solved, diagnostics = autocalibrate_view(view, config, video_path)
-        if solved is not None:
-            view["homography"] = solved
-        view["autocalibration"] = diagnostics
+    # Preflight the recording before spending GPU time on it, so an unusable
+    # upload is visible in the run's diagnostics rather than inferred later
+    # from strange results.
+    view["preflight"] = probe_recording(video_path)
+    for warning in view["preflight"].get("warnings", []):
+        print(f"[preflight] {view.get('label') or view['id']}: {warning}", flush=True)
+
+    # Manual calibration always wins; automatic calibration exists to make an
+    # uncalibrated view usable, never to second-guess a human who measured
+    # this camera. Without either, field_point() passes pixels straight
+    # through and every derived distance is in pixels rather than metres. The
+    # solved matrix is written back onto the view so every downstream
+    # field_point() call in this run picks it up.
+    solved, diagnostics = resolve_view_calibration(view, config, video_path)
+    if solved is not None:
+        view["homography"] = solved
+    view["autocalibration"] = diagnostics
+    if diagnostics.get("attempted"):
+        print(
+            f"[calibration] {view.get('label') or view['id']}: "
+            f"{'accepted' if solved is not None else 'rejected'} - {diagnostics.get('reason')} "
+            f"(tags matched {diagnostics.get('tags_matched', 0)}, "
+            f"error {diagnostics.get('reprojection_error_px')})",
+            flush=True,
+        )
 
     reid = RobotReId()
     piece_tracker = PieceTracker()
@@ -787,6 +857,7 @@ def run_job(model, run):
         raise RuntimeError(f"Run requires Qwen revision {run['qwen_revision']}, runner serves {QWEN_REVISION}")
     api("processing", run_id=run["id"])
     all_tracks, all_observations, all_qwen_clips = [], [], []
+    view_diagnostics = []
     with tempfile.TemporaryDirectory(prefix="spartans-vision-") as directory:
         directory = Path(directory)
         for index, view in enumerate(run.get("views", [])):
@@ -806,7 +877,19 @@ def run_job(model, run):
             all_observations.extend(observations)
             all_observations.extend(qwen_observations)
             all_qwen_clips.extend(qwen_clips)
-    api("complete", run_id=run["id"], tracks=all_tracks, observations=all_observations, qwen_clips=all_qwen_clips)
+            # Per-view calibration and recording diagnostics travel with the
+            # run so a reviewer can see why a view produced pixel coordinates
+            # instead of metres without reading the runner's logs.
+            view_diagnostics.append({
+                "view_id": view["id"], "label": view.get("label"),
+                "preflight": view.get("preflight"),
+                "calibration": view.get("autocalibration"),
+                "calibrated": bool(view.get("homography")),
+            })
+    api(
+        "complete", run_id=run["id"], tracks=all_tracks, observations=all_observations,
+        qwen_clips=all_qwen_clips, view_diagnostics=view_diagnostics,
+    )
 
 
 def heartbeat(current_run_id=None, last_error=None):

@@ -679,10 +679,18 @@ falls out of that pose — for a point at z=0 the third rotation column drops
 out, leaving `K [r1 r2 t]`, which is inverted because `field_point()` goes
 image → field.
 
-Opt-in via `config.apriltag_layout_path` (the WPILib layout is game-year
-specific, so a path rather than baked-in constants) plus the camera's
-horizontal FOV or real intrinsics. It refuses rather than guessing, through
-three gates that each exist because something got past the previous one:
+**Opt-in twice over, and manual calibration always wins.** It needs
+`config.apriltag_autocalibrate: true` *and* `config.apriltag_layout_path` (the
+WPILib layout is game-year specific, so a path rather than baked-in
+constants), plus `camera_horizontal_fov_deg` — which is never guessed, because
+a homography from invented intrinsics is confidently wrong rather than
+obviously wrong. `resolve_view_calibration()` holds the precedence rule and
+does not even consult the solver when a view already has a homography.
+`apriltag_family` (36h11/36h10/25h9/16h5), `apriltag_size_m` and
+`apriltag_max_reprojection_px` are configurable too.
+
+It refuses rather than guessing, through three gates that each exist because
+something got past the previous one:
 
 1. **Reprojection error** — catches a wrong tag size or an overstated FOV.
 2. **Physical plausibility of the recovered pose** — catches what reprojection
@@ -707,6 +715,21 @@ diagnostics say so and suggest aiming to catch a side wall.
 
 `main()` doubles as a CLI for calibrating a venue once from a recording,
 printing the homography and diagnostics as JSON.
+
+**Nothing here can fail a run.** A missing layout, an OpenCV build without
+`cv2.aruco`, an unknown tag family, an unreadable recording, no tags in view
+or a refused solve all fall back to pixel coordinates and record why.
+
+**Per-view diagnostics travel with the run.** `complete` now carries a
+`view_diagnostics` entry per view: the recording preflight (resolution, fps,
+frame count, duration, and warnings about low resolution, low frame rate or a
+clip shorter than a match), plus the calibration outcome — tags detected and
+matched, reprojection error, recovered camera position, coplanarity, and the
+fallback reason when it was refused. That means a reviewer can see why a view
+produced pixels instead of metres without reading the runner's logs.
+
+Setup, capture expectations and the remaining real-world validation are in
+`vision/runner/README.md`.
 
 ### Calibration & tuning
 

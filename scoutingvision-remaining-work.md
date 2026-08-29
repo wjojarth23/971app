@@ -277,9 +277,18 @@ Both are exact with perfect corners, so this is noise sensitivity rather than
 bias. When the visible tags are coplanar the diagnostics say so and suggest
 aiming to catch a side wall.
 
-Still wants a real field to confirm the corner-ordering convention against —
-that is the one assumption synthetic tests can't validate, and the
-reprojection gate is what would catch it being wrong.
+Now also opt-in behind an explicit `apriltag_autocalibrate` flag (not just a
+layout path), configurable for tag family and error threshold, with a
+recording preflight reporting resolution/fps/duration and per-view diagnostics
+travelling back with the run. 44 Python tests cover layout parsing, the solve,
+every refusal path, and manual-homography precedence.
+
+**Still wants a real field** to confirm the corner-ordering convention — the
+one assumption synthetic tests can't validate. The reprojection gate is what
+would catch it being wrong, so check the reported camera position looks sane
+on the first real run before trusting the numbers. Two practical notes from
+testing: a 6.5in tag at 14 m is only ~15px and the detector misses about half
+of those, and accuracy is much better when the camera sees more than one wall.
 
 ### B4c. Analytics vision does better than a human **[NICE]**
 
