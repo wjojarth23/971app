@@ -22,10 +22,16 @@
   let cameraPosition = 'Elevated fixed tripod';
   let syncOffsetMs = 0;
   let homographyText = '';
+  let fieldMaskText = '';
+  let goalZonesText = '';
   let files = [];
   let modelName = 'frc-vision-yolo';
   let modelVersion = 'v1';
   let confidenceFloor = 0.35;
+  let hsvLowerText = '20,100,100';
+  let hsvUpperText = '35,255,255';
+  let minPieceArea = 40;
+  let minCircularity = 0.55;
   let busy = false;
   let reviewNotes = {};
   let trackTeamDraft = {};
@@ -84,13 +90,29 @@
         homography = JSON.parse(homographyText);
         if (!Array.isArray(homography) || homography.flat(Infinity).length !== 9) throw new Error('Homography must contain exactly nine numbers.');
       }
+      // Field mask / goal zones: normalized (0-1) polygons, same shape the
+      // hybrid classical-CV game-piece pipeline reads server-side (see
+      // scoutingvision.md). A plain JSON textarea for now, matching the
+      // existing homography field - a visual polygon-drawing tuner is a
+      // natural future enhancement, not built here.
+      let fieldMask = null;
+      if (fieldMaskText.trim()) {
+        fieldMask = JSON.parse(fieldMaskText);
+        if (!Array.isArray(fieldMask) || fieldMask.length < 3) throw new Error('Field mask must be an array of at least 3 [x,y] points.');
+      }
+      let goalZones = [];
+      if (goalZonesText.trim()) {
+        goalZones = JSON.parse(goalZonesText);
+        if (!Array.isArray(goalZones)) throw new Error('Goal zones must be an array of {label, alliance, polygon}.');
+      }
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
         const result = await post({
           action: 'add-view', vision_match_id: selectedId,
           label: files.length > 1 ? `${cameraLabel} ${index + 1}` : cameraLabel,
           camera_position: cameraPosition, file_name: file.name,
-          sync_offset_ms: Number(syncOffsetMs) || 0, homography
+          sync_offset_ms: Number(syncOffsetMs) || 0, homography,
+          field_mask: fieldMask, goal_zones: goalZones
         });
         const { error: uploadError } = await supabase.storage.from('vision-recordings').uploadToSignedUrl(result.upload.path, result.upload.token, file, { contentType: file.type || 'video/quicktime' });
         if (uploadError) throw uploadError;
@@ -101,10 +123,29 @@
     finally { busy = false; }
   }
 
+  function parseHsv(text, fallback) {
+    const parts = text.split(',').map((part) => Number(part.trim()));
+    return parts.length === 3 && parts.every(Number.isFinite) ? parts : fallback;
+  }
+
   async function queueRun() {
     busy = true;
     try {
-      await post({ action: 'queue-run', vision_match_id: selectedId, model_name: modelName, model_version: modelVersion, config: { confidence_floor: Number(confidenceFloor) } });
+      await post({
+        action: 'queue-run', vision_match_id: selectedId, model_name: modelName, model_version: modelVersion,
+        config: {
+          confidence_floor: Number(confidenceFloor),
+          // Hybrid classical-CV game-piece detection tuning (see
+          // scoutingvision.md) - HSV threshold range for the game piece
+          // color, plus contour area/circularity filters. Defaults on the
+          // runner side if left blank; per-venue lighting is exactly why
+          // this is tunable per run rather than hardcoded.
+          hsv_lower: parseHsv(hsvLowerText, undefined),
+          hsv_upper: parseHsv(hsvUpperText, undefined),
+          min_piece_area: Number(minPieceArea) || undefined,
+          min_circularity: Number(minCircularity) || undefined
+        }
+      });
       await loadMatches();
     } catch (exception) { error = exception.message; }
     finally { busy = false; }
@@ -189,6 +230,8 @@
           <input class="form-input" placeholder="Camera position" bind:value={cameraPosition} />
           <input class="form-input" type="number" bind:value={syncOffsetMs} title="Synchronization offset in milliseconds" />
           <input class="form-input" placeholder="3×3 homography JSON (optional)" bind:value={homographyText} />
+          <input class="form-input" placeholder="Field mask [[x,y],...] normalized 0-1 (optional)" bind:value={fieldMaskText} title="Region of interest excluding audience/background - see scoutingvision.md" />
+          <input class="form-input" placeholder='Goal zones [{"label","alliance","polygon"}] (optional)' bind:value={goalZonesText} title="Where a scored game piece's trajectory ends - required for automatic fuel attribution" />
           <input class="form-input" type="file" accept="video/*" multiple on:change={(event) => files = [...event.currentTarget.files]} />
           <button class="btn btn-sm" on:click={uploadViews} disabled={busy || !files.length}><Upload size={14} /> Upload {files.length || ''} view{files.length === 1 ? '' : 's'}</button>
         </div>
@@ -197,6 +240,15 @@
       <section class="surface-card section">
         <h2>ML processing</h2>
         <div class="run-controls"><input class="form-input" bind:value={modelName} /><input class="form-input" bind:value={modelVersion} /><label>Confidence <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={confidenceFloor} /></label><button class="btn btn-primary btn-sm" on:click={queueRun} disabled={busy || !detail.views.length}>Queue run</button></div>
+        <details class="hybrid-cv-config">
+          <summary>Hybrid game-piece detection tuning (optional)</summary>
+          <div class="run-controls">
+            <label>HSV lower (H,S,V) <input class="form-input" bind:value={hsvLowerText} /></label>
+            <label>HSV upper (H,S,V) <input class="form-input" bind:value={hsvUpperText} /></label>
+            <label>Min area (px²) <input class="form-input" type="number" min="0" bind:value={minPieceArea} /></label>
+            <label>Min circularity <input class="form-input" type="number" min="0" max="1" step="0.05" bind:value={minCircularity} /></label>
+          </div>
+        </details>
         <div class="run-list">{#each detail.runs as run}<span class={`status ${run.status}`}>
           {run.model_name} {run.model_version} · {run.status}{run.error ? ` · ${run.error}` : ''}
           {#if run.released_at}<em class="released-tag">released</em>
@@ -246,6 +298,9 @@
   .upload-grid,.run-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap-2); margin-top:var(--space-3); }
   .run-controls { grid-template-columns:1fr 1fr 10rem auto; align-items:end; }
   .run-controls label { display:grid; gap:var(--space-1); }
+  .hybrid-cv-config { margin-top:var(--space-3); }
+  .hybrid-cv-config summary { cursor:pointer; color:var(--text-muted); font-size:.85rem; }
+  .hybrid-cv-config .run-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .status { padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); background:var(--surface-2); display:inline-flex; align-items:center; gap:var(--gap-2); }
   .status.failed { color:var(--red,#c33); }
   .status button { display:inline-flex; align-items:center; gap:4px; }

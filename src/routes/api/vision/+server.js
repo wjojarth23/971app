@@ -151,7 +151,8 @@ export async function POST({ request }) {
       vision_match_id: body.vision_match_id, label: body.label, storage_path: storagePath,
       camera_position: body.camera_position || null, frame_rate: body.frame_rate || null,
       width: body.width || null, height: body.height || null, sync_offset_ms: body.sync_offset_ms || 0,
-      homography: body.homography || null, calibration_points: body.calibration_points || []
+      homography: body.homography || null, calibration_points: body.calibration_points || [],
+      field_mask: body.field_mask || null, goal_zones: body.goal_zones || []
     }).select('*').single();
     if (error) return json({ error: error.message }, { status: 400 });
     const { data: upload, error: uploadError } = await client.storage.from('vision-recordings').createSignedUploadUrl(storagePath);

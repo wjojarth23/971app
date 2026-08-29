@@ -38,3 +38,8 @@ vite.config.ts.timestamp-*
 
 # Local secrets file
 secrets.txt
+
+# Python (vision/runner, vision/training)
+__pycache__/
+*.pyc
+.venv/

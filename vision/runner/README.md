@@ -1,16 +1,34 @@
 # Vision ML Runner
 
 Private post-match worker for `/scouting/vision`. It downloads every camera
-view through one-hour signed URLs, runs versioned custom Ultralytics YOLO
-weights, tracks robots, emits trajectory/action evidence, and reports results
-to the authenticated runner API. The web app never receives model weights or
-the runner token.
+view through one-hour signed URLs, runs a hybrid detection pipeline, tracks
+robots, emits trajectory/action/scoring evidence, and reports results to the
+authenticated runner API. The web app never receives model weights or the
+runner token.
 
-This dense tracking worker complements the offline Qwen3-VL bootstrap in
+**Hybrid pipeline** (adapted from community R&D shared on Chief Delphi,
+"Computer Vision Scouting" - see `scoutingvision.md` for the full writeup):
+
+- **Robots**: versioned custom Ultralytics YOLO weights + built-in
+  cross-frame tracking, plus a velocity+color-histogram re-identification
+  pass (`RobotReId`) that recovers a robot's tracked identity across a brief
+  occlusion instead of splitting it into two unrelated tracks.
+- **Game pieces (fuel)**: *not* a YOLO class - classical HSV color
+  thresholding + contour/circularity filtering (`detect_game_pieces`),
+  tracked frame-to-frame (`PieceTracker`), and attributed to a scoring robot
+  by tracing a piece's trajectory back to its origin and finding the closest
+  robot track at that moment (`attribute_scores`) - not whichever robot is
+  nearest the goal when the piece lands.
+
+Requires a per-view **field mask** (audience/background exclusion) and
+**goal zone** calibration (where a scored piece's trajectory should end) to
+get useful output - see the upload form on `/scouting/vision`.
+
+This worker complements the offline Qwen3-VL bootstrap in
 `vision/training/bootstrap_annotate.py`. Qwen proposes semantic events for
-human review; this worker provides deterministic per-frame tracks and mobility
-metrics. Qwen does not replace the tracker or write production observations
-directly.
+human review; this worker provides deterministic per-frame tracks, mobility
+metrics, and piece attribution. Qwen does not replace the tracker or write
+production observations directly.
 
 Required environment:
 
@@ -29,9 +47,13 @@ python3 -m venv .venv
 .venv/bin/python vision_runner.py
 ```
 
-The supplied weights must define `robot_red`, `robot_blue`, `fuel_scored`,
-`climb_attempt`, and `climb_success` classes (alliance suffixes are supported
-for action classes). A model cannot identify a specific FRC team from alliance
+The supplied weights must define `robot_red`, `robot_blue`, `climb_attempt`,
+and `climb_success` classes (alliance suffixes supported for action classes).
+**Do not train a `fuel_scored` class** - fuel detection is the classical CV
+pipeline above, tuned via `vision_runs.config` (`hsv_lower`/`hsv_upper`/
+`min_piece_area`/`min_circularity`), not trained weights; any `fuel_scored`
+box a legacy model still emits is explicitly ignored rather than
+double-counted. A model cannot identify a specific FRC team from alliance
 color alone. Queue configuration may provide an audited `identity_map` from
 `<view id>:<tracker id>` to `frcNNNN`; unidentified tracks are marked for human
 review instead of guessed.

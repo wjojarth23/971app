@@ -40,7 +40,7 @@ the code and what does it do."
 
 ## Database
 
-Two SQL files, neither yet applied to production (see **Setup checklist**
+Three SQL files, none yet applied to production (see **Setup checklist**
 below).
 
 ### `migrations/20260828_vision_system.sql`
@@ -53,7 +53,7 @@ Seven tables, all with RLS enabled:
 | `vision_views` | One row per uploaded camera recording for a match: storage path, camera position, frame rate/dimensions, sync offset, homography + calibration points. |
 | `vision_runs` | One row per model-processing attempt on a match. Immutable `model_name`/`model_version`/`config`; `status`: `queued → claimed → processing → complete/failed/cancelled`. |
 | `vision_tracks` | Per-robot trajectory output from one run: alliance, start/end ms, identity + tracking confidence, raw `trajectory` points, derived `metrics` (see analytics below), `needs_review` flag. |
-| `vision_observations` | Discrete detected events (`fuel_attempt`, `fuel_scored`, `climb_attempt`, `climb_success`, `mobility`, `disabled`, `identity`) with a JSON `value`, confidence, and `evidence` (frame/box) for audit. |
+| `vision_observations` | Discrete detected events (`fuel_attempt`, `fuel_scored`, `climb_attempt`, `climb_success`, `mobility`, `disabled`, `identity`) with a JSON `value`, confidence, and `evidence` for audit. `climb_*` evidence is a YOLO frame/box; `fuel_scored` evidence is the classical-CV goal zone label + trajectory length (see **Hybrid game-piece detection** below - fuel isn't a YOLO detection). |
 | `vision_discrepancies` | Vision-vs-TBA mismatches queued for human review, with severity (`info`/`warning`/`critical`) and a resolution workflow. |
 | `vision_reference_snapshots` | The TBA match breakdown captured at analysis time, so later re-review doesn't depend on TBA's API still returning the same shape. |
 
@@ -89,6 +89,17 @@ Three additions on top of the above:
 Both new tables are SELECT-only for `authenticated` + `VISION_REVIEW` (read
 for the dashboard); all writes go through `service_role` (the runner's own
 heartbeat call, and the release bridge's privileged insert — see below).
+
+### `migrations/20260829_vision_field_mask_goal_zones.sql`
+
+Two more columns on `vision_views` (no new tables, no new RLS - already
+covered by the table's existing policy from the first migration):
+
+- **`field_mask` jsonb** — a normalized (0-1) ROI polygon; detections
+  outside it (audience, pit area) are discarded before either detector runs.
+- **`goal_zones` jsonb** (default `[]`) — array of `{label, alliance,
+  polygon}`; where a scored game piece's trajectory is expected to end. See
+  **Hybrid game-piece detection** under the runner section below.
 
 ## Backend
 
@@ -291,12 +302,18 @@ inline). Right pane, once a match is selected:
 
 1. **Camera views** — inline `<video>` playback per uploaded view (signed
    URL from the detail fetch), plus an upload form (label, position, sync
-   offset, optional homography JSON, file picker). Upload flow calls
-   `add-view` for a signed upload URL, then uploads directly to Supabase
-   Storage via `supabase.storage...uploadToSignedUrl` — the raw video never
-   transits the SvelteKit server.
-2. **ML processing** — queue a run by name/version/confidence floor; lists
-   past runs with status (and error, if failed).
+   offset, optional homography JSON, field mask JSON, goal zones JSON, file
+   picker). Upload flow calls `add-view` for a signed upload URL, then
+   uploads directly to Supabase Storage via
+   `supabase.storage...uploadToSignedUrl` — the raw video never transits the
+   SvelteKit server. Field mask/goal zones are plain JSON textareas for now
+   (no visual polygon-drawing tuner - see the runner section's calibration
+   note).
+2. **ML processing** — queue a run by name/version/confidence floor, plus a
+   collapsed "Hybrid game-piece detection tuning" section (HSV lower/upper,
+   min area, min circularity - all optional, fall back to the runner's
+   defaults if left blank); lists past runs with status (and error, if
+   failed).
 3. **Robot tracks & mobility** (once a run has tracks) — editable team-key
    field per track (writes back via `update-track`), plus derived distance /
    P90 speed / turn rate.
@@ -328,17 +345,42 @@ input; defaults to the active scouting event.
 ## External ML runner — `vision/runner/`
 
 `vision_runner.py`: a standalone Python polling loop (no web framework) —
-`claim` → `processing` → `process_view` per camera → `complete`/`fail`, using
-`requests` against `api/vision-runner`. Model inference is Ultralytics
-`YOLO(...).track(..., persist=True)` for detection + cross-frame tracking.
-Per frame:
-- `robot_red` / `robot_blue` boxes with a tracker id become trajectory points
-  (`field_point` applies the view's homography via `cv2.perspectiveTransform`
-  if one was calibrated, otherwise passes through raw pixel coordinates and
-  marks them `calibrated: false`).
-- `fuel_scored` / `climb_attempt` / `climb_success` boxes (optionally
-  alliance-suffixed, e.g. `fuel_scored_red`) become `vision_observations`
-  directly, with the raw detection box kept as `evidence`.
+`heartbeat` (every iteration) → `claim` → `processing` → `process_view` per
+camera → `complete`/`fail`, using `requests` against `api/vision-runner`.
+
+The pipeline is **hybrid**, adapted from community R&D shared on Chief
+Delphi ("Computer Vision Scouting",
+chiefdelphi.com/t/computer-vision-scouting/511642 - see
+`implementations/vision-scouting-system.md` for the full rationale). Two
+different detectors run per frame, because the best tool differs by problem:
+
+- **Robots** — Ultralytics `YOLO(...).track(..., persist=True)` (detection +
+  ByteTrack-style cross-frame tracking). `robot_red`/`robot_blue` boxes with
+  a tracker id become trajectory points (`field_point` applies the view's
+  homography via `cv2.perspectiveTransform` if one was calibrated, otherwise
+  passes through raw pixel coordinates and marks them `calibrated: false`).
+  `climb_attempt`/`climb_success` boxes become `vision_observations`
+  directly, same as before.
+- **Game pieces (fuel)** — classical CV, *not* a YOLO class:
+  `detect_game_pieces` (HSV threshold → contour → area/circularity filter,
+  masked to the view's field mask if calibrated) finds piece candidates each
+  frame; `PieceTracker` associates them into trajectories via gated
+  nearest-neighbor matching; `attribute_scores` treats a trajectory ending
+  inside a calibrated goal zone as scored, and attributes it to whichever
+  robot track was closest to the trajectory's *origin* point (where the
+  piece left the shooter), not whichever robot is nearest the goal itself.
+  Any `fuel_scored` boxes from legacy weights are explicitly ignored rather
+  than double-counted alongside this pipeline.
+- **`RobotReId`** — recovers a robot's tracked identity across a brief
+  occlusion (blocked by a game piece or another robot) instead of minting a
+  new track id for the same physical robot. A candidate recovery needs both
+  signals to agree: the lost track's last known velocity projects to
+  roughly where the new detection is, *and* the new detection's bumper-
+  region color histogram (`bumper_histogram` - HSV hue+saturation of the
+  box's bottom third, ignoring brightness) is similar enough to the lost
+  track's. Position alone is ambiguous with several same-alliance robots
+  nearby; this file's own smoke tests (see below) confirm a same-position,
+  different-looking robot is correctly rejected rather than merged.
 
 Team identity is never inferred from alliance color — a track only gets a
 `team_key` if the run's `config.identity_map` (an audited
@@ -346,6 +388,45 @@ Team identity is never inferred from alliance color — a track only gets a
 during review) contains an entry for it; otherwise `needs_review: true`. No
 model weights are committed to the repo — `VISION_MODEL_PATH` must point to
 a locally trained/versioned `.pt` file (see training pipeline below).
+
+### Calibration & tuning
+
+- **Field mask** (`vision_views.field_mask`) and **goal zones**
+  (`vision_views.goal_zones`) — normalized (0-1) polygons, set per view via
+  a JSON textarea on the upload form (matching the existing homography JSON
+  field). A field mask excludes audience/background from *both* detectors; a
+  goal zone is where a scored piece's trajectory is expected to end. Without
+  a goal zone calibrated, no fuel can ever be attributed - `attribute_scores`
+  only fires for trajectories that actually end inside one.
+- **HSV range / min area / min circularity** (`vision_runs.config.hsv_lower`,
+  `hsv_upper`, `min_piece_area`, `min_circularity`) — per-run, since per the
+  source community's own experience, lighting varies enough by venue that a
+  single hardcoded threshold doesn't survive multiple events. Exposed as a
+  collapsed "Hybrid game-piece detection tuning" section on the run-queue
+  form; falls back to `DEFAULT_HSV_LOWER`/`DEFAULT_HSV_UPPER`/etc. in
+  `vision_runner.py` if left blank.
+
+No visual polygon-drawing/HSV-preview tuner tool exists yet (the source
+community post describes building one) - calibration today is hand-written
+JSON/numbers. A natural follow-up, not built here.
+
+### Verifying the pure-logic pieces without a GPU or real footage
+
+`PieceTracker`, `detect_game_pieces`, `build_mask`, `point_in_zone`,
+`attribute_scores`, and `RobotReId` are all plain Python/OpenCV/NumPy with
+no YOLO dependency, so they can be exercised directly against synthetic
+frames and fixtures - stub `sys.modules['ultralytics']` before import (the
+module only touches `ultralytics.YOLO` at call time, not import time) since
+`vision_runner.py` otherwise requires the real package. There's no
+pytest/CI wiring for this yet (no Python tests exist anywhere else in this
+repo either) - this was run ad hoc during development to confirm, concretely:
+a moving piece stays one trajectory; two simultaneous distant pieces don't
+merge; a non-circular blob is rejected by the circularity filter; a piece
+that never enters a goal zone produces no observation; a piece is attributed
+to the robot closest to its *origin*, not the robot closest to the goal; an
+occluded robot is recovered under its original id when both position and
+appearance match; and a same-position, different-colored robot is correctly
+*not* merged.
 
 ## Training pipeline — `vision/training/`
 
@@ -430,12 +511,13 @@ this establishes one.
 
 ## Setup checklist (nothing here works until these are done)
 
-1. Run **both** migration files against the real Supabase project, in order
-   — **neither is applied yet** as of this doc; production currently has no
-   `vision_*` tables, no `vision-recordings` bucket, and no `vision_notify`
-   column:
+1. Run **all three** migration files against the real Supabase project, in
+   order — **none are applied yet** as of this doc; production currently has
+   no `vision_*` tables, no `vision-recordings` bucket, no `vision_notify`
+   column, and no field-mask/goal-zone columns:
    - `migrations/20260828_vision_system.sql`
    - `migrations/20260829_vision_notifications_release_fleet.sql`
+   - `migrations/20260829_vision_field_mask_goal_zones.sql`
 2. Grant `VISION_REVIEW` (and `VISION_RELEASE`, for whoever should be able to
    release results) from the admin panel's Permissions column - this is now
    possible through the app (see **Slack alerting** above for how the
