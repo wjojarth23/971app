@@ -9,6 +9,7 @@
 
   let matches = [];
   let noteText = '';
+  let rankingImpact = 0;
   let selectedMatch = null;
   let selectedMatchKey = '';
   let selectedTeam = '';
@@ -195,7 +196,8 @@
         match_key: selectedMatch.match_key,
         match_number: selectedMatch.match_number,
         team_key: selectedTeam,
-        notes: noteText || ''
+        notes: noteText || '',
+        ranking_impact: rankingImpact
       };
       const res = await authFetch('/notescout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
@@ -203,7 +205,8 @@
         alert('Save failed: ' + (data?.error || 'unknown'));
       } else {
         noteText = '';
-        alert('Saved');
+        rankingImpact = 0;
+        alert(data.warning || 'Saved');
       }
     } catch (e) {
       alert('Save error: ' + e.message);
@@ -328,6 +331,18 @@
   <textarea id="notesArea" class="form-input" rows="10" bind:value={noteText} placeholder="Enter scouting notes here (plain text)."></textarea>
       </div>
 
+      <div class="form-group">
+        <label class="form-label" for="rankingImpact">Ranking impact</label>
+        <select id="rankingImpact" class="form-select" bind:value={rankingImpact}>
+          <option value={-2}>Major concern</option>
+          <option value={-1}>Concern</option>
+          <option value={0}>Observation only</option>
+          <option value={1}>Positive</option>
+          <option value={2}>Standout</option>
+        </select>
+        <small class="form-help">This structured rating affects Scout Power. The note text remains for human review.</small>
+      </div>
+
       <div class="page-actions">
         <button class="btn btn-primary" on:click={saveNote} disabled={saving || !selectedTeam || !selectedMatch?.match_key}>Save</button>
         <button class="btn btn-outline" on:click={() => { noteText=''; }} disabled={!noteText}>Clear</button>
@@ -350,6 +365,9 @@
         {#each teamNotes as n}
           <div style="border-bottom:1px solid var(--border); padding:0.75rem 0">
             <div style="font-size:0.9rem; color:var(--secondary); font-weight:700">{n.match_number ? ' #' + n.match_number : ''}</div>
+            <div class="impact-badge" class:negative={Number(n.ranking_impact) < 0} class:positive={Number(n.ranking_impact) > 0}>
+              Ranking impact: {Number(n.ranking_impact) > 0 ? '+' : ''}{Number(n.ranking_impact) || 0}
+            </div>
             <div style="white-space:pre-wrap; margin-top:0.25rem">{n.notes}</div>
           </div>
         {/each}
@@ -367,6 +385,19 @@
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: var(--gap-3);
   }
+
+  .impact-badge {
+    display: inline-block;
+    margin-top: var(--space-1);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+
+  .impact-badge.negative { color: var(--red-strong); background: var(--red-soft); }
+  .impact-badge.positive { color: var(--success); }
   
   /* Mobile Responsive Styles */
   @media (max-width: 768px) {

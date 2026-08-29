@@ -74,10 +74,13 @@ reading code.
   Competition nav folder, alongside Scouting rather than nested inside it -
   intentionally its own page rather than a mode of the Scouting workspace, so
   it never gets confused with the TBA-OPR-backed comparison table above. An
-  event-relative ranking built only from combined local scout observations:
-  weights average fuel per match (40%), driving (20%), accuracy (15%), climb
-  level (15%), and speed (10%); missing dimensions are omitted and the
-  remaining weights are rebalanced instead of being treated as zero. Also
+  event-relative ranking built only from combined local scout observations.
+  Observed match performance contributes 85% and an explicit human-selected
+  impact attached to saved `scout_notes` contributes 15%; neutral and legacy
+  notes remain review-only. Within match performance, weights are average fuel
+  per match (40%), driving (20%), accuracy (15%), climb level (15%), and speed
+  (10%); missing dimensions are omitted and the remaining weights are
+  rebalanced instead of being treated as zero. Also
   includes a **head-to-head comparison** view for any two event teams,
   covering scout power, matches scouted, fuel, driving, accuracy, speed, and
   climb success.
