@@ -44,8 +44,8 @@ the code and what does it do."
 
 ## Database
 
-Four SQL files, with the Qwen/DGX migration still requiring deployment (see **Setup checklist**
-below).
+Five SQL files. The first four are applied; the runner-health cron migration
+is deliberately held until merge (see **Setup checklist** below).
 
 ### `migrations/20260828_vision_system.sql`
 
@@ -218,8 +218,9 @@ permission to use the feature; they don't.
 
 ## Slack alerting
 
-`src/lib/server/slack_notifications.js` adds `notifyVisionRunFailed(runId)`
-and `notifyVisionCriticalDiscrepancy(discrepancyId)`, both following the same
+`src/lib/server/slack_notifications.js` adds `notifyVisionRunFailed(runId)`,
+`notifyVisionCriticalDiscrepancy(discrepancyId)` and
+`sendVisionRunnerHealthAlerts()`, all following the same
 `dispatchNotification` pattern every other Slack DM in this app uses
 (per-notification-type opt-out via `user_profiles.notification_settings`,
 automatic dedup via `user_notification_logs`). What's different from every
@@ -228,10 +229,28 @@ other notification category here: the recipient list isn't role-derived
 (`user_profiles.vision_notify`), deliberately separate from who can *use* the
 feature (everyone) - alerting is opt-in regardless, the same way match
 reminders or task assignments are, not a permission gate.
-`NOTIFICATION_KEYS.VISION_ALERT` covers both
-trigger conditions (run failure, new critical discrepancy) under one
-category rather than splitting them - to a recipient, both mean the same
-thing: "go look at Vision Scouting."
+`NOTIFICATION_KEYS.VISION_ALERT` covers all
+trigger conditions (run failure, new critical discrepancy, runner outage)
+under one category rather than splitting them - to a recipient, they all mean
+the same thing: "go look at Vision Scouting."
+
+**Runner outages** are the third trigger, and the only scheduled one. A
+runner that can't reach its Qwen service stops claiming work entirely and
+records that nowhere but its own `vision_runners` row, so queued runs would
+otherwise sit unprocessed with nobody told. `sendVisionRunnerHealthAlerts()`
+is driven by a `pg_cron` sweep every 5 minutes via
+`api/notifications/vision-stale-runners` (cron-gated by the same
+`cron_auth.js` token as the other notification sweeps, reusing the existing
+`planner_notifications_*` vault secrets rather than provisioning a new one).
+`visionRunnerAlert(runner, now)` holds the decision and is unit-tested
+separately in `src/lib/server/vision_runner_health.test.js`; it fires for a
+runner silent past 15 minutes, or one that is heartbeating but reporting
+`runtime_metrics.qwen.ready === false`. The 15-minute threshold is
+deliberately far above the dashboard's 60s *online* cutoff: that one means
+"responding right now", this one only trips for an outage nobody could
+mistake for a slow iteration. The entity key embeds `last_seen_at`, which is
+frozen while a runner is down, so one continuous outage alerts exactly once
+while a later, separate outage alerts again.
 
 **Admin UI** (`src/routes/admin/+page.svelte`): a "Vision Alerts" checkbox
 sits next to the existing manufacturing-workflow notify checkboxes in the
@@ -423,6 +442,35 @@ not blindly added together. Their material fuel/climb disagreements become
 identity and adds observation review states. Only `accepted` or `corrected`
 observations can cross the `VISION_RELEASE` bridge.
 
+### Failure handling and attribution
+
+Three behaviours are worth knowing before reading `analyze_view_with_qwen`:
+
+- **A failed clip is skipped, not fatal.** The service answers 422 whenever
+  the model emits unparseable JSON, which over dozens of clips per view is a
+  matter of when rather than if. Losing one clip must not discard the run's
+  YOLO tracks and classical-CV work, so the clip is recorded with
+  `clip_quality='unusable'` and the service's error body in `raw_response`
+  (surfaced in the "Qwen clip audit" panel) and the pass continues. If *every*
+  clip fails the run is failed outright — an outage must not read as Qwen
+  silently agreeing with the deterministic pipeline.
+- **Robot-centric events are attributed to a track; fuel is not.**
+  `attribute_qwen_event` matches a Qwen box against concurrent YOLO tracks —
+  which already carry `team_key` from `identity_map` — but only for
+  `climb_attempt`/`climb_success`/`disabled_or_immobile`, where the box sits
+  on the robot doing the thing. `fuel_scored` is deliberately excluded: its
+  box is at the goal, not the shooter, and attributing it to the nearest robot
+  is the exact error `attribute_scores` traces piece trajectories back to
+  their origin to avoid. Qwen fuel therefore stays alliance-level and serves
+  only as a cross-check. Matching requires the same alliance and a track point
+  within 500 ms, records `attribution_distance` in evidence, and can be capped
+  via `config.qwen_attribution_max_distance`. It is only ever a pre-filled
+  suggestion — the observation still lands `unreviewed`.
+- **The runner heartbeats per clip.** A whole-match Qwen pass is dozens of
+  serialized inferences running for many minutes; without a ping per clip the
+  fleet dashboard's 60s online threshold reads a hard-at-work runner as
+  offline, and a genuinely hung one is indistinguishable from a busy one.
+
 ### Calibration & tuning
 
 - **Field mask** (`vision_views.field_mask`) and **goal zones**
@@ -559,13 +607,18 @@ this establishes one.
 
 ## Setup checklist (nothing here works until these are done)
 
-1. Run all Vision migrations against Supabase in order. The first three were
-   applied during PR #84 development; the new Qwen/DGX migration still needs
-   deployment:
-   - `migrations/20260828_vision_system.sql`
-   - `migrations/20260829_vision_notifications_release_fleet.sql`
-   - `migrations/20260829_vision_field_mask_goal_zones.sql`
-   - `migrations/20260829_vision_qwen30b_dgx.sql`
+1. Run all Vision migrations against Supabase in order. The first four are
+   already applied; the fifth is deliberately held back until merge:
+   - `migrations/20260828_vision_system.sql` — applied
+   - `migrations/20260829_vision_notifications_release_fleet.sql` — applied
+   - `migrations/20260829_vision_field_mask_goal_zones.sql` — applied
+   - `migrations/20260829_vision_qwen30b_dgx.sql` — applied
+   - `migrations/20260829_vision_runner_health_cron.sql` — **apply on merge,
+     not before.** Unlike the others (additive schema deployed code ignores),
+     it schedules a `pg_cron` job that calls
+     `/api/notifications/vision-stale-runners`, a route that only exists on
+     this branch; applying it early just 404s against production every 5
+     minutes.
 2. No permission grant is needed for basic access - every approved user can
    already use Vision Scouting once the migrations run. Grant `VISION_RELEASE`
    (from the admin panel's Permissions column) only to whoever should be able

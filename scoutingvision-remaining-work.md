@@ -1,13 +1,11 @@
 # Vision Scouting — what's left before this actually works
 
-The original PR #84 Vision surface and its first three migrations exist; the
-new Qwen/DGX changes and fourth migration remain local and undeployed. This
-doc tracks the gap between "the code exists" and "this produces a trustworthy
-scouting number for a real match." Updated
-after doing as much of the groundwork as is actually possible from a repo
-checkout alone — the remaining items genuinely need a human with GCP
-console access, physical hardware, or real match footage; nothing left here
-is something more code could resolve on its own.
+This doc tracks the gap between "the code exists" and "this produces a
+trustworthy scouting number for a real match." Updated after doing as much of
+the groundwork as is actually possible from a repo checkout alone — the
+remaining items genuinely need a human with GCP console access, physical
+hardware, or real match footage; nothing left here is something more code
+could resolve on its own.
 
 ## DGX Spark / Qwen3-VL-30B addition
 
@@ -23,14 +21,52 @@ The repository now has a concrete DGX Spark stack for the full BF16
 - The dense runner sends bounded timestamped JPEG sequences, stores Qwen
   source/model/latency evidence, and reports Qwen health on its fleet
   heartbeat.
-- `20260829_vision_qwen30b_dgx.sql` makes every model observation explicitly
-  reviewable. The release bridge now excludes anything not human-accepted or
-  corrected.
+- `20260829_vision_qwen30b_dgx.sql` (**applied**) makes every model
+  observation explicitly reviewable. The release bridge now excludes anything
+  not human-accepted or corrected.
 
-Still requiring operator action: apply that migration, provision the DGX
-Spark, replace both example secrets, pin `VISION_QWEN_REVISION`, authenticate
-Docker to NVIDIA NGC, download the 60+ GB model cache, and run a real-video
-acceptance pass. Code cannot truthfully certify hardware it cannot access.
+Note there is no LM Studio anywhere in this design, and no inbound path from
+the internet to anyone's personal machine: Qwen and the runner are two
+containers on the same DGX host talking over a private Compose network
+(`http://qwen:8000`). So there is no inbound rate limiting to add, and no
+Qwen API key that needs to reach GCP Secret Manager — `VISION_QWEN_TOKEN`
+only ever exists on the DGX box. `VISION_RUNNER_TOKEN` remains the one secret
+the deployed web app actually needs.
+
+Still requiring operator action: provision the DGX Spark, replace both
+example secrets, pin `VISION_QWEN_REVISION`, authenticate Docker to NVIDIA
+NGC, download the 60+ GB model cache, and run a real-video acceptance pass.
+Code cannot truthfully certify hardware it cannot access.
+
+## Fixed since the Qwen pipeline landed
+
+Four defects found by reading the merged Qwen work, all fixed and verified
+against synthetic fixtures (see `scoutingvision.md` for the design detail):
+
+- **One malformed clip no longer discards an entire run.** `/analyze` returns
+  422 whenever the model emits unparseable JSON; the per-clip request had no
+  error handling, so a single bad response threw away every YOLO track and
+  classical-CV observation for all views and failed the run. Failed clips are
+  now recorded `clip_quality='unusable'` with the error body and skipped —
+  but an all-clips-failed run still fails loudly, so an outage can't
+  masquerade as Qwen agreeing with the pipeline.
+- **Qwen climb/disabled events are now team-attributable.** Every Qwen
+  observation was hardcoded `team_key: None`, and the release bridge skips
+  team-less rows — so "Accept" contributed nothing and a human had to retype a
+  team on every event. Robot-centric events now match against the YOLO tracks
+  that already carry `team_key`. `fuel_scored` is deliberately still excluded
+  (its box is at the goal, not the shooter).
+- **A busy runner no longer reads as offline.** The runner never heartbeated
+  during `run_job`, which runs for many minutes, while the dashboard's online
+  cutoff is 60s — so a runner was shown Offline for exactly as long as it was
+  working. It now heartbeats per view and per Qwen clip.
+- **Runner outages now alert.** A runner that loses Qwen stops claiming work
+  and reported it nowhere but its own row. `api/notifications/vision-stale-runners`
+  plus a 5-minute `pg_cron` sweep now DMs the `vision_notify` list.
+
+Also swapped several hardcoded hex colours on the vision pages for real
+design tokens — `var(--red, #c33)` never resolved, because no `--red` token
+exists, so those elements silently ignored dark theme.
 
 ## 1. Done in this pass
 
@@ -97,6 +133,34 @@ value into whichever host ends up running the runner. Until this happens,
 `api/vision-runner` rejects every request — this is still the single
 hardest blocker, just now fully spelled out with the exact commands.
 
+### Measure Qwen throughput before trusting the clip schedule
+
+Nothing here can be settled without the actual Spark, and it may force a
+design change rather than a tuning tweak. Clips are analyzed strictly
+serially: roughly 30 per view for a 150-second match at the default 5-second
+clip length, each a blocking HTTP call carrying 8 images at 1280x720, and the
+service holds a single inference lock so nothing overlaps. At a plausible
+30-60s per clip that is 15-30 minutes per view, multiplied by the number of
+camera views per match. A qualification day running a match every ~7 minutes
+would fall behind immediately.
+
+Time one real clip on the Spark first, then decide. The cheap levers, roughly
+in order of what they cost you:
+
+- `VISION_QWEN_FRAMES_PER_CLIP` (8 -> 4) and `VISION_QWEN_JPEG_WIDTH`
+  (1280 -> 960) — straight latency reduction, some loss of small-object
+  detail.
+- `VISION_QWEN_CLIP_SECONDS` (5 -> 10) — halves the request count, at the
+  cost of coarser event timestamps.
+- Only send clips where the deterministic pipeline already saw activity. This
+  is the big one — most of a match is not a scoring or climbing moment — and
+  it would cut hallucination surface as well as time. It is a real behaviour
+  change, so it wants real footage to validate against, not a guess.
+
+`sample_qwen_clip` also reopens and re-seeks the video file for every clip,
+which is wasteful but irrelevant next to inference time; don't bother
+optimizing it until the numbers above say it matters.
+
 ### Provision the DGX Spark runner host
 
 The Docker/Compose and systemd units exist, but they are not running on the
@@ -142,16 +206,20 @@ Unchanged from before: nothing in `release-run` checks model quality before
 allowing a release. Still worth a decision — keep it a documented,
 trust-based process, or add an actual `approved_for_release` check.
 
-## Suggested order (unchanged, still the right sequence)
+## Suggested order
 
-1. Apply `20260829_vision_qwen30b_dgx.sql` and run the two `gcloud` commands
-   above.
+1. Run the two `gcloud` commands above. (The Qwen/DGX migration is already
+   applied; `20260829_vision_runner_health_cron.sql` is the one to hold until
+   this branch merges.)
 2. Stand up the DGX Spark Compose stack, pin the Qwen revision, point the
    dense runner at the placeholder model, and confirm a full `queue-run` →
    `claim` → Qwen analysis → `complete` cycle against the deployed app.
-3. Get one real recording (any camera, even a phone) through the pipeline
+3. Time a single Qwen clip on that stack before anything else — the answer
+   decides whether the current clip schedule is viable at a competition or
+   needs the activity-gating change described above.
+4. Get one real recording (any camera, even a phone) through the pipeline
    by hand to see what the hybrid detection actually produces before
    investing in labeling/training.
-4. Only then: real camera hardware, a labeled dataset, an actual trained
+5. Only then: real camera hardware, a labeled dataset, an actual trained
    model, and a visual calibration tool if hand-typed JSON proves too
    painful in practice.

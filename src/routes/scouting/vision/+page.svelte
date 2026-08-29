@@ -320,7 +320,7 @@
       {/if}
 
       {#if detail.qwenClips?.length}
-        <section class="surface-card section"><h2>Qwen clip audit</h2><div class="qwen-clip-list">{#each detail.qwenClips as clip}<div><b>{(clip.started_ms / 1000).toFixed(1)}–{(clip.ended_ms / 1000).toFixed(1)}s</b><span>{clip.clip_quality || 'unknown quality'} · {clip.event_count} proposals · {clip.latency_ms ?? '—'} ms</span><small>{clip.model}@{clip.revision?.slice(0, 8)} · {clip.dtype}</small>{#if clip.normalized_result?.review_notes}<p>{clip.normalized_result.review_notes}</p>{/if}</div>{/each}</div></section>
+        <section class="surface-card section"><h2>Qwen clip audit</h2><div class="qwen-clip-list">{#each detail.qwenClips as clip}<div><b>{(clip.started_ms / 1000).toFixed(1)}–{(clip.ended_ms / 1000).toFixed(1)}s</b><span>{clip.clip_quality || 'unknown quality'} · {clip.event_count} proposals · {clip.latency_ms ?? '—'} ms</span><small>{clip.model}@{clip.revision?.slice(0, 8)} · {clip.dtype}</small>{#if clip.normalized_result?.error}<p class="clip-error">Clip skipped: {clip.normalized_result.error}</p>{:else if clip.normalized_result?.review_notes}<p>{clip.normalized_result.review_notes}</p>{/if}</div>{/each}</div></section>
       {/if}
 
       <section class="surface-card section">
@@ -341,6 +341,7 @@
   .qwen-clip-list { display:grid; gap:var(--space-2); }
   .qwen-clip-list > div { display:grid; grid-template-columns:auto 1fr auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); }
   .qwen-clip-list p { grid-column:1/-1; margin:0; color:var(--text-muted); }
+  .qwen-clip-list p.clip-error { color:var(--danger); }
   .match-list button { display:flex; justify-content:space-between; align-items:center; text-align:left; border:1px solid var(--border); border-radius:var(--radius-md); padding:var(--space-2); background:transparent; color:var(--text); cursor:pointer; }
   .match-list button.active { border-color:var(--brand-primary,#d9a413); background:var(--surface-2); }
   .match-list span,.view-list span { display:grid; }

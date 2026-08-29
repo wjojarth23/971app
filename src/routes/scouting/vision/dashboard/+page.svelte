@@ -130,19 +130,19 @@
   .stat-card { padding:var(--space-4); display:flex; flex-direction:column; gap:4px; }
   .stat-label { color:var(--text-muted); font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
   .stat-value { font-size:1.6rem; font-weight:700; }
-  .stat-value.warn { color:var(--red,#c33); }
+  .stat-value.warn { color:var(--danger); }
   .stat-of { font-size:1rem; font-weight:400; color:var(--text-muted); margin-left:2px; }
   .stat-sub { font-size:.78rem; color:var(--text-muted); }
 
   .table-wrap { overflow:auto; }
   table { width:100%; border-collapse:collapse; }
   th, td { padding:var(--space-2); border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
-  .error-cell { white-space:normal; color:var(--red,#c33); max-width:20rem; }
-  .stale { color:var(--red,#c33); }
+  .error-cell { white-space:normal; color:var(--danger); max-width:20rem; }
+  .stale { color:var(--danger); }
 
   .fleet-status { padding:2px var(--space-2); border-radius:var(--radius-sm); font-size:.78rem; }
-  .fleet-status.online { background:color-mix(in srgb, #16a34a 18%, transparent); color:#16a34a; }
-  .fleet-status.offline { background:color-mix(in srgb, #c33 18%, transparent); color:#c33; }
+  .fleet-status.online { background:var(--status-ready-bg); color:var(--status-ready-text); }
+  .fleet-status.offline { background:var(--status-risk-bg); color:var(--status-risk-text); }
 
   @media (max-width:640px) {
     .actions { flex-direction:column; align-items:stretch; }

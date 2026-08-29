@@ -106,7 +106,60 @@ def sample_qwen_clip(video_path, start_ms, end_ms, count):
     return frames
 
 
-def qwen_event_to_observation(event, view, config, clip, response):
+def qwen_box_point(box_0_1000, frame_shape, homography):
+    """Qwen boxes are [x1,y1,x2,y2] normalized to 0..1000 of whatever frame the
+    model was shown, so they survive sample_qwen_clip()'s JPEG downscale
+    unchanged. Convert the box centre back to pixels and push it through the
+    same homography the robot tracks used, so both end up in one space."""
+    if not box_0_1000 or len(box_0_1000) != 4:
+        return None
+    height, width = frame_shape[:2]
+    center = (
+        (float(box_0_1000[0]) + float(box_0_1000[2])) / 2 / 1000 * width,
+        (float(box_0_1000[1]) + float(box_0_1000[3])) / 2 / 1000 * height,
+    )
+    x, y, _calibrated = field_point(center, homography)
+    return x, y
+
+
+# Qwen events whose box sits on the robot performing the action, so matching it
+# to the nearest robot track is meaningful. fuel_scored is deliberately absent:
+# its box is at the goal, not at the shooter, and attributing it to whichever
+# robot is closest to the goal is the exact mistake attribute_scores() traces
+# piece trajectories back to their origin to avoid. Qwen fuel stays
+# alliance-level and serves only as a cross-check against the classical-CV
+# pipeline, which remains the sole source of truth for who scored fuel.
+ROBOT_CENTRED_QWEN_EVENTS = {"climb_attempt", "climb_success", "disabled_or_immobile"}
+
+
+def attribute_qwen_event(event, robot_tracks, timestamp_ms, frame_shape, homography, max_distance):
+    """Resolve a Qwen event to the robot track it happened on. Returns
+    (track, distance); track is None when nothing matched. Attribution is only
+    ever a pre-filled suggestion - the observation still lands as
+    review_status=unreviewed and cannot reach scouting data until a human
+    accepts or corrects it."""
+    if event.get("type") not in ROBOT_CENTRED_QWEN_EVENTS or frame_shape is None:
+        return None, None
+    point = qwen_box_point(event.get("box_0_1000"), frame_shape, homography)
+    if point is None:
+        return None, None
+    alliance = event.get("alliance") if event.get("alliance") in {"red", "blue"} else None
+    best_track, best_distance = None, None
+    for track in robot_tracks:
+        if alliance and track.get("alliance") != alliance:
+            continue
+        closest = min(track["trajectory"], key=lambda p: abs(p["t"] - timestamp_ms), default=None)
+        if not closest or abs(closest["t"] - timestamp_ms) > 500:
+            continue
+        distance = math.hypot(closest["x"] - point[0], closest["y"] - point[1])
+        if best_distance is None or distance < best_distance:
+            best_track, best_distance = track, distance
+    if best_track is not None and max_distance is not None and best_distance > float(max_distance):
+        return None, best_distance
+    return best_track, best_distance
+
+
+def qwen_event_to_observation(event, view, config, clip, response, robot_tracks=(), frame_shape=None):
     event_type = event.get("type")
     observation_type = {
         "fuel_scored": "fuel_scored",
@@ -120,9 +173,15 @@ def qwen_event_to_observation(event, view, config, clip, response):
     value = {"count": 1} if observation_type == "fuel_scored" else {}
     if observation_type.startswith("climb"):
         value["level"] = event.get("climb_level") or config.get("default_climb_level")
+    track, distance = attribute_qwen_event(
+        event, robot_tracks, timestamp_ms, frame_shape, view.get("homography"),
+        config.get("qwen_attribution_max_distance"),
+    )
+    alliance = event.get("alliance") if event.get("alliance") in {"red", "blue"} else None
     return {
-        "view_id": view["id"], "team_key": None,
-        "alliance": event.get("alliance") if event.get("alliance") in {"red", "blue"} else None,
+        "view_id": view["id"],
+        "team_key": track["team_key"] if track else None,
+        "alliance": alliance or (track["alliance"] if track else None),
         "phase": phase_for_timestamp(timestamp_ms, config),
         "observation_type": observation_type, "value": value,
         "started_ms": timestamp_ms, "ended_ms": timestamp_ms,
@@ -136,12 +195,26 @@ def qwen_event_to_observation(event, view, config, clip, response):
             "explanation": event.get("evidence"),
             "clip_start_ms": clip[0], "clip_end_ms": clip[1],
             "latency_ms": response.get("latency_ms"),
+            "attribution_distance": distance,
+            "attributed_from_track": bool(track),
             "review_required": True,
         },
     }
 
 
-def analyze_view_with_qwen(view, config, video_path, match_key=None):
+def qwen_error_detail(error):
+    """Prefer the service's own response body - a 422 carries the raw model
+    text that failed to parse, which is what a reviewer actually needs."""
+    response = getattr(error, "response", None)
+    if response is not None:
+        try:
+            return response.text[:4000]
+        except Exception:
+            pass
+    return str(error)[:4000]
+
+
+def analyze_view_with_qwen(view, config, video_path, match_key=None, robot_tracks=(), on_progress=None):
     if not QWEN_URL:
         if QWEN_REQUIRED:
             raise RuntimeError("VISION_QWEN_URL is required but not configured")
@@ -149,9 +222,15 @@ def analyze_view_with_qwen(view, config, video_path, match_key=None):
     capture = cv2.VideoCapture(str(video_path))
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    frame_shape = (
+        int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+        int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
+    )
     capture.release()
     if fps <= 0 or frame_count <= 0:
         raise RuntimeError(f"Could not read video for Qwen: {video_path}")
+    if frame_shape[0] <= 0 or frame_shape[1] <= 0:
+        frame_shape = None  # no usable dimensions, so no box->track attribution
     duration_ms = round(frame_count * 1000 / fps)
     clip_ms = max(1000, round(float(config.get("qwen_clip_seconds", QWEN_CLIP_SECONDS)) * 1000))
     frame_count_per_clip = max(
@@ -161,23 +240,45 @@ def analyze_view_with_qwen(view, config, video_path, match_key=None):
     observations = []
     clips = []
     start_ms = 0
+    analyzed = 0
+    failed = 0
     while start_ms < duration_ms:
         end_ms = min(start_ms + clip_ms, duration_ms)
         frames = sample_qwen_clip(video_path, start_ms, end_ms, frame_count_per_clip)
         if len(frames) < 2:
             start_ms = end_ms
             continue
-        response = requests.post(
-            f"{QWEN_URL}/analyze",
-            headers={"Authorization": f"Bearer {QWEN_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "match_key": match_key, "view_id": view["id"],
-                "view_label": view.get("label"), "clip_start_ms": start_ms,
-                "clip_end_ms": end_ms, "frames": frames,
-            }, timeout=900,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = requests.post(
+                f"{QWEN_URL}/analyze",
+                headers={"Authorization": f"Bearer {QWEN_TOKEN}", "Content-Type": "application/json"},
+                json={
+                    "match_key": match_key, "view_id": view["id"],
+                    "view_label": view.get("label"), "clip_start_ms": start_ms,
+                    "clip_end_ms": end_ms, "frames": frames,
+                }, timeout=900,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as error:
+            # The service answers 422 whenever the model emits unparseable
+            # JSON, which over dozens of clips is a matter of when, not if.
+            # Losing one clip must not discard the whole run's YOLO tracks and
+            # classical-CV work, so record the gap as an unusable clip a
+            # reviewer can see and carry on.
+            failed += 1
+            clips.append({
+                "view_id": view["id"], "started_ms": start_ms, "ended_ms": end_ms,
+                "model": QWEN_MODEL, "revision": QWEN_REVISION, "dtype": "bfloat16",
+                "latency_ms": None, "clip_quality": "unusable", "event_count": 0,
+                "normalized_result": {"error": str(error)[:500]},
+                "raw_response": qwen_error_detail(error),
+            })
+            start_ms = end_ms
+            if on_progress:
+                on_progress()
+            continue
+        analyzed += 1
         result = payload.get("result", {})
         clips.append({
             "view_id": view["id"], "started_ms": start_ms, "ended_ms": end_ms,
@@ -191,10 +292,26 @@ def analyze_view_with_qwen(view, config, video_path, match_key=None):
             "raw_response": payload.get("raw_response", ""),
         })
         for event in result.get("events", []):
-            observation = qwen_event_to_observation(event, view, config, (start_ms, end_ms), payload)
+            observation = qwen_event_to_observation(
+                event, view, config, (start_ms, end_ms), payload, robot_tracks, frame_shape,
+            )
             if observation:
                 observations.append(observation)
         start_ms = end_ms
+        # A whole-match Qwen pass is dozens of serialized inferences and can
+        # run for many minutes. Without a ping per clip the fleet dashboard's
+        # 60s online threshold reads a hard-at-work runner as offline, and a
+        # genuinely hung one becomes indistinguishable from a busy one.
+        if on_progress:
+            on_progress()
+    # Tolerating individual clips is not the same as tolerating a dead service:
+    # a run where nothing succeeded would otherwise complete "successfully"
+    # with no Qwen data at all, and its silence would read as agreement with
+    # the deterministic pipeline instead of an outage.
+    if failed and not analyzed:
+        raise RuntimeError(
+            f"Every Qwen clip failed for view {view.get('label') or view['id']} ({failed} clips)"
+        )
     return observations, clips
 
 
@@ -551,11 +668,14 @@ def run_job(model, run):
             if not view.get("signed_url"):
                 raise RuntimeError(f"View {view['id']} has no signed download URL")
             path = directory / f"view-{index}.mp4"
+            heartbeat(current_run_id=run["id"])
             download(view["signed_url"], path)
             tracks, observations = process_view(model, view, run.get("config") or {}, path)
+            heartbeat(current_run_id=run["id"])
             qwen_observations, qwen_clips = analyze_view_with_qwen(
                 view, run.get("config") or {}, path,
-                (run.get("vision_matches") or {}).get("match_key"),
+                (run.get("vision_matches") or {}).get("match_key"), tracks,
+                on_progress=lambda: heartbeat(current_run_id=run["id"]),
             )
             all_tracks.extend(tracks)
             all_observations.extend(observations)
