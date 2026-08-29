@@ -35,8 +35,18 @@ function makeMockClient(queues = {}, { user = { id: 'user-1' } } = {}) {
     return chain;
   }
 
+  const rpcCalls = [];
   return {
     from: (table) => makeChain(table),
+    // release-run does its scout_data_events insert, released_at claim and
+    // audit entry inside one transaction via release_vision_run() (see
+    // 20260829_vision_release_atomic.sql), so the rows to assert on arrive
+    // here rather than through .insert().
+    rpcCalls,
+    rpc: async (name, args) => {
+      rpcCalls.push({ name, args });
+      return { data: { ok: true, released_count: (args?.p_rows || []).length }, error: null };
+    },
     storage: {
       from: () => ({
         createSignedUrl: async () => ({ data: { signedUrl: 'https://signed.example/view.mp4' }, error: null }),
@@ -229,60 +239,44 @@ describe('api/vision', () => {
 
     it('releases fuel and a valid climb_pos as scout_data_events, tagged role: vision', async () => {
       mockClient = makeMockClient({ user_profiles: [{ data: { role: 'member', permissions: ['VISION_RELEASE'] }, error: null }] });
-      const insertedRows = [];
       mockDb = makeMockClient({
         vision_runs: [{ data: run, error: null }],
         vision_tracks: [{ data: [], error: null }],
-        vision_observations: [{ data: observations, error: null }],
-        scout_data_events: [{ data: [{ id: 'e1' }, { id: 'e2' }], error: null }]
+        vision_observations: [{ data: observations, error: null }]
       });
-      // Capture what's actually passed to insert() so the mapping (event_type,
-      // event_value, role) can be asserted, not just the HTTP status.
-      const originalFrom = mockDb.from;
-      mockDb.from = (table) => {
-        const chain = originalFrom(table);
-        if (table === 'scout_data_events') {
-          const originalInsert = chain.insert;
-          chain.insert = (rows) => { insertedRows.push(...rows); return originalInsert(rows); };
-        }
-        return chain;
-      };
 
       const { POST } = await import('./+server.js');
       const res = await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
       const body = await res.json();
       expect(res.status).toBe(200);
       expect(body.data.released_count).toBe(2);
-      expect(insertedRows).toEqual(expect.arrayContaining([
-        expect.objectContaining({ team_key: 'frc971', event_type: 'hub_fuel_override', event_value: '3', role: 'vision', match_key: '2026casf_qm1' }),
-        expect.objectContaining({ team_key: 'frc971', event_type: 'climb_pos', event_value: 'L2', role: 'vision', match_key: '2026casf_qm1' })
+      // role/created_by/created_at are stamped inside release_vision_run() by
+      // the transaction that claims the release, so the route passes only the
+      // fields that vary per row.
+      const releaseCall = mockDb.rpcCalls.find((call) => call.name === 'release_vision_run');
+      expect(releaseCall.args.p_rows).toEqual(expect.arrayContaining([
+        { team_key: 'frc971', event_type: 'hub_fuel_override', event_value: '3', match_key: '2026casf_qm1' },
+        { team_key: 'frc971', event_type: 'climb_pos', event_value: 'L2', match_key: '2026casf_qm1' }
       ]));
     });
 
     it('skips an unrecognized climb value instead of writing garbage into climb_pos', async () => {
       mockClient = makeMockClient({ user_profiles: [{ data: { role: 'member', permissions: ['VISION_RELEASE'] }, error: null }] });
-      const insertedRows = [];
       mockDb = makeMockClient({
         vision_runs: [{ data: run, error: null }],
         vision_tracks: [{ data: [], error: null }],
         vision_observations: [{ data: [
           { observation_type: 'fuel_scored', team_key: 'frc971', alliance: 'red', started_ms: 1000, value: { count: 1 }, review_status: 'accepted' },
           { observation_type: 'climb_success', team_key: 'frc971', alliance: 'red', started_ms: 5000, value: { level: 'success' }, review_status: 'accepted' }
-        ], error: null }],
-        scout_data_events: [{ data: [{ id: 'e1' }], error: null }]
+        ], error: null }]
       });
-      const originalFrom = mockDb.from;
-      mockDb.from = (table) => {
-        const chain = originalFrom(table);
-        if (table === 'scout_data_events') {
-          const originalInsert = chain.insert;
-          chain.insert = (rows) => { insertedRows.push(...rows); return originalInsert(rows); };
-        }
-        return chain;
-      };
       const { POST } = await import('./+server.js');
-      await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
-      expect(insertedRows.some((row) => row.event_type === 'climb_pos')).toBe(false);
+      const res = await POST({ request: request({ action: 'release-run', run_id: 'run-1' }) });
+      const body = await res.json();
+      const releaseCall = mockDb.rpcCalls.find((call) => call.name === 'release_vision_run');
+      expect(releaseCall.args.p_rows.some((row) => row.event_type === 'climb_pos')).toBe(false);
+      // ...and says so, rather than the climb vanishing without a word.
+      expect(body.data.skipped_climbs).toEqual([{ team_key: 'frc971', value: 'success' }]);
     });
 
     it('refuses to release unreviewed model observations', async () => {

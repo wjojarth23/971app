@@ -50,8 +50,24 @@ the code and what does it do."
 
 ## Database
 
-Five SQL files. The first four are applied; the runner-health cron migration
-is deliberately held until merge (see **Setup checklist** below).
+Eight SQL files. Seven are applied; the runner-health cron migration is
+deliberately held until merge (see **Setup checklist** below).
+
+Three of them are hardening rather than schema:
+
+- `20260829_vision_rls_approved_user.sql` — every Vision table and the
+  recordings bucket originally used `USING (true) WITH CHECK (true)`, which
+  means every *authenticated* session, including accounts pending approval and
+  banned accounts. The UI gated them out but RLS is what protects a direct
+  anon-key client. All 10 tables and the storage bucket are now
+  `public.approved_user()` (admin or `CAN_SEE_ROUTES`), matching every sibling
+  scouting table.
+- `20260829_vision_release_atomic.sql` — `release_vision_run()`, which does the
+  `scout_data_events` insert, the `released_at` claim and the audit row in one
+  transaction, with a compare-and-swap so concurrent releases can't double a
+  match's events. See **Reviewed-result release bridge**.
+- `20260829_vision_recording_retention.sql` — `vision_views.recording_deleted_at`,
+  for the opt-in retention sweep.
 
 ### `migrations/20260828_vision_system.sql`
 
@@ -71,14 +87,17 @@ Also creates a private `vision-recordings` storage bucket (`public: false`).
 
 Access control is RLS-driven, applied via a `DO $$ ... FOREACH $$` loop over
 all seven tables:
-- `authenticated` role: full access, no permission check (`USING (true)`) -
-  any approved team member can use Vision Scouting, same as the rest of
-  Competition.
+- `authenticated` role: full access gated on `public.approved_user()` — any
+  *approved* team member can use Vision Scouting, same as the rest of
+  Competition, with no extra permission needed. (This originally shipped as
+  `USING (true)`, which also let pending and banned accounts through via a
+  direct anon-key client; tightened in
+  `20260829_vision_rls_approved_user.sql`.)
 - `service_role`: unrestricted (`USING (true)`) — this is what the runner's
   server-side Supabase client uses.
-- The storage bucket gets a matching `authenticated` policy (no permission
-  check either) - private in the sense of "not directly browsable, signed
-  URLs only," not "hidden from teammates."
+- The storage bucket gets a matching `approved_user()` policy - private in the
+  sense of "not directly browsable, signed URLs only," not "hidden from
+  teammates."
 
 ### `migrations/20260829_vision_notifications_release_fleet.sql`
 
@@ -97,8 +116,8 @@ Three additions on top of the above:
 - **`vision_runners`** table (`runner_id` primary key, `last_seen_at`,
   `model_path`, `current_run_id`, `last_error`) — runner fleet heartbeats.
 
-Both new tables are SELECT-only for `authenticated` (no permission check -
-read for the dashboard, same open-to-everyone stance as the rest of Vision
+Both new tables are SELECT-only for `authenticated` (gated on
+`approved_user()` - read for the dashboard, same stance as the rest of Vision
 Scouting); all writes go through `service_role` (the runner's own heartbeat
 call, and the release bridge's privileged insert — see below).
 
@@ -196,6 +215,10 @@ below, which adds its own explicit `VISION_RELEASE` check.
   - `review-observations` — the same verdicts applied to up to 500 ids at
     once, for clearing a match's worth of proposals without a click per row.
     Deliberately excludes `corrected`, which needs a per-row value and team.
+  - `update-view` — saves calibration (field mask, goal zones, homography,
+    sync offset) onto an already-uploaded view. Separate from `add-view`
+    because calibration is drawn against the recording itself, which can't
+    happen until the file exists.
   - `release-run` — the reviewed-result release bridge; see its own section
     below.
 
@@ -228,6 +251,30 @@ permission to use the feature; they don't.
   a Slack alert. Every claimed run must terminate through `complete` or
   `fail` — same invariant the AutoCAM Fusion runner uses.
 
+## Recording retention — `api/notifications/vision-recording-retention`
+
+Match video is by far the largest thing this feature stores and nothing ever
+removed it, so an event's worth of multi-camera recordings grew without bound.
+This sweep reclaims the video files and nothing else: the view row, its tracks,
+observations, discrepancies and the release audit trail all stay, so a released
+scouting number keeps its provenance after the video behind it is gone.
+
+The decision of what may be deleted lives in `src/lib/server/vision_retention.js`,
+kept pure and separately unit-tested because it decides what gets permanently
+destroyed. Three deliberate constraints:
+
+- **Opt-in.** With `VISION_RECORDING_RETENTION_DAYS` unset, nothing is ever
+  deleted. There is no defensible default number of days to guess on a team's
+  behalf.
+- **Released runs only.** Video is the evidence behind a reviewer's decision;
+  a run that was never released means that work is unfinished or was rejected,
+  and either way the footage still matters.
+- **Measured from the most recent release**, not the first — a re-release means
+  someone was still working with that match.
+
+Like the stale-runner sweep it **fails closed** without a cron secret (see
+below), which matters more here because this one deletes files.
+
 ## Slack alerting
 
 `src/lib/server/slack_notifications.js` adds `notifyVisionRunFailed(runId)`,
@@ -254,6 +301,15 @@ is driven by a `pg_cron` sweep every 5 minutes via
 `api/notifications/vision-stale-runners` (cron-gated by the same
 `cron_auth.js` token as the other notification sweeps, reusing the existing
 `planner_notifications_*` vault secrets rather than provisioning a new one).
+
+Both Vision cron endpoints **fail closed**: `isAuthorizedCronRequest()` is
+deliberately fail-open — it accepts any request when no cron secret is
+configured — and `CRON_NOTIFICATION_TOKEN` is currently commented out of
+`cloudbuild.yaml` (issue #5), so inheriting that default would have put new
+unauthenticated routes on the live service. With no secret set they return 503
+and do nothing. A health sweep that doesn't run beats an open endpoint, and
+refusing loudly is what gets the secret configured. Remove those guards once
+issue #5 is closed.
 `visionRunnerAlert(runner, now)` holds the decision and is unit-tested
 separately in `src/lib/server/vision_runner_health.test.js`; it fires for a
 runner silent past 15 minutes, or one that is heartbeating but reporting
@@ -292,7 +348,10 @@ Guardrails, in order:
    enough for this one action.
 2. The run must be `status: 'complete'` and not already released
    (`released_at IS NULL`) - a release is a one-time, explicit action, not
-   re-runnable.
+   re-runnable. The read here is only an early bail-out; the *authoritative*
+   check is a compare-and-swap inside `release_vision_run()`, because two
+   concurrent callers could otherwise both pass this read before either
+   wrote, and double every event for the match.
 3. Once authorized, the actual write uses a `service_role` client
    (`getSupabase()`), because `scout_data_events` INSERT is RLS-gated on
    `DATA_SCOUT_ADMIN`/`DATA_SCOUT_MEMBER` - permissions a vision releaser
@@ -329,6 +388,14 @@ Guardrails, in order:
 5. If nothing is attributable yet (no track/observation has a resolved team
    identity), the release is rejected outright rather than silently doing
    nothing.
+6. The write itself is a single call to `release_vision_run()`
+   (`20260829_vision_release_atomic.sql`), which claims the run, inserts the
+   `scout_data_events` rows, and writes the `vision_release_log` entry in one
+   transaction. This was three separate REST calls originally, which meant a
+   failure between them could leave real scouting data with no release state
+   and no provenance — invisible vision-authored rows nothing recorded the
+   origin of. Rows are computed and validated in JS and passed in already
+   vetted; the function's only job is to write all of them or none.
 
 UI: a "Release to scouting data" button appears per run on
 `/scouting/vision` once it's complete and unreleased, gated client-side on
@@ -517,6 +584,30 @@ Three behaviours are worth knowing before reading `analyze_view_with_qwen`:
   fleet dashboard's 60s online threshold reads a hard-at-work runner as
   offline, and a genuinely hung one is indistinguishable from a busy one.
 
+### Calibration UI — `src/lib/components/VisionCalibrator.svelte`
+
+Click-to-draw calibration against a paused frame of the view's own recording,
+replacing hand-typed JSON. Three modes: trace the field mask, outline goal
+zones (each with a label and alliance), or click four field landmarks and type
+their real coordinates to solve the homography.
+
+Two coordinate spaces, deliberately — this is the thing to get right when
+touching it. Mask and goal-zone polygons are stored **normalized 0-1** so one
+calibration survives a resolution change (`build_mask`/`point_in_zone` scale
+them by frame size). Homography source points are stored in the **source
+video's own pixels**, because `field_point()` applies the matrix to pixel-space
+box centres. `calibrationPointFromClick()` in `src/lib/homography.js` returns
+both from one click, and is unit-tested for the case that actually bites: the
+player is almost always scaled down, so displayed pixels are not video pixels.
+
+`solveHomography()` is a plain DLT solve (four correspondences, an 8×8 system,
+Gaussian elimination with partial pivoting) returning a matrix normalized so
+h33 is 1. It refuses degenerate point sets — three collinear or two coincident
+— rather than returning a garbage matrix, which is the common way a hand-picked
+set goes wrong. Its output was checked against `cv2.getPerspectiveTransform`
+and agrees to ~10 significant figures; that equivalence matters because the
+runner consumes the matrix with `cv2.perspectiveTransform`.
+
 ### Calibration & tuning
 
 - **Field mask** (`vision_views.field_mask`) and **goal zones**
@@ -653,12 +744,15 @@ this establishes one.
 
 ## Setup checklist (nothing here works until these are done)
 
-1. Run all Vision migrations against Supabase in order. The first four are
-   already applied; the fifth is deliberately held back until merge:
+1. Run all Vision migrations against Supabase in order. Seven are already
+   applied; the cron one is deliberately held back until merge:
    - `migrations/20260828_vision_system.sql` — applied
    - `migrations/20260829_vision_notifications_release_fleet.sql` — applied
    - `migrations/20260829_vision_field_mask_goal_zones.sql` — applied
    - `migrations/20260829_vision_qwen30b_dgx.sql` — applied
+   - `migrations/20260829_vision_rls_approved_user.sql` — applied
+   - `migrations/20260829_vision_release_atomic.sql` — applied
+   - `migrations/20260829_vision_recording_retention.sql` — applied
    - `migrations/20260829_vision_runner_health_cron.sql` — **apply on merge,
      not before.** Unlike the others (additive schema deployed code ignores),
      it schedules a `pg_cron` job that calls

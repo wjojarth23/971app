@@ -5,6 +5,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import { userStore } from '$lib/stores/auth.js';
   import { hasPermission } from '$lib/permissions.js';
+  import VisionCalibrator from '$lib/components/VisionCalibrator.svelte';
 
   let user = null;
   userStore.subscribe((v) => { user = v; });
@@ -43,6 +44,36 @@
   let trackTeamDraft = {};
   let observationTeamDraft = {};
   let observationValueDraft = {};
+  let viewPlayers = {};
+
+  // Observation timestamps are in match time (the runner already added the
+  // view's sync offset), so subtract it back out to land on the right frame of
+  // this particular recording.
+  function calibrationSummary(view) {
+    const parts = [];
+    if (view.field_mask?.length) parts.push('mask');
+    if (view.goal_zones?.length) parts.push(`${view.goal_zones.length} zone${view.goal_zones.length === 1 ? '' : 's'}`);
+    if (view.homography) parts.push('homography');
+    return parts.length ? `calibrated: ${parts.join(', ')}` : 'not calibrated';
+  }
+
+  async function saveCalibration(payload) {
+    busy = true;
+    error = '';
+    try {
+      await post(payload);
+      await loadDetail(selectedId);
+    } catch (exception) { error = exception.message; }
+    finally { busy = false; }
+  }
+
+  function jumpToObservation(observation) {
+    const view = (detail?.views || []).find((candidate) => candidate.id === observation.view_id);
+    const player = viewPlayers[observation.view_id];
+    if (!view || !player) return;
+    player.currentTime = Math.max(0, (observation.started_ms - (view.sync_offset_ms || 0)) / 1000);
+    player.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 
   async function api(path = '', options = {}) {
     const headers = { ...(await getAuthHeader()), ...(options.headers || {}) };
@@ -295,7 +326,29 @@
     {:else}
       <section class="surface-card section">
         <h2>{detail.match.match_key} · Camera views</h2>
-        <div class="view-list">{#each detail.views as view}<div><Video size={16} /><span><b>{view.label}</b><small>{view.camera_position || 'Position not recorded'} · offset {view.sync_offset_ms}ms</small></span>{#if view.signed_url}<video controls muted preload="metadata" src={view.signed_url} aria-label={`${view.label} evidence recording`}></video>{/if}</div>{/each}</div>
+        <div class="view-list">
+          {#each detail.views as view (view.id)}
+            <div>
+              <Video size={16} />
+              <span>
+                <b>{view.label}</b>
+                <small>
+                  {view.camera_position || 'Position not recorded'} · offset {view.sync_offset_ms}ms
+                  · {calibrationSummary(view)}
+                </small>
+              </span>
+              {#if view.signed_url}
+                <video bind:this={viewPlayers[view.id]} controls muted preload="metadata" src={view.signed_url} aria-label={`${view.label} evidence recording`}></video>
+              {/if}
+            </div>
+            {#if view.signed_url}
+              <details class="calibrate-panel">
+                <summary>Calibrate {view.label}</summary>
+                <VisionCalibrator {view} {busy} onSave={saveCalibration} />
+              </details>
+            {/if}
+          {/each}
+        </div>
         <div class="upload-grid">
           <label>View label <input class="form-input" placeholder="Full field" bind:value={cameraLabel} /></label>
           <label>Camera position <input class="form-input" placeholder="Elevated fixed tripod" bind:value={cameraPosition} /></label>
@@ -404,8 +457,13 @@
                   {observation.source || 'legacy'}
                 </span>
                 <code>{JSON.stringify(observation.value)}</code>
-                <span class={`observation-review ${observation.review_status || 'unreviewed'}`}>
-                  {observation.review_status || 'unreviewed'}
+                <span class="observation-actions">
+                  {#if viewPlayers[observation.view_id]}
+                    <button class="btn btn-sm" on:click={() => jumpToObservation(observation)} title="Seek this view's recording to the moment described">Watch</button>
+                  {/if}
+                  <span class={`observation-review ${observation.review_status || 'unreviewed'}`}>
+                    {observation.review_status || 'unreviewed'}
+                  </span>
                 </span>
                 {#if !['accepted', 'corrected', 'rejected', 'unobservable'].includes(observation.review_status)}
                   <div class="observation-correction">
@@ -470,6 +528,10 @@
   .observation-list > div { display:grid; grid-template-columns:1fr 1fr auto auto; gap:var(--gap-2); padding:var(--space-2); border-bottom:1px solid var(--border); align-items:center; }
   .observation-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr)); gap:var(--gap-3); align-items:end; margin-bottom:var(--space-3); }
   .bulk-actions { display:flex; gap:var(--gap-2); flex-wrap:wrap; }
+  .calibrate-panel { border:1px solid var(--border); border-radius:var(--radius-md); padding:var(--space-2) var(--space-3); }
+  .calibrate-panel summary { cursor:pointer; font-size:.85rem; color:var(--text-muted); }
+  .calibrate-panel[open] summary { margin-bottom:var(--space-3); }
+  .observation-actions { display:flex; align-items:center; gap:var(--gap-2); justify-content:flex-end; }
   .observation-review { font-size:.7rem; text-transform:uppercase; color:var(--text-muted); }
   .observation-review.accepted,.observation-review.corrected { color:var(--green-strong); }
   .observation-correction { grid-column:1/-1; display:grid; grid-template-columns:minmax(7rem,.4fr) minmax(12rem,1fr) auto; gap:var(--gap-2); }

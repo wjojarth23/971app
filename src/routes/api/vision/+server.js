@@ -162,6 +162,23 @@ export async function POST({ request }) {
     return json({ success: true, data: { view, upload } });
   }
 
+  // Calibration on an already-uploaded view. Separate from add-view because
+  // calibration is drawn against the recording itself (see the Calibrate
+  // panel), which by definition can't happen until the file is uploaded.
+  if (action === 'update-view') {
+    if (!body.id) return json({ error: 'view id required' }, { status: 400 });
+    const updates = {};
+    if (body.field_mask !== undefined) updates.field_mask = body.field_mask || null;
+    if (body.goal_zones !== undefined) updates.goal_zones = body.goal_zones || [];
+    if (body.homography !== undefined) updates.homography = body.homography || null;
+    if (body.calibration_points !== undefined) updates.calibration_points = body.calibration_points || [];
+    if (body.sync_offset_ms !== undefined) updates.sync_offset_ms = Number(body.sync_offset_ms) || 0;
+    if (!Object.keys(updates).length) return json({ error: 'Nothing to update' }, { status: 400 });
+    const { data, error } = await client.from('vision_views').update(updates).eq('id', body.id).select('*').single();
+    if (error) return json({ error: error.message }, { status: 400 });
+    return json({ success: true, data });
+  }
+
   if (action === 'queue-run') {
     if (!body.vision_match_id || !body.model_name || !body.model_version) return json({ error: 'vision_match_id and model identity required' }, { status: 400 });
     const { data: views } = await client.from('vision_views').select('id').eq('vision_match_id', body.vision_match_id);
@@ -288,23 +305,23 @@ export async function POST({ request }) {
     const reviewedObservations = (observations || []).filter((observation) => ['accepted', 'corrected'].includes(observation.review_status));
     const summary = summarizeVision(reviewedObservations, tracks || []);
 
-    const nowIso = new Date().toISOString();
+    // Only the fields release_vision_run() actually reads. role, created_by
+    // and created_at are set inside the function so every released row is
+    // stamped by the same transaction that claimed the release.
     const rows = [];
     const skippedClimbs = [];
     for (const [teamKey, team] of Object.entries(summary.teams)) {
       if (!teamKey) continue; // never release an alliance-only, unattributed result as a specific team's data
       if (team.fuelObservations > 0 && Number.isFinite(team.fuelScored)) {
         rows.push({
-          match_key: matchKey, match_number: null, team_key: teamKey, phase: null,
-          event_type: 'hub_fuel_override', event_value: String(Math.round(team.fuelScored)),
-          role: 'vision', on_shift: null, created_by: actor.id, created_at: nowIso
+          match_key: matchKey, team_key: teamKey,
+          event_type: 'hub_fuel_override', event_value: String(Math.round(team.fuelScored))
         });
       }
       if (team.climb && VALID_CLIMB_POS.has(team.climb)) {
         rows.push({
-          match_key: matchKey, match_number: null, team_key: teamKey, phase: null,
-          event_type: 'climb_pos', event_value: team.climb,
-          role: 'vision', on_shift: null, created_by: actor.id, created_at: nowIso
+          match_key: matchKey, team_key: teamKey,
+          event_type: 'climb_pos', event_value: team.climb
         });
       } else if (team.climb) {
         // Refusing an unrecognized climb value is right, but doing it silently
@@ -322,20 +339,25 @@ export async function POST({ request }) {
       }, { status: 400 });
     }
 
-    const { data: inserted, error: insertError } = await db.from('scout_data_events').insert(rows).select('id');
-    if (insertError) return json({ error: insertError.message }, { status: 500 });
+    // One transaction for the scouting rows, the run's released_at, and the
+    // audit entry (see 20260829_vision_release_atomic.sql). Doing these as
+    // three REST calls meant a failure between them could leave real scouting
+    // data with no release state and no provenance, and let two concurrent
+    // releases both pass the already-released check and double every event.
+    // The compare-and-swap inside the function is what makes the second
+    // caller lose cleanly.
+    const { data: released, error: releaseError } = await db.rpc('release_vision_run', {
+      p_run_id: run.id,
+      p_actor: actor.id,
+      p_rows: rows,
+      p_team_count: Object.keys(summary.teams).length
+    });
+    if (releaseError) return json({ error: releaseError.message }, { status: 500 });
+    if (!released?.ok) {
+      return json({ error: 'This run has already been released' }, { status: 409 });
+    }
 
-    await Promise.all([
-      db.from('vision_runs').update({ released_at: nowIso, released_by: actor.id }).eq('id', run.id),
-      db.from('vision_release_log').insert({
-        vision_run_id: run.id,
-        released_by: actor.id,
-        scout_data_event_ids: (inserted || []).map((row) => row.id),
-        team_count: Object.keys(summary.teams).length
-      })
-    ]);
-
-    return json({ success: true, data: { released_count: rows.length, skipped_climbs: skippedClimbs } });
+    return json({ success: true, data: { released_count: released.released_count, skipped_climbs: skippedClimbs } });
   }
 
   return json({ error: 'Invalid action' }, { status: 400 });
