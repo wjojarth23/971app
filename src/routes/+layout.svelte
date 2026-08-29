@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, ClipboardCheck } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, ClipboardCheck, Eye } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -254,6 +254,7 @@
     if (compact.startsWith('notescout')) return 'notescout';
     if (compact.startsWith('datascout')) return 'datascout';
     if (compact.startsWith('matchscout')) return 'matchscout';
+    if (compact.startsWith('vision')) return 'vision';
     if (compact.startsWith('teamview')) return 'teamview';
     if (compact.startsWith('pitscout')) return 'pitscout';
     if (compact.startsWith('powerranking')) return 'powerrankings';
@@ -273,6 +274,7 @@
     purchasing: '/cad/purchasing',
     scouting: '/scouting',
     powerrankings: '/powerrankings',
+    vision: '/scouting/vision',
     docs: '/docs',
     planner: '/planner',
     notescout: '/notescout',
@@ -297,6 +299,7 @@
     purchasing: Receipt,
     scouting: Binoculars,
     powerrankings: Trophy,
+    vision: Eye,
     docs: FileText,
     planner: CalendarDays,
     notescout: Coins,
@@ -319,8 +322,9 @@
     cad: 'CAD',
     build: 'Build',
     purchasing: 'Purchasing',
-    scouting: 'Scouting',
+    scouting: 'Data Scouting',
     powerrankings: 'Power Rankings',
+    vision: 'Vision Scouting',
     docs: 'Docs',
     planner: 'Planner',
     notescout: 'Note Scouting',
@@ -361,6 +365,7 @@
 
   function canRenderTabKey(key) {
     const k = normalizeKey(key);
+    if (navConfig?.tabs?.[k] === false) return false;
     if (k === 'admin') return hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
     // Scouting Admin: Competition Leads, or admins (who can access everything).
     if (k === 'scouting-admin') {

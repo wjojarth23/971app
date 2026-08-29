@@ -29,12 +29,11 @@ reading code.
   is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
-- **Scouting**: pit scouting forms, a new match-scouting workspace (`/matchscout`)
-  for pre-match, autonomous, teleop, and post-match reports, data scouting,
-  free-form notes,
-  cross-team data discovery and analysis (`discover/`), a consolidated
-  team-view, and scouting-admin tooling (assignment management, form/config
-  editing) - integrates with The Blue Alliance API for competition data.
+- **Scouting**: the Competition menu exposes Data Scouting (`/scouting`),
+  Pit Scouting (`/pitscout`), Match Scouting (`/matchscout`), and Vision
+  Scouting (`/scouting/vision`). Legacy scouting routes remain in the source
+  tree for future restoration but are not reachable through navigation. The
+  scouting tools integrate with The Blue Alliance API for competition data.
 - **Planning**: Gantt-based build/task scheduling (`wx-svelte-gantt`),
   Slack-driven prompts and reminders on a 15-minute cron sweep.
 - **Purchasing/Budget**: COTS (commercial off-the-shelf) part stock
@@ -51,10 +50,9 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
-- **Scouting** (`scouting/`): a team-comparison / pick-list workspace for the
-  active event - default-on next to Purchasing. Distinct from the existing
-  pit/data/note scouting *collection* tools below, which this reads from
-  rather than replaces:
+- **Data Scouting** (`scouting/`): a team-comparison / pick-list workspace for
+  the active event. It is distinct from the legacy collection routes it reads
+  from rather than replaces:
   - Sortable comparison table fusing The Blue Alliance's real team roster
     (authoritative - nothing else here ever narrows or redefines it), TBA's
     own OPR/rankings (`api/tba/event-oprs` - replaced the dead Statbotics EPA
@@ -72,10 +70,7 @@ reading code.
     any entry (deliberately more open than `scout_notes`' creator-only
     edit rule - a pick list is one document the whole strategy group edits
     together, and per-row ownership would break group reordering).
-- **Power Rankings** (`powerrankings/`): a separate top-level tab in the
-  Competition nav folder, alongside Scouting rather than nested inside it -
-  intentionally its own page rather than a mode of the Scouting workspace, so
-  it never gets confused with the TBA-OPR-backed comparison table above. An
+- **Power Rankings** (`powerrankings/`): a retained legacy scouting route. An
   event-relative ranking built only from combined local scout observations:
   weights average fuel per match (40%), driving (20%), accuracy (15%), climb
   level (15%), and speed (10%); missing dimensions are omitted and the
@@ -216,12 +211,11 @@ own docs are all together in one place instead of scattered across
   (`wx-svelte-gantt`), Slack-driven prompts/notifications
   (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
   Supabase `pg_cron` job every 15 minutes.
-- **`matchscout/`, `pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
-  `teamview/`, `discover/`, `powerrankings/`** - FRC competition scouting:
-  pit scouting forms, match data scouting, notes, cross-team data
-  discovery/analysis, and the local-scouting-only power rankings +
-  head-to-head comparison view (own top-level tab, not nested under
-  `scouting/`).
+- **`scouting/`, `matchscout/`, `pitscout/`, `scouting/vision/`** - the active
+  FRC competition scouting routes: data/pick-list, match, pit, and vision
+  scouting. **`datascout/`, `notescout/`, `scouting-admin/`, `teamview/`,
+  `discover/`, `powerrankings/`** are retained legacy scouting routes and are
+  intentionally hidden from navigation.
 - **`cots-stocking/`, `kitting/`** - purchasing/inventory: COTS (commercial
   off-the-shelf) part stock tracking and kitting workflows.
 - **`tasks/`** - general task tracking, separate from the planner's

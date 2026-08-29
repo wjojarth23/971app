@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { Home, Hammer, Package, Move3d, Wrench, Receipt, Coins, User, Briefcase, ChevronDown, Camera, Cpu } from 'lucide-svelte';
+  import { Home, Hammer, Package, Move3d, Wrench, Receipt, Coins, User, Briefcase, ChevronDown, Camera, Cpu, Binoculars, ClipboardCheck, Eye } from 'lucide-svelte';
 
   export let header_tabs = [];
   const dispatch = createEventDispatcher();
@@ -12,6 +12,9 @@
     cad: Move3d,
     build: Wrench,
     purchasing: Receipt,
+    scouting: Binoculars,
+    matchscout: ClipboardCheck,
+    vision: Eye,
     notescout: Coins,
     teamview: Coins,
     datascout: Coins,
