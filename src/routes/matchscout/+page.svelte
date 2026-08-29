@@ -126,9 +126,9 @@
   <div class="scouting-shell">
     <aside class="stage-nav" aria-label="Match scouting stages">
       <button class:active={phase === 'prematch'} on:click={() => selectPhase('prematch')}><MapPinned size={18} /><span>Pre-match</span><small>01</small></button>
-      <button class:active={phase === 'auto'} on:click={() => selectPhase('auto')} disabled={!assignmentReady}><Route size={18} /><span>Auto</span><small>02</small></button>
-      <button class:active={phase === 'teleop'} on:click={() => selectPhase('teleop')} disabled={!assignmentReady}><Timer size={18} /><span>Teleop</span><small>03</small></button>
-      <button class:active={phase === 'postmatch'} on:click={() => selectPhase('postmatch')} disabled={!assignmentReady}><Trophy size={18} /><span>Post-match</span><small>04</small></button>
+      <button class:active={phase === 'auto'} on:click={() => selectPhase('auto')}><Route size={18} /><span>Auto</span><small>02</small></button>
+      <button class:active={phase === 'teleop'} on:click={() => selectPhase('teleop')}><Timer size={18} /><span>Teleop</span><small>03</small></button>
+      <button class:active={phase === 'postmatch'} on:click={() => selectPhase('postmatch')}><Trophy size={18} /><span>Post-match</span><small>04</small></button>
     </aside>
 
     <section class="match-workspace">
