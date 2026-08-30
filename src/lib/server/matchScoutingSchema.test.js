@@ -1,0 +1,167 @@
+import { describe, expect, it } from 'vitest';
+import {
+  RATING_FIELDS,
+  normalizeAutoPath,
+  normalizeMatchScoutEntry,
+  normalizePitProblemReport,
+  normalizeRatings,
+  normalizeTeamKey
+} from './matchScoutingSchema.js';
+
+describe('normalizeTeamKey', () => {
+  it('accepts the forms a scout or a query string actually supplies', () => {
+    expect(normalizeTeamKey('971')).toBe('frc971');
+    expect(normalizeTeamKey('frc971')).toBe('frc971');
+    expect(normalizeTeamKey('  FRC971 ')).toBe('frc971');
+  });
+
+  it('rejects anything that is not a team number', () => {
+    for (const bad of ['', null, undefined, 'frc', 'abc', 'frc97a', '123456', '-1']) {
+      expect(normalizeTeamKey(bad)).toBeNull();
+    }
+  });
+});
+
+describe('normalizeAutoPath', () => {
+  it('clamps points to the 0-100 diagram percentages', () => {
+    expect(normalizeAutoPath([[-5, 120], [50, 50]])).toEqual([[0, 100], [50, 50]]);
+  });
+
+  it('drops malformed points instead of storing NaN', () => {
+    expect(normalizeAutoPath([[1, 2], ['a', 3], [4], null, [5, 6]])).toEqual([[1, 2], [5, 6]]);
+    expect(normalizeAutoPath('nope')).toEqual([]);
+  });
+
+  it('caps a long freehand path while keeping both endpoints', () => {
+    // A pointermove-per-sample path over 15s is thousands of points; the
+    // drawing is only read back as a shape.
+    const long = Array.from({ length: 5000 }, (_, i) => [i % 100, (i * 7) % 100]);
+    const result = normalizeAutoPath(long);
+    expect(result.length).toBe(400);
+    expect(result[0]).toEqual(long[0]);
+    expect(result[result.length - 1]).toEqual(long[long.length - 1]);
+  });
+
+  it('leaves a short path untouched', () => {
+    const short = [[1, 1], [2, 2], [3, 3]];
+    expect(normalizeAutoPath(short)).toEqual(short);
+  });
+});
+
+describe('normalizeRatings', () => {
+  it('keeps only known fields, clamped to 1-5', () => {
+    const ratings = normalizeRatings({
+      'Shot accuracy': 3, Defense: 9, 'Not a field': 5, Reliability: -2
+    });
+    expect(ratings).toEqual({ 'Shot accuracy': 3, Defense: 5 });
+  });
+
+  it('treats 0 as unrated rather than a score of zero', () => {
+    expect(normalizeRatings(Object.fromEntries(RATING_FIELDS.map((f) => [f, 0])))).toEqual({});
+  });
+
+  it('tolerates junk', () => {
+    expect(normalizeRatings(null)).toEqual({});
+    expect(normalizeRatings([1, 2])).toEqual({});
+    expect(normalizeRatings({ Defense: 'good' })).toEqual({});
+  });
+});
+
+describe('normalizeMatchScoutEntry', () => {
+  const base = { event_key: '2026casj', match_key: 'qm12', team_key: '971' };
+
+  it('requires the identifying keys', () => {
+    expect(normalizeMatchScoutEntry({ ...base, event_key: '' }).error).toMatch(/event_key/);
+    expect(normalizeMatchScoutEntry({ ...base, match_key: '' }).error).toMatch(/match_key/);
+    expect(normalizeMatchScoutEntry({ ...base, team_key: 'nope' }).error).toMatch(/team_key/);
+  });
+
+  it('normalizes a full submission and stamps the author', () => {
+    const { value } = normalizeMatchScoutEntry({
+      ...base,
+      alliance: 'blue',
+      starting_position: 'center',
+      auto_start_zone: 'wing',
+      auto_points_band: '3-4',
+      ball_sources: ['wing', 'wing', 'floor'],
+      auto_path: [[10, 10], [20, 20]],
+      ratings: { Defense: 4 },
+      crash_or_break: true,
+      card: 'yellow',
+      driver_skill: 4
+    }, 'user-1');
+    expect(value.team_key).toBe('frc971');
+    expect(value.alliance).toBe('blue');
+    expect(value.ball_sources).toEqual(['wing', 'floor']); // deduped
+    expect(value.crash_or_break).toBe(true);
+    expect(value.created_by).toBe('user-1');
+  });
+
+  it('drops values outside the known vocabularies rather than storing them', () => {
+    // A renamed UI option should surface as missing data, not silently widen
+    // the schema with a value nothing else understands.
+    const { value } = normalizeMatchScoutEntry({
+      ...base,
+      alliance: 'green',
+      starting_position: 'somewhere else',
+      auto_points_band: '400',
+      card: 'blue',
+      ball_sources: ['wing', 'unknown-source']
+    });
+    expect(value.alliance).toBeNull();
+    expect(value.starting_position).toBeNull();
+    expect(value.auto_points_band).toBeNull();
+    expect(value.card).toBeNull();
+    expect(value.ball_sources).toEqual(['wing']);
+  });
+
+  it('clamps driver skill and treats junk as unrated', () => {
+    expect(normalizeMatchScoutEntry({ ...base, driver_skill: 99 }).value.driver_skill).toBe(5);
+    expect(normalizeMatchScoutEntry({ ...base, driver_skill: -3 }).value.driver_skill).toBe(0);
+    expect(normalizeMatchScoutEntry({ ...base, driver_skill: 'great' }).value.driver_skill).toBeNull();
+  });
+
+  it('only accepts a literal true for crash_or_break', () => {
+    expect(normalizeMatchScoutEntry({ ...base, crash_or_break: 'yes' }).value.crash_or_break).toBe(false);
+    expect(normalizeMatchScoutEntry(base).value.crash_or_break).toBe(false);
+  });
+
+  it('caps long free text instead of rejecting the whole report', () => {
+    const { value } = normalizeMatchScoutEntry({ ...base, post_notes: 'x'.repeat(10_000) });
+    expect(value.post_notes.length).toBe(4000);
+  });
+});
+
+describe('normalizePitProblemReport', () => {
+  const base = { event_key: '2026casj', team_key: '971' };
+
+  it('requires an event and a real team', () => {
+    expect(normalizePitProblemReport({ ...base, event_key: '' }).error).toMatch(/event_key/);
+    expect(normalizePitProblemReport({ ...base, team_key: '' }).error).toMatch(/team_key/);
+  });
+
+  it('falls back to a usable summary rather than storing an empty report', () => {
+    expect(normalizePitProblemReport(base).value.summary).toBe('Mechanical issue flagged after match');
+  });
+
+  it('derives urgency from what was observed, overriding the client', () => {
+    // A robot that died is urgent whatever the form submitted.
+    for (const state of ['died', 'disabled']) {
+      const { value } = normalizePitProblemReport({ ...base, robot_disabled: state, severity: 'watch' });
+      expect(value.severity).toBe('urgent');
+    }
+  });
+
+  it('honours a valid requested severity when nothing worse was observed', () => {
+    expect(normalizePitProblemReport({ ...base, severity: 'urgent' }).value.severity).toBe('urgent');
+    expect(normalizePitProblemReport({ ...base, severity: 'watch' }).value.severity).toBe('watch');
+    expect(normalizePitProblemReport({ ...base, severity: 'catastrophic' }).value.severity).toBe('watch');
+  });
+
+  it('always creates the report unresolved and attributed', () => {
+    const { value } = normalizePitProblemReport({ ...base, resolved: true }, 'user-9');
+    expect(value.resolved).toBe(false);
+    expect(value.created_by).toBe('user-9');
+    expect(value.source).toBe('Match scout');
+  });
+});
