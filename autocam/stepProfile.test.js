@@ -343,6 +343,29 @@ describe('extractRoutingContoursFromMeshes (real STEP file: flat-plate.step)', (
   });
 });
 
+describe('extractRoutingContoursFromMeshes (synthetic closed cube)', () => {
+  it('rejects a thick solid instead of emitting a sheet-profile perimeter that can omit features on other faces', () => {
+    const vertices = [
+      0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+      0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1
+    ];
+    const faces = [
+      [0, 1, 2, 0, 2, 3], [4, 6, 5, 4, 7, 6],
+      [0, 4, 5, 0, 5, 1], [1, 5, 6, 1, 6, 2],
+      [2, 6, 7, 2, 7, 3], [3, 7, 4, 3, 4, 0]
+    ];
+    const index = faces.flat();
+    const brep_faces = faces.map((face, i) => ({ first: i * 2, last: i * 2 + 1 }));
+    const cube = {
+      attributes: { position: { array: new Float32Array(vertices) } },
+      index: { array: new Uint32Array(index) },
+      brep_faces
+    };
+
+    expect(() => extractRoutingContoursFromMeshes([cube])).toThrow(/too thick for the sheet-profile router operation/);
+  });
+});
+
 describe('extractRoutingContoursFromMeshes (real STEP file: multibody-bracket.step - the real file behind the multi-mesh thickness test above: a bracket bundled with 2 small fastener bodies)', () => {
   it('reads a sane thickness for the bracket itself, not contaminated by the fastener bodies', async () => {
     const meshes = await readStepMeshes(fs.readFileSync(MULTIBODY_BRACKET));
