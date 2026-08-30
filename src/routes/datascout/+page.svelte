@@ -52,7 +52,6 @@
 
   // Teleop Specific State
   let currentRole = "Scoring";
-  let shiftOn = true;
   let autoTopSection;
   let teleopTopSection;
   let matchNotes = "";
@@ -62,9 +61,6 @@
   let finalClimbPos = "N/A";
   let autoClimbPos = "N/A";
   let autoDead = false;
-  let shootingAccuracy = 3; // 1-5 default 3
-  let shootingSpeed = 6; // 1-20 balls/sec default 5
-  let drivingRank = 2; // 1-3 default Good
 
   // History / Logs
   let scoutingEvents = []; // current session events
@@ -96,46 +92,14 @@
 
   $: myAssignmentCount = Object.keys(myDataAssignments).length;
 
-  // Animation State
-  let animatedBalls = [];
-  let shootingTimer;
-
   function handleButtonClick(e) {
     if (e.currentTarget) {
       e.currentTarget.blur();
     }
   }
 
-  $: {
-    if (typeof window !== "undefined") {
-      clearInterval(shootingTimer);
-      // Only animate in scouting phases
-      if (phase === "auto" || phase === "teleop") {
-        const interval = 1000 / shootingSpeed;
-        shootingTimer = setInterval(() => {
-          const id = Math.random();
-          animatedBalls = [...animatedBalls, { id }];
-          // Cleanup ball after animation finishes
-          setTimeout(() => {
-            animatedBalls = animatedBalls.filter((b) => b.id !== id);
-          }, 3000); // Matches --ball-duration
-        }, interval);
-      }
-    }
-  }
-
   const ROLES = ["Scoring", "Shuttling", "Defense", "Counter Defense", "Dead"];
   const CLIMB_POSITIONS = ["N/A", "L1", "L2", "L3", "Failed"];
-  const SUBJECTIVE_SCORES = [
-    { label: "Bad", value: 1 },
-    { label: "Good", value: 2 },
-    { label: "Great", value: 3 },
-  ];
-
-  function subjectiveScoreLabel(value) {
-    return SUBJECTIVE_SCORES.find((score) => score.value === Number(value))
-      ?.label || "Good";
-  }
 
   function displayTeam(t) {
     return t ? String(t).replace(/^frc/i, "") : "";
@@ -342,15 +306,11 @@
     phase = "pre";
     startPosition = "";
     currentRole = "Scoring";
-    shiftOn = true;
     matchNotes = "";
     submittingMatch = false;
     finalClimbPos = "N/A";
     autoClimbPos = "N/A";
     autoDead = false;
-    shootingAccuracy = 3;
-    shootingSpeed = 5;
-    drivingRank = 2;
     scoutingEvents = [];
     holdTimers = {};
   }
@@ -366,9 +326,10 @@
       event_type,
       event_value,
       user_id: user?.id || null,
-      // Add context state to every event for redundancy if needed, or just rely on 'role_update' events
+      // Role remains useful context. Shift state was removed from the scout
+      // workflow; every observation stands on its own instead.
       role: phase === "teleop" ? currentRole : null,
-      on_shift: phase === "teleop" ? shiftOn : null,
+      on_shift: null,
     };
 
     // Optimistic UI update
@@ -459,8 +420,6 @@
     if (nextLast) {
       const isTeleopSetup =
         (lastEvent.event_type === "auto_climb_pos" &&
-          nextLast.event_type === "shift_update") ||
-        (lastEvent.event_type === "shift_update" &&
           nextLast.event_type === "role_update") ||
         (lastEvent.event_type === "role_update" &&
           nextLast.event_type === "phase" &&
@@ -526,7 +485,6 @@
     void scrollTeleopToTop();
     record("phase", "end_auto");
     record("role_update", currentRole);
-    record("shift_update", String(shiftOn));
     record("auto_climb_pos", autoClimbPos);
   }
   function beginEndgame() {
@@ -594,9 +552,6 @@
     try {
       await saveMatchNotes();
       await record("climb_pos", finalClimbPos);
-      await record("rank_accuracy", shootingAccuracy);
-      await record("rank_speed", shootingSpeed);
-      await record("rank_driving", drivingRank);
       await record("phase", "finish_match");
       await completeMyAssignment(selectedMatch.key, selectedTeam);
       phase = "finished";
@@ -645,11 +600,6 @@
   function setRole(r) {
     currentRole = r;
     record("role_update", r);
-  }
-  function setShift(val) {
-    if (shiftOn === val) return;
-    shiftOn = val;
-    record("shift_update", String(val));
   }
 
   // Viewing Data
@@ -2034,30 +1984,8 @@
         >
           <div class="teleop-live-zone">
             <div class="teleop-config teleop-panel">
-              <div class="shift-selector">
-                <span class="label">Shift Status</span>
-                <div class="btn-grid teleop-option-grid teleop-shift-grid">
-                  <button
-                    class="btn {shiftOn ? 'btn-selected' : 'btn-outline'} big-btn"
-                    on:click={(e) => {
-                      handleButtonClick(e);
-                      setShift(true);
-                    }}>On Shift</button
-                  >
-                  <button
-                    class="btn {!shiftOn
-                      ? 'btn-selected'
-                      : 'btn-outline'} big-btn"
-                    on:click={(e) => {
-                      handleButtonClick(e);
-                      setShift(false);
-                    }}>Off Shift</button
-                  >
-                </div>
-              </div>
-
               <div class="role-selector">
-                <span class="label">Current Robot Role</span>
+                <span class="label">Current robot role / status</span>
                 <div class="btn-grid teleop-option-grid teleop-role-grid">
                   {#each ROLES as r}
                     <button
@@ -2067,7 +1995,7 @@
                       on:click={(e) => {
                         handleButtonClick(e);
                         setRole(r);
-                      }}>{r}</button
+                      }}>{r === "Dead" ? "Disabled / Dead" : r}</button
                     >
                   {/each}
                 </div>
@@ -2075,7 +2003,8 @@
             </div>
 
             <div class="teleop-live-middle">
-              <span class="label">Shooting / Outtake (Hold)</span>
+              <span class="label">Robot action — hold only while it is happening</span>
+              <p class="control-help">These buttons time what the robot is doing; they do not add scored fuel.</p>
               <div class="btn-grid teleop-action-grid teleop-panel">
                 <button
                   class="btn {holdTimers['shooting_shuttling']
@@ -2086,7 +2015,7 @@
                   on:touchstart|preventDefault={() =>
                     startAction("shooting", "shuttling")}
                   on:touchend|preventDefault={() =>
-                    endAction("shooting", "shuttling")}>Shuttling</button
+                    endAction("shooting", "shuttling")}>Shuttling fuel</button
                 >
 
                 <button
@@ -2105,7 +2034,7 @@
                     )}
                   on:touchend|preventDefault={() =>
                     endVisualAction("pushing_outpost_tele")}
-                  >Outtake Push</button
+                  >Feeding outpost</button
                 >
                 <button
                   class="btn {holdTimers['shooting_scoring']
@@ -2116,13 +2045,14 @@
                   on:touchstart|preventDefault={() =>
                     startAction("shooting", "scoring")}
                   on:touchend|preventDefault={() =>
-                    endAction("shooting", "scoring")}>Scoring</button
+                    endAction("shooting", "scoring")}>Shooting at hub</button
                 >
               </div>
             </div>
 
             <div class="teleop-live-middle">
-              <span class="label">Fuel Scored (Tap)</span>
+              <span class="label">Scored fuel — tap once per fuel</span>
+              <p class="control-help">Each tap adds exactly one to the displayed total.</p>
               <div class="btn-grid teleop-action-grid teleop-panel">
                 <button
                   class="btn btn-outline big-btn fuel-count-btn"
@@ -2131,7 +2061,7 @@
                     recordFuelScore("shuttle");
                   }}
                 >
-                  Shuttle
+                  +1 Shuttle
                   <span class="fuel-count-badge">{shuttleFuelCount}</span>
                 </button>
                 <button
@@ -2141,13 +2071,15 @@
                     recordFuelScore("hub");
                   }}
                 >
-                  Hub
+                  +1 Hub
                   <span class="fuel-count-badge">{hubFuelCount}</span>
                 </button>
               </div>
+              <details class="fuel-corrections">
+                <summary>Correct a total</summary>
               <div class="fuel-override-row">
                 <div class="fuel-override-input">
-                  <label for="shuttleFuelOverride">Shuttle count</label>
+                  <label for="shuttleFuelOverride">Set Shuttle total</label>
                   <input
                     id="shuttleFuelOverride"
                     type="number"
@@ -2166,7 +2098,7 @@
                   >
                 </div>
                 <div class="fuel-override-input">
-                  <label for="hubFuelOverride">Hub count</label>
+                  <label for="hubFuelOverride">Set Hub total</label>
                   <input
                     id="hubFuelOverride"
                     type="number"
@@ -2185,6 +2117,7 @@
                   >
                 </div>
               </div>
+              </details>
             </div>
 
             <div class="teleop-live-bottom">
@@ -2208,7 +2141,7 @@
 
         <div class="phase-section teleop-phase teleop-phase-secondary">
           <div class="form-group mt-1">
-            <span class="label">Climb Position</span>
+            <span class="label">Endgame result</span>
             <div class="btn-grid teleop-option-grid teleop-climb-grid">
               {#each CLIMB_POSITIONS as p}
                 <button
@@ -2225,85 +2158,13 @@
           </div>
 
           <div class="form-group mt-1">
-            <span class="label">Shooting Accuracy</span>
-            <input
-              type="range"
-              min="1"
-              max="5"
-              step="1"
-              list="accuracy-ticks"
-              bind:value={shootingAccuracy}
-              class="slider"
-            />
-            <datalist id="accuracy-ticks">
-              {#each Array(5) as _, i}<option value={i + 1}></option>{/each}
-            </datalist>
-            <div class="range-labels">
-              <span>1</span><span>5</span>
-            </div>
-            <div class="current-val">{shootingAccuracy}</div>
-          </div>
-
-          <div class="form-group mt-1">
-            <span class="label">Shooting Speed</span>
-
-            <!-- Animation -->
-            <div class="animation-stage">
-              <div class="robot-box">🤖</div>
-              {#each animatedBalls as b (b.id)}
-                <div
-                  class="projectile-x"
-                  style="animation-duration: var(--ball-duration);"
-                >
-                  <div class="projectile-y">🥎</div>
-                </div>
-              {/each}
-            </div>
-
-            <input
-              type="range"
-              min="0"
-              max="20"
-              step="2"
-              list="speed-ticks"
-              bind:value={shootingSpeed}
-              class="slider"
-            />
-            <datalist id="speed-ticks">
-              {#each Array(20) as _, i}<option value={i + 1}></option>{/each}
-            </datalist>
-            <div class="range-labels">
-              <span>1</span><span>20</span>
-            </div>
-            <div class="current-val">{shootingSpeed} fuel/sec</div>
-          </div>
-
-          <div class="form-group mt-1">
-            <span class="label">Subjective Score</span>
-            <div class="btn-grid teleop-option-grid subjective-score-grid">
-              {#each SUBJECTIVE_SCORES as score}
-                <button
-                  class="btn {drivingRank === score.value
-                    ? 'btn-selected'
-                    : 'btn-outline'} big-btn"
-                  on:click={(e) => {
-                    handleButtonClick(e);
-                    drivingRank = score.value;
-                  }}>{score.label}</button
-                >
-              {/each}
-            </div>
-            <div class="current-val">{subjectiveScoreLabel(drivingRank)}</div>
-          </div>
-
-          <div class="form-group mt-1">
-            <label class="label" for="matchNotes">Notes</label>
+            <label class="label" for="matchNotes">Notes (optional)</label>
             <textarea
               id="matchNotes"
               class="form-input match-notes-input"
               rows="4"
               bind:value={matchNotes}
-              placeholder="Anything important for note scouting?"
+              placeholder="Anything important for strategy? Leave blank if not."
             ></textarea>
           </div>
 
@@ -2345,9 +2206,6 @@
                 {e.phase.toUpperCase()[0]} - {e.event_type}: {e.event_value ||
                   ""}
                 {#if e.role}[{e.role}]{/if}
-                {#if e.on_shift !== null && e.on_shift !== undefined}({e.on_shift
-                    ? "ON"
-                    : "OFF"}){/if}
               </div>
             {/each}
           </div>
@@ -2785,6 +2643,12 @@
     gap: 0.25rem;
     flex: 1 1 auto;
   }
+  .control-help {
+    margin: 0 0 0.25rem;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
   .auto-live-bottom,
   .teleop-live-bottom {
     display: flex;
@@ -2819,9 +2683,6 @@
     grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
     grid-auto-flow: dense;
   }
-  .teleop-shift-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .teleop-action-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-auto-rows: minmax(clamp(4.75rem, 11dvh, 7rem), 1fr);
@@ -2839,6 +2700,12 @@
     font-weight: 700;
     line-height: 1;
   }
+  .fuel-corrections {
+    margin-top: 0.6rem;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.78rem;
+  }
+  .fuel-corrections summary { cursor: pointer; }
   .fuel-override-row {
     display: flex;
     gap: 0.75rem;
@@ -2862,9 +2729,6 @@
   }
   .teleop-climb-grid {
     grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
-  }
-  .subjective-score-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .auto-phase .big-btn,
   .teleop-phase .big-btn {
