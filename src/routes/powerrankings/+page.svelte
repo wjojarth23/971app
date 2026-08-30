@@ -50,21 +50,27 @@
     error = '';
     warning = '';
     const authHeaders = await getAuthHeader();
-    const [rosterResult, scoutResult, notesResult] = await Promise.all([
+    const [rosterResult, scoutResult, notesResult, pitResult, problemResult] = await Promise.all([
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).then((response) => response.json()).catch(() => null),
       fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
-      fetch(`/notescout?event_key=${encodeURIComponent(eventKey)}&recent=50000`, { headers: authHeaders }).then((response) => response.json()).catch(() => null)
+      fetch(`/notescout?event_key=${encodeURIComponent(eventKey)}&recent=50000`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
+      fetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
+      fetch(`/api/matchscout?resource=pit-problems&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null)
     ]);
 
     const scoutEvents = scoutResult?.success ? scoutResult.data : [];
     const scoutNotes = notesResult?.success ? notesResult.data : [];
+    const pitEntries = pitResult?.success ? pitResult.data : [];
+    const problemReports = problemResult?.success ? problemResult.data : [];
     if (!scoutResult?.success) warning = scoutResult?.error || 'Local scouting data is unavailable.';
     else if (scoutResult.truncated) warning = 'Only the first 50,000 scouting observations were loaded.';
     if (!notesResult?.success) warning = `${warning ? `${warning} ` : ''}${notesResult?.error || 'Scouting notes are unavailable.'}`;
+    if (!pitResult?.success) warning = `${warning ? `${warning} ` : ''}${pitResult?.error || 'Pit profiles are unavailable.'}`;
+    if (!problemResult?.success) warning = `${warning ? `${warning} ` : ''}${problemResult?.error || 'Pit problem reports are unavailable.'}`;
 
     let roster = rosterResult?.success ? rosterResult.data : [];
     if (!roster.length) {
-      const keys = [...new Set([...scoutEvents, ...scoutNotes].map((row) => row.team_key).filter(Boolean))];
+      const keys = [...new Set([...scoutEvents, ...scoutNotes, ...pitEntries, ...problemReports].map((row) => row.team_key).filter(Boolean))];
       roster = keys.map((key) => ({
         key,
         team_number: Number(String(key).replace(/^frc/i, '')),
@@ -78,7 +84,7 @@
       return;
     }
 
-    teams = buildPowerRankings(roster, scoutEvents, scoutNotes);
+    teams = buildPowerRankings(roster, scoutEvents, scoutNotes, { pitEntries, problemReports });
     const ranked = [...teams].sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1));
     if (!compareLeftKey && ranked[0]) compareLeftKey = ranked[0].key;
     if (!compareRightKey && ranked[1]) compareRightKey = ranked[1].key;
@@ -115,7 +121,7 @@
   <div class="error-container"><p>{error}</p></div>
 {:else}
   {#if warning}<p class="text-muted">⚠ {warning}</p>{/if}
-  <p class="formula">Scout power is 85% observed match performance and 15% explicit note impact. Neutral notes remain visible for human review without changing the score. Missing inputs are omitted and remaining weights are rebalanced.</p>
+  <p class="formula">Scout power is 70% observed match performance, 15% explicit note impact, and 15% pit capability/reliability. Unresolved pit problems reduce the pit score; neutral prose and archetype labels remain human context. Missing inputs are omitted and remaining weights are rebalanced.</p>
 
   <section class="surface-card comparison-card">
     <h2><Swords size={18} /> Head to Head</h2>
@@ -131,6 +137,9 @@
         <b>{fmt(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmt(compareRight.scoutPower)}</b>
         <b>{compareLeft.noteSummary.averageImpact ?? '—'}</b><span>Note impact</span><b>{compareRight.noteSummary.averageImpact ?? '—'}</b>
         <b>{compareLeft.noteSummary.noteCount}</b><span>Saved notes</span><b>{compareRight.noteSummary.noteCount}</b>
+        <b>{fmt(compareLeft.pitSummary.pitScore)}</b><span>Pit score</span><b>{fmt(compareRight.pitSummary.pitScore)}</b>
+        <b>{compareLeft.pitSummary.robotArchetype || '—'}</b><span>Archetype</span><b>{compareRight.pitSummary.robotArchetype || '—'}</b>
+        <b>{compareLeft.pitSummary.openProblemCount}</b><span>Open pit problems</span><b>{compareRight.pitSummary.openProblemCount}</b>
         <b>{compareLeft.scoutSummary.matchesScouted}</b><span>Matches scouted</span><b>{compareRight.scoutSummary.matchesScouted}</b>
         <b>{fmt(compareLeft.scoutSummary.avgFuel)}</b><span>Avg fuel</span><b>{fmt(compareRight.scoutSummary.avgFuel)}</b>
         <b>{fmt(compareLeft.scoutSummary.avgDrivingRank)}</b><span>Driving</span><b>{fmt(compareRight.scoutSummary.avgDrivingRank)}</b>
@@ -148,11 +157,11 @@
         <th><button on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>
         <th><button on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
         <th>Name</th><th><button on:click={() => sortBy('scoutPower')}>Scout Power <ArrowUpDown size={11} /></button></th>
-        <th>Matches</th><th>Note Impact</th><th>Notes</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
+        <th>Matches</th><th>Pit Score</th><th>Problems</th><th>Archetype</th><th>Note Impact</th><th>Notes</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
       </tr></thead>
       <tbody>{#each filteredTeams as team (team.key)}<tr>
         <td class="strong">{team.powerRank ?? '—'}</td><td class="mono">{team.team_number}</td><td>{team.nickname}</td>
-        <td class="strong">{fmt(team.scoutPower)}</td><td>{team.scoutSummary.matchesScouted}</td><td>{team.noteSummary.averageImpact ?? '—'}</td><td>{team.noteSummary.noteCount}</td><td>{fmt(team.scoutSummary.avgFuel)}</td>
+        <td class="strong">{fmt(team.scoutPower)}</td><td>{team.scoutSummary.matchesScouted}</td><td>{fmt(team.pitSummary.pitScore)}</td><td>{team.pitSummary.openProblemCount}</td><td>{team.pitSummary.robotArchetype || '—'}</td><td>{team.noteSummary.averageImpact ?? '—'}</td><td>{team.noteSummary.noteCount}</td><td>{fmt(team.scoutSummary.avgFuel)}</td>
         <td>{fmt(team.scoutSummary.avgDrivingRank)}</td><td>{fmt(team.scoutSummary.avgAccuracy)}</td><td>{fmt(team.scoutSummary.avgSpeed)}</td><td>{fmtPercent(team.scoutSummary.climbSuccessRate)}</td>
       </tr>{/each}</tbody>
     </table>

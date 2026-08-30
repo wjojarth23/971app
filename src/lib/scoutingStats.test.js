@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   summarizeTeamEvents, summarizeTeamPerformance, buildPowerRankings,
-  fuelCountFromEvents, deriveMatchTeamRow, summarizeScoutNotes
+  fuelCountFromEvents, deriveMatchTeamRow, summarizeScoutNotes, summarizePitScouting
 } from './scoutingStats.js';
 
 function event(overrides) {
@@ -219,7 +219,42 @@ describe('power rankings', () => {
       { team_key: 'frc2', ranking_impact: 2 }
     ]);
 
-    expect(ranked.find((row) => row.key === 'frc1').scoutPower).toBeCloseTo(53.833333, 5);
-    expect(ranked.find((row) => row.key === 'frc2').scoutPower).toBeCloseTo(46.166667, 5);
+    expect(ranked.find((row) => row.key === 'frc1').scoutPower).toBeCloseTo(52.156863, 5);
+    expect(ranked.find((row) => row.key === 'frc2').scoutPower).toBeCloseTo(47.843137, 5);
+  });
+
+  it('uses pit capability and unresolved problems without scoring prose or archetype labels', () => {
+    const teams = [{ key: 'frc1' }, { key: 'frc2' }];
+    const pitEntries = [
+      {
+        team_key: 'frc1', robot_archetype: 'Shooter', additional_notes: 'Fast repair access',
+        climb_options: ['No Climb'], technical_details: { overall_reliability_rating: 4 }
+      },
+      {
+        team_key: 'frc2', robot_archetype: 'Hybrid', additional_notes: '',
+        climb_options: ['L3'], technical_details: { overall_reliability_rating: 10 }
+      }
+    ];
+    const problemReports = [{ team_key: 'frc1', severity: 'urgent', resolved: false }];
+    const ranked = buildPowerRankings(teams, [], [], { pitEntries, problemReports });
+    const first = ranked.find((row) => row.key === 'frc1');
+    const second = ranked.find((row) => row.key === 'frc2');
+
+    expect(second.powerRank).toBe(1);
+    expect(first.pitSummary.openProblemCount).toBe(1);
+    expect(first.pitSummary.robotArchetype).toBe('Shooter');
+    expect(first.pitSummary.hasAdditionalNotes).toBe(true);
+    expect(second.pitSummary.pitScore).toBeGreaterThan(first.pitSummary.pitScore);
+  });
+
+  it('does not let resolved pit problems reduce a team score', () => {
+    const summary = summarizePitScouting(
+      { climb_options: ['L2'] },
+      [{ severity: 'urgent', resolved: true }],
+      null
+    );
+    expect(summary.openProblemCount).toBe(0);
+    expect(summary.problemPenalty).toBe(0);
+    expect(summary.pitScore).toBe(summary.capabilityScore);
   });
 });

@@ -3,9 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
 import { getSupabase } from '$lib/server/971bot.js';
 import { selectPitScoutEntries, upsertPitScoutEntry } from '$lib/server/pitScoutingSchema.js';
+import { normalizeTeamKey } from '$lib/server/matchScoutingSchema.js';
 
 const NO_CLIMB_OPTION = 'No Climb';
 const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
+const ROBOT_ARCHETYPES = ['Shooter', 'Shuttler', 'Defender', 'Climber', 'Hybrid', 'Support / Feeder', 'Unknown'];
 
 const TECHNICAL_DETAIL_OPTIONS = {
   use_net: ['Yes', 'No'],
@@ -225,11 +227,13 @@ export async function POST({ request, url }) {
     if (!isLocal && !actor?.id) return json({ error: 'Unauthorized' }, { status: 401 });
 
     const event_key = String(body?.event_key || '').trim();
-    const team_key = String(body?.team_key || '').trim();
+    const team_key = normalizeTeamKey(body?.team_key);
     const drivebase_type = body?.drivebase_type || null;
     const shooter_type = body?.shooter_type || null;
     const hopper_type = body?.hopper_type || null;
     const human_player_balls_in_auto = body?.human_player_balls_in_auto || null;
+    const robot_archetype = ROBOT_ARCHETYPES.includes(body?.robot_archetype) ? body.robot_archetype : null;
+    const additional_notes = sanitizeLongText(body?.additional_notes, 4000);
     const likely_breaking_component = sanitizeLongText(body?.likely_breaking_component);
     const estimated_bps = sanitizeEstimatedBps(body?.estimated_bps);
     const climb_options = sanitizeClimbOptions(body?.climb_options);
@@ -248,6 +252,8 @@ export async function POST({ request, url }) {
       shooter_type,
       hopper_type,
       human_player_balls_in_auto,
+      robot_archetype,
+      additional_notes,
       likely_breaking_component,
       estimated_bps,
       climb_options,

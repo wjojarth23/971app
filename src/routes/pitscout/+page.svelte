@@ -8,6 +8,7 @@
   const SHOOTER_OPTIONS = ['Single Fixed', 'Multi Fixed', 'Wide', 'Turret', 'Double Turret'];
   const HOPPER_OPTIONS = ['Spindexer', 'Dye Rotor', 'Belted'];
   const HUMAN_PLAYER_AUTO_OPTIONS = ['0-10', '10-20', '20+'];
+  const ROBOT_ARCHETYPES = ['Shooter', 'Shuttler', 'Defender', 'Climber', 'Hybrid', 'Support / Feeder', 'Unknown'];
   const NO_CLIMB_OPTION = 'No Climb';
   const CLIMB_OPTIONS = [NO_CLIMB_OPTION, 'L1 Auto', 'L1', 'L2', 'L3'];
   const MAX_AUTO_OPTIONS = 8;
@@ -147,6 +148,11 @@
   let saving = false;
   let uploading = false;
   let apiNote = '';
+  let activeView = 'teams';
+  let problems = [];
+  let problemLoading = false;
+  let problemSaving = false;
+  let problemDraft = { team_key: '', summary: '', detail: '', severity: 'watch' };
 
   let teams = [];
   let entriesByTeam = {};
@@ -158,6 +164,8 @@
   let hopper_type = '';
   let human_player_balls_in_auto = '';
   let pitSchema = {
+    robot_archetype: true,
+    additional_notes: true,
     likely_breaking_component: true,
     estimated_bps: true,
     climb_options: true,
@@ -165,6 +173,8 @@
     technical_details: true
   };
   let schemaWarning = '';
+  let robot_archetype = '';
+  let additional_notes = '';
   let likely_breaking_component = '';
   let estimated_bps = undefined;
   let climb_options = [];
@@ -314,6 +324,8 @@
       String(entry.hopper_type).trim() ||
       entry.human_player_balls_in_auto &&
       String(entry.human_player_balls_in_auto).trim() ||
+      String(entry.robot_archetype || '').trim() ||
+      String(entry.additional_notes || '').trim() ||
       normalizeLikelyBreakingComponent(entry.likely_breaking_component) ||
       hasEstimatedBps(entry.estimated_bps) ||
       normalizeClimbOptions(entry.climb_options).length ||
@@ -351,6 +363,8 @@
     shooter_type = entry?.shooter_type || '';
     hopper_type = entry?.hopper_type || '';
     human_player_balls_in_auto = entry?.human_player_balls_in_auto || '';
+    robot_archetype = ROBOT_ARCHETYPES.includes(entry?.robot_archetype) ? entry.robot_archetype : '';
+    additional_notes = String(entry?.additional_notes || '');
     likely_breaking_component = entry?.likely_breaking_component || '';
     estimated_bps = hasEstimatedBps(entry?.estimated_bps) ? Number(entry.estimated_bps) : undefined;
     climb_options = normalizeClimbOptions(entry?.climb_options || []);
@@ -443,6 +457,76 @@
     return next;
   }
 
+  async function loadProblems() {
+    if (!resolvedEventKey) {
+      problems = [];
+      return [];
+    }
+    problemLoading = true;
+    try {
+      const res = await authFetch(`/api/matchscout?resource=pit-problems&event_key=${encodeURIComponent(resolvedEventKey)}`);
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || `Failed to load pit problems (${res.status})`);
+      problems = data.data || [];
+      return problems;
+    } catch (e) {
+      problems = [];
+      apiNote = e.message || 'Failed to load pit problems';
+      return [];
+    } finally {
+      problemLoading = false;
+    }
+  }
+
+  async function createProblem() {
+    if (!eventKey || !problemDraft.team_key || !problemDraft.summary.trim() || isViewingPastEvent) return;
+    problemSaving = true;
+    apiNote = '';
+    try {
+      const res = await authFetch('/api/matchscout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'report-pit-problem',
+          event_key: eventKey,
+          team_key: problemDraft.team_key,
+          source: 'Pit scout',
+          summary: problemDraft.summary,
+          detail: problemDraft.detail,
+          severity: problemDraft.severity
+        })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || `Problem save failed (${res.status})`);
+      problemDraft = { team_key: '', summary: '', detail: '', severity: 'watch' };
+      await loadProblems();
+      apiNote = 'Pit problem added to the shared queue.';
+    } catch (e) {
+      apiNote = e.message || 'Problem save failed';
+    } finally {
+      problemSaving = false;
+    }
+  }
+
+  async function setProblemResolved(problem, resolved) {
+    problemSaving = true;
+    apiNote = '';
+    try {
+      const res = await authFetch('/api/matchscout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'resolve-pit-problem', id: problem.id, resolved })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || `Problem update failed (${res.status})`);
+      problems = problems.map((row) => row.id === problem.id ? data.data : row);
+    } catch (e) {
+      apiNote = e.message || 'Problem update failed';
+    } finally {
+      problemSaving = false;
+    }
+  }
+
   async function loadEventOptions() {
     eventKey = (await fetchActiveScoutingEventKey()) || '';
     availableEvents = await fetchAvailableScoutingEvents();
@@ -462,7 +546,7 @@
         return;
       }
 
-      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries()]);
+      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries(), loadProblems()]);
       teams = [...new Set([...loadedTeams, ...Object.keys(loadedEntries)])].sort(teamSort);
       syncSelectedTeam();
     } catch (e) {
@@ -614,6 +698,8 @@
         shooter_type,
         hopper_type,
         human_player_balls_in_auto,
+        ...(pitSchema.robot_archetype ? { robot_archetype } : {}),
+        ...(pitSchema.additional_notes ? { additional_notes } : {}),
         ...(pitSchema.likely_breaking_component
           ? { likely_breaking_component: normalizedLikelyBreakingComponent }
           : {}),
@@ -675,6 +761,8 @@
   $: selectedEntry = selectedTeam ? entriesByTeam[selectedTeam] || null : null;
   $: photoSlotsRemaining = Math.max(0, 3 - editablePhotoPaths.length - pendingFiles.length);
   $: photoButtonLabel = prefersCameraCapture ? 'Take Photo' : 'Add Photos';
+  $: openProblems = problems.filter((problem) => !problem.resolved);
+  $: resolvedProblems = problems.filter((problem) => problem.resolved);
 
   onMount(() => {
     prefersCameraCapture = detectCameraCapturePreference();
@@ -730,7 +818,88 @@
   </div>
 </div>
 
-{#if !selectedTeam}
+<div class="view-tabs" aria-label="Pit Scouting sections">
+  <button class:active={activeView === 'teams'} type="button" on:click={() => activeView = 'teams'}>Team profiles</button>
+  <button class:active={activeView === 'problems'} type="button" on:click={() => activeView = 'problems'}>
+    Problems {#if openProblems.length}<span>{openProblems.length}</span>{/if}
+  </button>
+</div>
+
+{#if activeView === 'problems'}
+  <div class="problems-layout">
+    <section class="card problem-queue">
+      <div class="problem-heading">
+        <div><h3>Shared repair queue</h3><p>Problems reported by match and pit scouts for {resolvedEventKey || 'the active event'}.</p></div>
+        <button class="btn btn-secondary" type="button" on:click={loadProblems} disabled={problemLoading}>Refresh</button>
+      </div>
+
+      {#if problemLoading}
+        <div class="empty">Loading problems...</div>
+      {:else if !problems.length}
+        <div class="empty">No pit problems reported for this event.</div>
+      {:else if !openProblems.length}
+        <div class="empty">No open pit problems for this event.</div>
+      {:else}
+        <div class="problem-list">
+          {#each openProblems as problem (problem.id)}
+            <article class="problem-card" class:urgent={problem.severity === 'urgent'}>
+              <div class="problem-meta">
+                <strong>Team {displayTeam(problem.team_key)}</strong>
+                <span class="severity">{problem.severity}</span>
+                <span>{problem.source || 'Scout'}</span>
+                {#if problem.match_key}<span>{problem.match_key}</span>{/if}
+              </div>
+              <h4>{problem.summary}</h4>
+              {#if problem.detail}<p>{problem.detail}</p>{/if}
+              <button class="btn btn-primary" type="button" disabled={problemSaving} on:click={() => setProblemResolved(problem, true)}>Mark resolved</button>
+            </article>
+          {/each}
+        </div>
+      {/if}
+
+      {#if resolvedProblems.length}
+        <details class="resolved-problems">
+          <summary>Resolved problems ({resolvedProblems.length})</summary>
+          {#each resolvedProblems as problem (problem.id)}
+            <div class="resolved-row">
+              <span>Team {displayTeam(problem.team_key)} · {problem.summary}</span>
+              <button class="btn btn-outline" type="button" disabled={problemSaving} on:click={() => setProblemResolved(problem, false)}>Reopen</button>
+            </div>
+          {/each}
+        </details>
+      {/if}
+    </section>
+
+    <form class="card problem-form" on:submit|preventDefault={createProblem}>
+      <h3>Add a pit report</h3>
+      {#if isViewingPastEvent}<div class="note">Switch to the current event before adding a problem.</div>{/if}
+      <div class="form-group">
+        <label class="form-label" for="problemTeam">Team</label>
+        <select id="problemTeam" class="form-select" bind:value={problemDraft.team_key} disabled={isViewingPastEvent}>
+          <option value="">-- Select --</option>
+          {#each teams as teamKey}<option value={teamKey}>Team {displayTeam(teamKey)}</option>{/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="problemSummary">Problem</label>
+        <input id="problemSummary" class="form-input" maxlength="300" bind:value={problemDraft.summary} placeholder="Example: intake belt slipping" disabled={isViewingPastEvent} />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="problemSeverity">Severity</label>
+        <select id="problemSeverity" class="form-select" bind:value={problemDraft.severity} disabled={isViewingPastEvent}>
+          <option value="watch">Watch</option><option value="urgent">Urgent</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="problemDetail">Details</label>
+        <textarea id="problemDetail" class="form-input" rows="5" bind:value={problemDraft.detail} placeholder="What failed and what should be checked?" disabled={isViewingPastEvent}></textarea>
+      </div>
+      <button class="btn btn-primary" type="submit" disabled={problemSaving || isViewingPastEvent || !problemDraft.team_key || !problemDraft.summary.trim()}>
+        {problemSaving ? 'Saving...' : 'Add problem'}
+      </button>
+    </form>
+  </div>
+{:else if !selectedTeam}
   <div class="card picker-card">
     <div class="form-group" style="margin-bottom:0">
       <label class="form-label" for="teamSearch">Team</label>
@@ -829,6 +998,24 @@
         {/each}
       </select>
     </div>
+
+    {#if pitSchema.robot_archetype}
+      <div class="form-group">
+        <label class="form-label" for="robotArchetypeSelect">Robot Archetype</label>
+        <select id="robotArchetypeSelect" class="form-select" bind:value={robot_archetype}>
+          <option value="">-- Select --</option>
+          {#each ROBOT_ARCHETYPES as option}<option value={option}>{option}</option>{/each}
+        </select>
+      </div>
+    {/if}
+
+    {#if pitSchema.additional_notes}
+      <div class="form-group">
+        <label class="form-label" for="additionalNotesInput">Additional Notes</label>
+        <textarea id="additionalNotesInput" class="form-input additional-notes-input" rows="5" maxlength="4000" bind:value={additional_notes} placeholder="Strategy observations, pit conversations, repair history, or follow-up questions"></textarea>
+        <small class="form-help">Saved for human review. Structured pit capabilities and unresolved problems affect Power Rankings.</small>
+      </div>
+    {/if}
 
     {#if pitSchema.technical_details}
       <section class="question-section">
@@ -1492,6 +1679,93 @@
 {/if}
 
 <style>
+  .view-tabs {
+    display: flex;
+    gap: 0.5rem;
+    max-width: 760px;
+    margin: 0 auto 1rem;
+  }
+
+  .view-tabs button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .view-tabs button.active {
+    border-color: var(--brand-gold-strong);
+    background: var(--brand-gold-soft);
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .view-tabs button span {
+    min-width: 1.35rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 999px;
+    background: var(--danger);
+    color: white;
+    font-size: 0.72rem;
+    text-align: center;
+  }
+
+  .problems-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.75fr);
+    gap: 1rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .problem-heading,
+  .problem-meta,
+  .resolved-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .problem-heading h3,
+  .problem-heading p,
+  .problem-form h3,
+  .problem-card h4,
+  .problem-card p {
+    margin-top: 0;
+  }
+
+  .problem-heading p,
+  .problem-card p {
+    color: var(--text-muted);
+  }
+
+  .problem-list {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .problem-card {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-sm);
+  }
+
+  .problem-card.urgent { border-left-color: var(--danger); }
+  .problem-meta { justify-content: flex-start; flex-wrap: wrap; color: var(--text-muted); font-size: 0.8rem; }
+  .severity { text-transform: uppercase; font-weight: 700; }
+  .resolved-problems { margin-top: 1rem; }
+  .resolved-row { padding: 0.65rem 0; border-bottom: 1px solid var(--border); }
+  .problem-form { align-self: start; }
+  .additional-notes-input { min-height: 120px; resize: vertical; }
+
   .page-header {
     display: flex;
     justify-content: space-between;
@@ -1770,6 +2044,8 @@
     .submit-btn {
       width: 100%;
     }
+
+    .problems-layout { grid-template-columns: 1fr; }
   }
 
   @media (max-width: 480px) {

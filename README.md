@@ -96,14 +96,22 @@ reading code.
     any entry (deliberately more open than `scout_notes`' creator-only
     edit rule - a pick list is one document the whole strategy group edits
     together, and per-row ownership would break group reordering).
+- **Match + Pit Scouting** (`matchscout/`, `pitscout/`): durable Supabase-backed
+  match reports and shared per-team pit profiles. Pit profiles include robot
+  archetype, mechanisms, climb capability, technical ratings, photos, failure
+  risks, and additional human-review notes. Match and pit scouts share a repair
+  queue backed by `pit_problem_reports`; open problems can be resolved or
+  reopened from Pit Scouting instead of disappearing into browser-local state.
 - **Power Rankings** (`powerrankings/`): a separate top-level tab in the
   Competition nav folder, alongside Scouting rather than nested inside it -
   intentionally its own page rather than a mode of the Scouting workspace, so
   it never gets confused with the TBA-OPR-backed comparison table above. An
   event-relative ranking built only from combined local scout observations.
-  Observed match performance contributes 85% and an explicit human-selected
-  impact attached to saved `scout_notes` contributes 15%; neutral and legacy
-  notes remain review-only. Within match performance, weights are average fuel
+  Observed match performance contributes 70%, an explicit human-selected
+  impact attached to saved `scout_notes` contributes 15%, and structured pit
+  capability/reliability contributes 15%; unresolved pit problems reduce the
+  pit score while archetype and freeform prose remain human context. Within
+  match performance, weights are average fuel
   per match (40%), driving (20%), accuracy (15%), climb level (15%), and speed
   (10%); missing dimensions are omitted and the remaining weights are
   rebalanced instead of being treated as zero. Also
@@ -244,7 +252,7 @@ own docs are all together in one place instead of scattered across
   (`wx-svelte-gantt`), Slack-driven prompts/notifications
   (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
   Supabase `pg_cron` job every 15 minutes.
-- **`pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
+- **`matchscout/`, `pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
   `teamview/`, `discover/`, `powerrankings/`** - FRC competition scouting:
   pit scouting forms, match data scouting, notes, cross-team data
   discovery/analysis, and the local-scouting-only power rankings +
@@ -352,10 +360,10 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 
 ## Known gaps (check before assuming otherwise)
 
-- **8 tables have RLS fully disabled**: `scouting_settings`,
+- **7 tables have RLS fully disabled**: `scouting_settings`,
   `attendance_locations`, `attendance_schedules`,
   `attendance_schedule_locations`, `user_attendance_logs`,
-  `user_notification_logs`, `pit_scout_entries`, `runtime_leases`. Confirmed
+  `user_notification_logs`, `runtime_leases`. Confirmed
   live via the Supabase security advisor - re-check before relying on this
   list being current, since it should shrink over time as these get fixed.
 - **`PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle** - a
