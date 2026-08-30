@@ -22,11 +22,18 @@ export async function fetchUserProfile(userId) {
     return null;
   }
   try {
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .select('id, email, full_name, role, is_dev, permissions, header_tabs, dashboard_layout, login_screen_style, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel, manufacturing_lead_workflows')
-      .eq('id', userId)
-      .single();
+    const [profileResult, rosterResult] = await Promise.all([
+      supabase
+        .from('user_profiles')
+        .select('id, email, full_name, role, is_dev, permissions, header_tabs, dashboard_layout, login_screen_style, created_at, updated_at, banned, general_role, purchasing_role, team_role, frc_team, notification_settings, slack_user_id, slack_dm_channel, manufacturing_lead_workflows')
+        .eq('id', userId)
+        .single(),
+      supabase
+        .from('roster_entries')
+        .select('key:key_id(key_name)')
+        .eq('user_id', userId)
+    ]);
+    const { data, error } = profileResult;
 
     if (error) {
       console.warn('user_profiles fetch error:', error.message || error);
@@ -62,6 +69,7 @@ export async function fetchUserProfile(userId) {
       purchasing_role: data.purchasing_role || 'basic',
       team_role: data.team_role || 'other',
       frc_team: data.frc_team || null,
+      roster_keys: (rosterResult.data || []).map((entry) => entry?.key?.key_name).filter(Boolean),
       is_dev: !!data.is_dev,
       // new customization fields
       header_tabs: headerTabs,
