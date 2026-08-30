@@ -7,10 +7,16 @@
 // Anything outside them is dropped rather than stored, so a renamed option in
 // the UI shows up as missing data instead of quietly widening the schema.
 
+import {
+  MATCH_RATING_FIELDS,
+  TELEOP_ROLES as SHARED_TELEOP_ROLES,
+  parseAutoPointsEstimate
+} from '$lib/matchScouting.js';
+
 export const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
 export const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
-export const POINT_BANDS = ['0', '1-5', '6-10', '11-20', '21+'];
-export const RATING_FIELDS = ['Shot accuracy', 'Driver awareness', 'Cycle speed', 'Defense', 'Reliability'];
+export const RATING_FIELDS = MATCH_RATING_FIELDS;
+export const TELEOP_ROLES = SHARED_TELEOP_ROLES;
 export const BALL_SOURCES = ['source', 'wing', 'neutral', 'opponent wing', 'human player', 'floor'];
 export const CARDS = ['', 'yellow', 'red'];
 export const DISABLED_STATES = ['', 'no', 'tipped', 'died', 'disabled'];
@@ -114,6 +120,15 @@ export function normalizeMatchScoutEntry(body, actorId = null) {
   if (!match_key) return { value: null, error: 'match_key is required' };
   if (!team_key) return { value: null, error: 'A valid team_key is required (e.g. frc971)' };
 
+  const rawAutoPoints = body?.auto_points_estimate ?? body?.auto_points_band;
+  const autoPoints = parseAutoPointsEstimate(rawAutoPoints);
+  if (String(rawAutoPoints ?? '').trim() && !autoPoints) {
+    return {
+      value: null,
+      error: 'Auto points must be a number, a range like 40-60, or a lower bound like 100+'
+    };
+  }
+
   const driverSkillRaw = Number(body?.driver_skill);
   return {
     value: {
@@ -123,12 +138,18 @@ export function normalizeMatchScoutEntry(body, actorId = null) {
       alliance: oneOf(body?.alliance, ['red', 'blue']),
       starting_position: oneOf(body?.starting_position, START_POSITIONS),
       auto_start_zone: oneOf(body?.auto_start_zone, AUTO_ZONES),
-      auto_points_band: oneOf(body?.auto_points_band, POINT_BANDS),
+      // Keep the readable estimate for old consumers and store its parsed
+      // values separately so analytics do not need to reverse-engineer text.
+      auto_points_band: autoPoints?.input ?? null,
+      auto_points_min: autoPoints?.min ?? null,
+      auto_points_max: autoPoints?.max ?? null,
+      auto_points_average: autoPoints?.average ?? null,
       auto_finish: trimmed(body?.auto_finish, 120),
       auto_moved: trimmed(body?.auto_moved, 40),
       ball_sources: normalizeStringList(body?.ball_sources, BALL_SOURCES),
       auto_path: normalizeAutoPath(body?.auto_path),
       ratings: normalizeRatings(body?.ratings),
+      teleop_roles: normalizeStringList(body?.teleop_roles, TELEOP_ROLES),
       teleop_notes: trimmed(body?.teleop_notes),
       crash_or_break: body?.crash_or_break === true,
       robot_disabled: oneOf(body?.robot_disabled, DISABLED_STATES),

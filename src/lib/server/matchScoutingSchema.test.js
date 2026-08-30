@@ -84,10 +84,11 @@ describe('normalizeMatchScoutEntry', () => {
       alliance: 'blue',
       starting_position: 'center',
       auto_start_zone: 'wing',
-      auto_points_band: '6-10',
+      auto_points_estimate: '80-100',
       ball_sources: ['wing', 'wing', 'floor'],
       auto_path: [[10, 10], [20, 20]],
       ratings: { Defense: 4 },
+      teleop_roles: ['Scoring', 'Defense', 'Defense', 'made-up role'],
       crash_or_break: true,
       card: 'yellow',
       driver_skill: 4
@@ -95,6 +96,11 @@ describe('normalizeMatchScoutEntry', () => {
     expect(value.team_key).toBe('frc971');
     expect(value.alliance).toBe('blue');
     expect(value.ball_sources).toEqual(['wing', 'floor']); // deduped
+    expect(value.auto_points_band).toBe('80-100');
+    expect(value.auto_points_min).toBe(80);
+    expect(value.auto_points_max).toBe(100);
+    expect(value.auto_points_average).toBe(90);
+    expect(value.teleop_roles).toEqual(['Scoring', 'Defense']);
     expect(value.crash_or_break).toBe(true);
     expect(value.created_by).toBe('user-1');
   });
@@ -106,15 +112,24 @@ describe('normalizeMatchScoutEntry', () => {
       ...base,
       alliance: 'green',
       starting_position: 'somewhere else',
-      auto_points_band: '400',
       card: 'blue',
       ball_sources: ['wing', 'unknown-source']
     });
     expect(value.alliance).toBeNull();
     expect(value.starting_position).toBeNull();
-    expect(value.auto_points_band).toBeNull();
     expect(value.card).toBeNull();
     expect(value.ball_sources).toEqual(['wing']);
+  });
+
+  it('rejects malformed point estimates rather than saving ambiguous text', () => {
+    expect(normalizeMatchScoutEntry({ ...base, auto_points_estimate: 'a bunch' }).error).toMatch(/Auto points/);
+    expect(normalizeMatchScoutEntry({ ...base, auto_points_estimate: '100-50' }).error).toMatch(/Auto points/);
+  });
+
+  it('keeps older point-band clients compatible while deriving an average', () => {
+    const { value } = normalizeMatchScoutEntry({ ...base, auto_points_band: '6-10' });
+    expect(value.auto_points_band).toBe('6-10');
+    expect(value.auto_points_average).toBe(8);
   });
 
   it('clamps driver skill and treats junk as unrated', () => {
