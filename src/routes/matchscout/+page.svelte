@@ -74,6 +74,38 @@
     drawing = false;
   }
 
+  // Rating profile as a star/radar. Five axes on an identical 0-5 scale for one
+  // robot in one match, which is the case a radar is actually good for: the
+  // shape itself is the signal - a spiky robot reads differently from a
+  // balanced one at a glance. The usual complaint about radars is that exact
+  // values are hard to read off, so every axis carries its number as a label
+  // too; the shape is a summary, not the only encoding.
+  const STAR_MAX = 5;
+  const STAR_SIZE = 260;
+  const STAR_CENTER = STAR_SIZE / 2;
+  const STAR_RADIUS = 84;
+
+  function starPoint(index, value, count) {
+    // Start at 12 o'clock and go clockwise, which is how these are read.
+    const angle = (Math.PI * 2 * index) / count - Math.PI / 2;
+    const distance = (Math.max(0, Math.min(STAR_MAX, value)) / STAR_MAX) * STAR_RADIUS;
+    return [STAR_CENTER + Math.cos(angle) * distance, STAR_CENTER + Math.sin(angle) * distance];
+  }
+
+  function starPolygon(values, count, scale = 1) {
+    return values
+      .map((value, index) => starPoint(index, value * scale, count).map((n) => n.toFixed(1)).join(','))
+      .join(' ');
+  }
+
+  $: starFields = RATING_FIELDS.map((field) => ({ field, value: Number(ratings[field]) || 0 }));
+  $: starShape = starPolygon(starFields.map((entry) => entry.value), starFields.length);
+  // Rings at each whole rating, so a reader can count outward instead of
+  // estimating a distance.
+  $: starRings = [1, 2, 3, 4, 5].map((ring) =>
+    starPolygon(starFields.map(() => STAR_MAX), starFields.length, ring / STAR_MAX));
+  $: ratedCount = starFields.filter((entry) => entry.value > 0).length;
+
   async function post(body) {
     const response = await fetch('/api/matchscout', {
       method: 'POST',
@@ -179,8 +211,50 @@
       {#if submitted}
         <div class="submitted-state">
           <div class="submitted-icon"><Check size={28} /></div>
-          <h2>Match report ready</h2>
-          <p>Review the details or return to pre-match for the next assignment.</p>
+          <h2>Match {matchNumber} &middot; Robot {robotNumber}</h2>
+          <p>Saved. Here is how you rated them.</p>
+
+          {#if ratedCount}
+            <figure class="rating-star">
+              <svg viewBox={`0 0 ${STAR_SIZE} ${STAR_SIZE}`} role="img"
+                   aria-label={`Rating profile: ${starFields.map((entry) => `${entry.field} ${entry.value} of ${STAR_MAX}`).join(', ')}`}>
+                {#each starRings as ring, index}
+                  <polygon points={ring} class="star-ring" class:outer={index === starRings.length - 1} />
+                {/each}
+                {#each starFields as entry, index}
+                  <line x1={STAR_CENTER} y1={STAR_CENTER}
+                        x2={starPoint(index, STAR_MAX, starFields.length)[0]}
+                        y2={starPoint(index, STAR_MAX, starFields.length)[1]} class="star-spoke" />
+                {/each}
+                <polygon points={starShape} class="star-shape" />
+                {#each starFields as entry, index}
+                  {#if entry.value > 0}
+                    <circle cx={starPoint(index, entry.value, starFields.length)[0]}
+                            cy={starPoint(index, entry.value, starFields.length)[1]}
+                            r="4" class="star-node" />
+                  {/if}
+                {/each}
+                {#each starFields as entry, index}
+                  <text
+                    x={starPoint(index, STAR_MAX + 0.9, starFields.length)[0]}
+                    y={starPoint(index, STAR_MAX + 0.9, starFields.length)[1]}
+                    class="star-axis-index">{index + 1}</text>
+                {/each}
+              </svg>
+              <figcaption class="star-legend">
+                {#each starFields as entry}
+                  <span class="star-legend-row" class:unrated={!entry.value}>
+                    <span class="star-legend-index">{starFields.indexOf(entry) + 1}</span>
+                    <span class="star-legend-label">{entry.field}</span>
+                    <span class="star-legend-value">{entry.value || '—'}</span>
+                  </span>
+                {/each}
+              </figcaption>
+            </figure>
+          {:else}
+            <p class="star-empty">No ratings were recorded for this robot.</p>
+          {/if}
+
           <button class="btn btn-primary" on:click={() => { submitted = false; selectPhase('prematch'); }}>Next assignment</button>
         </div>
       {:else if phase === 'prematch'}
@@ -256,6 +330,41 @@
   .ratings-grid { display:grid; gap:var(--space-3); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
   .notes-label textarea { resize:vertical; min-height:7rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
   .pit-report-field { margin-top:var(--space-3); }
+  /* One series, so no legend box is needed for identity - the axis labels
+     name each value directly, and the numbers sit beside the shape so the
+     chart is never the only encoding. Grid and spokes stay recessive; only
+     the shape carries the accent. */
+  .rating-star { display:grid; grid-template-columns:auto minmax(0,11rem); gap:var(--gap-4); align-items:center; margin:0; }
+  .rating-star svg { width:min(260px, 60vw); height:auto; overflow:visible; }
+  .star-ring { fill:none; stroke:var(--border); stroke-width:1; }
+  .star-ring.outer { stroke:var(--text-muted); opacity:.45; }
+  .star-spoke { stroke:var(--border); stroke-width:1; }
+  .star-shape {
+    fill:color-mix(in srgb, var(--brand-gold-base, #d9a413) 26%, transparent);
+    stroke:var(--brand-gold-base, #d9a413);
+    stroke-width:2;
+    stroke-linejoin:round;
+  }
+  .star-node { fill:var(--brand-gold-base, #d9a413); stroke:var(--surface-1); stroke-width:2; }
+  .star-legend { display:grid; gap:2px; text-align:left; }
+  .star-legend-row { display:flex; align-items:baseline; gap:var(--gap-2); font-size:.82rem; padding:2px 0; border-bottom:1px solid var(--border); }
+  .star-legend-label { flex:1; }
+  .star-axis-index, .star-legend-index {
+    font-size:.68rem;
+    font-variant-numeric:tabular-nums;
+    fill:var(--text-muted);
+    color:var(--text-muted);
+  }
+  .star-axis-index { text-anchor:middle; dominant-baseline:middle; }
+  .star-legend-index { min-width:1ch; }
+  .star-legend-label { color:var(--text-muted); }
+  .star-legend-value { font-variant-numeric:tabular-nums; font-weight:600; color:var(--text); }
+  .star-legend-row.unrated .star-legend-value { color:var(--text-muted); font-weight:400; }
+  .star-empty { color:var(--text-muted); font-size:.85rem; }
+  @media (max-width:560px) {
+    .rating-star { grid-template-columns:1fr; justify-items:center; }
+    .star-legend { width:min(260px, 80vw); }
+  }
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
   @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four { grid-template-columns:repeat(2,1fr); } }
