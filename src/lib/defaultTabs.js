@@ -19,9 +19,9 @@
 //     codebase for a future restoration but are deliberately out of the
 //     default menu - they are still reachable by URL, and by anyone who
 //     already added them to their own saved nav.
-//     Match Scouting belongs here too and is intentionally absent for now:
-//     PR #89 reverted the /matchscout route out of main, so listing it would
-//     be a nav entry pointing at a 404. Add it back with the route.
+//     Match Scouting is listed again: #89 removed the route wholesale, and it
+//     has been restored and rewired to api/matchscout instead of the
+//     browser-local storage it originally used.
 //   - Purchasing and Docs: stand alone.
 //
 // Home is rendered separately and always first; Admin is appended for
@@ -59,6 +59,7 @@ export function defaultHeaderTabs(navConfig = navigation) {
     children: [
       { key: 'scouting', label: 'Data Scouting' },
       { key: 'pitscout', label: 'Pit Scouting' },
+      { key: 'matchscout', label: 'Match Scouting' },
       { key: 'vision', label: 'Vision Scouting' }
     ]
   });
