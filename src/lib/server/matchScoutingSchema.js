@@ -147,10 +147,16 @@ export function normalizeMatchScoutEntry(body, actorId = null) {
       auto_finish: trimmed(body?.auto_finish, 120),
       auto_moved: trimmed(body?.auto_moved, 40),
       ball_sources: normalizeStringList(body?.ball_sources, BALL_SOURCES),
+      auto_collision: body?.auto_collision === true,
+      auto_collision_notes: trimmed(body?.auto_collision_notes, 500),
       auto_path: normalizeAutoPath(body?.auto_path),
       ratings: normalizeRatings(body?.ratings),
       teleop_roles: normalizeStringList(body?.teleop_roles, TELEOP_ROLES),
       teleop_notes: trimmed(body?.teleop_notes),
+      intake_speed: Number.isFinite(Number(body?.intake_speed))
+        ? Math.min(3, Math.max(1, Math.round(Number(body.intake_speed))))
+        : null,
+      intake_jammed: body?.intake_jammed === true,
       crash_or_break: body?.crash_or_break === true,
       robot_disabled: oneOf(body?.robot_disabled, DISABLED_STATES),
       card: oneOf(body?.card, CARDS),

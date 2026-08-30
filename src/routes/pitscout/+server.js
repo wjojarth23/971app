@@ -232,6 +232,7 @@ export async function POST({ request, url }) {
     const shooter_type = body?.shooter_type || null;
     const hopper_type = body?.hopper_type || null;
     const human_player_balls_in_auto = body?.human_player_balls_in_auto || null;
+    const scout_name = sanitizeLongText(body?.scout_name, 120);
     const robot_archetype = ROBOT_ARCHETYPES.includes(body?.robot_archetype) ? body.robot_archetype : null;
     const additional_notes = sanitizeLongText(body?.additional_notes, 4000);
     const likely_breaking_component = sanitizeLongText(body?.likely_breaking_component);
@@ -252,6 +253,7 @@ export async function POST({ request, url }) {
       shooter_type,
       hopper_type,
       human_player_balls_in_auto,
+      scout_name,
       robot_archetype,
       additional_notes,
       likely_breaking_component,
@@ -288,6 +290,21 @@ export async function GET({ url, request }) {
     const canReadPublic = isPublicReadRequest(url);
 
     if (!isLocal && !actor?.id && !canReadPublic) return json({ error: 'Unauthorized' }, { status: 401 });
+
+    if (url.searchParams.get('resource') === 'scout-names') {
+      if (!isLocal && !actor?.id) return json({ error: 'Unauthorized' }, { status: 401 });
+      const { data, error } = await db
+        .from('user_profiles')
+        .select('full_name')
+        .eq('banned', false)
+        .not('full_name', 'is', null)
+        .order('full_name', { ascending: true });
+      if (error) return json({ error: error.message }, { status: 500 });
+      return json({
+        success: true,
+        data: [...new Set((data || []).map((row) => String(row.full_name || '').trim()).filter(Boolean))]
+      });
+    }
 
     const event_key = String(url.searchParams.get('event_key') || '').trim();
     const team_key = String(url.searchParams.get('team_key') || '').trim();
