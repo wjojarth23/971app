@@ -505,6 +505,55 @@
     return next;
   }
 
+  // Open problems a match scout flagged for this team. These are the whole
+  // reason the pit-problem handoff exists, and until now nothing displayed
+  // them: match scouting wrote them and the pit crew - the intended audience -
+  // had no way to see them.
+  let openProblems = [];
+  let problemsError = '';
+
+  $: problemsByTeam = openProblems.reduce((map, report) => {
+    (map[report.team_key] ||= []).push(report);
+    return map;
+  }, {});
+  $: selectedTeamProblems = selectedTeam ? (problemsByTeam[selectedTeam] || []) : [];
+
+  async function loadOpenProblems() {
+    problemsError = '';
+    if (!resolvedEventKey) {
+      openProblems = [];
+      return;
+    }
+    try {
+      const res = await authFetch(
+        `/api/matchscout?resource=pit-problems&open=1&event_key=${encodeURIComponent(resolvedEventKey)}`
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || `Failed to load pit problems (${res.status})`);
+      openProblems = data.data || [];
+    } catch (error) {
+      // A pit entry is still worth filling in even if the problem queue is
+      // unreachable, so this never blocks the rest of the page.
+      openProblems = [];
+      problemsError = error.message;
+    }
+  }
+
+  async function resolveProblem(report) {
+    try {
+      const res = await authFetch('/api/matchscout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'resolve-pit-problem', id: report.id, resolved: true })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || `Failed to resolve (${res.status})`);
+      openProblems = openProblems.filter((item) => item.id !== report.id);
+    } catch (error) {
+      problemsError = error.message;
+    }
+  }
+
   async function loadEventOptions() {
     eventKey = (await fetchActiveScoutingEventKey()) || '';
     availableEvents = await fetchAvailableScoutingEvents();
@@ -524,7 +573,7 @@
         return;
       }
 
-      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries()]);
+      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries(), loadOpenProblems()]);
       teams = [...new Set([...loadedTeams, ...Object.keys(loadedEntries)])].sort(teamSort);
       syncSelectedTeam();
     } catch (e) {
@@ -821,6 +870,14 @@
         {#each filteredTeams as teamKey}
           <button class="team-row" type="button" on:click={() => openEntry(teamKey)}>
             <span class="team-row-main">Team {displayTeam(teamKey)}</span>
+            {#if (problemsByTeam[teamKey] || []).length}
+              <span
+                class="problem-flag"
+                class:urgent={problemsByTeam[teamKey].some((report) => report.severity === 'urgent')}
+              >
+                {problemsByTeam[teamKey].length} to inspect
+              </span>
+            {/if}
             <span class={getPitScoutStatusClass(entriesByTeam[teamKey])}>{getPitScoutStatusLabel(entriesByTeam[teamKey])}</span>
           </button>
         {/each}
@@ -850,6 +907,31 @@
         save under the active event ({eventKey || 'none set'}) instead — switch back to "Current Event" to
         edit this team's live pit entry.
       </div>
+    {/if}
+
+    {#if problemsError}
+      <div class="note">{problemsError}</div>
+    {/if}
+
+    {#if selectedTeamProblems.length}
+      <section class="problem-queue" aria-label="Open problems flagged by match scouts">
+        <h4>Flagged by match scouts</h4>
+        {#each selectedTeamProblems as report}
+          <article class="problem-item" class:urgent={report.severity === 'urgent'}>
+            <div class="problem-body">
+              <p class="problem-summary">{report.summary}</p>
+              {#if report.detail}<p class="problem-detail">{report.detail}</p>{/if}
+              <p class="problem-meta">
+                {report.source}{report.match_key ? ` · match ${report.match_key}` : ''}
+                {report.severity === 'urgent' ? ' · urgent' : ''}
+              </p>
+            </div>
+            <button class="btn btn-outline btn-sm" type="button" on:click={() => resolveProblem(report)}>
+              Mark inspected
+            </button>
+          </article>
+        {/each}
+      </section>
     {/if}
 
     <nav class="topic-rail" aria-label="Pit scouting topics">
@@ -1692,6 +1774,38 @@
     color: var(--text-muted);
     font-size: 0.9rem;
   }
+
+  /* A flagged problem is time-critical - "inspect before the next match" - so
+     it gets colour where the rest of the row does not. Urgent (the robot died
+     or was disabled) is the only thing that escalates past the warning tone. */
+  .problem-flag {
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.72rem;
+    white-space: nowrap;
+    background: var(--status-risk-bg);
+    color: var(--status-risk-text);
+  }
+  .problem-flag.urgent { font-weight: 700; }
+
+  .problem-queue {
+    display: grid;
+    gap: var(--gap-2);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--danger);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+  }
+  .problem-queue h4 { margin: 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+  .problem-item { display: flex; gap: var(--gap-3); align-items: flex-start; justify-content: space-between; }
+  .problem-item + .problem-item { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+  .problem-body { min-width: 0; }
+  .problem-summary { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .problem-item.urgent .problem-summary { color: var(--danger); }
+  .problem-detail { margin: 2px 0 0; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+  .problem-meta { margin: 2px 0 0; color: var(--text-muted); font-size: 0.75rem; }
 
   /* Topic rail: horizontal on a phone (thumb-reachable, scrolls), a fixed
      column on a laptop. Deliberately not cards - it is a wayfinding control,
