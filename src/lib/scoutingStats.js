@@ -191,10 +191,58 @@ export function summarizeScoutNotes(notes) {
   };
 }
 
+const PIT_CLIMB_SCORE = Object.freeze({
+  'No Climb': 0,
+  'L1 Auto': 45,
+  L1: 35,
+  L2: 70,
+  L3: 100
+});
+const PIT_PROBLEM_PENALTY = Object.freeze({ watch: 8, urgent: 20 });
+
+// Pit claims are useful pre-match evidence, but deliberately remain a small
+// part of Scout Power. Capability fields are scored; archetype and prose are
+// surfaced for humans without pretending categories or sentences are numbers.
+export function summarizePitScouting(entry, problems = [], normalizedBps = null) {
+  const climbs = Array.isArray(entry?.climb_options) ? entry.climb_options : [];
+  const climbScore = climbs.length
+    ? Math.max(...climbs.map((value) => PIT_CLIMB_SCORE[value] ?? 0))
+    : null;
+  const reliability = Number(entry?.technical_details?.overall_reliability_rating);
+  const reliabilityScore = reliability >= 1 && reliability <= 10 ? reliability * 10 : null;
+  const openProblems = (problems || []).filter((problem) => !problem?.resolved);
+  const urgentProblems = openProblems.filter((problem) => problem?.severity === 'urgent').length;
+  const problemPenalty = Math.min(60, openProblems.reduce(
+    (sum, problem) => sum + (PIT_PROBLEM_PENALTY[problem?.severity] || PIT_PROBLEM_PENALTY.watch),
+    0
+  ));
+  const capabilityScore = weightedScore([
+    { value: climbScore, weight: 0.45 },
+    { value: normalizedBps, weight: 0.35 },
+    { value: reliabilityScore, weight: 0.2 }
+  ]);
+  const pitScore = capabilityScore == null && !openProblems.length
+    ? null
+    : Math.max(0, (capabilityScore ?? 50) - problemPenalty);
+
+  return {
+    pitScore,
+    capabilityScore,
+    climbScore,
+    reliabilityScore,
+    estimatedBps: parseNumeric(entry?.estimated_bps),
+    openProblemCount: openProblems.length,
+    urgentProblemCount: urgentProblems,
+    problemPenalty,
+    robotArchetype: entry?.robot_archetype || null,
+    hasAdditionalNotes: Boolean(String(entry?.additional_notes || '').trim())
+  };
+}
+
 // Produces event-relative rankings from the team's own scouting observations.
 // Missing dimensions are omitted and the remaining weights are normalized,
 // never converted to fake zeroes.
-export function buildPowerRankings(teams, events, notes = []) {
+export function buildPowerRankings(teams, events, notes = [], pitInputs = {}) {
   const eventsByTeam = new Map();
   for (const row of events || []) {
     if (!row?.team_key) continue;
@@ -213,6 +261,14 @@ export function buildPowerRankings(teams, events, notes = []) {
     if (!notesByTeam.has(note.team_key)) notesByTeam.set(note.team_key, []);
     notesByTeam.get(note.team_key).push(note);
   }
+  const pitByTeam = new Map((pitInputs.pitEntries || []).map((entry) => [entry.team_key, entry]));
+  const problemsByTeam = new Map();
+  for (const problem of pitInputs.problemReports || []) {
+    if (!problem?.team_key) continue;
+    if (!problemsByTeam.has(problem.team_key)) problemsByTeam.set(problem.team_key, []);
+    problemsByTeam.get(problem.team_key).push(problem);
+  }
+  const bpsValues = [...pitByTeam.values()].map((entry) => parseNumeric(entry?.estimated_bps));
   const ranked = rows.map((row) => {
     const summary = row.scoutSummary;
     const performanceScore = weightedScore([
@@ -223,15 +279,24 @@ export function buildPowerRankings(teams, events, notes = []) {
       { value: normalize(summary.avgClimbLevel, metricValues('avgClimbLevel')), weight: 0.15 }
     ]);
     const noteSummary = summarizeScoutNotes(notesByTeam.get(row.key) || []);
+    const pitEntry = pitByTeam.get(row.key) || null;
+    const rawBps = parseNumeric(pitEntry?.estimated_bps);
+    const pitSummary = summarizePitScouting(
+      pitEntry,
+      problemsByTeam.get(row.key) || [],
+      normalize(rawBps, bpsValues)
+    );
     const scoutPower = weightedScore([
-      { value: performanceScore, weight: 0.85 },
-      { value: noteSummary.impactScore, weight: 0.15 }
+      { value: performanceScore, weight: 0.7 },
+      { value: noteSummary.impactScore, weight: 0.15 },
+      { value: pitSummary.pitScore, weight: 0.15 }
     ]);
     return {
       ...row,
       scoutPower,
       performanceScore,
-      noteSummary
+      noteSummary,
+      pitSummary
     };
   });
 

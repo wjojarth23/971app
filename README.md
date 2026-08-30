@@ -100,6 +100,12 @@ reading code.
     any entry (deliberately more open than `scout_notes`' creator-only
     edit rule - a pick list is one document the whole strategy group edits
     together, and per-row ownership would break group reordering).
+- **Match + Pit Scouting** (`matchscout/`, `pitscout/`): durable Supabase-backed
+  match reports and shared per-team pit profiles. Pit profiles include robot
+  archetype, mechanisms, climb capability, technical ratings, photos, failure
+  risks, and additional human-review notes. Match and pit scouts share a repair
+  queue backed by `pit_problem_reports`; open problems can be resolved or
+  reopened from Pit Scouting instead of disappearing into browser-local state.
 - **Power Rankings** (`powerrankings/`): the last item in the Competition nav
   folder - its own page rather than a mode of the Pick List workspace, so it
   never gets confused with that page's comparison table. An event-relative
@@ -123,9 +129,12 @@ reading code.
   recessively so the page reads as our ranking with official data alongside,
   not a scoreboard of equals. A TBA outage degrades to a note rather than
   hiding the scouting ranking.
-  Observed match performance contributes 85% and an explicit human-selected
-  impact attached to saved `scout_notes` contributes 15%; neutral and legacy
-  notes remain review-only. Within match performance, weights are average fuel
+  Observed match performance contributes 70%, an explicit human-selected
+  impact attached to saved `scout_notes` contributes 15%, and structured pit
+  capability/reliability contributes 15%; unresolved pit problems reduce the
+  pit score while archetype and freeform prose remain human context. Neutral
+  and legacy notes remain review-only. Within match performance, weights are
+  average fuel
   per match (40%), driving (20%), accuracy (15%), climb level (15%), and speed
   (10%); missing dimensions are omitted and the remaining weights are
   rebalanced instead of being treated as zero. Also
@@ -269,7 +278,7 @@ own docs are all together in one place instead of scattered across
   (`wx-svelte-gantt`), Slack-driven prompts/notifications
   (`src/lib/server/planner_notifications.js`, `971bot.js`), driven by a
   Supabase `pg_cron` job every 15 minutes.
-- **`pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
+- **`matchscout/`, `pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
   `teamview/`, `discover/`, `powerrankings/`** - FRC competition scouting:
   pit scouting forms, match data scouting, notes, cross-team data
   discovery/analysis, and the local-scouting-only power rankings +
