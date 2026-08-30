@@ -29,7 +29,9 @@ reading code.
   is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
-- **Scouting**: pit scouting forms, match/data scouting, free-form notes,
+- **Scouting**: pit scouting (a topic-at-a-time form with per-topic
+  completion counts, built for filling in a noisy pit on a phone while a team
+  answers out of order), match/data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.
@@ -75,8 +77,10 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
-- **Scouting** (`scouting/`): a team-comparison / pick-list workspace for the
-  active event - default-on next to Purchasing. Distinct from the existing
+- **Pick List** (`scouting/`): a team-comparison / pick-list workspace for the
+  active event. Named for what it produces: it was previously labelled "Data
+  Scouting" in the nav, which collided with the separate `datascout` route and
+  described the inputs rather than the output. Distinct from the existing
   pit/data/note scouting *collection* tools below, which this reads from
   rather than replaces:
   - Sortable comparison table fusing The Blue Alliance's real team roster

@@ -172,6 +172,68 @@
   let technical_details = createDefaultTechnicalDetails();
   let editablePhotoPaths = [];
   let pendingFiles = [];
+  // Pit scouting is done standing in a noisy pit with a phone in one hand,
+  // talking to a team that volunteers information in whatever order it likes.
+  // A single 600-line scroll of ~40 selects is the wrong shape for that: you
+  // cannot tell what is still missing, and you cannot jump to the thing the
+  // team just mentioned. Topics are answered one at a time, jumpable in any
+  // order, with the remaining count always visible so a scout knows when they
+  // can walk away.
+  const TOPICS = [
+    { id: 'basics', label: 'Basics' },
+    { id: 'mechanisms', label: 'Mechanisms' },
+    { id: 'electrical', label: 'Electrical' },
+    { id: 'controls', label: 'Controls' },
+    { id: 'structure', label: 'Structure' },
+    { id: 'ratings', label: 'Ratings' },
+    { id: 'photos', label: 'Photos' }
+  ];
+
+  // Which answers belong to which topic, for the per-topic counts. Kept
+  // explicit rather than derived from the markup so a field moving between
+  // topics is a deliberate edit, not a silent change in what "complete" means.
+  const TOPIC_FIELDS = {
+    mechanisms: ['use_net', 'intake_style', 'ground_roller_motor_count', 'ground_intake_kicker'],
+    electrical: ['main_breaker_brand', 'sb_connector', 'main_breaker_shroud', 'wire_insulation', 'mostly_used_wire_gauge', 'battery_type'],
+    controls: ['uses_canivore', 'can_bus_count', 'coprocessor', 'uses_wpilib'],
+    structure: ['swerve_module', 'drivebase_tube_thickness', 'bumper_width', 'bumper_height', 'bumper_length', 'bumper_foam', 'grip_tape', 'hopper_wall_reinforcement', 'fits_under_trench', 'drives_over_mound', 'printed_roller_hubs', 'roller_hub_material'],
+    ratings: ['drivebase_rating', 'electrical_rating', 'overall_reliability_rating']
+  };
+
+  let activeTopic = 'basics';
+
+  const answered = (value) =>
+    Array.isArray(value) ? value.length > 0 : value !== '' && value !== null && value !== undefined;
+
+  function topicProgress(topicId, details, core, climb, autos, photos, pending) {
+    if (topicId === 'basics') {
+      const values = [core.drivebase_type, core.shooter_type, core.hopper_type, core.human_player_balls_in_auto, climb, autos];
+      return { done: values.filter(answered).length, total: values.length };
+    }
+    if (topicId === 'photos') {
+      return { done: photos.length + pending.length ? 1 : 0, total: 1 };
+    }
+    if (topicId === 'ratings') {
+      const keys = TOPIC_FIELDS.ratings;
+      const values = [...keys.map((key) => details[key]), core.estimated_bps, core.likely_breaking_component];
+      return { done: values.filter(answered).length, total: values.length };
+    }
+    const keys = TOPIC_FIELDS[topicId] || [];
+    return { done: keys.filter((key) => answered(details[key])).length, total: keys.length };
+  }
+
+  $: coreAnswers = {
+    drivebase_type, shooter_type, hopper_type, human_player_balls_in_auto,
+    estimated_bps, likely_breaking_component
+  };
+  $: topicStates = TOPICS.map((topic) => ({
+    ...topic,
+    ...topicProgress(topic.id, technical_details, coreAnswers, climb_options, autoOptions, editablePhotoPaths, pendingFiles)
+  }));
+  $: answeredTotal = topicStates.reduce((sum, topic) => sum + topic.done, 0);
+  $: questionTotal = topicStates.reduce((sum, topic) => sum + topic.total, 0);
+  $: remaining = Math.max(0, questionTotal - answeredTotal);
+
   let photoInputKey = 0;
   let photoInput;
   let prefersCameraCapture = false;
@@ -790,6 +852,35 @@
       </div>
     {/if}
 
+    <nav class="topic-rail" aria-label="Pit scouting topics">
+      {#each topicStates as topic}
+        <button
+          type="button"
+          class="topic-tab"
+          class:active={activeTopic === topic.id}
+          class:done={topic.done === topic.total}
+          on:click={() => (activeTopic = topic.id)}
+        >
+          <span class="topic-name">{topic.label}</span>
+          <span class="topic-count">{topic.done}/{topic.total}</span>
+        </button>
+      {/each}
+    </nav>
+
+    <div class="topic-progress">
+      <div class="topic-progress-bar">
+        <div class="topic-progress-fill" style={`width:${questionTotal ? (answeredTotal / questionTotal) * 100 : 0}%`}></div>
+      </div>
+      <span class="topic-progress-text">
+        {#if remaining}
+          {remaining} question{remaining === 1 ? '' : 's'} left
+        {:else}
+          Everything answered - ready to submit
+        {/if}
+      </span>
+    </div>
+
+{#if activeTopic === 'basics'}
     <div class="form-group">
       <label class="form-label" for="drivebaseSelect">Drivebase Type</label>
       <select id="drivebaseSelect" class="form-select" bind:value={drivebase_type}>
@@ -829,8 +920,10 @@
         {/each}
       </select>
     </div>
+{/if}
 
     {#if pitSchema.technical_details}
+{#if activeTopic === 'mechanisms'}
       <section class="question-section">
         <h4>Robot and Mechanisms</h4>
 
@@ -914,7 +1007,9 @@
           </div>
         </div>
       </section>
+{/if}
 
+{#if activeTopic === 'electrical'}
       <section class="question-section">
         <h4>Electrical</h4>
 
@@ -998,7 +1093,9 @@
           </div>
         </div>
       </section>
+{/if}
 
+{#if activeTopic === 'controls'}
       <section class="question-section">
         <h4>Controls and Software</h4>
 
@@ -1094,7 +1191,9 @@
           </div>
         </div>
       </section>
+{/if}
 
+{#if activeTopic === 'structure'}
       <section class="question-section">
         <h4>Drivebase and Structure</h4>
 
@@ -1274,7 +1373,9 @@
           </div>
         </div>
       </section>
+{/if}
 
+{#if activeTopic === 'ratings'}
       <section class="question-section">
         <h4>Subjective Ratings</h4>
         <div class="rating-grid">
@@ -1349,6 +1450,8 @@
       </div>
     {/if}
 
+{/if}
+{#if activeTopic === 'basics'}
     {#if pitSchema.climb_options}
       <div class="form-group">
         <label class="form-label">Climb Options</label>
@@ -1420,7 +1523,9 @@
         {/if}
       </div>
     {/if}
+{/if}
 
+{#if activeTopic === 'photos'}
     <div class="form-group">
       <div class="photo-header">
         <label class="form-label" for="photoUpload">Pit Photos (up to 3)</label>
@@ -1477,6 +1582,7 @@
       </div>
     {/if}
 
+{/if}
     <div class="submit-row">
       <button class="btn btn-primary submit-btn" type="submit" disabled={saving || uploading}>
         {#if uploading}
@@ -1585,6 +1691,104 @@
     margin-top: 0.3rem;
     color: var(--text-muted);
     font-size: 0.9rem;
+  }
+
+  /* Topic rail: horizontal on a phone (thumb-reachable, scrolls), a fixed
+     column on a laptop. Deliberately not cards - it is a wayfinding control,
+     and the count is the whole point of it. */
+  .topic-rail {
+    display: flex;
+    gap: var(--gap-1);
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
+  }
+  .topic-rail::-webkit-scrollbar { display: none; }
+  .topic-tab {
+    display: flex;
+    align-items: baseline;
+    gap: var(--gap-2);
+    flex: 0 0 auto;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 2.75rem;
+  }
+  .topic-tab:hover { color: var(--text); }
+  .topic-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--brand-gold-base, #d9a413);
+  }
+  .topic-name { font-weight: 600; font-size: 0.92rem; }
+  .topic-count {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+  /* A finished topic is the one thing worth colouring - it is what tells a
+     scout they can stop asking about it. */
+  .topic-tab.done .topic-count { color: var(--green-strong); }
+
+  .topic-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-3);
+    margin-bottom: var(--space-4);
+  }
+  .topic-progress-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .topic-progress-fill {
+    height: 100%;
+    background: var(--brand-gold-base, #d9a413);
+    transition: width 160ms ease-out;
+  }
+  .topic-progress-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (min-width: 900px) {
+    /* Room for a persistent column, so the remaining topics stay visible
+       while answering one of them. */
+    .entry-card {
+      grid-template-columns: 12rem minmax(0, 1fr);
+      column-gap: var(--space-5);
+      align-items: start;
+      /* The rail costs 12rem, so give the answer column back the width it
+         had rather than squeezing every select into two thirds of it. */
+      max-width: 1040px;
+    }
+    .entry-card > *:not(.topic-rail) { grid-column: 2; }
+    .entry-card > .entry-header, .entry-card > .note { grid-column: 1 / -1; }
+    .topic-rail {
+      grid-column: 1;
+      grid-row: 2 / 100;
+      position: sticky;
+      top: var(--space-4);
+      flex-direction: column;
+      overflow-x: visible;
+      border-bottom: 0;
+      border-right: 1px solid var(--border);
+    }
+    .topic-tab {
+      justify-content: space-between;
+      border-bottom: 0;
+      border-right: 2px solid transparent;
+      text-align: left;
+    }
+    .topic-tab.active { border-right-color: var(--brand-gold-base, #d9a413); background: var(--surface-2); }
   }
 
   .question-section {

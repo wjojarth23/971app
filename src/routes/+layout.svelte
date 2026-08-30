@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, Eye, ClipboardCheck } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Trophy, Eye, ClipboardCheck, ListChecks } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -297,7 +297,7 @@
     cad: Move3d,
     build: Wrench,
     purchasing: Receipt,
-    scouting: Binoculars,
+    scouting: ListChecks,
     powerrankings: Trophy,
     vision: Eye,
     docs: FileText,
@@ -322,7 +322,7 @@
     cad: 'CAD',
     build: 'Build',
     purchasing: 'Purchasing',
-    scouting: 'Scouting',
+    scouting: 'Pick List',
     powerrankings: 'Power Rankings',
     vision: 'Vision Scouting',
     docs: 'Docs',
