@@ -100,11 +100,29 @@ reading code.
     any entry (deliberately more open than `scout_notes`' creator-only
     edit rule - a pick list is one document the whole strategy group edits
     together, and per-row ownership would break group reordering).
-- **Power Rankings** (`powerrankings/`): a separate top-level tab in the
-  Competition nav folder, alongside Scouting rather than nested inside it -
-  intentionally its own page rather than a mode of the Scouting workspace, so
-  it never gets confused with the TBA-OPR-backed comparison table above. An
-  event-relative ranking built only from combined local scout observations.
+- **Power Rankings** (`powerrankings/`): the last item in the Competition nav
+  folder - its own page rather than a mode of the Pick List workspace, so it
+  never gets confused with that page's comparison table. An event-relative
+  ranking built only from combined local scout observations.
+
+  It shows **three deliberately distinct measures**, and the page says so in
+  as many words, because conflating them would misrepresent an official FRC
+  standing:
+  - **971 Scout Power** - our own ranking from our own scouts. The primary
+    column, and *not* an FRC ranking; it exists to inform our picks.
+  - **Official Event Rank** - the real qualification standing from The Blue
+    Alliance, which FIRST computes from Ranking Points earned in qualification
+    matches. The only official rank on the page.
+  - **TBA OPR** - Offensive Power Rating, a least-squares estimate of a team's
+    contribution to alliance score. A statistical estimate, not a rank.
+
+  The latter two come from the existing `api/tba/event-oprs` proxy (note its
+  response field is named `epa` for backwards compatibility with the
+  Statbotics route it replaced; the value is OPR). They are reference columns
+  only - they never feed the Scout Power calculation - and are styled
+  recessively so the page reads as our ranking with official data alongside,
+  not a scoreboard of equals. A TBA outage degrades to a note rather than
+  hiding the scouting ranking.
   Observed match performance contributes 85% and an explicit human-selected
   impact attached to saved `scout_notes` contributes 15%; neutral and legacy
   notes remain review-only. Within match performance, weights are average fuel

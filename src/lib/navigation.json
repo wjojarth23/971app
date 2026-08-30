@@ -6,7 +6,7 @@
     "cad": true,
     "purchasing": true,
     "scouting": true,
-    "powerrankings": false,
+    "powerrankings": true,
     "docs": true,
     "planner": true,
     "tasks": true,
