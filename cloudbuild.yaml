@@ -11,11 +11,37 @@ substitutions:
   # PUBLIC_ONSHAPE_ACCESS_KEY / PUBLIC_ONSHAPE_SECRET_KEY are deliberately
   # NOT here — pulled from Secret Manager at build time instead (see
   # availableSecrets below) so the raw values never sit in this committed
-  # file / git history, even though they still end up in the app's public
-  # client bundle at runtime (src/lib/onshape.js is imported by three
-  # client-side .svelte pages — a pre-existing app design choice, not
-  # introduced by this migration; worth a separate follow-up to proxy
-  # Onshape calls server-side instead, and to rotate these keys).
+  # file / git history.
+  #
+  # They no longer reach the client bundle. src/lib/onshape.js used to import
+  # the secret without ever using it, and $env/static/public inlines whatever
+  # it touches, so it shipped to every visitor of a CAD page. That import is
+  # gone (GitHub issue #86); api/onshape/+server.js is now the only consumer.
+  #
+  # !!! REMINDER: TWO THINGS STILL OPEN ON ISSUE #86 !!!
+  #
+  # 1. ROTATE THE KEY. The old one was in client/_app/immutable/ for however
+  #    long it shipped, so it must be considered public. This is the part that
+  #    actually matters, and no code change substitutes for it.
+  #
+  # 2. Move it off PUBLIC_ entirely. Passing it as a PUBLIC_ build arg still
+  #    puts it in $env/static/public, so a single future client-side import
+  #    silently re-publishes it. api/onshape/+server.js already prefers
+  #    private ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY and only falls back to
+  #    the PUBLIC_ pair, so the switch needs no code change:
+  #      a. grant the Cloud Run runtime service account access — the build
+  #         step's secretEnv uses the Cloud Build SA, which is NOT the same
+  #         identity, and this exact mismatch is what broke deploys for
+  #         CRON_NOTIFICATION_TOKEN (see the reminder further down):
+  #           gcloud secrets add-iam-policy-binding ONSHAPE_ACCESS_KEY \
+  #             --project=spartanshub \
+  #             --member="serviceAccount:819718873862-compute@developer.gserviceaccount.com" \
+  #             --role="roles/secretmanager.secretAccessor"
+  #           (repeat for ONSHAPE_SECRET_KEY)
+  #      b. add ONSHAPE_ACCESS_KEY=ONSHAPE_ACCESS_KEY:latest and
+  #         ONSHAPE_SECRET_KEY=ONSHAPE_SECRET_KEY:latest to --set-secrets below
+  #      c. drop the two PUBLIC_ONSHAPE_*_KEY build args from the build step
+  #    Not wired here yet, because doing (b) before (a) breaks every deploy.
   _PUBLIC_SUPABASE_URL: 'https://ypkjxqwjkjkznlmjmwpe.supabase.co'
   _PUBLIC_ONSHAPE_BASE_URL: 'https://frc971.onshape.com'
   _PUBLIC_AUTO_VENDOR: 'false'
