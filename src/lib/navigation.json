@@ -17,6 +17,7 @@
     "vision": true,
     "cots-stocking": true,
     "autocam": true,
-    "datascout": false
+    "datascout": false,
+    "matchscout": true
   }
 }
