@@ -117,11 +117,16 @@ reading code.
   never gets confused with that page's comparison table. An event-relative
   ranking built only from combined local scout observations.
 
-  It shows **three deliberately distinct measures**, and the page says so in
+  It shows **four deliberately distinct measures**, and the page says so in
   as many words, because conflating them would misrepresent an official FRC
   standing:
   - **971 Scout Power** - our own ranking from our own scouts. The primary
     column, and *not* an FRC ranking; it exists to inform our picks.
+  - **Human Consensus** - a separate preference rank produced by authenticated
+    scouts choosing between two robots. Each scout gets one current vote per
+    event/team pair; changing the choice updates it. These votes never alter
+    Scout Power. A two-thirds-or-stronger majority that opposes a calculated
+    Scout Power gap of at least five points flags both robots for human review.
   - **Official Event Rank** - the real qualification standing from The Blue
     Alliance, which FIRST computes from Ranking Points earned in qualification
     matches. The only official rank on the page.
@@ -145,8 +150,13 @@ reading code.
   (10%); missing dimensions are omitted and the remaining weights are
   rebalanced instead of being treated as zero. Also
   includes a **head-to-head comparison** view for any two event teams,
-  covering scout power, matches scouted, fuel, driving, accuracy, speed, and
-  climb success.
+  covering scout power, human consensus, matches scouted, fuel, driving,
+  accuracy, speed, and climb success. Its overlaid robot star plot normalizes
+  fuel, driving, accuracy, speed, climb, and pit capability against the
+  currently loaded event field; missing observations stay visibly absent at
+  the center rather than becoming invented zero-valued evidence. Pairwise
+  preferences persist in `scouting_pairwise_votes` through
+  `api/scouting-comparisons`.
 - **Docs** (`docs/`): browses every `*.md` file in the repo (a "finder" -
   folder tree + search on the left, rendered markdown on the right).
   Content is bundled at build time via Vite's `import.meta.glob` (raw
@@ -287,9 +297,9 @@ own docs are all together in one place instead of scattered across
 - **`matchscout/`, `pitscout/`, `datascout/`, `notescout/`, `scouting-admin/`,
   `teamview/`, `discover/`, `powerrankings/`** - FRC competition scouting:
   pit scouting forms, match data scouting, notes, cross-team data
-  discovery/analysis, and the local-scouting-only power rankings +
-  head-to-head comparison view (own top-level tab, not nested under
-  `scouting/`).
+  discovery/analysis, and the local-scouting power rankings + persisted human
+  consensus + star-plot head-to-head comparison view (own top-level tab, not
+  nested under `scouting/`).
 - **`scouting/vision/`, `scouting/vision/dashboard/`** - post-match
   multi-view ML processing, TBA discrepancy review, and the release bridge
   into `scout_data_events` (the release action itself is `VISION_RELEASE`-
@@ -346,6 +356,11 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 - **RLS (Row Level Security)** is the real authorization boundary - not
   app-layer checks. Every table should have RLS enabled with real policies;
   see **Known gaps** for tables that currently don't.
+- **Power-ranking consensus** is stored in `scouting_pairwise_votes`, with a
+  unique row per event/team-pair/scout and RLS restricting writes to the
+  authenticated scout's own choice. The API returns aggregate-safe team and
+  winner keys, not voter identities; consensus is deliberately separate from
+  the calculated Scout Power inputs.
 - **Auth**: Supabase Auth, client-side only (no server session/SSR) - see
   `docs/guides/AUTH_PROTOCOL.md`.
 

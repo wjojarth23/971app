@@ -172,6 +172,144 @@ function weightedScore(parts) {
   return usable.reduce((sum, part) => sum + part.value * part.weight, 0) / weight;
 }
 
+export const STAR_PROFILE_AXES = Object.freeze([
+  { key: 'fuel', label: 'Fuel', source: (row) => row.scoutSummary.avgFuel },
+  { key: 'driving', label: 'Driving', source: (row) => row.scoutSummary.avgDrivingRank },
+  { key: 'accuracy', label: 'Accuracy', source: (row) => row.scoutSummary.avgAccuracy },
+  { key: 'speed', label: 'Speed', source: (row) => row.scoutSummary.avgSpeed },
+  { key: 'climb', label: 'Climb', source: (row) => row.scoutSummary.avgClimbLevel },
+  { key: 'pit', label: 'Pit', source: (row) => row.pitSummary.pitScore }
+]);
+
+function attachStarProfiles(rows) {
+  const fieldValues = new Map(STAR_PROFILE_AXES.map((axis) => [
+    axis.key,
+    rows.map((row) => axis.source(row))
+  ]));
+
+  return rows.map((row) => ({
+    ...row,
+    starProfile: STAR_PROFILE_AXES.map((axis) => {
+      const raw = axis.source(row);
+      return {
+        key: axis.key,
+        label: axis.label,
+        raw,
+        value: normalize(raw, fieldValues.get(axis.key))
+      };
+    })
+  }));
+}
+
+function canonicalPair(firstKey, secondKey) {
+  return [String(firstKey || ''), String(secondKey || '')].sort().join('|');
+}
+
+export function summarizePairwisePair(votes, firstKey, secondKey) {
+  if (!firstKey || !secondKey || firstKey === secondKey) {
+    return { voteCount: 0, firstWins: 0, secondWins: 0, firstShare: null, secondShare: null, leaderKey: null };
+  }
+  const pairKey = canonicalPair(firstKey, secondKey);
+  let firstWins = 0;
+  let secondWins = 0;
+  for (const vote of votes || []) {
+    if (canonicalPair(vote?.team_a_key, vote?.team_b_key) !== pairKey) continue;
+    if (vote?.winner_team_key === firstKey) firstWins += 1;
+    else if (vote?.winner_team_key === secondKey) secondWins += 1;
+  }
+  const voteCount = firstWins + secondWins;
+  return {
+    voteCount,
+    firstWins,
+    secondWins,
+    firstShare: voteCount ? firstWins / voteCount : null,
+    secondShare: voteCount ? secondWins / voteCount : null,
+    leaderKey: firstWins === secondWins ? null : firstWins > secondWins ? firstKey : secondKey
+  };
+}
+
+// Human preference is intentionally parallel to calculated Scout Power. It
+// creates a consensus rank and review signal but never modifies scoutPower or
+// powerRank, preserving the provenance of both measures.
+export function applyPairwiseConsensus(teams, votes) {
+  const rows = teams || [];
+  const byKey = new Map(rows.map((team) => [team.key, {
+    wins: 0,
+    losses: 0,
+    voteCount: 0,
+    winRate: null,
+    humanRank: null,
+    reviewCount: 0,
+    reviewFlag: false
+  }]));
+  const pairs = new Map();
+
+  for (const vote of votes || []) {
+    const firstKey = vote?.team_a_key;
+    const secondKey = vote?.team_b_key;
+    const winnerKey = vote?.winner_team_key;
+    if (!byKey.has(firstKey) || !byKey.has(secondKey) || firstKey === secondKey) continue;
+    if (winnerKey !== firstKey && winnerKey !== secondKey) continue;
+    const loserKey = winnerKey === firstKey ? secondKey : firstKey;
+    const winner = byKey.get(winnerKey);
+    const loser = byKey.get(loserKey);
+    winner.wins += 1;
+    winner.voteCount += 1;
+    loser.losses += 1;
+    loser.voteCount += 1;
+
+    const pairKey = canonicalPair(firstKey, secondKey);
+    if (!pairs.has(pairKey)) pairs.set(pairKey, { firstKey, secondKey, winners: [] });
+    pairs.get(pairKey).winners.push(winnerKey);
+  }
+
+  for (const summary of byKey.values()) {
+    summary.winRate = summary.voteCount ? summary.wins / summary.voteCount : null;
+  }
+
+  const ranked = rows
+    .filter((team) => byKey.get(team.key).voteCount > 0)
+    .sort((a, b) => {
+      const first = byKey.get(a.key);
+      const second = byKey.get(b.key);
+      return second.winRate - first.winRate
+        || second.voteCount - first.voteCount
+        || (a.powerRank ?? Number.MAX_SAFE_INTEGER) - (b.powerRank ?? Number.MAX_SAFE_INTEGER)
+        || (a.team_number ?? 0) - (b.team_number ?? 0);
+    });
+  ranked.forEach((team, index) => { byKey.get(team.key).humanRank = index + 1; });
+
+  const teamByKey = new Map(rows.map((team) => [team.key, team]));
+  for (const pair of pairs.values()) {
+    if (pair.winners.length < 2) continue;
+    const winsByTeam = new Map();
+    for (const winner of pair.winners) winsByTeam.set(winner, (winsByTeam.get(winner) || 0) + 1);
+    const [majorityKey, majorityWins] = [...winsByTeam.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (majorityWins / pair.winners.length < (2 / 3)) continue;
+    const first = teamByKey.get(pair.firstKey);
+    const second = teamByKey.get(pair.secondKey);
+    if (!Number.isFinite(first?.scoutPower) || !Number.isFinite(second?.scoutPower)) continue;
+    if (Math.abs(first.scoutPower - second.scoutPower) < 5) continue;
+    const calculatedLeader = first.scoutPower > second.scoutPower ? first.key : second.key;
+    if (majorityKey === calculatedLeader) continue;
+    byKey.get(first.key).reviewCount += 1;
+    byKey.get(second.key).reviewCount += 1;
+  }
+
+  return rows.map((team) => {
+    const consensusSummary = byKey.get(team.key);
+    consensusSummary.reviewFlag = consensusSummary.reviewCount > 0;
+    return {
+      ...team,
+      consensusSummary,
+      humanRank: consensusSummary.humanRank,
+      humanWinRate: consensusSummary.winRate,
+      humanVoteCount: consensusSummary.voteCount,
+      reviewFlag: consensusSummary.reviewFlag
+    };
+  });
+}
+
 // Freeform prose is never scored automatically. Scouts explicitly attach a
 // -2..2 impact so rankings use human judgment without pretending sentiment
 // analysis understands match context. Neutral/legacy notes are review-only.
@@ -304,5 +442,5 @@ export function buildPowerRankings(teams, events, notes = [], pitInputs = {}) {
     .sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1))
     .map((row, index) => [row.key, row.scoutPower == null ? null : index + 1]);
   const rankByKey = new Map(order);
-  return ranked.map((row) => ({ ...row, powerRank: rankByKey.get(row.key) }));
+  return attachStarProfiles(ranked.map((row) => ({ ...row, powerRank: rankByKey.get(row.key) })));
 }
