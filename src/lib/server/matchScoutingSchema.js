@@ -9,7 +9,7 @@
 
 export const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
 export const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
-export const POINT_BANDS = ['0', '1-2', '3-4', '5+'];
+export const POINT_BANDS = ['0', '1-5', '6-10', '11-20', '21+'];
 export const RATING_FIELDS = ['Shot accuracy', 'Driver awareness', 'Cycle speed', 'Defense', 'Reliability'];
 export const BALL_SOURCES = ['source', 'wing', 'neutral', 'opponent wing', 'human player', 'floor'];
 export const CARDS = ['', 'yellow', 'red'];
@@ -33,6 +33,18 @@ function oneOf(value, allowed) {
   if (value == null) return null;
   const text = String(value).trim();
   return allowed.includes(text) ? text : null;
+}
+
+export function requiresPitProblemReport(robotDisabled) {
+  return ['disabled', 'died'].includes(String(robotDisabled || '').trim());
+}
+
+export function validatePitProblemHandoff(body) {
+  const requested = body?.report_pit_problem === true || requiresPitProblemReport(body?.robot_disabled);
+  if (!requested) return null;
+  return trimmed(body?.pit_problem_summary, MAX_SUMMARY_LENGTH)
+    ? null
+    : 'Describe the problem for pit scouting when the robot is disabled or died';
 }
 
 /** Team keys arrive as "971", "frc971" or " frc971 " depending on the caller. */

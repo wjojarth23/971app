@@ -106,6 +106,12 @@ reading code.
   risks, and additional human-review notes. Match and pit scouts share a repair
   queue backed by `pit_problem_reports`; open problems can be resolved or
   reopened from Pit Scouting instead of disappearing into browser-local state.
+  Match Scouting keeps robot status available throughout the workflow and
+  requires a described pit handoff whenever a robot is marked disabled or dead;
+  general notes and the labeled auto-path drawing remain optional. The live
+  Data Scouting form deliberately omits shift toggles and subjective speed/
+  accuracy grading: scouts record timed robot actions, tap once per scored fuel,
+  choose the objective endgame result, and may add an optional note.
 - **Power Rankings** (`powerrankings/`): the last item in the Competition nav
   folder - its own page rather than a mode of the Pick List workspace, so it
   never gets confused with that page's comparison table. An event-relative

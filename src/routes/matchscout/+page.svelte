@@ -5,19 +5,15 @@
   import { AlertTriangle, Check, ChevronRight, ClipboardCheck, Flag, MapPinned, Route, RotateCcw, Timer, Trophy } from 'lucide-svelte';
 
   const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
-  const AUTO_ZONES = ['source', 'wing', 'neutral', 'opponent wing'];
-  const POINT_BANDS = ['0', '1-2', '3-4', '5+'];
-  const RATING_FIELDS = ['Shot accuracy', 'Driver awareness', 'Cycle speed', 'Defense', 'Reliability'];
+  const POINT_BANDS = ['0', '1-5', '6-10', '11-20', '21+'];
+  const RATING_FIELDS = ['Shot accuracy', 'Driver awareness'];
 
   let phase = 'prematch';
   let matchNumber = '';
   let robotNumber = '';
   let alliance = 'red';
   let startingPosition = '';
-  let autoStartZone = '';
   let autoPoints = '';
-  let autoFinish = '';
-  let ballSources = [];
   let autoMoved = '';
   let autoPath = [];
   let drawing = false;
@@ -37,16 +33,18 @@
 
   $: assignmentReady = matchNumber.trim() && robotNumber.trim() && startingPosition;
   $: assignmentLabel = assignmentReady ? `Match ${matchNumber} · Robot ${robotNumber}` : 'Set your assignment';
+  $: requiresPitReport = robotDisabled === 'disabled' || robotDisabled === 'died';
+  $: shouldReportPitProblem = requiresPitReport || pitProblem;
+  $: canFinish = !saving && (!shouldReportPitProblem || pitProblemDetails.trim());
 
   function selectPhase(nextPhase) {
     phase = nextPhase;
     submitted = false;
   }
 
-  function toggleBallSource(source) {
-    ballSources = ballSources.includes(source)
-      ? ballSources.filter((item) => item !== source)
-      : [...ballSources, source];
+  function setRobotStatus(status) {
+    robotDisabled = status;
+    if (status === 'disabled' || status === 'died') pitProblem = true;
   }
 
   function pointFromEvent(event) {
@@ -126,6 +124,11 @@
       error = 'No active scouting event is set, so this report has nowhere to go.';
       return;
     }
+    if (shouldReportPitProblem && !pitProblemDetails.trim()) {
+      phase = 'postmatch';
+      error = 'Describe what the pit crew needs to inspect before submitting.';
+      return;
+    }
     saving = true;
     error = '';
     try {
@@ -136,11 +139,8 @@
         team_key: robotNumber.trim(),
         alliance,
         starting_position: startingPosition,
-        auto_start_zone: autoStartZone,
         auto_points_band: autoPoints,
-        auto_finish: autoFinish,
         auto_moved: autoMoved,
-        ball_sources: ballSources,
         auto_path: autoPath,
         ratings,
         teleop_notes: teleopNotes,
@@ -149,24 +149,11 @@
         // The UI says "None"; the stored vocabulary uses an empty string.
         card: card === 'none' ? '' : card,
         driver_skill: driverSkill,
-        post_notes: postNotes
+        post_notes: postNotes,
+        report_pit_problem: shouldReportPitProblem,
+        pit_problem_summary: pitProblemDetails,
+        pit_problem_detail: postNotes
       });
-      // Reported separately so a failure here is visible rather than losing
-      // the whole match report, and so the pit crew's queue stays its own
-      // record with its own lifecycle.
-      if (pitProblem) {
-        await post({
-          action: 'report-pit-problem',
-          event_key: eventKey,
-          team_key: robotNumber.trim(),
-          match_key: matchNumber.trim(),
-          summary: pitProblemDetails.trim(),
-          detail: postNotes.trim(),
-          // Severity is re-derived server-side from robot_disabled; sending
-          // it is a hint, not the decision.
-          robot_disabled: robotDisabled
-        });
-      }
       submitted = true;
     } catch (exception) {
       error = exception.message;
@@ -208,6 +195,16 @@
     </aside>
 
     <section class="match-workspace">
+      {#if !submitted && assignmentReady}
+        <div class="persistent-status" class:urgent={requiresPitReport}>
+          <div><span class="field-label">Robot status</span><small>Available throughout the match</small></div>
+          <div class="choice-grid status-buttons">
+            <button class:chosen={robotDisabled === 'no'} on:click={() => setRobotStatus('no')}>Active</button>
+            <button class:chosen={robotDisabled === 'disabled'} on:click={() => setRobotStatus('disabled')}>Disabled</button>
+            <button class:chosen={robotDisabled === 'died'} on:click={() => setRobotStatus('died')}>Died</button>
+          </div>
+        </div>
+      {/if}
       {#if submitted}
         <div class="submitted-state">
           <div class="submitted-icon"><Check size={28} /></div>
@@ -274,34 +271,35 @@
         </div>
         <div class="section-footer"><span>{assignmentReady ? `Robot ${robotNumber} is ready to scout.` : 'Match, robot, and starting position are required.'}</span><button class="btn btn-primary" disabled={!assignmentReady} on:click={() => selectPhase('auto')}>Begin auto <ChevronRight size={16} /></button></div>
       {:else if phase === 'auto'}
-        <div class="section-heading"><div><span class="eyebrow">Autonomous</span><h2>Auto report</h2><p>Capture what the robot attempted and where it traveled.</p></div><Route size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Autonomous</span><h2>Auto report</h2><p>Record whether auto ran, roughly how much fuel scored, and optionally draw the path.</p></div><Route size={20} /></div>
         <div class="auto-layout">
           <div class="auto-controls">
-            <div class="control-group"><span class="field-label">Starting zone</span><div class="choice-grid">{#each AUTO_ZONES as zone}<button class:chosen={autoStartZone === zone} on:click={() => autoStartZone = zone}>{zone}</button>{/each}</div></div>
-            <div class="control-group"><span class="field-label">Estimated points</span><div class="choice-grid four">{#each POINT_BANDS as band}<button class:chosen={autoPoints === band} on:click={() => autoPoints = band}>{band}</button>{/each}</div></div>
-            <div class="control-group"><span class="field-label">End action</span><div class="choice-grid"><button class:chosen={autoFinish === 'shoot'} on:click={() => autoFinish = 'shoot'}>Shoot</button><button class:chosen={autoFinish === 'climb'} on:click={() => autoFinish = 'climb'}>Climb</button><button class:chosen={autoFinish === 'none'} on:click={() => autoFinish = 'none'}>Neither</button></div></div>
-            <div class="control-group"><span class="field-label">Ball source</span><div class="choice-grid">{#each ['alliance zone', 'neutral zone', 'human player'] as source}<button class:chosen={ballSources.includes(source)} on:click={() => toggleBallSource(source)}>{source}</button>{/each}</div></div>
-            <div class="control-group"><span class="field-label">Did it run?</span><div class="segmented"><button class:chosen={autoMoved === 'ran'} on:click={() => autoMoved = 'ran'}>Ran</button><button class:chosen={autoMoved === 'did-not-run'} on:click={() => autoMoved = 'did-not-run'}>Did not run</button></div></div>
+            <div class="control-group"><span class="field-label">Did autonomous run?</span><div class="segmented"><button class:chosen={autoMoved === 'ran'} on:click={() => autoMoved = 'ran'}>Yes</button><button class:chosen={autoMoved === 'did-not-run'} on:click={() => autoMoved = 'did-not-run'}>No</button></div></div>
+            <div class="control-group"><span class="field-label">Estimated fuel scored</span><small class="field-help">Choose the closest range; an exact count is not required.</small><div class="choice-grid fuel-bands">{#each POINT_BANDS as band}<button class:chosen={autoPoints === band} on:click={() => autoPoints = band}>{band}</button>{/each}</div></div>
           </div>
-          <div class="path-panel"><div class="path-heading"><span class="field-label">Robot path</span><button class="btn btn-sm" on:click={() => autoPath = []} disabled={!autoPath.length}><RotateCcw size={14} /> Clear</button></div><div class="field-board" role="application" aria-label="Draw the robot's autonomous path" on:pointerdown={beginPath} on:pointermove={extendPath} on:pointerup={completePath} on:pointerleave={completePath}><div class="field-line midline"></div><div class="field-zone top-zone"></div><div class="field-zone bottom-zone"></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{#if autoPath.length > 1}<polyline points={autoPath.map(([x, y]) => `${x},${y}`).join(' ')} />{/if}{#if autoPath.length}<circle cx={autoPath[0][0]} cy={autoPath[0][1]} r="2.2" class="path-start" />{/if}</svg></div></div>
+          <div class="path-panel"><div class="path-heading"><div><span class="field-label">Robot path (optional)</span><small>Draw from the robot's start toward the opponent end.</small></div><button class="btn btn-sm" on:click={() => autoPath = []} disabled={!autoPath.length}><RotateCcw size={14} /> Clear</button></div><div class="field-board" role="application" aria-label="Draw the robot's optional autonomous path from alliance end to opponent end" on:pointerdown={beginPath} on:pointermove={extendPath} on:pointerup={completePath} on:pointerleave={completePath}><span class="field-map-label alliance-end">Alliance end / start</span><span class="field-map-label neutral-zone">Neutral zone</span><span class="field-map-label opponent-end">Opponent end</span><div class="field-line midline"></div><div class="field-zone top-zone"></div><div class="field-zone bottom-zone"></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{#if autoPath.length > 1}<polyline points={autoPath.map(([x, y]) => `${x},${y}`).join(' ')} />{/if}{#if autoPath.length}<circle cx={autoPath[0][0]} cy={autoPath[0][1]} r="2.2" class="path-start" />{/if}</svg></div></div>
         </div>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('prematch')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('teleop')}>Continue to teleop <ChevronRight size={16} /></button></div>
       {:else if phase === 'teleop'}
-        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2><p>Use the ratings for the details that separate similar robots.</p></div><Timer size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2><p>Two optional quick ratings; skip either one if you could not judge it confidently.</p></div><Timer size={20} /></div>
         <div class="ratings-grid">{#each RATING_FIELDS as field}<div class="rating-row"><span>{field}</span><div class="rating-buttons">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings[field] === value} on:click={() => ratings = { ...ratings, [field]: value }}>{value}</button>{/each}</div></div>{/each}</div>
-        <label class="notes-label">Additional notes<textarea class="form-input" rows="5" placeholder="What mattered during teleop?" bind:value={teleopNotes}></textarea></label>
+        <label class="notes-label">Additional notes (optional)<textarea class="form-input" rows="5" placeholder="What mattered during teleop? Leave blank if nothing did." bind:value={teleopNotes}></textarea></label>
         <label class="incident-toggle"><input type="checkbox" bind:checked={crashOrBreak} /><span><AlertTriangle size={17} /> Crash or mechanical break</span></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('auto')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('postmatch')}>Continue to post-match <ChevronRight size={16} /></button></div>
       {:else}
         <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2><p>Close out the report and flag anything the pit crew needs to inspect.</p></div><Trophy size={20} /></div>
-        <div class="post-grid"><fieldset><legend>Robot status</legend><div class="choice-grid"><button class:chosen={robotDisabled === 'no'} on:click={() => robotDisabled = 'no'}>Stayed active</button><button class:chosen={robotDisabled === 'disabled'} on:click={() => robotDisabled = 'disabled'}>Disabled</button><button class:chosen={robotDisabled === 'died'} on:click={() => robotDisabled = 'died'}>Died</button></div></fieldset><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
+        <div class="post-grid"><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
         <div class="control-group"><span class="field-label">Driver skill</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={driverSkill === value} on:click={() => driverSkill = value}>{value}</button>{/each}</div></div>
-        <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Flag a problem for pit scouting</span></label>
-        {#if pitProblem}
-          <label class="notes-label pit-report-field">Problem for pit crew<textarea class="form-input" rows="3" placeholder="What should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
+        {#if requiresPitReport}
+          <div class="required-handoff"><AlertTriangle size={17} /><span>A pit report is required because this robot was {robotDisabled}. It will appear in <strong>Pit Scouting → Problems</strong>.</span></div>
+        {:else}
+          <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Send a problem to Pit Scouting → Problems</span></label>
         {/if}
-        <label class="notes-label">Freeform notes<textarea class="form-input" rows="5" placeholder="Anything strategy should know?" bind:value={postNotes}></textarea></label>
-        <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" on:click={finishScout} disabled={saving}>{saving ? 'Saving...' : 'Finish match scouting'} <Check size={16} /></button></div>
+        {#if shouldReportPitProblem}
+          <label class="notes-label pit-report-field">Problem for pit crew (required)<textarea class="form-input" required rows="3" placeholder="What failed, and what should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
+        {/if}
+        <label class="notes-label">Freeform notes (optional)<textarea class="form-input" rows="5" placeholder="Anything strategy should know? Leave blank if not." bind:value={postNotes}></textarea></label>
+        <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" on:click={finishScout} disabled={!canFinish}>{saving ? 'Saving...' : 'Finish match scouting'} <Check size={16} /></button></div>
         {#if error}<p class="submit-error">{error}</p>{/if}
       {/if}
     </section>
@@ -320,16 +318,24 @@
   .stage-nav button:last-child { border-bottom:0; } .stage-nav button.active { color:var(--text); background:var(--brand-gold-soft); box-shadow:inset 3px 0 0 var(--brand-gold-base); } .stage-nav button:disabled { cursor:not-allowed; opacity:.5; }
   .stage-nav span,.eyebrow,.field-label { color:var(--text-muted); font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; }
   .section-heading { display:flex; align-items:start; justify-content:space-between; gap:var(--gap-3); margin-bottom:var(--space-5); } .section-heading :global(svg) { color:var(--text-muted); }
+  .persistent-status { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-3); margin-bottom:var(--space-4); padding:var(--space-3) var(--space-4); border:1px solid var(--border); border-left:3px solid var(--green-base); background:var(--surface-2); }
+  .persistent-status.urgent { border-left-color:var(--red-base); background:var(--red-soft); }
+  .persistent-status > div:first-child { display:grid; gap:2px; }
+  .persistent-status small,.path-heading small,.field-help { color:var(--text-muted); font-size:.75rem; }
+  .status-buttons { margin-top:0; }
   .assignment-grid,.post-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--gap-4); } label,fieldset { display:grid; gap:var(--space-2); color:var(--text-muted); font-size:.8rem; } fieldset { margin:0; padding:0; border:0; } legend { padding:0; }
   .segmented,.choice-grid,.position-grid,.rating-buttons { display:flex; flex-wrap:wrap; gap:var(--gap-2); } .segmented button,.choice-grid button,.position-grid button,.rating-buttons button { min-height:var(--control-height); padding:0 var(--space-3); border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-1); color:var(--text); cursor:pointer; }
   .segmented button.chosen,.choice-grid button.chosen,.position-grid button.chosen,.rating-buttons button.chosen { border-color:var(--brand-gold-strong); background:var(--brand-gold-soft); color:var(--secondary); font-weight:600; } .segmented .red-choice.chosen { border-color:var(--red-base); background:var(--red-soft); } .segmented .blue-choice.chosen { border-color:var(--blue-base); background:var(--blue-soft); }
   .start-position-block,.control-group,.notes-label,.incident-toggle { margin-top:var(--space-5); } .position-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); margin-top:var(--space-2); } .position-grid button { min-height:4rem; text-transform:capitalize; }
   .section-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--gap-3); margin-top:var(--space-6); padding-top:var(--space-4); border-top:1px solid var(--border); color:var(--text-muted); font-size:.82rem; } .section-footer .btn { display:inline-flex; align-items:center; gap:var(--gap-2); }
   .auto-layout { display:grid; grid-template-columns:minmax(18rem,.9fr) minmax(18rem,1.1fr); gap:var(--space-6); } .auto-controls { display:grid; align-content:start; gap:var(--space-1); } .choice-grid { margin-top:var(--space-2); } .choice-grid.four { display:grid; grid-template-columns:repeat(4,1fr); }
-  .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; } .field-board { position:relative; aspect-ratio:1.8; overflow:hidden; border:1px solid var(--border); background:#edf3e9; cursor:crosshair; touch-action:none; } .field-line { position:absolute; background:#a4b09d; } .midline { top:0; bottom:0; left:50%; width:1px; } .field-zone { position:absolute; width:22%; height:18%; border:1px solid #a4b09d; } .top-zone { top:7%; left:39%; } .bottom-zone { bottom:7%; left:39%; } .field-board svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; } .field-board polyline { fill:none; stroke:var(--brand-gold-strong); stroke-width:1.2; stroke-linecap:round; stroke-linejoin:round; } .field-board .path-start { fill:var(--blue-base); }
+  .fuel-bands { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); }
+  .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--gap-3); } .path-heading > div { display:grid; gap:2px; } .field-board { position:relative; aspect-ratio:1.8; overflow:hidden; border:1px solid var(--border); background:#edf3e9; cursor:crosshair; touch-action:none; } .field-line { position:absolute; background:#a4b09d; } .midline { top:0; bottom:0; left:50%; width:1px; } .field-zone { position:absolute; width:22%; height:18%; border:1px solid #a4b09d; } .top-zone { top:7%; left:39%; } .bottom-zone { bottom:7%; left:39%; } .field-map-label { position:absolute; z-index:1; padding:2px 5px; background:color-mix(in srgb, #edf3e9 82%, transparent); color:#52604f; font-size:.65rem; font-weight:600; text-transform:uppercase; letter-spacing:.03em; pointer-events:none; } .alliance-end { left:var(--space-2); bottom:var(--space-2); } .neutral-zone { left:50%; top:50%; transform:translate(-50%,-50%); } .opponent-end { right:var(--space-2); top:var(--space-2); } .field-board svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; } .field-board polyline { fill:none; stroke:var(--brand-gold-strong); stroke-width:1.2; stroke-linecap:round; stroke-linejoin:round; } .field-board .path-start { fill:var(--blue-base); }
   .ratings-grid { display:grid; gap:var(--space-3); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
   .notes-label textarea { resize:vertical; min-height:7rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
   .pit-report-field { margin-top:var(--space-3); }
+  .required-handoff { display:flex; align-items:flex-start; gap:var(--gap-2); margin-top:var(--space-5); padding:var(--space-3) var(--space-4); border-left:3px solid var(--red-base); background:var(--red-soft); color:var(--text); font-size:.88rem; }
+  .required-handoff :global(svg) { flex:none; color:var(--red-base); }
   /* One series, so no legend box is needed for identity - the axis labels
      name each value directly, and the numbers sit beside the shape so the
      chart is never the only encoding. Grid and spokes stay recessive; only
@@ -367,7 +373,7 @@
   }
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
   @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four { grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four,.fuel-bands { grid-template-columns:repeat(2,1fr); } .persistent-status { align-items:stretch; flex-direction:column; } }
 
   /* Match Scouting intentionally shares Pit Scouting's focused field-workspace language. */
   .match-scouting-page { max-width:1160px; }
@@ -399,6 +405,7 @@
   .notes-label { padding:var(--space-4); border:1px solid var(--border); }
   .incident-toggle { padding:var(--space-3) var(--space-4); border-left:3px solid var(--red-base); background:var(--red-soft); }
   .post-grid { padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .post-grid { grid-template-columns:1fr; }
   .submitted-state { background:var(--surface-2); }
   @media (max-width:850px) {
     .scouting-shell { grid-template-columns:1fr; }

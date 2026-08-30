@@ -5,7 +5,9 @@ import {
   normalizeMatchScoutEntry,
   normalizePitProblemReport,
   normalizeRatings,
-  normalizeTeamKey
+  normalizeTeamKey,
+  requiresPitProblemReport,
+  validatePitProblemHandoff
 } from './matchScoutingSchema.js';
 
 describe('normalizeTeamKey', () => {
@@ -82,7 +84,7 @@ describe('normalizeMatchScoutEntry', () => {
       alliance: 'blue',
       starting_position: 'center',
       auto_start_zone: 'wing',
-      auto_points_band: '3-4',
+      auto_points_band: '6-10',
       ball_sources: ['wing', 'wing', 'floor'],
       auto_path: [[10, 10], [20, 20]],
       ratings: { Defense: 4 },
@@ -129,6 +131,20 @@ describe('normalizeMatchScoutEntry', () => {
   it('caps long free text instead of rejecting the whole report', () => {
     const { value } = normalizeMatchScoutEntry({ ...base, post_notes: 'x'.repeat(10_000) });
     expect(value.post_notes.length).toBe(4000);
+  });
+});
+
+describe('pit problem handoff requirement', () => {
+  it('requires a description when a robot is disabled or dies', () => {
+    expect(requiresPitProblemReport('disabled')).toBe(true);
+    expect(requiresPitProblemReport('died')).toBe(true);
+    expect(validatePitProblemHandoff({ robot_disabled: 'disabled', pit_problem_summary: '' })).toMatch(/Describe/);
+  });
+
+  it('keeps notes and voluntary handoffs optional for an active robot', () => {
+    expect(requiresPitProblemReport('no')).toBe(false);
+    expect(validatePitProblemHandoff({ robot_disabled: 'no' })).toBeNull();
+    expect(validatePitProblemHandoff({ robot_disabled: 'no', report_pit_problem: true })).toMatch(/Describe/);
   });
 });
 
