@@ -14,13 +14,14 @@
 //     a new entry in manufacturingChildren below.
 //   - CAD: CAD and Build combined into one group, since Build is really a
 //     CAD sub-concern (already lives at /cad/build).
-//   - Competition: every scouting/competition tool in one place, including
-//     the ones that used to be individually opt-in-only (Pit/Data/Note
-//     Scouting, Team View, Scouting Admin) - the reorg's whole point is
-//     making these actually discoverable as one coherent section instead of
-//     requiring someone to already know they exist to add them manually.
-//     Scouting Admin's own visibility is still gated by canRenderTabKey
-//     (Competition Lead / admin only) regardless of nesting.
+//   - Competition: the active scouting surfaces only. The legacy routes
+//     (Power Rankings, Note Scouting, Team View, Scouting Admin) stay in the
+//     codebase for a future restoration but are deliberately out of the
+//     default menu - they are still reachable by URL, and by anyone who
+//     already added them to their own saved nav.
+//     Match Scouting belongs here too and is intentionally absent for now:
+//     PR #89 reverted the /matchscout route out of main, so listing it would
+//     be a nav entry pointing at a 404. Add it back with the route.
 //   - Purchasing and Docs: stand alone.
 //
 // Home is rendered separately and always first; Admin is appended for
@@ -56,13 +57,8 @@ export function defaultHeaderTabs(navConfig = navigation) {
     type: 'folder',
     label: 'Competition',
     children: [
-      { key: 'scouting', label: 'Scouting' },
-      { key: 'powerrankings', label: 'Power Rankings' },
+      { key: 'scouting', label: 'Data Scouting' },
       { key: 'pitscout', label: 'Pit Scouting' },
-      { key: 'datascout', label: 'Data Scouting' },
-      { key: 'notescout', label: 'Note Scouting' },
-      { key: 'teamview', label: 'Team View' },
-      { key: 'scouting-admin', label: 'Scouting Admin' },
       { key: 'vision', label: 'Vision Scouting' }
     ]
   });

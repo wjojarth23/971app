@@ -6,16 +6,17 @@
     "cad": true,
     "purchasing": true,
     "scouting": true,
-    "powerrankings": true,
+    "powerrankings": false,
     "docs": true,
     "planner": true,
     "tasks": true,
-    "notescout": true,
-    "teamview": true,
+    "notescout": false,
+    "teamview": false,
     "pitscout": true,
-    "scouting-admin": true,
+    "scouting-admin": false,
     "vision": true,
     "cots-stocking": true,
-    "autocam": true
+    "autocam": true,
+    "datascout": false
   }
 }
