@@ -449,6 +449,12 @@ function signedArea(points) {
   return sum / 2;
 }
 
+// This extractor is deliberately a sheet-profile router path, not general
+// 3-axis milling. Limiting stock thickness relative to the smaller profile
+// dimension prevents a cube, shaft, pulley, or other solid from being
+// accepted merely because one of its planar faces happens to be the largest.
+const MAX_ROUTING_THICKNESS_TO_MIN_PROFILE_SPAN = 0.25;
+
 /**
  * Routing: finds the largest flat face (in any orientation), traces its
  * boundary into outer + hole loops projected into that face's own plane,
@@ -602,6 +608,23 @@ export function extractRoutingContoursFromMeshes(meshes) {
         `genuine opposite face. Check this is a flat pattern, not an already-formed/bent part.`
       );
     }
+  }
+
+  // A genuine routed sheet has a distinctly thin axis. Without this guard,
+  // a thick solid with a large planar face can produce a superficially valid
+  // perimeter program while omitting features on the other faces. This is a
+  // rejection, rather than a guess at a different machining operation.
+  const minProfileX = Math.min(...outerPoints.map((p) => p.x));
+  const maxProfileX = Math.max(...outerPoints.map((p) => p.x));
+  const minProfileY = Math.min(...outerPoints.map((p) => p.y));
+  const maxProfileY = Math.max(...outerPoints.map((p) => p.y));
+  const minProfileSpan = Math.min(maxProfileX - minProfileX, maxProfileY - minProfileY);
+  if (thickness !== null && minProfileSpan > 0 && thickness > minProfileSpan * MAX_ROUTING_THICKNESS_TO_MIN_PROFILE_SPAN) {
+    throw new Error(
+      `This part is too thick for the sheet-profile router operation: measured thickness ${thickness.toFixed(3)}" ` +
+      `is over ${(MAX_ROUTING_THICKNESS_TO_MIN_PROFILE_SPAN * 100).toFixed(0)}% of its smaller profile span ${minProfileSpan.toFixed(3)}". ` +
+      'Use a thin flat pattern, or a milling/turning operation for a solid part.'
+    );
   }
 
   return { contours, thickness };
