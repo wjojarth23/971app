@@ -123,6 +123,13 @@ const AXIS_INDEX = { x: 0, y: 1, z: 2 };
 // 20-100:1. 8 sits comfortably in the gap, generous to legitimate large
 // thin discs without accepting an obviously-flat plate through this path.
 const MAX_DISC_DIAMETER_TO_LENGTH_RATIO = 8;
+// This is an early bounding-box rejection only. The radial-symmetry check
+// below is the actual operation guard; it deliberately refuses finished
+// polygonal geometry until an explicit raw-stock workflow exists.
+const MIN_TURNING_CROSS_SECTION_ASPECT = 0.75;
+const TURNING_SYMMETRY_ANGLE_BINS = 64;
+const MIN_TURNING_RADIAL_SYMMETRY = 0.99;
+const MAX_NON_SYMMETRIC_TURNING_SLICES = 0.06;
 
 /**
  * Picks which bounding-box axis is the part's true rotational axis, trying
@@ -137,9 +144,10 @@ const MAX_DISC_DIAMETER_TO_LENGTH_RATIO = 8;
  * are long, which the largest-span-only heuristic never considered.
  *
  * Returns the accepted candidate's axis assignment, or null if neither the
- * largest-span nor the smallest-span axis produces a plausible turned-part
- * cross-section (see crossSectionAspect below) - the caller throws in that
- * case, using the largest-span candidate's numbers for the error message
+ * largest-span nor the smallest-span axis produces a plausible preliminary
+ * turned-part cross-section (see crossSectionAspect below). The caller then
+ * applies its stricter radial-symmetry guard before accepting it. If neither
+ * axis is plausible, the caller reports the largest-span candidate's numbers
  * (the "primary"/expected hypothesis for a typical shaft-like part).
  */
 export function pickLengthAxis(spans) {
@@ -154,25 +162,16 @@ export function pickLengthAxis(spans) {
     const [radiusAxisA, radiusAxisB] = axes.filter((a) => a !== lengthAxis);
     const radiusAxisSpanA = spans[radiusAxisA];
     const radiusAxisSpanB = spans[radiusAxisB];
-    // Sanity check: real bar stock (round, hex, or square) is roughly as
-    // wide in one off-axis direction as the other - the bounding box
-    // cross-section is close to square even when the actual cross-section
-    // isn't circular (e.g. hex stock turned down to a round shaft is a
-    // completely normal lathe operation). A flat plate is the opposite:
-    // one off-axis extent (its thickness) is drastically smaller than the
-    // other (its width). Without this check, a flat plate's "radius" -
-    // computed as hypot() of both off-axis directions - is dominated by
-    // the wide direction and produces a numerically plausible profile for
-    // a shape that was never a solid of revolution to begin with. Found
-    // via a real "550 Motor Plate" STEP file (flat, with mounting holes)
-    // that slipped past the maxRadius<length/2 check below by coincidence
-    // and would have silently generated lathe G-code for a part that
-    // should never go near a lathe.
+    // Preliminary sanity check: a real rotational part is roughly as wide
+    // in one off-axis direction as the other, while a flat plate has one
+    // drastically smaller off-axis extent. This fast check rejects obvious
+    // plates; the stricter radial-symmetry check in the caller rejects
+    // non-rotational shapes that happen to have a square-ish bounding box.
     const crossSectionAspect = Math.min(radiusAxisSpanA, radiusAxisSpanB) / Math.max(radiusAxisSpanA, radiusAxisSpanB);
     const candidate = { lengthAxis, radiusAxisA, radiusAxisB, radiusAxisSpanA, radiusAxisSpanB, crossSectionAspect };
     if (i === 0) primary = candidate; // always the largest-span attempt, for the error message below
 
-    if (crossSectionAspect < 0.5) continue;
+    if (crossSectionAspect < MIN_TURNING_CROSS_SECTION_ASPECT) continue;
     if (i === 0) return candidate; // largest-span candidate passed outright - the common, unambiguous case
 
     // The smallest-span candidate passed the roundness bar too, but that
@@ -220,16 +219,28 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
   const li = AXIS_INDEX[lengthAxis], ai = AXIS_INDEX[radiusAxisA], bi = AXIS_INDEX[radiusAxisB];
   const bucketSize = (lengthMax - lengthMin) / buckets;
   const maxRadiusByBucket = new Array(buckets + 1).fill(-1);
+  const maxRadiusByAngle = Array.from(
+    { length: buckets + 1 },
+    () => new Array(TURNING_SYMMETRY_ANGLE_BINS).fill(-1)
+  );
 
-  function sample(lengthPos, radius) {
+  function sample(lengthPos, axisA, axisB) {
     const bucket = Math.min(buckets, Math.max(0, Math.round((lengthPos - lengthMin) / bucketSize)));
+    const centeredA = axisA - centerA;
+    const centeredB = axisB - centerB;
+    const radius = Math.hypot(centeredA, centeredB);
     if (radius > maxRadiusByBucket[bucket]) maxRadiusByBucket[bucket] = radius;
+    if (radius > 1e-9) {
+      const angle = (Math.atan2(centeredB, centeredA) + Math.PI * 2) % (Math.PI * 2);
+      const angleBucket = Math.min(TURNING_SYMMETRY_ANGLE_BINS - 1, Math.floor(angle / (Math.PI * 2) * TURNING_SYMMETRY_ANGLE_BINS));
+      if (radius > maxRadiusByAngle[bucket][angleBucket]) maxRadiusByAngle[bucket][angleBucket] = radius;
+    }
   }
 
   for (const mesh of meshes) {
     const pos = mesh.attributes.position.array;
     for (let i = 0; i < pos.length; i += 3) {
-      sample(pos[i + li], Math.hypot(pos[i + ai] - centerA, pos[i + bi] - centerB));
+      sample(pos[i + li], pos[i + ai], pos[i + bi]);
     }
 
     // Also walk every triangle edge and interpolate extra samples along it
@@ -265,8 +276,7 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
         for (let s = 1; s < steps; s += 1) {
           const frac = s / steps;
           const lengthPos = l1 + frac * (l2 - l1);
-          const radius = Math.hypot(a1 + frac * (a2 - a1) - centerA, b1 + frac * (b2 - b1) - centerB);
-          sample(lengthPos, radius);
+          sample(lengthPos, a1 + frac * (a2 - a1), b1 + frac * (b2 - b1));
         }
       }
     }
@@ -279,6 +289,29 @@ export function extractTurningProfileFromMeshes(meshes, { buckets = 300 } = {}) 
   }
   if (profile.length < 2) {
     throw new Error('Not enough geometry variation along the detected length axis to build a turning profile - is this really a lathe part?');
+  }
+
+  // A bounding box alone cannot tell a turned body from a folded bracket:
+  // both can look roughly square across one candidate axis. Compare the
+  // largest available radius around the proposed spindle axis in angular
+  // bins. Cylinders and cones remain close to radially uniform; brackets,
+  // gears, and other one-sided shapes have angular variation. Inner or
+  // cross-drilled features only lower a local radius, so this uses the outer
+  // radius in each bin and tolerates a minority of affected slices.
+  let symmetrySlices = 0;
+  let nonSymmetricSlices = 0;
+  const requiredAngleBins = Math.ceil(TURNING_SYMMETRY_ANGLE_BINS * 0.25);
+  for (let bucket = 1; bucket < buckets; bucket += 1) {
+    const radii = maxRadiusByAngle[bucket].filter((radius) => radius >= 0);
+    if (radii.length < requiredAngleBins) continue;
+    symmetrySlices += 1;
+    if (Math.min(...radii) < Math.max(...radii) * MIN_TURNING_RADIAL_SYMMETRY) nonSymmetricSlices += 1;
+  }
+  if (symmetrySlices >= 8 && nonSymmetricSlices / symmetrySlices > MAX_NON_SYMMETRIC_TURNING_SLICES) {
+    throw new Error(
+      `This doesn't look like a turned part: ${nonSymmetricSlices} of ${symmetrySlices} sampled cross-sections are not radially symmetric ` +
+      `around the detected ${lengthAxis.toUpperCase()} spindle axis. Check this is a solid of revolution, not a gear, bracket, tube, or assembly.`
+    );
   }
 
   // Sanity check: for the PRIMARY (largest-span-as-length) path only, a real

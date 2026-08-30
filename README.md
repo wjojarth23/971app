@@ -206,6 +206,9 @@ own docs are all together in one place instead of scattered across
   holes only) - see `autocam/docs/tubestock-feature.md` for the full design
   and real-fixture validation, including the one real bug it caught
   (`lateralOffset`) that a synthetic test alone never would have.
+  Turning accepts only rotationally symmetric finished geometry; gears,
+  polygonal exteriors, tubes, and formed parts are rejected rather than
+  approximated as a round turning envelope.
 - **`autocam/toolpathPreview.js`** - parses generated G-code back into a
   toolpath for preview (`autocam/components/ToolpathViewer.svelte`).
 - **`autocam/drive_watcher.js`** - Google Drive input-sweep (`cad` →
