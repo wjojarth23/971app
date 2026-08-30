@@ -366,10 +366,11 @@
   function canRenderTabKey(key) {
     const k = normalizeKey(key);
     if (k === 'admin') return hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
-    // Scouting Admin: Competition Leads, or admins (who can access everything).
+    // Scouting Admin is a scoped competition role, separate from site-wide admin.
     if (k === 'scouting-admin') {
       return activeProfile?.team_role === 'Competition Lead'
-        || hasPermission(activeProfile, 'VIEW_ADMIN_PANEL');
+        || hasPermission(activeProfile, 'VIEW_ADMIN_PANEL')
+        || (activeProfile?.roster_keys || []).some((role) => String(role).toLowerCase() === 'scouting admin');
     }
     return true;
   }

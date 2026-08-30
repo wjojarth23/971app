@@ -712,13 +712,13 @@ async function findScoutingRosterId(db, existingRoleKeys = new Map()) {
   const { data, error } = await db
     .from('rosters')
     .select('id, name')
-    .ilike('name', '%scout%')
     .order('id', { ascending: true });
 
   if (error) return null;
   const rows = data || [];
   const scoutingRoster =
     rows.find((r) => String(r?.name || '').toLowerCase().includes('scouting')) ||
+    rows.find((r) => String(r?.name || '').toLowerCase().includes('competition')) ||
     rows[0];
 
   return scoutingRoster?.id || null;
