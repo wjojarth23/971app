@@ -86,9 +86,13 @@ describe('normalizeMatchScoutEntry', () => {
       auto_start_zone: 'wing',
       auto_points_estimate: '80-100',
       ball_sources: ['wing', 'wing', 'floor'],
+      auto_collision: true,
+      auto_collision_notes: 'Bumped 254 near center',
       auto_path: [[10, 10], [20, 20]],
       ratings: { Defense: 4 },
       teleop_roles: ['Scoring', 'Defense', 'Defense', 'made-up role'],
+      intake_speed: 2,
+      intake_jammed: true,
       crash_or_break: true,
       card: 'yellow',
       driver_skill: 4
@@ -100,7 +104,11 @@ describe('normalizeMatchScoutEntry', () => {
     expect(value.auto_points_min).toBe(80);
     expect(value.auto_points_max).toBe(100);
     expect(value.auto_points_average).toBe(90);
+    expect(value.auto_collision).toBe(true);
+    expect(value.auto_collision_notes).toBe('Bumped 254 near center');
     expect(value.teleop_roles).toEqual(['Scoring', 'Defense']);
+    expect(value.intake_speed).toBe(2);
+    expect(value.intake_jammed).toBe(true);
     expect(value.crash_or_break).toBe(true);
     expect(value.created_by).toBe('user-1');
   });
@@ -141,6 +149,14 @@ describe('normalizeMatchScoutEntry', () => {
   it('only accepts a literal true for crash_or_break', () => {
     expect(normalizeMatchScoutEntry({ ...base, crash_or_break: 'yes' }).value.crash_or_break).toBe(false);
     expect(normalizeMatchScoutEntry(base).value.crash_or_break).toBe(false);
+  });
+
+  it('clamps intake speed to the 1-3 scouting scale and defaults booleans safely', () => {
+    expect(normalizeMatchScoutEntry({ ...base, intake_speed: 9 }).value.intake_speed).toBe(3);
+    expect(normalizeMatchScoutEntry({ ...base, intake_speed: 0 }).value.intake_speed).toBe(1);
+    expect(normalizeMatchScoutEntry({ ...base, intake_speed: 'fast' }).value.intake_speed).toBeNull();
+    expect(normalizeMatchScoutEntry({ ...base, auto_collision: 'yes', intake_jammed: 'yes' }).value)
+      .toMatchObject({ auto_collision: false, intake_jammed: false });
   });
 
   it('caps long free text instead of rejecting the whole report', () => {

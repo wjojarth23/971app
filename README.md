@@ -30,8 +30,11 @@ reading code.
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
 - **Scouting**: pit scouting (a topic-at-a-time form with per-topic
-  completion counts, built for filling in a noisy pit on a phone while a team
-  answers out of order), match/data scouting, free-form notes,
+  completion counts, scout/contact attribution, and up to three robot photos,
+  built for filling in a noisy pit on a phone while a team answers out of
+  order), alliance-tinted match scouting with event-team type-ahead and
+  structured auto collision/fuel-source plus intake-speed/jam observations,
+  data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.

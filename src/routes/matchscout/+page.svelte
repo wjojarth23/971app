@@ -8,6 +8,15 @@
 
   const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
   const RATING_FIELDS = MATCH_RATING_FIELDS;
+  const TELEOP_RATING_FIELDS = RATING_FIELDS.filter((field) => field !== 'Driver awareness');
+  const BALL_SOURCE_OPTIONS = [
+    ['source', 'Source'],
+    ['wing', 'Alliance wing'],
+    ['neutral', 'Neutral zone'],
+    ['opponent wing', 'Opponent wing'],
+    ['human player', 'Human player'],
+    ['floor', 'Loose fuel / floor']
+  ];
   const AUTO_POINT_EXAMPLES = ['0', '20-40', '50-75', '100+'];
 
   let phase = 'prematch';
@@ -18,9 +27,14 @@
   let autoPoints = '';
   let autoMoved = '';
   let autoPath = [];
+  let ballSources = [];
+  let autoCollision = false;
+  let autoCollisionNotes = '';
   let ratings = Object.fromEntries(RATING_FIELDS.map((field) => [field, 0]));
   let teleopRoles = [];
   let teleopNotes = '';
+  let intakeSpeed = 0;
+  let intakeJammed = false;
   let crashOrBreak = false;
   let robotDisabled = '';
   let card = '';
@@ -30,6 +44,7 @@
   let postNotes = '';
   let submitted = false;
   let eventKey = '';
+  let eventTeams = [];
   let saving = false;
   let error = '';
 
@@ -55,6 +70,12 @@
     teleopRoles = teleopRoles.includes(role)
       ? teleopRoles.filter((entry) => entry !== role)
       : [...teleopRoles, role];
+  }
+
+  function toggleBallSource(source) {
+    ballSources = ballSources.includes(source)
+      ? ballSources.filter((entry) => entry !== source)
+      : [...ballSources, source];
   }
 
   // Rating profile as a star/radar. Five axes on an identical 0-5 scale for one
@@ -100,6 +121,23 @@
     return payload.data;
   }
 
+  async function loadEventTeams(key) {
+    if (!key) return;
+    try {
+      const response = await fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(key)}`);
+      const payload = await response.json().catch(() => null);
+      if (response.ok && payload?.success) {
+        eventTeams = (payload.data || []).sort((a, b) => Number(a.team_number) - Number(b.team_number));
+      }
+    } catch {
+      eventTeams = [];
+    }
+  }
+
+  function normalizeRobotNumber(event) {
+    robotNumber = String(event.currentTarget?.value || '').replace(/\D/g, '').slice(0, 6);
+  }
+
   async function finishScout() {
     if (!assignmentReady) {
       phase = 'prematch';
@@ -126,10 +164,15 @@
         starting_position: startingPosition,
         auto_points_estimate: autoPoints,
         auto_moved: autoMoved,
+        ball_sources: ballSources,
+        auto_collision: autoCollision,
+        auto_collision_notes: autoCollision ? autoCollisionNotes : '',
         auto_path: autoPath,
         ratings,
         teleop_roles: teleopRoles,
         teleop_notes: teleopNotes,
+        intake_speed: intakeSpeed || null,
+        intake_jammed: intakeJammed,
         crash_or_break: crashOrBreak,
         robot_disabled: robotDisabled,
         // The UI says "None"; the stored vocabulary uses an empty string.
@@ -150,6 +193,7 @@
 
   onMount(async () => {
     eventKey = (await fetchActiveScoutingEventKey()) || '';
+    await loadEventTeams(eventKey);
     const query = new URLSearchParams(window.location.search);
     matchNumber = query.get('match') || '';
     robotNumber = query.get('team') || '';
@@ -160,7 +204,7 @@
 
 <svelte:head><title>Match Scouting</title></svelte:head>
 
-<main class="match-scouting-page">
+<main class="match-scouting-page" class:alliance-red={alliance === 'red'} class:alliance-blue={alliance === 'blue'}>
   <header class="page-header">
     <div class="header-content">
       <h1><ClipboardCheck size={22} /> Match Scouting</h1>
@@ -244,7 +288,23 @@
         <div class="section-heading"><div><span class="eyebrow">Pre-match</span><h2>Match assignment</h2><p>Set the robot and its opening location before the field goes live.</p></div><MapPinned size={20} /></div>
         <div class="assignment-grid">
           <label>Match #<input class="form-input" inputmode="numeric" placeholder="14" bind:value={matchNumber} /></label>
-          <label>Robot #<input class="form-input" inputmode="numeric" placeholder="971" bind:value={robotNumber} /></label>
+          <label>
+            Robot #
+            <input
+              class="form-input"
+              inputmode="numeric"
+              placeholder="Start typing a team number"
+              list="event-team-options"
+              autocomplete="off"
+              value={robotNumber}
+              on:input={normalizeRobotNumber}
+            />
+            <datalist id="event-team-options">
+              {#each eventTeams as team}
+                <option value={team.team_number}>{team.nickname || team.name || `Team ${team.team_number}`}</option>
+              {/each}
+            </datalist>
+          </label>
           <fieldset><legend>Alliance</legend><div class="segmented"><button class:chosen={alliance === 'red'} class="red-choice" on:click={() => alliance = 'red'}>Red</button><button class:chosen={alliance === 'blue'} class="blue-choice" on:click={() => alliance = 'blue'}>Blue</button></div></fieldset>
         </div>
         <div class="start-position-block">
@@ -287,6 +347,34 @@
                 <small class="estimate-error">Use a number, a low-high range, or a value ending in +.</small>
               {/if}
             </div>
+            <fieldset class="control-group">
+              <legend class="field-label">Where did the robot collect fuel?</legend>
+              <small class="field-help">Select every location observed during autonomous.</small>
+              <div class="choice-grid auto-source-grid">
+                {#each BALL_SOURCE_OPTIONS as source}
+                  <button
+                    class:chosen={ballSources.includes(source[0])}
+                    on:click={() => toggleBallSource(source[0])}
+                  >{source[1]}</button>
+                {/each}
+              </div>
+            </fieldset>
+            <div class="control-group">
+              <span class="field-label">Collision with another robot?</span>
+              <div class="segmented">
+                <button class:chosen={!autoCollision} on:click={() => (autoCollision = false)}>No</button>
+                <button class:chosen={autoCollision} on:click={() => (autoCollision = true)}>Yes</button>
+              </div>
+              {#if autoCollision}
+                <textarea
+                  class="form-input collision-notes"
+                  rows="2"
+                  maxlength="500"
+                  placeholder="Which robot, where, and what happened?"
+                  bind:value={autoCollisionNotes}
+                ></textarea>
+              {/if}
+            </div>
           </div>
           <div class="path-panel">
             <div class="path-heading">
@@ -311,9 +399,24 @@
         </fieldset>
         <div class="ratings-grid">
           <div class="ratings-heading"><span class="field-label">Optional 1-5 ratings</span><small>1 = poor, 5 = excellent. Leave untouched when not observed.</small></div>
-          {#each RATING_FIELDS as field}
+          {#each TELEOP_RATING_FIELDS as field}
             <div class="rating-row"><span>{field}</span><div class="rating-buttons">{#each [1, 2, 3, 4, 5] as value}<button aria-label={`${field}: ${value} of 5`} class:chosen={ratings[field] === value} on:click={() => ratings = { ...ratings, [field]: value }}>{value}</button>{/each}</div></div>
           {/each}
+        </div>
+        <div class="intake-observations">
+          <div class="control-group">
+            <span class="field-label">Intake speed</span>
+            <small class="field-help">1 = slow, 3 = fast. Leave blank if it was not observed.</small>
+            <div class="rating-buttons large">
+              {#each [1, 2, 3] as value}
+                <button class:chosen={intakeSpeed === value} on:click={() => (intakeSpeed = value)}>{value}</button>
+              {/each}
+            </div>
+          </div>
+          <label class="incident-toggle intake-jam-toggle">
+            <input type="checkbox" bind:checked={intakeJammed} />
+            <span><AlertTriangle size={17} /> Intake jammed during the match</span>
+          </label>
         </div>
         <label class="notes-label scouter-notes">Real-scout observations (optional)<textarea class="form-input" rows="9" placeholder="What did the robot actually do? Note repeatable strengths, defense response, cycle consistency, field awareness, or anything the numbers miss." bind:value={teleopNotes}></textarea></label>
         <label class="incident-toggle"><input type="checkbox" bind:checked={crashOrBreak} /><span><AlertTriangle size={17} /> Crash or mechanical break</span></label>
@@ -322,6 +425,7 @@
         <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2><p>Close out the report and flag anything the pit crew needs to inspect.</p></div><Trophy size={20} /></div>
         <div class="post-grid"><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
         <div class="control-group"><span class="field-label">Driver skill</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={driverSkill === value} on:click={() => driverSkill = value}>{value}</button>{/each}</div></div>
+        <div class="control-group"><span class="field-label">Driver awareness</span><small class="field-help">Rate decisions, field awareness, and reaction to traffic after seeing the full match.</small><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings['Driver awareness'] === value} on:click={() => ratings = { ...ratings, 'Driver awareness': value }}>{value}</button>{/each}</div></div>
         {#if requiresPitReport}
           <div class="required-handoff"><AlertTriangle size={17} /><span>A pit report is required because this robot was {robotDisabled}. It will appear in <strong>Pit Scouting → Problems</strong>.</span></div>
         {:else}
@@ -341,6 +445,9 @@
 <style>
   .submit-error { margin:var(--space-2) 0 0; color:var(--danger); font-size:.85rem; }
   .match-scouting-page { max-width:1200px; margin:0 auto; padding:var(--space-4); }
+  .match-scouting-page { transition:background-color 160ms ease, box-shadow 160ms ease; clip-path:inset(0 -100vmax); }
+  .match-scouting-page.alliance-red { background:color-mix(in srgb, var(--red-base) 8%, transparent); box-shadow:0 0 0 100vmax color-mix(in srgb, var(--red-base) 8%, transparent); }
+  .match-scouting-page.alliance-blue { background:color-mix(in srgb, var(--blue-base) 8%, transparent); box-shadow:0 0 0 100vmax color-mix(in srgb, var(--blue-base) 8%, transparent); }
   h1,h2 { margin:0; } h1 { display:flex; align-items:center; gap:var(--gap-2); } h2 { font-size:1.2rem; }
   .assignment-chip { display:flex; align-items:center; gap:var(--gap-2); border:1px solid var(--border); padding:var(--space-2) var(--space-3); background:var(--surface-2); font-size:.85rem; }
   .assignment-chip b { text-transform:uppercase; font-size:.72rem; } .assignment-chip.red b { color:var(--red-strong); } .assignment-chip.blue b { color:var(--blue-strong); }
@@ -367,6 +474,8 @@
   .estimate-result { color:var(--text-muted); }
   .estimate-result strong { color:var(--text); }
   .estimate-error { color:var(--danger); }
+  .auto-source-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .collision-notes { margin-top:var(--space-2); resize:vertical; }
   .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--gap-3); } .path-heading > div { display:grid; gap:2px; }
   .field-source { color:var(--text-muted); font-size:.68rem; line-height:1.35; }
   .teleop-roles { margin-bottom:var(--space-4); padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
@@ -374,6 +483,8 @@
   .ratings-grid { display:grid; gap:var(--space-3); } .ratings-heading { display:flex; justify-content:space-between; gap:var(--gap-3); padding-bottom:var(--space-2); border-bottom:1px solid var(--border); } .ratings-heading small { color:var(--text-muted); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
   .notes-label textarea { resize:vertical; min-height:7rem; line-height:1.5; } .scouter-notes textarea { min-height:12rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
   .pit-report-field { margin-top:var(--space-3); }
+  .intake-observations { display:grid; grid-template-columns:minmax(0,1fr) minmax(16rem,1fr); gap:var(--gap-4); align-items:end; margin-top:var(--space-5); }
+  .intake-jam-toggle { margin-top:0; }
   .required-handoff { display:flex; align-items:flex-start; gap:var(--gap-2); margin-top:var(--space-5); padding:var(--space-3) var(--space-4); border-left:3px solid var(--red-base); background:var(--red-soft); color:var(--text); font-size:.88rem; }
   .required-handoff :global(svg) { flex:none; color:var(--red-base); }
   /* One series, so no legend box is needed for identity - the axis labels
@@ -412,7 +523,7 @@
     .star-legend { width:min(260px, 80vw); }
   }
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
-  @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout,.intake-observations { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row,.ratings-heading { align-items:flex-start; flex-direction:column; } .point-examples,.role-grid { grid-template-columns:repeat(2,1fr); } .persistent-status { align-items:stretch; flex-direction:column; } }
 
   /* Match Scouting intentionally shares Pit Scouting's focused field-workspace language. */

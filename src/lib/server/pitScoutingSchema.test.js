@@ -71,6 +71,7 @@ describe('normalizePitScoutRow', () => {
     expect(normalized.estimated_bps).toBeNull();
     expect(normalized.robot_archetype).toBeNull();
     expect(normalized.additional_notes).toBeNull();
+    expect(normalized.scout_name).toBeNull();
   });
 
   it('preserves a real value already present on the row', () => {
@@ -121,6 +122,7 @@ describe('pitScoutSchemaWarning', () => {
     expect(warning).toContain('estimated BPS');
     expect(warning).toContain('robot archetype');
     expect(warning).toContain('additional notes');
+    expect(warning).toContain('scout name');
   });
 });
 

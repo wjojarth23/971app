@@ -1,4 +1,5 @@
 const PIT_SCOUT_OPTIONAL_COLUMN_DEFAULTS = Object.freeze({
+  scout_name: null,
   robot_archetype: null,
   additional_notes: null,
   likely_breaking_component: null,
@@ -33,6 +34,7 @@ function cloneDefaultValue(value) {
 export function buildPitScoutSchema(supportedColumns = PIT_SCOUT_OPTIONAL_COLUMNS) {
   const supported = new Set((supportedColumns || []).map(String));
   return {
+    scout_name: supported.has('scout_name'),
     robot_archetype: supported.has('robot_archetype'),
     additional_notes: supported.has('additional_notes'),
     likely_breaking_component: supported.has('likely_breaking_component'),
@@ -89,6 +91,7 @@ export function normalizePitScoutRows(rows, schema = buildPitScoutSchema()) {
 
 export function pitScoutSchemaWarning(schema = buildPitScoutSchema()) {
   const missing = [];
+  if (!schema?.scout_name) missing.push('scout name');
   if (!schema?.robot_archetype) missing.push('robot archetype');
   if (!schema?.additional_notes) missing.push('additional notes');
   if (!schema?.likely_breaking_component) missing.push('likely breaking component');

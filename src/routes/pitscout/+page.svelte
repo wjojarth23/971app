@@ -159,12 +159,15 @@
   let entriesByTeam = {};
   let selectedTeam = '';
   let teamSearch = '';
+  let scoutNames = [];
+  let scout_name = '';
 
   let drivebase_type = '';
   let shooter_type = '';
   let hopper_type = '';
   let human_player_balls_in_auto = '';
   let pitSchema = {
+    scout_name: true,
     robot_archetype: true,
     additional_notes: true,
     likely_breaking_component: true,
@@ -218,7 +221,7 @@
 
   function topicProgress(topicId, details, core, climb, autos, photos, pending) {
     if (topicId === 'basics') {
-      const values = [core.drivebase_type, core.shooter_type, core.hopper_type, core.human_player_balls_in_auto, climb, autos];
+      const values = [core.scout_name, core.drivebase_type, core.shooter_type, core.hopper_type, core.human_player_balls_in_auto, climb, autos];
       return { done: values.filter(answered).length, total: values.length };
     }
     if (topicId === 'photos') {
@@ -234,6 +237,7 @@
   }
 
   $: coreAnswers = {
+    scout_name,
     drivebase_type, shooter_type, hopper_type, human_player_balls_in_auto,
     estimated_bps, likely_breaking_component
   };
@@ -422,6 +426,7 @@
 
   function applyTeamEntry(teamKey) {
     const entry = entriesByTeam[teamKey] || null;
+    scout_name = entry?.scout_name || '';
     drivebase_type = entry?.drivebase_type || '';
     shooter_type = entry?.shooter_type || '';
     hopper_type = entry?.hopper_type || '';
@@ -520,6 +525,14 @@
     return next;
   }
 
+  async function loadScoutNames() {
+    const res = await authFetch('/pitscout?resource=scout-names');
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) return [];
+    scoutNames = data.data || [];
+    return scoutNames;
+  }
+
   async function loadProblems() {
     if (!resolvedEventKey) {
       problems = [];
@@ -610,7 +623,7 @@
         return;
       }
 
-      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries(), loadProblems()]);
+      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries(), loadProblems(), loadScoutNames()]);
       teams = [...new Set([...loadedTeams, ...Object.keys(loadedEntries)])].sort(teamSort);
       syncSelectedTeam();
     } catch (e) {
@@ -758,6 +771,7 @@
         action: 'save-entry',
         event_key: eventKey,
         team_key: selectedTeam,
+        ...(pitSchema.scout_name ? { scout_name: String(scout_name || '').trim() } : {}),
         drivebase_type,
         shooter_type,
         hopper_type,
@@ -1026,6 +1040,13 @@
           {/if}
         </div>
       </div>
+      <button
+        class="btn btn-outline entry-photo-action"
+        type="button"
+        on:click={() => (activeTopic = 'photos')}
+      >
+        {editablePhotoPaths.length + pendingFiles.length ? 'Manage photos' : 'Add photos'}
+      </button>
     </div>
 
     {#if isViewingPastEvent}
@@ -1090,6 +1111,26 @@
     </div>
 
 {#if activeTopic === 'basics'}
+    {#if pitSchema.scout_name}
+      <div class="form-group">
+        <label class="form-label" for="scoutNameInput">Scout / contact name</label>
+        <input
+          id="scoutNameInput"
+          class="form-input"
+          type="text"
+          maxlength="120"
+          list="pitScoutNames"
+          autocomplete="off"
+          placeholder="Start typing a team member's name"
+          bind:value={scout_name}
+        />
+        <datalist id="pitScoutNames">
+          {#each scoutNames as name}<option value={name}></option>{/each}
+        </datalist>
+        <small class="form-help">Use the person who can answer follow-up questions about this entry.</small>
+      </div>
+    {/if}
+
     <div class="form-group">
       <label class="form-label" for="drivebaseSelect">Drivebase Type</label>
       <select id="drivebaseSelect" class="form-select" bind:value={drivebase_type}>
@@ -2001,6 +2042,9 @@
     gap: 1rem;
   }
 
+  .entry-header > div { flex: 1; }
+  .entry-photo-action { margin-left: auto; white-space: nowrap; }
+
   .entry-subtitle {
     margin-top: 0.3rem;
     color: var(--text-muted);
@@ -2294,6 +2338,8 @@
       flex-direction: column;
       align-items: stretch;
     }
+
+    .entry-photo-action { width: 100%; margin-left: 0; }
 
     .page-summary {
       width: 100%;
