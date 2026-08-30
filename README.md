@@ -29,7 +29,9 @@ reading code.
   is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
-- **Scouting**: pit scouting forms, match/data scouting, free-form notes,
+- **Scouting**: pit scouting (a topic-at-a-time form with per-topic
+  completion counts, built for filling in a noisy pit on a phone while a team
+  answers out of order), match/data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.
@@ -75,8 +77,10 @@ reading code.
   surfaced on user profiles.
 - **Profile**: per-user profile settings and personal stats (attendance
   history, etc.).
-- **Scouting** (`scouting/`): a team-comparison / pick-list workspace for the
-  active event - default-on next to Purchasing. Distinct from the existing
+- **Pick List** (`scouting/`): a team-comparison / pick-list workspace for the
+  active event. Named for what it produces: it was previously labelled "Data
+  Scouting" in the nav, which collided with the separate `datascout` route and
+  described the inputs rather than the output. Distinct from the existing
   pit/data/note scouting *collection* tools below, which this reads from
   rather than replaces:
   - Sortable comparison table fusing The Blue Alliance's real team roster
@@ -102,16 +106,35 @@ reading code.
   risks, and additional human-review notes. Match and pit scouts share a repair
   queue backed by `pit_problem_reports`; open problems can be resolved or
   reopened from Pit Scouting instead of disappearing into browser-local state.
-- **Power Rankings** (`powerrankings/`): a separate top-level tab in the
-  Competition nav folder, alongside Scouting rather than nested inside it -
-  intentionally its own page rather than a mode of the Scouting workspace, so
-  it never gets confused with the TBA-OPR-backed comparison table above. An
-  event-relative ranking built only from combined local scout observations.
+- **Power Rankings** (`powerrankings/`): the last item in the Competition nav
+  folder - its own page rather than a mode of the Pick List workspace, so it
+  never gets confused with that page's comparison table. An event-relative
+  ranking built only from combined local scout observations.
+
+  It shows **three deliberately distinct measures**, and the page says so in
+  as many words, because conflating them would misrepresent an official FRC
+  standing:
+  - **971 Scout Power** - our own ranking from our own scouts. The primary
+    column, and *not* an FRC ranking; it exists to inform our picks.
+  - **Official Event Rank** - the real qualification standing from The Blue
+    Alliance, which FIRST computes from Ranking Points earned in qualification
+    matches. The only official rank on the page.
+  - **TBA OPR** - Offensive Power Rating, a least-squares estimate of a team's
+    contribution to alliance score. A statistical estimate, not a rank.
+
+  The latter two come from the existing `api/tba/event-oprs` proxy (note its
+  response field is named `epa` for backwards compatibility with the
+  Statbotics route it replaced; the value is OPR). They are reference columns
+  only - they never feed the Scout Power calculation - and are styled
+  recessively so the page reads as our ranking with official data alongside,
+  not a scoreboard of equals. A TBA outage degrades to a note rather than
+  hiding the scouting ranking.
   Observed match performance contributes 70%, an explicit human-selected
   impact attached to saved `scout_notes` contributes 15%, and structured pit
   capability/reliability contributes 15%; unresolved pit problems reduce the
-  pit score while archetype and freeform prose remain human context. Within
-  match performance, weights are average fuel
+  pit score while archetype and freeform prose remain human context. Neutral
+  and legacy notes remain review-only. Within match performance, weights are
+  average fuel
   per match (40%), driving (20%), accuracy (15%), climb level (15%), and speed
   (10%); missing dimensions are omitted and the remaining weights are
   rebalanced instead of being treated as zero. Also
@@ -192,6 +215,9 @@ own docs are all together in one place instead of scattered across
   holes only) - see `autocam/docs/tubestock-feature.md` for the full design
   and real-fixture validation, including the one real bug it caught
   (`lateralOffset`) that a synthetic test alone never would have.
+  Turning accepts only rotationally symmetric finished geometry; gears,
+  polygonal exteriors, tubes, and formed parts are rejected rather than
+  approximated as a round turning envelope.
 - **`autocam/toolpathPreview.js`** - parses generated G-code back into a
   toolpath for preview (`autocam/components/ToolpathViewer.svelte`).
 - **`autocam/drive_watcher.js`** - Google Drive input-sweep (`cad` →
@@ -360,17 +386,24 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 
 ## Known gaps (check before assuming otherwise)
 
-- **7 tables have RLS fully disabled**: `scouting_settings`,
-  `attendance_locations`, `attendance_schedules`,
-  `attendance_schedule_locations`, `user_attendance_logs`,
-  `user_notification_logs`, `runtime_leases`. Confirmed
-  live via the Supabase security advisor - re-check before relying on this
-  list being current, since it should shrink over time as these get fixed.
-- **`PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle** - a
-  pre-existing design choice (`src/lib/onshape.js` uses
-  `$env/static/public`), not something introduced by any specific recent
-  change. Worth a follow-up to proxy Onshape calls server-side and rotate
-  the key once that's done.
+- **RLS is now enabled on every table in `public`.** This previously listed 8
+  tables with it switched off; all are closed (`pit_scout_entries` with the
+  match-scouting work, the remaining 7 in
+  `migrations/20260830_enable_rls_remaining_tables.sql`). Verified live rather
+  than assumed - re-check with the Supabase security advisor before trusting
+  this line, since a new table is easy to add without a policy.
+- **`PUBLIC_ONSHAPE_SECRET_KEY` no longer ships in the client bundle**, but
+  **the old key must still be rotated.** `src/lib/onshape.js` used to import it
+  even though it never used it (every call already went through
+  `/api/onshape`), and `$env/static/public` inlines anything it touches - so
+  the secret was in `client/_app/immutable/` for every visitor who loaded a CAD
+  page. The import is gone, verified by building with a canary value and
+  grepping the client output. `api/onshape/+server.js` is now the only consumer
+  and prefers private `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY`, falling back
+  to the `PUBLIC_` ones the deploy still supplies. Remaining work is
+  operational, not code: rotate the key in Onshape, add the private pair to
+  Secret Manager and `cloudbuild.yaml`, and drop the `PUBLIC_ONSHAPE_*_KEY`
+  substitutions. See GitHub issue #86.
 - **Cron-auth (`cron_auth.js`) is fail-open by design** when no
   `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` is configured -
   intentional for frictionless local dev, but means the real secret must

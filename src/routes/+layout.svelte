@@ -6,8 +6,8 @@
   import { supabase } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
-  import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, Eye, ClipboardCheck } from 'lucide-svelte';
+  import { defaultHeaderTabs, ensurePowerRankingsTab } from '$lib/defaultTabs.js';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Trophy, Eye, ClipboardCheck, ListChecks } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -297,7 +297,7 @@
     cad: Move3d,
     build: Wrench,
     purchasing: Receipt,
-    scouting: Binoculars,
+    scouting: ListChecks,
     powerrankings: Trophy,
     vision: Eye,
     docs: FileText,
@@ -322,7 +322,7 @@
     cad: 'CAD',
     build: 'Build',
     purchasing: 'Purchasing',
-    scouting: 'Scouting',
+    scouting: 'Pick List',
     powerrankings: 'Power Rankings',
     vision: 'Vision Scouting',
     docs: 'Docs',
@@ -454,7 +454,10 @@
   $: effectiveTabs = (customTabs && customTabs.length)
     ? customTabs
     : fallbackTabs();
-  $: baseNavTabs = addAdminTabIfAllowed(effectiveTabs, canViewAdmin);
+  // Power Rankings is appended for anyone whose saved header_tabs predates it,
+  // so a customized nav still surfaces the feature. Purely additive - see
+  // ensurePowerRankingsTab().
+  $: baseNavTabs = addAdminTabIfAllowed(ensurePowerRankingsTab(effectiveTabs, navConfig), canViewAdmin);
   $: navItems = isApproved ? buildNavItems(baseNavTabs) : [];
   $: profileDisplayName = activeProfile?.full_name || activeProfile?.email || authUser?.email || 'Profile';
 

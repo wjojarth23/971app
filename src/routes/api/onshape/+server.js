@@ -1,4 +1,5 @@
 import { PUBLIC_ONSHAPE_ACCESS_KEY, PUBLIC_ONSHAPE_SECRET_KEY, PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
+import { env } from '$env/dynamic/private';
 import { json } from '@sveltejs/kit';
 import { getCached, setCached, CACHE_TTL_MS, buildCacheKey } from '$lib/server/onshape_cache.js';
 
@@ -212,8 +213,25 @@ async function handleSVGConversion(documentId, wvm, wvmId, elementId, partId) {
 
 /* ── Auth helpers (add or replace) ─────────────────────────────── */
 
+// This is the only place the Onshape credential is used, and this file is
+// server-only - a browser never sees it.
+//
+// Prefers real private env vars, falling back to the PUBLIC_ ones the deploy
+// currently supplies. The fallback exists so this keeps working today: the
+// values are still configured as PUBLIC_* in cloudbuild.yaml, and anything
+// read from $env/static/public is inlined into the client bundle regardless of
+// whether a browser ever imports it.
+//
+// To finish closing GitHub issue #86: rotate the key in Onshape, add
+// ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY to Secret Manager and
+// cloudbuild.yaml's --set-secrets, then drop the PUBLIC_ONSHAPE_*_KEY
+// substitutions. No code change is needed for that switch - just this
+// fallback going unused. Rotation is the part that matters; the old key has
+// already shipped to every browser that loaded a CAD page.
 function getBasicAuth() {
-  const cred = btoa(`${PUBLIC_ONSHAPE_ACCESS_KEY}:${PUBLIC_ONSHAPE_SECRET_KEY}`);
+  const accessKey = env.ONSHAPE_ACCESS_KEY || PUBLIC_ONSHAPE_ACCESS_KEY;
+  const secretKey = env.ONSHAPE_SECRET_KEY || PUBLIC_ONSHAPE_SECRET_KEY;
+  const cred = Buffer.from(`${accessKey}:${secretKey}`).toString('base64');
   return { 'Authorization': `Basic ${cred}` };
 }
 

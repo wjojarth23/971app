@@ -57,14 +57,62 @@ export function defaultHeaderTabs(navConfig = navigation) {
     type: 'folder',
     label: 'Competition',
     children: [
-      { key: 'scouting', label: 'Data Scouting' },
+      { key: 'scouting', label: 'Pick List' },
       { key: 'pitscout', label: 'Pit Scouting' },
       { key: 'matchscout', label: 'Match Scouting' },
-      { key: 'vision', label: 'Vision Scouting' }
+      { key: 'vision', label: 'Vision Scouting' },
+      { key: 'powerrankings', label: 'Power Rankings' }
     ]
   });
 
   tabs.push({ type: 'tab', key: 'docs', label: 'Docs' });
 
   return tabs;
+}
+
+
+const COMPETITION_FOLDER_LABEL = 'Competition';
+
+function containsTabKey(items, wantedKey) {
+  if (!Array.isArray(items)) return false;
+  return items.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    if (item.key === wantedKey) return true;
+    return item.type === 'folder' && containsTabKey(item.children, wantedKey);
+  });
+}
+
+/**
+ * Put Power Rankings in someone's Competition folder without disturbing the
+ * rest of their navigation.
+ *
+ * Anyone who already customized their header keeps a saved `header_tabs` that
+ * predates this tab, and defaults never apply to them again - the same
+ * limitation this file documents for every other added tab. Rather than
+ * rewriting saved rows, this augments at render time: it only ever appends,
+ * never reorders or removes, and does nothing at all once the tab is present
+ * (including when someone has deliberately placed it elsewhere).
+ *
+ * Falls back to a top-level tab when there is no Competition folder to join,
+ * so a user with a flat custom nav still gets it rather than silently missing
+ * the feature.
+ */
+export function ensurePowerRankingsTab(tabs, navConfig = navigation) {
+  if (navConfig?.tabs?.powerrankings === false) return tabs;
+  if (!Array.isArray(tabs)) return tabs;
+  if (containsTabKey(tabs, 'powerrankings')) return tabs;
+
+  const entry = { key: 'powerrankings', label: 'Power Rankings' };
+  const folderIndex = tabs.findIndex(
+    (item) => item?.type === 'folder' && item?.label === COMPETITION_FOLDER_LABEL
+  );
+  if (folderIndex === -1) return [...tabs, { type: 'tab', ...entry }];
+
+  const folder = tabs[folderIndex];
+  const next = [...tabs];
+  next[folderIndex] = {
+    ...folder,
+    children: [...(Array.isArray(folder.children) ? folder.children : []), entry]
+  };
+  return next;
 }

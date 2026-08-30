@@ -1,4 +1,10 @@
-import { PUBLIC_ONSHAPE_ACCESS_KEY, PUBLIC_ONSHAPE_SECRET_KEY, PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
+// Deliberately does NOT import the Onshape credentials. This module runs in
+// the browser (it is imported by the cad/* pages), and anything read from
+// $env/static/public is inlined into the client bundle - so importing the
+// secret key here published it to every visitor, whether or not it was used.
+// It was in fact never used: every call below goes through /api/onshape, and
+// only that server route signs requests. See GitHub issue #86.
+import { PUBLIC_ONSHAPE_BASE_URL } from '$env/static/public';
 import { partClassificationService } from './bom_classify.js';
 
 const ENABLE_BBOX = false;
@@ -20,8 +26,6 @@ function normalizeOnshapeWvmType(value) {
 
 class OnShapeAPI {
     constructor() {
-        this.accessKey = PUBLIC_ONSHAPE_ACCESS_KEY;
-        this.secretKey = PUBLIC_ONSHAPE_SECRET_KEY;
         this.baseUrl = PUBLIC_ONSHAPE_BASE_URL || 'https://cad.onshape.com';
         // Use our server-side API route to avoid CORS issues
         this.apiRoute = '/api/onshape';

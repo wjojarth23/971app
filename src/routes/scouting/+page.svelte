@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import {
-    Binoculars, ArrowUpDown, RefreshCw, Search, Download, Star, X,
+    ListChecks, ArrowUpDown, RefreshCw, Search, Download, Star, X,
     ChevronDown, ChevronRight, ArrowUp, ArrowDown
   } from 'lucide-svelte';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
@@ -275,12 +275,12 @@
 </script>
 
 <svelte:head>
-  <title>Scouting</title>
+  <title>Pick List</title>
 </svelte:head>
 
 <div class="page-header">
   <div class="header-content">
-    <h1><Binoculars size={22} style="vertical-align:-3px; margin-right:6px" /> Scouting</h1>
+    <h1><ListChecks size={22} style="vertical-align:-3px; margin-right:6px" /> Pick List</h1>
     <p>
       Team comparison / pick list{eventKey ? ` for ${eventKey}` : ''} - The Blue Alliance roster,
       TBA OPR, your team's own scouting coverage, and a shared pick list in one workspace.
@@ -326,7 +326,7 @@
     <!-- Pick list -->
     <div class="surface-card picklist-card">
       <div class="flex-row-between">
-        <h3 style="margin:0">Pick List{picklist.length ? ` (${picklist.length})` : ''}</h3>
+        <h3 style="margin:0">Ranked picks{picklist.length ? ` (${picklist.length})` : ''}</h3>
       </div>
       {#if picklistError}
         <p class="text-error">{picklistError}</p>

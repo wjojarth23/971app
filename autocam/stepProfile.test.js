@@ -57,30 +57,8 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-shaft.step)', () 
     meshes = await readStepMeshes(fs.readFileSync(HEX_SHAFT));
   });
 
-  it('auto-detects the long axis regardless of which one the STEP file used', () => {
-    const profile = extractTurningProfileFromMeshes(meshes);
-    const length = Math.abs(profile[profile.length - 1].z - profile[0].z);
-    // Known-good values, verified against this exact file - the long axis
-    // here is X in the STEP file's own coordinates, not Z.
-    expect(length).toBeCloseTo(5.178, 2);
-  });
-
-  it('computes a plausible max radius (well under the length - a shaft, not a disc)', () => {
-    const profile = extractTurningProfileFromMeshes(meshes);
-    const maxRadius = Math.max(...profile.map((p) => p.x));
-    expect(maxRadius).toBeCloseTo(0.271, 2);
-    const length = Math.abs(profile[profile.length - 1].z - profile[0].z);
-    expect(maxRadius).toBeLessThan(length); // the sanity guard in stepProfile.js itself
-  });
-
-  it('generates G-code end to end (this fixture is the app\'s primary/simplest turning example but had never actually been run through generateTurningGcode in a test before)', () => {
-    const profile = extractTurningProfileFromMeshes(meshes);
-    const maxRadius = Math.max(...profile.map((p) => p.x));
-    const result = generateTurningGcode(profile, {
-      stockDiameter: maxRadius * 2 * 1.1, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
-    });
-    expect(result.gcode).toContain('M30');
-    expect(result.stats).toBeDefined();
+  it('rejects finished hex geometry instead of silently turning it into a round envelope', () => {
+    expect(() => extractTurningProfileFromMeshes(meshes)).toThrow(/not radially symmetric/);
   });
 
   it('rejects a profile whose radius exceeds half the detected length (wrong-axis / disc-shaped guard)', () => {
@@ -98,7 +76,7 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-shaft.step)', () 
     expect(() => extractTurningProfileFromMeshes(discMeshes)).toThrow(/doesn't look like a turned part/);
   });
 
-  it('does not report a false near-zero radius mid-shaft when a length-bucket only contains an unrelated small feature\'s vertices (real bug: a cross-drilled retention-pin hole on a real "Vortex Shaft" STEP file left some fine length-buckets containing only the hole\'s own near-zero-radius vertices, with no OD vertices sampled in that same narrow slice - the profile reported the shaft necking down to a literal 0.0000" radius, sandwiched between full-diameter readings on both sides, which would have cut a phantom groove into solid material)', () => {
+  it('rejects a cross-drilled profile rather than inferring a smooth turning envelope from sparse outer vertices', () => {
     // A simple round tube from z=0 to z=10, radius 1, tessellated with
     // vertices ONLY at its two end rings (exactly what a real STEP export
     // can do for a long straight cylindrical run - a flat surface doesn't
@@ -131,10 +109,7 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-shaft.step)', () 
       brep_faces: []
     };
 
-    const profile = extractTurningProfileFromMeshes([mesh], { buckets: 20 });
-    const midpoint = profile.find((p) => Math.abs(p.z - 5) < 0.3);
-    expect(midpoint).toBeDefined();
-    expect(midpoint.x).toBeGreaterThan(0.9); // must read close to the true OD radius (1), not the hole's 0
+    expect(() => extractTurningProfileFromMeshes([mesh], { buckets: 20 })).toThrow(/not radially symmetric/);
   });
 
   it('rejects a flat plate whose cross-section aspect ratio gives it away, even when it passes the maxRadius<length/2 guard', () => {
@@ -158,9 +133,49 @@ describe('extractTurningProfileFromMeshes (real STEP file: hex-shaft.step)', () 
     expect(() => extractTurningProfileFromMeshes(plateMeshes)).toThrow(/too flat\/rectangular for bar stock/);
   });
 
+  it('rejects a rectangular bar cross-section rather than treating tube stock as turnable', () => {
+    expect(pickLengthAxis({ x: 12, y: 2, z: 1.4 })).toBeNull();
+  });
+
   it('rejects the real flat-plate.step fixture (a genuinely flat/holed part, not bar stock)', async () => {
     const plateMeshes = await readStepMeshes(fs.readFileSync(FLAT_PLATE));
     expect(() => extractTurningProfileFromMeshes(plateMeshes)).toThrow(/doesn't look like a turned part/);
+  });
+});
+
+describe('extractTurningProfileFromMeshes (real formed brackets)', () => {
+  it('rejects a bent mounting bracket instead of reducing it to a rotational envelope', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(MOUNTING_BRACKET_BENT));
+    expect(() => extractTurningProfileFromMeshes(meshes)).toThrow(/doesn't look like a turned part/);
+  });
+
+  it('rejects the independent 15 mm formed bracket regression fixture', async () => {
+    const meshes = await readStepMeshes(fs.readFileSync(GEARBOX_MOTION_BRACKET_15MM));
+    expect(() => extractTurningProfileFromMeshes(meshes)).toThrow(/doesn't look like a turned part/);
+  });
+
+  it('rejects an equal-bounding-box asymmetric prism that cannot be detected from cross-section aspect alone', () => {
+    const sides = 16;
+    const positions = [];
+    for (const x of [0, 5]) {
+      for (let i = 0; i < sides; i += 1) {
+        const angle = (i / sides) * Math.PI * 2;
+        const radius = i % 2 === 0 ? 1 : 0.55;
+        positions.push(x, Math.cos(angle) * radius, Math.sin(angle) * radius);
+      }
+    }
+    const index = [];
+    for (let i = 0; i < sides; i += 1) {
+      const next = (i + 1) % sides;
+      index.push(i, next, sides + next, i, sides + next, sides + i);
+    }
+    const prism = {
+      attributes: { position: { array: new Float32Array(positions) } },
+      index: { array: new Uint32Array(index) },
+      brep_faces: []
+    };
+
+    expect(() => extractTurningProfileFromMeshes([prism])).toThrow(/not radially symmetric/);
   });
 });
 
@@ -170,38 +185,15 @@ describe('extractTurningProfileFromMeshes (real STEP file: vortex-shaft.step - a
     meshes = await readStepMeshes(fs.readFileSync(VORTEX_SHAFT));
   });
 
-  it('produces a profile with no near-zero-radius dropouts mid-shaft (the real file behind the synthetic regression test above)', () => {
-    const profile = extractTurningProfileFromMeshes(meshes);
-    const maxRadius = Math.max(...profile.map((p) => p.x));
-    // Any interior point (not the very first/last, which taper to the
-    // part's actual ends) dropping below ~40% of the max radius would be
-    // the bug reappearing - the pin hole's own near-zero-radius vertices
-    // winning a bucket's "max radius" over the real OD.
-    for (let i = 2; i < profile.length - 2; i += 1) {
-      expect(profile[i].x).toBeGreaterThan(maxRadius * 0.4);
-    }
-  });
-
-  it('generates G-code end to end', () => {
-    const profile = extractTurningProfileFromMeshes(meshes);
-    const maxRadius = Math.max(...profile.map((p) => p.x));
-    const result = generateTurningGcode(profile, {
-      stockDiameter: maxRadius * 2 * 1.05, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
-    });
-    expect(result.gcode).toContain('M30');
-    expect(result.stats).toBeDefined();
+  it('rejects the cross-drilled finished part instead of omitting that feature from an XZ turning program', () => {
+    expect(() => extractTurningProfileFromMeshes(meshes)).toThrow(/not radially symmetric/);
   });
 });
 
 describe('extractTurningProfileFromMeshes (real STEP file: hex-adapter.step - a stepped round-to-hex adapter with a bore)', () => {
-  it('generates G-code end to end', async () => {
+  it('rejects non-rotational hex geometry instead of omitting it from the turning profile', async () => {
     const meshes = await readStepMeshes(fs.readFileSync(HEX_ADAPTER));
-    const profile = extractTurningProfileFromMeshes(meshes);
-    const maxRadius = Math.max(...profile.map((p) => p.x));
-    const result = generateTurningGcode(profile, {
-      stockDiameter: maxRadius * 2 * 1.05, stepDown: 0.05, finishAllowance: 0.02, feedRough: 0.008, feedFinish: 0.004
-    });
-    expect(result.gcode).toContain('M30');
+    expect(() => extractTurningProfileFromMeshes(meshes)).toThrow(/not radially symmetric/);
   });
 });
 
@@ -340,6 +332,29 @@ describe('extractRoutingContoursFromMeshes (real STEP file: flat-plate.step)', (
     };
     const { thickness } = extractRoutingContoursFromMeshes([plateMesh, fastenerMesh]);
     expect(thickness).toBeCloseTo(2, 5);
+  });
+});
+
+describe('extractRoutingContoursFromMeshes (synthetic closed cube)', () => {
+  it('rejects a thick solid instead of emitting a sheet-profile perimeter that can omit features on other faces', () => {
+    const vertices = [
+      0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+      0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1
+    ];
+    const faces = [
+      [0, 1, 2, 0, 2, 3], [4, 6, 5, 4, 7, 6],
+      [0, 4, 5, 0, 5, 1], [1, 5, 6, 1, 6, 2],
+      [2, 6, 7, 2, 7, 3], [3, 7, 4, 3, 4, 0]
+    ];
+    const index = faces.flat();
+    const brep_faces = faces.map((face, i) => ({ first: i * 2, last: i * 2 + 1 }));
+    const cube = {
+      attributes: { position: { array: new Float32Array(vertices) } },
+      index: { array: new Uint32Array(index) },
+      brep_faces
+    };
+
+    expect(() => extractRoutingContoursFromMeshes([cube])).toThrow(/too thick for the sheet-profile router operation/);
   });
 });
 

@@ -44,18 +44,26 @@
     }
   }
 
+  let officialByTeam = new Map();
+  let officialNote = '';
+
+  const officialRank = (team) => officialByTeam.get(team?.team_number)?.rank ?? null;
+  const officialOpr = (team) => officialByTeam.get(team?.team_number)?.opr ?? null;
+
   async function loadRankings() {
     if (!eventKey) return;
     loading = true;
     error = '';
     warning = '';
+    officialNote = '';
     const authHeaders = await getAuthHeader();
-    const [rosterResult, scoutResult, notesResult, pitResult, problemResult] = await Promise.all([
+    const [rosterResult, scoutResult, notesResult, pitResult, problemResult, officialResult] = await Promise.all([
       fetch(`/api/tba/event-teams?event_key=${encodeURIComponent(eventKey)}`).then((response) => response.json()).catch(() => null),
       fetch(`/datascout?all_teams=1&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
       fetch(`/notescout?event_key=${encodeURIComponent(eventKey)}&recent=50000`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
       fetch(`/pitscout?event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
-      fetch(`/api/matchscout?resource=pit-problems&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null)
+      fetch(`/api/matchscout?resource=pit-problems&event_key=${encodeURIComponent(eventKey)}`, { headers: authHeaders }).then((response) => response.json()).catch(() => null),
+      fetch(`/api/tba/event-oprs?event_key=${encodeURIComponent(eventKey)}`).then((response) => response.json()).catch(() => null)
     ]);
 
     const scoutEvents = scoutResult?.success ? scoutResult.data : [];
@@ -84,6 +92,26 @@
       return;
     }
 
+    // Official rank and OPR come from The Blue Alliance and are reference
+    // columns only - they never feed buildPowerRankings(). Keyed by bare team
+    // number, which is the shape api/tba/event-oprs returns.
+    //
+    // Note the endpoint's field is named `epa` for backwards compatibility
+    // with the Statbotics route it replaced; the value it carries is TBA's
+    // OPR, and it is labelled as OPR everywhere it is shown.
+    officialByTeam = new Map();
+    if (officialResult?.success) {
+      for (const row of officialResult.data || []) {
+        const teamNumber = Number(row?.team);
+        if (Number.isFinite(teamNumber)) {
+          officialByTeam.set(teamNumber, { rank: row?.rank ?? null, opr: row?.epa ?? null });
+        }
+      }
+    } else if (officialResult?.error) {
+      // Reference data only - a TBA outage must not hide the scouting ranking.
+      officialNote = 'Official rank and TBA OPR are unavailable right now.';
+    }
+
     teams = buildPowerRankings(roster, scoutEvents, scoutNotes, { pitEntries, problemReports });
     const ranked = [...teams].sort((a, b) => (b.scoutPower ?? -1) - (a.scoutPower ?? -1));
     if (!compareLeftKey && ranked[0]) compareLeftKey = ranked[0].key;
@@ -106,7 +134,7 @@
 <div class="page-header">
   <div class="header-content">
     <h1><Trophy size={22} /> Power Rankings</h1>
-    <p>Combined 971 scout observations{eventKey ? ` for ${eventKey}` : ''}. No Statbotics or third-party rating is included.</p>
+    <p>971's own scouting ranking{eventKey ? ` for ${eventKey}` : ''}, shown next to the official event standing for reference.</p>
   </div>
   {#if eventKey}
     <button class="btn btn-sm" on:click={loadRankings} disabled={loading}><RefreshCw size={14} /> Refresh</button>
@@ -121,7 +149,22 @@
   <div class="error-container"><p>{error}</p></div>
 {:else}
   {#if warning}<p class="text-muted">⚠ {warning}</p>{/if}
-  <p class="formula">Scout power is 70% observed match performance, 15% explicit note impact, and 15% pit capability/reliability. Unresolved pit problems reduce the pit score; neutral prose and archetype labels remain human context. Missing inputs are omitted and remaining weights are rebalanced.</p>
+  {#if officialNote}<p class="text-muted">⚠ {officialNote}</p>{/if}
+
+  <section class="measure-key" aria-label="What each measure means">
+    <div>
+      <h3>971 Scout Power</h3>
+      <p>Our own ranking, from our own scouts. 70% observed match performance, 15% explicit note impact, and 15% pit capability/reliability; missing inputs are omitted and the remaining weights rebalanced. Unresolved pit problems reduce the pit score. <strong>Not an FRC ranking</strong> - it exists to inform our picks.</p>
+    </div>
+    <div>
+      <h3>Official Event Rank</h3>
+      <p>The real qualification standing from The Blue Alliance, which FIRST computes from Ranking Points earned in qualification matches. This is the only official rank on this page.</p>
+    </div>
+    <div>
+      <h3>TBA OPR</h3>
+      <p>Offensive Power Rating: a least-squares estimate of a team's contribution to alliance score, calculated by The Blue Alliance from match results. A statistical estimate, <strong>not an official rank</strong>.</p>
+    </div>
+  </section>
 
   <section class="surface-card comparison-card">
     <h2><Swords size={18} /> Head to Head</h2>
@@ -133,8 +176,10 @@
     {#if compareLeft && compareRight}
       <div class="comparison-grid">
         <strong>#{compareLeft.team_number}</strong><span>Metric</span><strong>#{compareRight.team_number}</strong>
-        <b>{compareLeft.powerRank ?? '—'}</b><span>Power rank</span><b>{compareRight.powerRank ?? '—'}</b>
-        <b>{fmt(compareLeft.scoutPower)}</b><span>Scout power</span><b>{fmt(compareRight.scoutPower)}</b>
+        <b>{compareLeft.powerRank ?? '—'}</b><span>Scout power rank (971)</span><b>{compareRight.powerRank ?? '—'}</b>
+        <b>{fmt(compareLeft.scoutPower)}</b><span>Scout power (971)</span><b>{fmt(compareRight.scoutPower)}</b>
+        <b>{officialRank(compareLeft) ?? '—'}</b><span>Official event rank</span><b>{officialRank(compareRight) ?? '—'}</b>
+        <b>{fmt(officialOpr(compareLeft))}</b><span>TBA OPR</span><b>{fmt(officialOpr(compareRight))}</b>
         <b>{compareLeft.noteSummary.averageImpact ?? '—'}</b><span>Note impact</span><b>{compareRight.noteSummary.averageImpact ?? '—'}</b>
         <b>{compareLeft.noteSummary.noteCount}</b><span>Saved notes</span><b>{compareRight.noteSummary.noteCount}</b>
         <b>{fmt(compareLeft.pitSummary.pitScore)}</b><span>Pit score</span><b>{fmt(compareRight.pitSummary.pitScore)}</b>
@@ -157,11 +202,16 @@
         <th><button on:click={() => sortBy('powerRank')}># <ArrowUpDown size={11} /></button></th>
         <th><button on:click={() => sortBy('team_number')}>Team <ArrowUpDown size={11} /></button></th>
         <th>Name</th><th><button on:click={() => sortBy('scoutPower')}>Scout Power <ArrowUpDown size={11} /></button></th>
+        <th class="reference" title="Official FRC qualification rank from The Blue Alliance">Official Rank</th>
+        <th class="reference" title="The Blue Alliance's Offensive Power Rating - a statistical estimate, not a rank">TBA OPR</th>
         <th>Matches</th><th>Pit Score</th><th>Problems</th><th>Archetype</th><th>Note Impact</th><th>Notes</th><th>Avg Fuel</th><th>Driving</th><th>Accuracy</th><th>Speed</th><th>Climb</th>
       </tr></thead>
       <tbody>{#each filteredTeams as team (team.key)}<tr>
         <td class="strong">{team.powerRank ?? '—'}</td><td class="mono">{team.team_number}</td><td>{team.nickname}</td>
-        <td class="strong">{fmt(team.scoutPower)}</td><td>{team.scoutSummary.matchesScouted}</td><td>{fmt(team.pitSummary.pitScore)}</td><td>{team.pitSummary.openProblemCount}</td><td>{team.pitSummary.robotArchetype || '—'}</td><td>{team.noteSummary.averageImpact ?? '—'}</td><td>{team.noteSummary.noteCount}</td><td>{fmt(team.scoutSummary.avgFuel)}</td>
+        <td class="strong">{fmt(team.scoutPower)}</td>
+        <td class="reference">{officialRank(team) ?? '—'}</td>
+        <td class="reference">{fmt(officialOpr(team))}</td>
+        <td>{team.scoutSummary.matchesScouted}</td><td>{fmt(team.pitSummary.pitScore)}</td><td>{team.pitSummary.openProblemCount}</td><td>{team.pitSummary.robotArchetype || '—'}</td><td>{team.noteSummary.averageImpact ?? '—'}</td><td>{team.noteSummary.noteCount}</td><td>{fmt(team.scoutSummary.avgFuel)}</td>
         <td>{fmt(team.scoutSummary.avgDrivingRank)}</td><td>{fmt(team.scoutSummary.avgAccuracy)}</td><td>{fmt(team.scoutSummary.avgSpeed)}</td><td>{fmtPercent(team.scoutSummary.climbSuccessRate)}</td>
       </tr>{/each}</tbody>
     </table>
@@ -170,7 +220,6 @@
 
 <style>
   h1, h2, .search { display:flex; align-items:center; gap:var(--gap-2); }
-  .formula { color:var(--text-muted); font-size:.85rem; }
   .comparison-card { padding:var(--space-4); margin:var(--space-4) 0; }
   .comparison-card h2 { margin-top:0; font-size:1rem; }
   .comparison-selectors { display:grid; grid-template-columns:1fr auto 1fr; align-items:end; gap:var(--gap-4); }
@@ -179,6 +228,12 @@
   .comparison-grid { display:grid; grid-template-columns:1fr 1.25fr 1fr; text-align:center; margin-top:var(--space-4); }
   .comparison-grid > * { padding:var(--space-2); border-bottom:1px solid var(--border); }
   .comparison-grid > span { color:var(--text-muted); }
+  /* Reference columns are visually recessive so the page reads as our ranking
+     with official data alongside, not as a scoreboard of equals. */
+  .reference { color:var(--text-muted); }
+  .measure-key { display:grid; grid-template-columns:repeat(auto-fit, minmax(15rem, 1fr)); gap:var(--gap-4); margin:var(--space-4) 0; }
+  .measure-key h3 { margin:0 0 var(--space-1); font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; }
+  .measure-key p { margin:0; color:var(--text-muted); font-size:.82rem; }
   .search { margin:var(--space-4) 0 var(--space-3); }
   .search input { flex:1; }
   th button { display:inline-flex; align-items:center; gap:4px; background:none; border:0; padding:0; color:inherit; font:inherit; cursor:pointer; }

@@ -72,6 +72,13 @@ function fmt(n, decimals = 4) {
   return Number(n).toFixed(decimals);
 }
 
+function requireFiniteNumber(value, name, { positive = false, nonNegative = false, integer = false } = {}) {
+  if (!Number.isFinite(value) || (positive && value <= 0) || (nonNegative && value < 0) || (integer && !Number.isInteger(value))) {
+    const constraint = integer ? 'a positive integer' : positive ? '> 0' : nonNegative ? '>= 0' : 'finite';
+    throw new Error(`${name} must be ${constraint}`);
+  }
+}
+
 // Length-to-diameter ratio above which an unsupported (no tailstock/steady
 // rest) cantilevered cut is a real deflection/whip/chatter risk, checked
 // against the part's SMALLEST working diameter (the most vulnerable point
@@ -320,8 +327,21 @@ export function generateTurningGcode(profile, params = {}) {
     spindleDwellSeconds = 2
   } = params;
 
-  if (!stockDiameter || stockDiameter <= 0) throw new Error('stockDiameter is required and must be > 0');
-  if (stepDown <= 0) throw new Error('stepDown must be > 0');
+  requireFiniteNumber(stockDiameter, 'stockDiameter', { positive: true });
+  requireFiniteNumber(stepDown, 'stepDown', { positive: true });
+  requireFiniteNumber(finishAllowance, 'finishAllowance', { nonNegative: true });
+  requireFiniteNumber(feedRough, 'feedRough', { positive: true });
+  requireFiniteNumber(feedFinish, 'feedFinish', { positive: true });
+  requireFiniteNumber(surfaceSpeed, 'surfaceSpeed', { positive: true });
+  requireFiniteNumber(maxRpm, 'maxRpm', { positive: true });
+  requireFiniteNumber(noseRadius, 'noseRadius', { nonNegative: true });
+  requireFiniteNumber(toolNumber, 'toolNumber', { positive: true, integer: true });
+  requireFiniteNumber(programNumber, 'programNumber', { positive: true, integer: true });
+  requireFiniteNumber(spindleDwellSeconds, 'spindleDwellSeconds', { nonNegative: true });
+  if (!['single', 'tailstock', 'flip'].includes(setupMode)) {
+    throw new Error('setupMode must be one of single, tailstock, or flip');
+  }
+  if (!['in', 'mm'].includes(units)) throw new Error('units must be in or mm');
 
   const maxProfileRadius = Math.max(...profile.map((p) => p.x));
   if (stockDiameter / 2 < maxProfileRadius) {
