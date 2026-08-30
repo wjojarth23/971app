@@ -374,17 +374,24 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 
 ## Known gaps (check before assuming otherwise)
 
-- **8 tables have RLS fully disabled**: `scouting_settings`,
-  `attendance_locations`, `attendance_schedules`,
-  `attendance_schedule_locations`, `user_attendance_logs`,
-  `user_notification_logs`, `pit_scout_entries`, `runtime_leases`. Confirmed
-  live via the Supabase security advisor - re-check before relying on this
-  list being current, since it should shrink over time as these get fixed.
-- **`PUBLIC_ONSHAPE_SECRET_KEY` ships in the public client bundle** - a
-  pre-existing design choice (`src/lib/onshape.js` uses
-  `$env/static/public`), not something introduced by any specific recent
-  change. Worth a follow-up to proxy Onshape calls server-side and rotate
-  the key once that's done.
+- **RLS is now enabled on every table in `public`.** This previously listed 8
+  tables with it switched off; all are closed (`pit_scout_entries` with the
+  match-scouting work, the remaining 7 in
+  `migrations/20260830_enable_rls_remaining_tables.sql`). Verified live rather
+  than assumed - re-check with the Supabase security advisor before trusting
+  this line, since a new table is easy to add without a policy.
+- **`PUBLIC_ONSHAPE_SECRET_KEY` no longer ships in the client bundle**, but
+  **the old key must still be rotated.** `src/lib/onshape.js` used to import it
+  even though it never used it (every call already went through
+  `/api/onshape`), and `$env/static/public` inlines anything it touches - so
+  the secret was in `client/_app/immutable/` for every visitor who loaded a CAD
+  page. The import is gone, verified by building with a canary value and
+  grepping the client output. `api/onshape/+server.js` is now the only consumer
+  and prefers private `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY`, falling back
+  to the `PUBLIC_` ones the deploy still supplies. Remaining work is
+  operational, not code: rotate the key in Onshape, add the private pair to
+  Secret Manager and `cloudbuild.yaml`, and drop the `PUBLIC_ONSHAPE_*_KEY`
+  substitutions. See GitHub issue #86.
 - **Cron-auth (`cron_auth.js`) is fail-open by design** when no
   `CRON_SECRET`/`CRON_TOKEN`/`CRON_NOTIFICATION_TOKEN` is configured -
   intentional for frictionless local dev, but means the real secret must
