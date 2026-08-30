@@ -1,0 +1,12 @@
+ultralytics==8.3.187
+opencv-python-headless==4.12.0.88
+requests==2.32.5
+numpy==2.2.6
+# ByteTrack (model.track(...), used by process_view() for every frame) needs
+# this at runtime - ultralytics auto-installs it on first use if missing,
+# which means a silent extra pip install + network dependency mid-inference
+# on a host that might not expect one. Pinned explicitly instead so a clean
+# `pip install -r requirements.txt` is actually sufficient. Confirmed via a
+# real model.track() run against a synthetic video, matching how
+# process_view() calls it - see vision/training/create_placeholder_model.py.
+lap==0.5.13

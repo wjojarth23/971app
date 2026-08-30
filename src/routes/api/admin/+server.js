@@ -54,7 +54,7 @@ export async function GET({ url, request }) {
 
     const { data, error } = await serviceSupa
       .from('user_profiles')
-      .select('id, email, full_name, role, is_dev, permissions, banned, general_role, purchasing_role, team_role, frc_team, manufacturing_lead_workflows')
+      .select('id, email, full_name, role, is_dev, permissions, banned, general_role, purchasing_role, team_role, frc_team, manufacturing_lead_workflows, vision_notify')
       .order('full_name', { ascending: true });
 
     if (error) return json({ error: error.message }, { status: 500 });
@@ -199,7 +199,7 @@ export async function POST({ request }) {
     }
 
     if (action === 'update-roles') {
-      const { general_role, purchasing_role, team_role, frc_team, manufacturing_lead_workflows } = body;
+      const { general_role, purchasing_role, team_role, frc_team, manufacturing_lead_workflows, vision_notify } = body;
       if (!isActorAdmin && !actorPerms.includes('EDIT_PERMISSIONS')) {
         return json({ error: 'Not authorized' }, { status: 403 });
       }
@@ -255,12 +255,13 @@ export async function POST({ request }) {
       if (team_role !== undefined) updatePayload.team_role = team_role;
       if (frc_team !== undefined) updatePayload.frc_team = frc_team;
       if (manufacturing_lead_workflows !== undefined) updatePayload.manufacturing_lead_workflows = manufacturing_lead_workflows;
+      if (vision_notify !== undefined) updatePayload.vision_notify = !!vision_notify;
 
       const { data: updatedRow, error } = await supa
         .from('user_profiles')
         .update(updatePayload)
         .eq('id', target_id)
-        .select('id, email, full_name, role, permissions, general_role, purchasing_role, team_role, frc_team, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel, manufacturing_lead_workflows')
+        .select('id, email, full_name, role, permissions, general_role, purchasing_role, team_role, frc_team, header_tabs, dashboard_layout, created_at, updated_at, banned, notification_settings, slack_user_id, slack_dm_channel, manufacturing_lead_workflows, vision_notify')
         .single();
       if (error) return json({ error: error.message }, { status: 500 });
       return json({ success: true, data: updatedRow });

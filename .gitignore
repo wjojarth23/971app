@@ -38,3 +38,14 @@ vite.config.ts.timestamp-*
 
 # Local secrets file
 secrets.txt
+
+# Python (vision/runner, vision/training)
+__pycache__/
+*.pyc
+.venv/
+
+# Trained/placeholder model weights - deliberately never committed (see
+# scoutingvision.md); vision/training/create_placeholder_model.py writes
+# here by default.
+vision/**/*.pt
+vision/**/models/

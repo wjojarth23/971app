@@ -1,0 +1,32 @@
+# Qwen3-VL service for DGX Spark
+
+Long-lived, authenticated inference service for the full BF16
+`Qwen/Qwen3-VL-30B-A3B-Instruct` checkpoint. It is separate from
+`vision/runner/`: Qwen handles bounded semantic clip analysis while the
+runner keeps dense YOLO/ByteTrack trajectories and classical game-piece
+tracking deterministic.
+
+The service accepts 2–8 timestamped JPEG frames per request, validates the
+model's JSON against `qwen_contract.py`, clamps untrusted coordinates and
+timestamps, and serializes inference with one process/one request at a time.
+Every returned event is provisional. The runner stores it with
+`review_status=unreviewed`; the web API refuses to release it into scouting
+data until a human accepts or corrects it.
+
+Recommended deployment is `../runner/docker-compose.yml` on DGX Spark. It
+uses an NVIDIA NGC PyTorch ARM64/CUDA base image, mounts a persistent model
+cache, uses BF16 without quantization, and keeps port 8000 private to the
+Compose network. `/analyze` requires the separate `VISION_QWEN_TOKEN`.
+
+```bash
+cd vision/runner
+cp .env.example .env
+# Replace both example secrets and add the real YOLO tracker weights.
+docker compose up -d --build
+docker compose logs -f qwen vision-runner
+```
+
+The first start downloads the 60+ GB checkpoint into the persistent cache.
+The default `VISION_QWEN_REVISION` is pinned to Hugging Face commit
+`9c4b90e1e4ba969fd3b5378b57d966d725f1b86c`; change it only through a new
+acceptance run so an upstream update cannot silently alter match results.

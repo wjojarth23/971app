@@ -578,3 +578,151 @@ export async function sendStaleManufacturingReminders() {
   }
   return { ok: true, checked: parts.length, sent: sentCount };
 }
+
+// Vision alert recipients are an explicit admin-managed opt-in
+// (user_profiles.vision_notify, set from the admin panel's "Vision Alerts"
+// checkbox) rather than derived from a role - this is a small, restricted
+// project (see scoutingvision.md) and the recipient list is meant to stay a
+// short, deliberately-chosen set, not everyone with a given role.
+async function visionAlertRecipients(supa) {
+  const { data, error } = await supa
+    .from('user_profiles')
+    .select('id, email')
+    .eq('vision_notify', true);
+  if (error || !data) return [];
+  return data;
+}
+
+export async function notifyVisionRunFailed(runId) {
+  if (!runId) return { ok: false, reason: 'invalid-input' };
+  const supa = getSupabase();
+  const { data: run, error } = await supa
+    .from('vision_runs')
+    .select('id, model_name, model_version, error, vision_matches(match_key, event_key)')
+    .eq('id', runId)
+    .maybeSingle();
+  if (error || !run) return { ok: false, reason: 'no-run' };
+
+  const recipients = await visionAlertRecipients(supa);
+  if (!recipients.length) return { ok: false, reason: 'no-recipients' };
+
+  const matchLabel = run.vision_matches?.match_key || 'a match';
+  const text = `Vision run failed on ${matchLabel} (${run.model_name} ${run.model_version}): ${run.error || 'no error message recorded'}.`;
+  const results = [];
+  for (const recipient of recipients) {
+    results.push(await dispatchNotification({
+      userId: recipient.id,
+      notificationKey: NOTIFICATION_KEYS.VISION_ALERT,
+      entityKey: `vision_run:${run.id}:failed`,
+      text
+    }));
+  }
+  return { ok: true, sent: results };
+}
+
+// A runner that can't reach Qwen stops claiming work entirely and only writes
+// last_error to its own row, so queued runs would otherwise sit unprocessed
+// with nobody told. Called from a cron sweep (see
+// api/notifications/vision-stale-runners/+server.js).
+//
+// The threshold is deliberately far above the dashboard's 60s online cutoff:
+// that one distinguishes "responding right now", this one only fires for an
+// outage nobody could mistake for a slow iteration. vision_runner.py
+// heartbeats per view and per Qwen clip, so even a runner grinding through a
+// full match stays well inside this window - going quiet for 15 minutes means
+// crashed, wedged, or shut down, not busy.
+export const RUNNER_SILENT_MS = 15 * 60 * 1000;
+
+// Returns the alert a runner row warrants right now, or null when it's
+// healthy. Split out from the sweep below so the decision - which is the part
+// with real edge cases - is directly testable without standing in for Slack.
+export function visionRunnerAlert(runner, now = Date.now()) {
+  const lastSeen = runner?.last_seen_at ? new Date(runner.last_seen_at).getTime() : 0;
+  const silentMs = now - lastSeen;
+  if (silentMs > RUNNER_SILENT_MS) {
+    const minutes = Math.round(silentMs / 60000);
+    return {
+      reason: 'silent',
+      // Keyed on last_seen_at so one continuous outage alerts once (the
+      // timestamp is frozen while the runner is down, and
+      // dispatchNotification dedups on entityKey), while a later, separate
+      // outage is a new key and does alert again.
+      entityKey: `vision_runner:${runner.runner_id}:silent:${runner.last_seen_at || 'never'}`,
+      text: runner.last_seen_at
+        ? `Vision runner "${runner.runner_id}" has not checked in for ${minutes} minutes. Queued runs are not being processed.`
+        : `Vision runner "${runner.runner_id}" has never checked in. Queued runs are not being processed.`
+    };
+  }
+  const qwen = runner?.runtime_metrics?.qwen;
+  if (qwen && qwen.ready === false) {
+    return {
+      reason: 'qwen-down',
+      entityKey: `vision_runner:${runner.runner_id}:qwen-down:${runner.last_seen_at || 'never'}`,
+      text: `Vision runner "${runner.runner_id}" is up but cannot reach its Qwen service, so it is not claiming any runs: ${qwen.error || 'Qwen service not ready'}`
+    };
+  }
+  return null;
+}
+
+export async function sendVisionRunnerHealthAlerts() {
+  const supa = getSupabase();
+  const { data: runners, error } = await supa
+    .from('vision_runners')
+    .select('runner_id, last_seen_at, last_error, current_run_id, runtime_metrics');
+  if (error) {
+    console.error('sendVisionRunnerHealthAlerts: runners query failed', error);
+    return { ok: false, reason: 'query-failed' };
+  }
+  if (!runners?.length) return { ok: true, checked: 0, sent: 0 };
+
+  const alerts = runners.map((runner) => [runner, visionRunnerAlert(runner)]).filter(([, alert]) => alert);
+  if (!alerts.length) return { ok: true, checked: runners.length, sent: 0 };
+
+  const recipients = await visionAlertRecipients(supa);
+  if (!recipients.length) return { ok: true, checked: runners.length, sent: 0, reason: 'no-recipients' };
+
+  let sentCount = 0;
+  for (const [, alert] of alerts) {
+    for (const recipient of recipients) {
+      const res = await dispatchNotification({
+        userId: recipient.id,
+        notificationKey: NOTIFICATION_KEYS.VISION_ALERT,
+        entityKey: alert.entityKey,
+        text: alert.text
+      });
+      if (res?.ok) sentCount += 1;
+    }
+  }
+  return { ok: true, checked: runners.length, alerting: alerts.length, sent: sentCount };
+}
+
+export async function notifyVisionCriticalDiscrepancy(discrepancyId) {
+  if (!discrepancyId) return { ok: false, reason: 'invalid-input' };
+  const supa = getSupabase();
+  const { data: discrepancy, error } = await supa
+    .from('vision_discrepancies')
+    .select('id, metric, alliance, vision_value, reference_value, severity, vision_runs(vision_matches(match_key))')
+    .eq('id', discrepancyId)
+    .maybeSingle();
+  if (error || !discrepancy || discrepancy.severity !== 'critical') {
+    return { ok: false, reason: 'not-critical' };
+  }
+
+  const recipients = await visionAlertRecipients(supa);
+  if (!recipients.length) return { ok: false, reason: 'no-recipients' };
+
+  const matchLabel = discrepancy.vision_runs?.vision_matches?.match_key || 'a match';
+  const metricLabel = String(discrepancy.metric || '').replaceAll('_', ' ');
+  const allianceLabel = discrepancy.alliance ? `${discrepancy.alliance} alliance` : 'unattributed';
+  const text = `Critical vision discrepancy on ${matchLabel} (${allianceLabel}): ${metricLabel} - vision ${JSON.stringify(discrepancy.vision_value)} vs TBA ${JSON.stringify(discrepancy.reference_value)}.`;
+  const results = [];
+  for (const recipient of recipients) {
+    results.push(await dispatchNotification({
+      userId: recipient.id,
+      notificationKey: NOTIFICATION_KEYS.VISION_ALERT,
+      entityKey: `vision_discrepancy:${discrepancy.id}:critical`,
+      text
+    }));
+  }
+  return { ok: true, sent: results };
+}

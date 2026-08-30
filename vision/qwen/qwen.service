@@ -1,0 +1,21 @@
+# Bare-metal alternative to Docker Compose on DGX Spark. Install this before
+# vision-runner.service and point both units at /opt/vision-runner/.env.
+[Unit]
+Description=Qwen3-VL-30B BF16 service (spartanshub Vision)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vision-runner
+WorkingDirectory=/opt/vision-qwen
+EnvironmentFile=/opt/vision-runner/.env
+Environment=HF_HOME=/var/lib/vision-qwen/huggingface
+ExecStart=/opt/vision-qwen/.venv/bin/python -m uvicorn qwen_service:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=15
+TimeoutStartSec=1800
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

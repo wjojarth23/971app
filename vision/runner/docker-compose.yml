@@ -1,0 +1,60 @@
+# Convenience wrapper around Dockerfile for a host that already has Docker +
+# the NVIDIA Container Toolkit set up (https://github.com/NVIDIA/nvidia-container-toolkit).
+# Alternative to vision-runner.service (bare-metal/systemd) in this same
+# directory - use whichever fits the actual host.
+#
+# Usage:
+#   cp .env.example .env   # then fill in real values
+#   mkdir -p models        # drop a trained (or placeholder) .pt file here
+#   docker compose up -d --build
+#   docker compose logs -f
+
+services:
+  qwen:
+    build:
+      context: ../qwen
+      dockerfile: Dockerfile
+      args:
+        NVIDIA_PYTORCH_IMAGE: ${NVIDIA_PYTORCH_IMAGE:-nvcr.io/nvidia/pytorch:26.07-py3}
+    env_file: .env
+    restart: unless-stopped
+    ipc: host
+    shm_size: 16gb
+    volumes:
+      - qwen-model-cache:/models/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5))['ready']"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 30m
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  vision-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      qwen:
+        condition: service_healthy
+    volumes:
+      # Read-only: the runner only ever reads weights, never writes them.
+      - ./models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  qwen-model-cache:

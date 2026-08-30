@@ -7,7 +7,7 @@
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
   import navConfig from '$lib/navigation.json';
   import { defaultHeaderTabs } from '$lib/defaultTabs.js';
-  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy } from 'lucide-svelte';
+  import { Move3d, Hammer, Wrench, Receipt, Home, Briefcase, Coins, Package, User, ChevronDown, Menu, X, Camera, CalendarDays, Cpu, FileText, Binoculars, Trophy, Eye } from 'lucide-svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Toasts from '$lib/Toasts.svelte';
@@ -256,6 +256,7 @@
     if (compact.startsWith('teamview')) return 'teamview';
     if (compact.startsWith('pitscout')) return 'pitscout';
     if (compact.startsWith('powerranking')) return 'powerrankings';
+    if (compact.startsWith('vision')) return 'vision';
     if (compact.startsWith('planner')) return 'planner';
     if (compact.startsWith('task')) return 'tasks';
     if (compact === 'scoutingadmin' || compact === 'scoutadmin') return 'scouting-admin';
@@ -272,6 +273,7 @@
     purchasing: '/cad/purchasing',
     scouting: '/scouting',
     powerrankings: '/powerrankings',
+    vision: '/scouting/vision',
     docs: '/docs',
     planner: '/planner',
     notescout: '/notescout',
@@ -295,6 +297,7 @@
     purchasing: Receipt,
     scouting: Binoculars,
     powerrankings: Trophy,
+    vision: Eye,
     docs: FileText,
     planner: CalendarDays,
     notescout: Coins,
@@ -318,6 +321,7 @@
     purchasing: 'Purchasing',
     scouting: 'Scouting',
     powerrankings: 'Power Rankings',
+    vision: 'Vision Scouting',
     docs: 'Docs',
     planner: 'Planner',
     notescout: 'Note Scouting',
