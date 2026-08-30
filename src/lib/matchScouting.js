@@ -71,3 +71,10 @@ export function parseAutoPointsEstimate(raw) {
     kind: 'exact'
   };
 }
+
+// Releasing the pointer ends one drawing gesture, not the robot's route.
+// Preserve previously captured points when the scout resumes drawing.
+export function continueAutoPath(path, point) {
+  const existingPath = Array.isArray(path) ? path : [];
+  return [...existingPath, point];
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAutoPointsEstimate } from './matchScouting.js';
+import { continueAutoPath, parseAutoPointsEstimate } from './matchScouting.js';
 
 describe('parseAutoPointsEstimate', () => {
   it('keeps an exact count exact', () => {
@@ -37,5 +37,24 @@ describe('parseAutoPointsEstimate', () => {
   it('treats a blank field as an intentionally skipped estimate', () => {
     expect(parseAutoPointsEstimate('')).toBeNull();
     expect(parseAutoPointsEstimate(null)).toBeNull();
+  });
+});
+
+describe('continueAutoPath', () => {
+  it('keeps points from earlier pointer gestures', () => {
+    const existingPath = [
+      [12, 24],
+      [18, 30]
+    ];
+
+    expect(continueAutoPath(existingPath, [25, 36])).toEqual([
+      [12, 24],
+      [18, 30],
+      [25, 36]
+    ]);
+  });
+
+  it('starts a path when no earlier gesture exists', () => {
+    expect(continueAutoPath(undefined, [5, 10])).toEqual([[5, 10]]);
   });
 });

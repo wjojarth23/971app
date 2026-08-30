@@ -111,8 +111,9 @@ reading code.
   general notes and the auto-path drawing remain optional. The path tool uses
   a simplified, alliance-relative version of WPILib/AdvantageScope's top-down
   2026 REBUILT field, so the scout's wall is always on the left and red/blue
-  paths share one useful coordinate system. Auto scoring accepts an exact
-  estimate, a bounded range such as `40-60` (stored average `50`), or an open
+  paths share one useful coordinate system. Releasing and pressing again
+  continues the saved route; only Clear removes it. Auto scoring accepts an
+  exact estimate, a bounded range such as `40-60` (stored average `50`), or an open
   lower bound such as `100+` (conservatively stored as at least `100`). Teleop
   adds optional observed-role tags and five quick ratings while keeping every
   subjective input skippable; teleop and post-match prose areas are deliberately

@@ -1,4 +1,6 @@
 <script>
+  import { continueAutoPath } from '$lib/matchScouting.js';
+
   export let alliance = 'blue';
   export let path = [];
 
@@ -21,7 +23,7 @@
   function beginPath(event) {
     drawing = true;
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    path = [pointFromEvent(event)];
+    path = continueAutoPath(path, pointFromEvent(event));
   }
 
   function extendPath(event) {
