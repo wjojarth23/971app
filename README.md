@@ -108,7 +108,15 @@ reading code.
   reopened from Pit Scouting instead of disappearing into browser-local state.
   Match Scouting keeps robot status available throughout the workflow and
   requires a described pit handoff whenever a robot is marked disabled or dead;
-  general notes and the labeled auto-path drawing remain optional. The live
+  general notes and the auto-path drawing remain optional. The path tool uses
+  a simplified, alliance-relative version of WPILib/AdvantageScope's top-down
+  2026 REBUILT field, so the scout's wall is always on the left and red/blue
+  paths share one useful coordinate system. Auto scoring accepts an exact
+  estimate, a bounded range such as `40-60` (stored average `50`), or an open
+  lower bound such as `100+` (conservatively stored as at least `100`). Teleop
+  adds optional observed-role tags and five quick ratings while keeping every
+  subjective input skippable; teleop and post-match prose areas are deliberately
+  large enough for real scout observations. The live
   Data Scouting form deliberately omits shift toggles and subjective speed/
   accuracy grading: scouts record timed robot actions, tap once per scored fuel,
   choose the objective endgame result, and may add an optional note.
@@ -338,6 +346,10 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
   generic STEP/3D viewer used outside AutoCAM too - `/manufacture`,
   `/manufacture/completed` - so it stayed here rather than moving into
   `autocam/` despite being CAD-adjacent), nav/layout pieces, etc.
+- **`matchScouting.js`** - shared match-scout vocabularies and the parser that
+  turns exact/range/open-ended auto point estimates into explicit numeric
+  bounds and a conservative aggregation value; `RebuiltFieldMap.svelte` owns
+  the reusable 2026 field-relative drawing surface.
 - **`config/`** - feature flags (e.g. `DISABLE_AUTOCAM` - see **Known
   gaps**, the legacy autocam system this flag referred to has since been
   removed entirely).

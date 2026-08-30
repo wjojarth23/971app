@@ -1,12 +1,14 @@
 <script>
   import { onMount } from 'svelte';
+  import RebuiltFieldMap from '$lib/components/RebuiltFieldMap.svelte';
+  import { MATCH_RATING_FIELDS, TELEOP_ROLES, parseAutoPointsEstimate } from '$lib/matchScouting.js';
   import { getAuthHeader } from '$lib/supabase.js';
   import { fetchActiveScoutingEventKey } from '$lib/scoutingEvent.js';
-  import { AlertTriangle, Check, ChevronRight, ClipboardCheck, Flag, MapPinned, Route, RotateCcw, Timer, Trophy } from 'lucide-svelte';
+  import { AlertTriangle, Check, ChevronRight, ClipboardCheck, MapPinned, Route, RotateCcw, Timer, Trophy } from 'lucide-svelte';
 
   const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
-  const POINT_BANDS = ['0', '1-5', '6-10', '11-20', '21+'];
-  const RATING_FIELDS = ['Shot accuracy', 'Driver awareness'];
+  const RATING_FIELDS = MATCH_RATING_FIELDS;
+  const AUTO_POINT_EXAMPLES = ['0', '20-40', '50-75', '100+'];
 
   let phase = 'prematch';
   let matchNumber = '';
@@ -16,8 +18,8 @@
   let autoPoints = '';
   let autoMoved = '';
   let autoPath = [];
-  let drawing = false;
   let ratings = Object.fromEntries(RATING_FIELDS.map((field) => [field, 0]));
+  let teleopRoles = [];
   let teleopNotes = '';
   let crashOrBreak = false;
   let robotDisabled = '';
@@ -35,7 +37,9 @@
   $: assignmentLabel = assignmentReady ? `Match ${matchNumber} · Robot ${robotNumber}` : 'Set your assignment';
   $: requiresPitReport = robotDisabled === 'disabled' || robotDisabled === 'died';
   $: shouldReportPitProblem = requiresPitReport || pitProblem;
-  $: canFinish = !saving && (!shouldReportPitProblem || pitProblemDetails.trim());
+  $: canFinish = !saving && !autoPointsInvalid && (!shouldReportPitProblem || pitProblemDetails.trim());
+  $: autoPointsEstimate = parseAutoPointsEstimate(autoPoints);
+  $: autoPointsInvalid = Boolean(autoPoints.trim()) && !autoPointsEstimate;
 
   function selectPhase(nextPhase) {
     phase = nextPhase;
@@ -47,29 +51,10 @@
     if (status === 'disabled' || status === 'died') pitProblem = true;
   }
 
-  function pointFromEvent(event) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return [
-      Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
-      Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100))
-    ];
-  }
-
-  function beginPath(event) {
-    const point = pointFromEvent(event);
-    drawing = true;
-    autoPath = [point];
-  }
-
-  function extendPath(event) {
-    if (!drawing) return;
-    const point = pointFromEvent(event);
-    const last = autoPath[autoPath.length - 1];
-    if (!last || Math.hypot(point[0] - last[0], point[1] - last[1]) > 1.5) autoPath = [...autoPath, point];
-  }
-
-  function completePath() {
-    drawing = false;
+  function toggleTeleopRole(role) {
+    teleopRoles = teleopRoles.includes(role)
+      ? teleopRoles.filter((entry) => entry !== role)
+      : [...teleopRoles, role];
   }
 
   // Rating profile as a star/radar. Five axes on an identical 0-5 scale for one
@@ -139,10 +124,11 @@
         team_key: robotNumber.trim(),
         alliance,
         starting_position: startingPosition,
-        auto_points_band: autoPoints,
+        auto_points_estimate: autoPoints,
         auto_moved: autoMoved,
         auto_path: autoPath,
         ratings,
+        teleop_roles: teleopRoles,
         teleop_notes: teleopNotes,
         crash_or_break: crashOrBreak,
         robot_disabled: robotDisabled,
@@ -275,15 +261,61 @@
         <div class="auto-layout">
           <div class="auto-controls">
             <div class="control-group"><span class="field-label">Did autonomous run?</span><div class="segmented"><button class:chosen={autoMoved === 'ran'} on:click={() => autoMoved = 'ran'}>Yes</button><button class:chosen={autoMoved === 'did-not-run'} on:click={() => autoMoved = 'did-not-run'}>No</button></div></div>
-            <div class="control-group"><span class="field-label">Estimated fuel scored</span><small class="field-help">Choose the closest range; an exact count is not required.</small><div class="choice-grid fuel-bands">{#each POINT_BANDS as band}<button class:chosen={autoPoints === band} on:click={() => autoPoints = band}>{band}</button>{/each}</div></div>
+            <div class="control-group auto-points-control">
+              <label for="auto-points-estimate" class="field-label">Estimated points scored</label>
+              <small class="field-help">Enter an exact estimate, a range such as 40-60, or a lower bound such as 100+. Optional.</small>
+              <input
+                id="auto-points-estimate"
+                class="form-input auto-points-input"
+                class:invalid={autoPointsInvalid}
+                inputmode="decimal"
+                placeholder="e.g. 40-60 or 100+"
+                bind:value={autoPoints}
+              />
+              <div class="choice-grid point-examples" aria-label="Quick auto point estimates">
+                {#each AUTO_POINT_EXAMPLES as example}
+                  <button class:chosen={autoPoints === example} on:click={() => autoPoints = example}>{example}</button>
+                {/each}
+              </div>
+              {#if autoPointsEstimate?.kind === 'range'}
+                <small class="estimate-result">Analytics estimate: <strong>{autoPointsEstimate.average} points</strong> (midpoint of {autoPointsEstimate.input}).</small>
+              {:else if autoPointsEstimate?.kind === 'lower-bound'}
+                <small class="estimate-result">Analytics estimate: <strong>at least {autoPointsEstimate.average} points</strong> (conservative lower bound).</small>
+              {:else if autoPointsEstimate}
+                <small class="estimate-result">Analytics estimate: <strong>{autoPointsEstimate.average} points</strong>.</small>
+              {:else if autoPointsInvalid}
+                <small class="estimate-error">Use a number, a low-high range, or a value ending in +.</small>
+              {/if}
+            </div>
           </div>
-          <div class="path-panel"><div class="path-heading"><div><span class="field-label">Robot path (optional)</span><small>Draw from the robot's start toward the opponent end.</small></div><button class="btn btn-sm" on:click={() => autoPath = []} disabled={!autoPath.length}><RotateCcw size={14} /> Clear</button></div><div class="field-board" role="application" aria-label="Draw the robot's optional autonomous path from alliance end to opponent end" on:pointerdown={beginPath} on:pointermove={extendPath} on:pointerup={completePath} on:pointerleave={completePath}><span class="field-map-label alliance-end">Alliance end / start</span><span class="field-map-label neutral-zone">Neutral zone</span><span class="field-map-label opponent-end">Opponent end</span><div class="field-line midline"></div><div class="field-zone top-zone"></div><div class="field-zone bottom-zone"></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{#if autoPath.length > 1}<polyline points={autoPath.map(([x, y]) => `${x},${y}`).join(' ')} />{/if}{#if autoPath.length}<circle cx={autoPath[0][0]} cy={autoPath[0][1]} r="2.2" class="path-start" />{/if}</svg></div></div>
+          <div class="path-panel">
+            <div class="path-heading">
+              <div><span class="field-label">Robot path (optional)</span><small>AdvantageScope-style 2026 field; your alliance wall is always on the left.</small></div>
+              <button class="btn btn-sm" on:click={() => autoPath = []} disabled={!autoPath.length}><RotateCcw size={14} /> Clear</button>
+            </div>
+            <RebuiltFieldMap {alliance} bind:path={autoPath} />
+            <small class="field-source">Simplified from the official WPILib/AdvantageScope 2026 REBUILT 2D field view for legibility on scouting devices.</small>
+          </div>
         </div>
-        <div class="section-footer"><button class="btn" on:click={() => selectPhase('prematch')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('teleop')}>Continue to teleop <ChevronRight size={16} /></button></div>
+        <div class="section-footer"><button class="btn" on:click={() => selectPhase('prematch')}>Back</button><button class="btn btn-primary" disabled={autoPointsInvalid} on:click={() => selectPhase('teleop')}>Continue to teleop <ChevronRight size={16} /></button></div>
       {:else if phase === 'teleop'}
-        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2><p>Two optional quick ratings; skip either one if you could not judge it confidently.</p></div><Timer size={20} /></div>
-        <div class="ratings-grid">{#each RATING_FIELDS as field}<div class="rating-row"><span>{field}</span><div class="rating-buttons">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings[field] === value} on:click={() => ratings = { ...ratings, [field]: value }}>{value}</button>{/each}</div></div>{/each}</div>
-        <label class="notes-label">Additional notes (optional)<textarea class="form-input" rows="5" placeholder="What mattered during teleop? Leave blank if nothing did." bind:value={teleopNotes}></textarea></label>
+        <div class="section-heading"><div><span class="eyebrow">Teleop</span><h2>Driver and robot performance</h2><p>Record the roles you actually saw and rate only what you could judge confidently. Every field remains optional.</p></div><Timer size={20} /></div>
+        <fieldset class="teleop-roles">
+          <legend class="field-label">Observed roles</legend>
+          <small class="field-help">Select every role this robot meaningfully performed.</small>
+          <div class="choice-grid role-grid">
+            {#each TELEOP_ROLES as role}
+              <button class:chosen={teleopRoles.includes(role)} on:click={() => toggleTeleopRole(role)}>{role}</button>
+            {/each}
+          </div>
+        </fieldset>
+        <div class="ratings-grid">
+          <div class="ratings-heading"><span class="field-label">Optional 1-5 ratings</span><small>1 = poor, 5 = excellent. Leave untouched when not observed.</small></div>
+          {#each RATING_FIELDS as field}
+            <div class="rating-row"><span>{field}</span><div class="rating-buttons">{#each [1, 2, 3, 4, 5] as value}<button aria-label={`${field}: ${value} of 5`} class:chosen={ratings[field] === value} on:click={() => ratings = { ...ratings, [field]: value }}>{value}</button>{/each}</div></div>
+          {/each}
+        </div>
+        <label class="notes-label scouter-notes">Real-scout observations (optional)<textarea class="form-input" rows="9" placeholder="What did the robot actually do? Note repeatable strengths, defense response, cycle consistency, field awareness, or anything the numbers miss." bind:value={teleopNotes}></textarea></label>
         <label class="incident-toggle"><input type="checkbox" bind:checked={crashOrBreak} /><span><AlertTriangle size={17} /> Crash or mechanical break</span></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('auto')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('postmatch')}>Continue to post-match <ChevronRight size={16} /></button></div>
       {:else}
@@ -298,7 +330,7 @@
         {#if shouldReportPitProblem}
           <label class="notes-label pit-report-field">Problem for pit crew (required)<textarea class="form-input" required rows="3" placeholder="What failed, and what should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
         {/if}
-        <label class="notes-label">Freeform notes (optional)<textarea class="form-input" rows="5" placeholder="Anything strategy should know? Leave blank if not." bind:value={postNotes}></textarea></label>
+        <label class="notes-label scouter-notes">Post-match scout notes (optional)<textarea class="form-input" rows="8" placeholder="Anything strategy should know that the structured fields missed? Leave blank if not." bind:value={postNotes}></textarea></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" on:click={finishScout} disabled={!canFinish}>{saving ? 'Saving...' : 'Finish match scouting'} <Check size={16} /></button></div>
         {#if error}<p class="submit-error">{error}</p>{/if}
       {/if}
@@ -328,11 +360,19 @@
   .segmented button.chosen,.choice-grid button.chosen,.position-grid button.chosen,.rating-buttons button.chosen { border-color:var(--brand-gold-strong); background:var(--brand-gold-soft); color:var(--secondary); font-weight:600; } .segmented .red-choice.chosen { border-color:var(--red-base); background:var(--red-soft); } .segmented .blue-choice.chosen { border-color:var(--blue-base); background:var(--blue-soft); }
   .start-position-block,.control-group,.notes-label,.incident-toggle { margin-top:var(--space-5); } .position-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); margin-top:var(--space-2); } .position-grid button { min-height:4rem; text-transform:capitalize; }
   .section-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--gap-3); margin-top:var(--space-6); padding-top:var(--space-4); border-top:1px solid var(--border); color:var(--text-muted); font-size:.82rem; } .section-footer .btn { display:inline-flex; align-items:center; gap:var(--gap-2); }
-  .auto-layout { display:grid; grid-template-columns:minmax(18rem,.9fr) minmax(18rem,1.1fr); gap:var(--space-6); } .auto-controls { display:grid; align-content:start; gap:var(--space-1); } .choice-grid { margin-top:var(--space-2); } .choice-grid.four { display:grid; grid-template-columns:repeat(4,1fr); }
-  .fuel-bands { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); }
-  .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--gap-3); } .path-heading > div { display:grid; gap:2px; } .field-board { position:relative; aspect-ratio:1.8; overflow:hidden; border:1px solid var(--border); background:#edf3e9; cursor:crosshair; touch-action:none; } .field-line { position:absolute; background:#a4b09d; } .midline { top:0; bottom:0; left:50%; width:1px; } .field-zone { position:absolute; width:22%; height:18%; border:1px solid #a4b09d; } .top-zone { top:7%; left:39%; } .bottom-zone { bottom:7%; left:39%; } .field-map-label { position:absolute; z-index:1; padding:2px 5px; background:color-mix(in srgb, #edf3e9 82%, transparent); color:#52604f; font-size:.65rem; font-weight:600; text-transform:uppercase; letter-spacing:.03em; pointer-events:none; } .alliance-end { left:var(--space-2); bottom:var(--space-2); } .neutral-zone { left:50%; top:50%; transform:translate(-50%,-50%); } .opponent-end { right:var(--space-2); top:var(--space-2); } .field-board svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; } .field-board polyline { fill:none; stroke:var(--brand-gold-strong); stroke-width:1.2; stroke-linecap:round; stroke-linejoin:round; } .field-board .path-start { fill:var(--blue-base); }
-  .ratings-grid { display:grid; gap:var(--space-3); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
-  .notes-label textarea { resize:vertical; min-height:7rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
+  .auto-layout { display:grid; grid-template-columns:minmax(18rem,.9fr) minmax(18rem,1.1fr); gap:var(--space-6); } .auto-controls { display:grid; align-content:start; gap:var(--space-1); } .choice-grid { margin-top:var(--space-2); }
+  .auto-points-input { margin-top:var(--space-2); font-size:1.1rem; font-variant-numeric:tabular-nums; }
+  .auto-points-input.invalid { border-color:var(--danger); }
+  .point-examples { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .estimate-result { color:var(--text-muted); }
+  .estimate-result strong { color:var(--text); }
+  .estimate-error { color:var(--danger); }
+  .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--gap-3); } .path-heading > div { display:grid; gap:2px; }
+  .field-source { color:var(--text-muted); font-size:.68rem; line-height:1.35; }
+  .teleop-roles { margin-bottom:var(--space-4); padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
+  .role-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .ratings-grid { display:grid; gap:var(--space-3); } .ratings-heading { display:flex; justify-content:space-between; gap:var(--gap-3); padding-bottom:var(--space-2); border-bottom:1px solid var(--border); } .ratings-heading small { color:var(--text-muted); } .rating-row { display:flex; align-items:center; justify-content:space-between; gap:var(--gap-4); padding-bottom:var(--space-3); border-bottom:1px solid var(--border); } .rating-row span { font-size:.9rem; } .rating-buttons button { width:2.25rem; padding:0; } .rating-buttons.large button { width:3rem; min-height:2.5rem; }
+  .notes-label textarea { resize:vertical; min-height:7rem; line-height:1.5; } .scouter-notes textarea { min-height:12rem; } .incident-toggle { display:flex; grid-template-columns:auto 1fr; align-items:center; color:var(--text); font-size:.9rem; } .incident-toggle span { display:flex; align-items:center; gap:var(--gap-2); } .incident-toggle :global(svg) { color:var(--red-base); }
   .pit-report-field { margin-top:var(--space-3); }
   .required-handoff { display:flex; align-items:flex-start; gap:var(--gap-2); margin-top:var(--space-5); padding:var(--space-3) var(--space-4); border-left:3px solid var(--red-base); background:var(--red-soft); color:var(--text); font-size:.88rem; }
   .required-handoff :global(svg) { flex:none; color:var(--red-base); }
@@ -373,7 +413,7 @@
   }
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
   @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row { align-items:flex-start; flex-direction:column; } .choice-grid.four,.fuel-bands { grid-template-columns:repeat(2,1fr); } .persistent-status { align-items:stretch; flex-direction:column; } }
+  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row,.ratings-heading { align-items:flex-start; flex-direction:column; } .point-examples,.role-grid { grid-template-columns:repeat(2,1fr); } .persistent-status { align-items:stretch; flex-direction:column; } }
 
   /* Match Scouting intentionally shares Pit Scouting's focused field-workspace language. */
   .match-scouting-page { max-width:1160px; }
@@ -398,7 +438,6 @@
   .auto-controls { gap:var(--space-3); }
   .control-group { margin-top:0; }
   .path-panel { padding:var(--space-3); border:1px solid var(--border); background:var(--surface-1); }
-  .field-board { background:#e7eee3; }
   .ratings-grid { padding:var(--space-4); border:1px solid var(--border); }
   .rating-row:last-child { padding-bottom:0; border-bottom:0; }
   .rating-buttons button { border-radius:50%; }
