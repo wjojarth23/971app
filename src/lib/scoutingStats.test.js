@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   summarizeTeamEvents, summarizeTeamPerformance, buildPowerRankings,
-  fuelCountFromEvents, deriveMatchTeamRow
+  fuelCountFromEvents, deriveMatchTeamRow, summarizeScoutNotes
 } from './scoutingStats.js';
 
 function event(overrides) {
@@ -192,5 +192,34 @@ describe('power rankings', () => {
     expect(ranked.find((row) => row.key === 'frc2').powerRank).toBe(1);
     expect(ranked.find((row) => row.key === 'frc3').scoutPower).toBeCloseTo(50, 5);
     expect(ranked.find((row) => row.key === 'frc3').scoutPower).not.toBe(0);
+  });
+
+  it('uses explicit note impact while keeping neutral notes review-only', () => {
+    const notes = [
+      { team_key: 'frc1', ranking_impact: -2 },
+      { team_key: 'frc1', ranking_impact: 0 },
+      { team_key: 'frc2', ranking_impact: 2 }
+    ];
+    const ranked = buildPowerRankings([{ key: 'frc1' }, { key: 'frc2' }], [], notes);
+
+    expect(ranked.find((row) => row.key === 'frc2').powerRank).toBe(1);
+    expect(ranked.find((row) => row.key === 'frc1').noteSummary.noteCount).toBe(2);
+    expect(ranked.find((row) => row.key === 'frc1').noteSummary.scoredNoteCount).toBe(1);
+    expect(summarizeScoutNotes([{ ranking_impact: 0 }]).impactScore).toBeNull();
+  });
+
+  it('blends note impact at 15 percent when performance data exists', () => {
+    const teams = [{ key: 'frc1' }, { key: 'frc2' }];
+    const events = [
+      event({ team_key: 'frc1', event_type: 'rank_driving', event_value: '3' }),
+      event({ team_key: 'frc2', event_type: 'rank_driving', event_value: '1' })
+    ];
+    const ranked = buildPowerRankings(teams, events, [
+      { team_key: 'frc1', ranking_impact: -2 },
+      { team_key: 'frc2', ranking_impact: 2 }
+    ]);
+
+    expect(ranked.find((row) => row.key === 'frc1').scoutPower).toBeCloseTo(53.833333, 5);
+    expect(ranked.find((row) => row.key === 'frc2').scoutPower).toBeCloseTo(46.166667, 5);
   });
 });

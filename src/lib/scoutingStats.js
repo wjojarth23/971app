@@ -172,10 +172,29 @@ function weightedScore(parts) {
   return usable.reduce((sum, part) => sum + part.value * part.weight, 0) / weight;
 }
 
+// Freeform prose is never scored automatically. Scouts explicitly attach a
+// -2..2 impact so rankings use human judgment without pretending sentiment
+// analysis understands match context. Neutral/legacy notes are review-only.
+export function summarizeScoutNotes(notes) {
+  const impacts = (notes || [])
+    .map((note) => Number(note?.ranking_impact))
+    .filter((impact) => Number.isInteger(impact) && impact >= -2 && impact <= 2 && impact !== 0);
+  const averageImpact = impacts.length
+    ? impacts.reduce((sum, impact) => sum + impact, 0) / impacts.length
+    : null;
+
+  return {
+    noteCount: (notes || []).length,
+    scoredNoteCount: impacts.length,
+    averageImpact,
+    impactScore: averageImpact == null ? null : ((averageImpact + 2) / 4) * 100
+  };
+}
+
 // Produces event-relative rankings from the team's own scouting observations.
 // Missing dimensions are omitted and the remaining weights are normalized,
 // never converted to fake zeroes.
-export function buildPowerRankings(teams, events) {
+export function buildPowerRankings(teams, events, notes = []) {
   const eventsByTeam = new Map();
   for (const row of events || []) {
     if (!row?.team_key) continue;
@@ -188,18 +207,31 @@ export function buildPowerRankings(teams, events) {
     scoutSummary: summarizeTeamPerformance(eventsByTeam.get(team.key) || [])
   }));
   const metricValues = (key) => rows.map((row) => row.scoutSummary[key]);
+  const notesByTeam = new Map();
+  for (const note of notes || []) {
+    if (!note?.team_key) continue;
+    if (!notesByTeam.has(note.team_key)) notesByTeam.set(note.team_key, []);
+    notesByTeam.get(note.team_key).push(note);
+  }
   const ranked = rows.map((row) => {
     const summary = row.scoutSummary;
-    const scoutPower = weightedScore([
+    const performanceScore = weightedScore([
       { value: normalize(summary.avgFuel, metricValues('avgFuel')), weight: 0.4 },
       { value: normalize(summary.avgDrivingRank, metricValues('avgDrivingRank')), weight: 0.2 },
       { value: normalize(summary.avgAccuracy, metricValues('avgAccuracy')), weight: 0.15 },
       { value: normalize(summary.avgSpeed, metricValues('avgSpeed')), weight: 0.1 },
       { value: normalize(summary.avgClimbLevel, metricValues('avgClimbLevel')), weight: 0.15 }
     ]);
+    const noteSummary = summarizeScoutNotes(notesByTeam.get(row.key) || []);
+    const scoutPower = weightedScore([
+      { value: performanceScore, weight: 0.85 },
+      { value: noteSummary.impactScore, weight: 0.15 }
+    ]);
     return {
       ...row,
-      scoutPower
+      scoutPower,
+      performanceScore,
+      noteSummary
     };
   });
 
