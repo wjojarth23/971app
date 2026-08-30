@@ -43,6 +43,7 @@ function getPitScoutStatus(row) {
   return photoPaths.length ? 'completed' : 'needs_photo';
 }
 const COMPETITION_ROLE_PRIORITY = [
+  'Scouting Admin',
   'Scouting Lead',
   'Data Scout Lead',
   'Note Scout Lead',
@@ -68,7 +69,7 @@ function isCompetitionLead(profile) {
 
 function isScoutingLead(rosterKeys) {
   const keys = new Set((rosterKeys || []).map(normalizeKey).filter(Boolean));
-  return keys.has('scouting lead') || keys.has('data scout lead') || keys.has('note scout lead');
+  return keys.has('scouting admin') || keys.has('scouting lead') || keys.has('data scout lead') || keys.has('note scout lead');
 }
 
 function canManageScouting(profile, rosterKeys) {
