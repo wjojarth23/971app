@@ -74,11 +74,19 @@ describe('generateTurningGcode - single setup (default)', () => {
   });
 
   it('throws if stockDiameter is missing', () => {
-    expect(() => generateTurningGcode(shaftProfile(), { stepDown: 0.05 })).toThrow(/stockDiameter is required/);
+    expect(() => generateTurningGcode(shaftProfile(), { stepDown: 0.05 })).toThrow(/stockDiameter must be > 0/);
   });
 
   it('throws if stepDown is not positive', () => {
     expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, stepDown: 0 })).toThrow(/stepDown must be > 0/);
+  });
+
+  it('rejects malformed numeric CAM parameters before generating G-code', () => {
+    expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, feedRough: 0 })).toThrow(/feedRough must be > 0/);
+    expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, feedFinish: Number.NaN })).toThrow(/feedFinish must be > 0/);
+    expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, finishAllowance: -0.01 })).toThrow(/finishAllowance must be >= 0/);
+    expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, maxRpm: Infinity })).toThrow(/maxRpm must be > 0/);
+    expect(() => generateTurningGcode(shaftProfile(), { ...baseParams, setupMode: 'unsupported' })).toThrow(/setupMode must be one of/);
   });
 
   it('throws if stock is smaller than the profile\'s max radius', () => {
