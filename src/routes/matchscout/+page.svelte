@@ -30,6 +30,9 @@
   let autoPathName = '';
   let savedAutoPaths = [];
   let savedPathLoading = false;
+  let selectedSavedPathId = '';
+  let savingPathFile = false;
+  let pathFileMessage = '';
   let ballSources = [];
   let autoCollision = false;
   let autoCollisionNotes = '';
@@ -140,6 +143,7 @@
   function normalizeRobotNumber(event) {
     robotNumber = String(event.currentTarget?.value || '').replace(/\D/g, '').slice(0, 6);
     savedAutoPaths = [];
+    selectedSavedPathId = '';
   }
 
   async function loadSavedAutoPaths() {
@@ -150,14 +154,12 @@
     savedPathLoading = true;
     try {
       const response = await fetch(
-        `/api/matchscout?event_key=${encodeURIComponent(eventKey)}&team_key=${encodeURIComponent(robotNumber.trim())}`,
+        `/api/matchscout?resource=auto-paths&event_key=${encodeURIComponent(eventKey)}&team_key=${encodeURIComponent(robotNumber.trim())}`,
         { headers: await getAuthHeader() }
       );
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Could not load saved auto paths.');
-      savedAutoPaths = (payload.data || [])
-        .filter((entry) => entry.auto_path_name && Array.isArray(entry.auto_path) && entry.auto_path.length)
-        .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+      savedAutoPaths = payload.data || [];
     } catch (exception) {
       error = exception.message;
       savedAutoPaths = [];
@@ -171,13 +173,48 @@
     await loadSavedAutoPaths();
   }
 
-  function openSavedAutoPath(event) {
-    const id = String(event.currentTarget?.value || '');
-    if (!id) return;
-    const saved = savedAutoPaths.find((entry) => String(entry.id) === id);
+  function loadSelectedAutoPath() {
+    if (!selectedSavedPathId) return;
+    const saved = savedAutoPaths.find((entry) => String(entry.id) === selectedSavedPathId);
     if (!saved) return;
-    autoPath = saved.auto_path.map((point) => [...point]);
-    autoPathName = saved.auto_path_name;
+    autoPath = saved.path.map((point) => [...point]);
+    autoPathName = saved.name;
+    alliance = saved.alliance === 'blue' ? 'blue' : saved.alliance === 'red' ? 'red' : alliance;
+    pathFileMessage = `Loaded “${saved.name}”.`;
+  }
+
+  async function saveAutoPathAsNewFile() {
+    pathFileMessage = '';
+    if (!eventKey || !robotNumber.trim()) {
+      pathFileMessage = 'Select a robot before saving a path file.';
+      return;
+    }
+    if (!autoPathName.trim()) {
+      pathFileMessage = 'Enter a path name first.';
+      return;
+    }
+    if (autoPath.length < 2) {
+      pathFileMessage = 'Draw a path before saving the file.';
+      return;
+    }
+    savingPathFile = true;
+    try {
+      const saved = await post({
+        action: 'save-auto-path',
+        event_key: eventKey,
+        team_key: robotNumber.trim(),
+        name: autoPathName,
+        alliance,
+        path: autoPath
+      });
+      await loadSavedAutoPaths();
+      selectedSavedPathId = String(saved.id);
+      pathFileMessage = `Saved “${saved.name}” as a new path file.`;
+    } catch (exception) {
+      pathFileMessage = exception.message;
+    } finally {
+      savingPathFile = false;
+    }
   }
 
   async function finishScout() {
@@ -441,15 +478,22 @@
                 />
               </label>
               <label for="saved-auto-path">
-                Open saved path
-                <select id="saved-auto-path" class="form-input" on:change={openSavedAutoPath} disabled={savedPathLoading || !savedAutoPaths.length}>
+                Saved path files
+                <select id="saved-auto-path" class="form-input" bind:value={selectedSavedPathId} disabled={savedPathLoading || !savedAutoPaths.length}>
                   <option value="">{savedPathLoading ? 'Loading...' : savedAutoPaths.length ? 'Choose a saved path' : 'No saved paths yet'}</option>
                   {#each savedAutoPaths as saved}
-                    <option value={saved.id}>{saved.auto_path_name} · Match {saved.match_key}</option>
+                    <option value={saved.id}>{saved.name}</option>
                   {/each}
                 </select>
               </label>
             </div>
+            <div class="path-file-actions">
+              <button class="btn btn-outline" on:click={loadSelectedAutoPath} disabled={!selectedSavedPathId || savedPathLoading}>Load file</button>
+              <button class="btn btn-primary" on:click={saveAutoPathAsNewFile} disabled={savingPathFile || autoPath.length < 2 || !autoPathName.trim()}>
+                {savingPathFile ? 'Saving...' : 'Save as new file'}
+              </button>
+            </div>
+            {#if pathFileMessage}<small class="path-file-message">{pathFileMessage}</small>{/if}
             <RebuiltFieldMap {alliance} bind:path={autoPath} />
             {#if autoPath.length && !autoPathName.trim()}<small class="estimate-error">Name this path so it can be reopened later.</small>{/if}
             <small class="field-source">Simplified from the official WPILib/AdvantageScope 2026 REBUILT 2D field view for legibility on scouting devices.</small>
@@ -548,6 +592,8 @@
   .collision-notes { margin-top:var(--space-2); resize:vertical; }
   .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--gap-3); } .path-heading > div { display:grid; gap:2px; }
   .saved-path-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap-3); margin:var(--space-2) 0; }
+  .path-file-actions { display:flex; flex-wrap:wrap; gap:var(--gap-2); }
+  .path-file-message { color:var(--text-muted); }
   .field-source { color:var(--text-muted); font-size:.68rem; line-height:1.35; }
   .teleop-roles { margin-bottom:var(--space-4); padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
   .role-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }

@@ -34,7 +34,8 @@ reading code.
   built for filling in a noisy pit on a phone while a team answers out of
   order), alliance-tinted match scouting with event-team type-ahead and
   structured auto collision/fuel-source plus intake-speed/jam observations,
-  and named drawn autonomous paths that can be reopened for later reports,
+  and an explicit named autonomous-path file library with “Save as new file”
+  and “Load file” actions independent of report submission,
   data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
