@@ -93,6 +93,47 @@ that is not routing and falls back to the current 2D preview.
 
 ---
 
+## Fusion parity — what we are actually matching
+
+Checked against Autodesk's own docs and Fusion CAM guides rather than memory,
+so the target is the real feature and not an impression of it.
+
+**Display toggles** — Fusion's Simulate dialog exposes independent checkboxes
+for **Tool**, **Toolpath**, and **Stock** (plus model visibility). We match all
+four.
+
+**Toolpath colour by move type.** Fusion colours moves by what they are, not
+by tool: Yellow = rapid, Blue = cutting, Red = ramp, Green = lead in/out, Gold
+= stay-down. What AutoCAM can honestly detect from its own output:
+
+| Fusion | Detectable here? |
+|---|---|
+| Rapid (yellow) | Yes — `G0` |
+| Cutting (blue) | Yes — `G1/G2/G3` at depth |
+| Ramp (red) | Yes — Z changing during XY motion; `routing.js` emits helical entry |
+| Lead in/out (green) | Partly — `routing.js` has a lead-in/out zone near corners, but it is not marked in the output. Treated as cutting unless we add a marker. |
+| Stay-down (gold) | Not applicable to what this generator emits |
+
+Colour-by-tool stays available as a *separate* mode, since multi-tool routing
+jobs are common here and Fusion's own per-operation stepping covers the same
+need.
+
+**Playback controls.** Fusion has Play, *go to next move*, *go to next
+operation*, *go to end*, and a speed slider. Ours maps operation-stepping onto
+the `(TOOL CHANGE: ...)` markers already in the G-code, which is the closest
+real equivalent to a Fusion operation boundary.
+
+**Collision.** Fusion turns the tool red on a collision. Full holder/fixture
+collision detection is out of scope, but the heightmap gives us one honest
+subset for free: flagging a move that removes material **below the finished
+part surface** — i.e. a gouge — once Phase 5 has the part mesh. Anything
+beyond that would be claiming more than we can check.
+
+**Machining time.** Fusion estimates it. Ours would need acceleration
+modelling to be anything but misleading, so the scrubber is distance-based and
+we show distance, not a fake time. Called out here so it is a decision rather
+than an omission.
+
 ## Phases
 
 Each is independently mergeable and leaves the app working.
@@ -125,10 +166,11 @@ pure and fully testable with no 3D involved, which is why it goes first.
 - Renders nothing but empty space; proves setup and disposal.
 
 ### Phase 2 — Toolpath in 3D
-- Rapids vs feeds as separate `LineSegments` with distinct materials
-  (rapid = thin/muted, feed = accent), colour-per-tool for multi-tool jobs
-  using the existing `toolIndex`.
-- Toggles for rapids and per-tool visibility.
+- Moves classified by type (rapid / cutting / ramp) and coloured on Fusion's
+  scheme, as separate `LineSegments` per class.
+- Second colour mode: per-tool, using the existing `toolIndex`.
+- Independent **Toolpath** / **Tool** / **Stock** / **Model** visibility
+  toggles, matching Fusion's dialog.
 
 ### Phase 3 — The end mill, and moving it
 - Flat end mill as a cylinder: **diameter from the job's `toolDiameter`, or
@@ -136,7 +178,9 @@ pure and fully testable with no 3D involved, which is why it goes first.
   has no saved tool, the UI takes a diameter input and defaults from the
   job's stored params.
 - Scrub bar over cumulative distance (not move index — constant-rate scrubbing
-  reads far better), play/pause, speed control, step-by-move.
+  reads far better), play/pause, speed slider.
+- Fusion's four transport controls: play, **next move**, **next operation**
+  (mapped to `(TOOL CHANGE:)` markers), **end of toolpath**.
 - Tool position interpolated within the current move.
 
 ### Phase 4 — Material removal (the real work)
@@ -179,10 +223,14 @@ pure and fully testable with no 3D involved, which is why it goes first.
 ## Deliberately out of scope
 
 - Turning and tube-stock simulation (see above).
-- Collision/gouge *detection* — this shows what happens, it does not judge it.
-  A natural follow-up once removal is trustworthy.
-- Feed-rate-accurate timing. Scrubbing is by distance; a real time estimate
-  needs acceleration modelling.
+- Holder/fixture collision detection. Fusion checks tool *and holder* against
+  part and fixtures; we model neither holder nor fixtures, so claiming it would
+  be false. Gouge detection against the finished surface is the one subset the
+  heightmap makes honest, and is listed as a Phase 5 follow-up rather than
+  promised here.
+- Machining-time estimation. Fusion reports it; doing so credibly needs
+  acceleration modelling, and a naive distance/feed number would be confidently
+  wrong on a program full of short moves. The scrubber shows distance.
 - Ball-nose and V-bit profiles. Flat end mill only, matching what routing
   actually generates today.
 
