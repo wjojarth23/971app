@@ -33,6 +33,8 @@ browser confirmation or prompt popups.
   is a separate sub-section, **Fusion CAM** (`/autocam/fusion`), backed by
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
+  Completed routing jobs also have a switchable 2D preview and a routing-only
+  3D toolpath view with rapid, cutting, and ramp/plunge paths distinguished.
 - **Scouting**: pit scouting (a topic-at-a-time form with per-topic
   completion counts, scout/contact attribution, and up to three robot photos,
   built for filling in a noisy pit on a phone while a team answers out of

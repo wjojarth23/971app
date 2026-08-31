@@ -14,6 +14,7 @@
   import TurningFinishTool from '$autocam/components/TurningFinishTool.svelte';
   import CadViewer from '$lib/components/CadViewer.svelte';
   import ToolpathViewer from '$autocam/components/ToolpathViewer.svelte';
+  import ToolpathSimulator from '$autocam/components/ToolpathSimulator.svelte';
   import { toastActions } from '$lib/toast.js';
   import {
     queueCamJobForPart,
@@ -143,6 +144,7 @@
   let editDeleting = false;
   let showJobCadModal = false;
   let showJobToolpathModal = false;
+  let toolpathView = '2d';
   let showNcviewerModal = false;
   let ncviewerCopyOk = null; // null = not attempted yet, true/false = result
 
@@ -491,6 +493,7 @@
   }
   function openToolpathPreview(job) {
     editingJob = job;
+    toolpathView = '2d';
     showJobToolpathModal = true;
   }
   // Embeds ncviewer.com directly in the app (iframe) instead of a plain
@@ -1394,7 +1397,17 @@
         <button type="button" class="modal-close-button" aria-label="Close" on:click={() => (showJobToolpathModal = false)}><X size={18} /></button>
       </div>
       <div class="modal-body">
-        <ToolpathViewer gcode={editingJob.gcode} operationType={editingJob.operation_type} />
+        {#if editingJob.operation_type === 'routing'}
+          <div class="toolpath-view-tabs" role="tablist" aria-label="Toolpath view">
+            <button type="button" role="tab" aria-selected={toolpathView === '2d'} class:active={toolpathView === '2d'} on:click={() => (toolpathView = '2d')}>2D Preview</button>
+            <button type="button" role="tab" aria-selected={toolpathView === '3d'} class:active={toolpathView === '3d'} on:click={() => (toolpathView = '3d')}>3D Toolpath</button>
+          </div>
+        {/if}
+        {#if toolpathView === '3d' && editingJob.operation_type === 'routing'}
+          <ToolpathSimulator gcode={editingJob.gcode} toolDiameter={Number(editingJob.params?.toolDiameter) || null} />
+        {:else}
+          <ToolpathViewer gcode={editingJob.gcode} operationType={editingJob.operation_type} />
+        {/if}
       </div>
     </div>
   </div>
@@ -1729,7 +1742,10 @@
   }
 
   .cad-modal { width: min(900px, 95vw); max-width: 95vw; }
-  .toolpath-modal { width: min(700px, 95vw); max-width: 95vw; }
+  .toolpath-modal { width: min(1100px, 95vw); max-width: 95vw; }
+  .toolpath-view-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
+  .toolpath-view-tabs button { padding: 0.5rem 0.75rem; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
+  .toolpath-view-tabs button.active { border-bottom-color: var(--accent-strong); color: var(--text); font-weight: 700; }
   .ncviewer-modal { width: min(1500px, 98vw); max-width: 98vw; height: min(94vh, 1100px); }
   .ncviewer-modal-body {
     display: flex;
