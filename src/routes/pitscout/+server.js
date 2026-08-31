@@ -64,7 +64,8 @@ const TECHNICAL_MULTI_FIELDS = new Set([
 const TECHNICAL_TEXT_FIELDS = new Set([
   'mostly_used_wire_gauge',
   'drivebase_tube_thickness',
-  'roller_hub_material'
+  'roller_hub_material',
+  'software_other'
 ]);
 
 const TECHNICAL_NUMBER_FIELDS = new Set([
@@ -72,6 +73,9 @@ const TECHNICAL_NUMBER_FIELDS = new Set([
   'bumper_length',
   'bumper_width',
   'bumper_height',
+  'drivetrain_length',
+  'drivetrain_width',
+  'drivetrain_height',
   'can_bus_count',
   'electrical_rating',
   'drivebase_rating',

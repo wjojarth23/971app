@@ -117,12 +117,16 @@
     coprocessor: '',
     programming_language: [],
     uses_wpilib: '',
+    software_other: '',
     grip_tape: '',
     swerve_module: '',
     hopper_wall_reinforcement: '',
     fits_under_trench: '',
     drives_over_mound: '',
     drivebase_tube_thickness: '',
+    drivetrain_length: undefined,
+    drivetrain_width: undefined,
+    drivetrain_height: undefined,
     bumper_foam: '',
     hardware_standards: [],
     encoder_types: [],
@@ -207,10 +211,10 @@
   // explicit rather than derived from the markup so a field moving between
   // topics is a deliberate edit, not a silent change in what "complete" means.
   const TOPIC_FIELDS = {
-    mechanisms: ['use_net', 'intake_style', 'ground_roller_motor_count', 'ground_intake_kicker'],
-    electrical: ['main_breaker_brand', 'sb_connector', 'main_breaker_shroud', 'wire_insulation', 'mostly_used_wire_gauge', 'battery_type'],
-    controls: ['uses_canivore', 'can_bus_count', 'coprocessor', 'uses_wpilib'],
-    structure: ['swerve_module', 'drivebase_tube_thickness', 'bumper_width', 'bumper_height', 'bumper_length', 'bumper_foam', 'grip_tape', 'hopper_wall_reinforcement', 'fits_under_trench', 'drives_over_mound', 'printed_roller_hubs', 'roller_hub_material'],
+    mechanisms: ['use_net', 'intake_style', 'ground_roller_motor_count'],
+    electrical: ['main_breaker_brand', 'sb_connector', 'main_breaker_shroud'],
+    controls: ['uses_canivore', 'can_bus_count', 'coprocessor', 'uses_wpilib', 'software_other'],
+    structure: ['swerve_module', 'drivetrain_length', 'drivetrain_width', 'drivetrain_height', 'bumper_width', 'bumper_height', 'bumper_length', 'bumper_foam', 'fits_under_trench', 'drives_over_mound', 'printed_roller_hubs', 'roller_hub_material'],
     ratings: ['drivebase_rating', 'electrical_rating', 'overall_reliability_rating']
   };
 
@@ -306,11 +310,15 @@
     normalized.mostly_used_wire_gauge = String(source.mostly_used_wire_gauge || '').trim().slice(0, 80);
     normalized.drivebase_tube_thickness = String(source.drivebase_tube_thickness || '').trim().slice(0, 80);
     normalized.roller_hub_material = String(source.roller_hub_material || '').trim().slice(0, 80);
+    normalized.software_other = String(source.software_other || '').trim().slice(0, 240);
 
     normalized.ground_roller_motor_count = normalizeTechnicalNumber(source.ground_roller_motor_count, { integer: true });
     normalized.bumper_length = normalizeTechnicalNumber(source.bumper_length);
     normalized.bumper_width = normalizeTechnicalNumber(source.bumper_width);
     normalized.bumper_height = normalizeTechnicalNumber(source.bumper_height);
+    normalized.drivetrain_length = normalizeTechnicalNumber(source.drivetrain_length);
+    normalized.drivetrain_width = normalizeTechnicalNumber(source.drivetrain_width);
+    normalized.drivetrain_height = normalizeTechnicalNumber(source.drivetrain_height);
     normalized.can_bus_count = normalizeTechnicalNumber(source.can_bus_count, { integer: true });
     normalized.electrical_rating = normalizeTechnicalNumber(source.electrical_rating, { min: 1, max: 10, integer: true });
     normalized.drivebase_rating = normalizeTechnicalNumber(source.drivebase_rating, { min: 1, max: 10, integer: true });
@@ -1228,19 +1236,6 @@
             />
           </div>
 
-          <div class="form-group">
-            <label class="form-label" for="groundIntakeKickerSelect">Ground intake has a kicker?</label>
-            <select
-              id="groundIntakeKickerSelect"
-              class="form-select"
-              bind:value={technical_details.ground_intake_kicker}
-            >
-              <option value="">-- Select --</option>
-              {#each YES_NO_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
         </div>
 
         <div class="form-group">
@@ -1312,53 +1307,6 @@
             </select>
           </div>
 
-          <div class="form-group">
-            <label class="form-label" for="wireGaugeInput">Wire gauge mostly used</label>
-            <input
-              id="wireGaugeInput"
-              class="form-input"
-              type="text"
-              maxlength="80"
-              placeholder="e.g. 6 AWG, 12 AWG"
-              bind:value={technical_details.mostly_used_wire_gauge}
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="wireInsulationSelect">Wire insulation</label>
-            <select id="wireInsulationSelect" class="form-select" bind:value={technical_details.wire_insulation}>
-              <option value="">-- Select --</option>
-              {#each WIRE_INSULATION_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="batteryTypeSelect">Battery type</label>
-            <select id="batteryTypeSelect" class="form-select" bind:value={technical_details.battery_type}>
-              <option value="">-- Select --</option>
-              {#each BATTERY_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Connectors and boards used</label>
-          <div class="option-grid">
-            {#each ELECTRICAL_CONNECTOR_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('electrical_connectors', option)}
-                  on:change={(event) => setTechnicalMulti('electrical_connectors', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
-          </div>
         </div>
       </section>
 {/if}
@@ -1458,6 +1406,10 @@
             {/each}
           </div>
         </div>
+        <div class="form-group">
+          <label class="form-label" for="softwareOtherInput">Other software or controls</label>
+          <input id="softwareOtherInput" class="form-input" maxlength="240" placeholder="Anything not listed above" bind:value={technical_details.software_other} />
+        </div>
       </section>
 {/if}
 
@@ -1471,30 +1423,6 @@
             <select id="swerveModuleSelect" class="form-select" bind:value={technical_details.swerve_module}>
               <option value="">-- Select --</option>
               {#each SWERVE_MODULE_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="gripTapeSelect">Grip tape</label>
-            <select id="gripTapeSelect" class="form-select" bind:value={technical_details.grip_tape}>
-              <option value="">-- Select --</option>
-              {#each GRIP_TAPE_OPTIONS as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="hopperWallSelect">Hopper wall reinforcement</label>
-            <select
-              id="hopperWallSelect"
-              class="form-select"
-              bind:value={technical_details.hopper_wall_reinforcement}
-            >
-              <option value="">-- Select --</option>
-              {#each HOPPER_WALL_OPTIONS as option}
                 <option value={option}>{option}</option>
               {/each}
             </select>
@@ -1521,18 +1449,6 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="drivebaseTubeThicknessInput">Drivebase tube thickness</label>
-            <input
-              id="drivebaseTubeThicknessInput"
-              class="form-input"
-              type="text"
-              maxlength="80"
-              placeholder="e.g. 1/8 in, 0.090 in"
-              bind:value={technical_details.drivebase_tube_thickness}
-            />
-          </div>
-
-          <div class="form-group">
             <label class="form-label" for="bumperFoamSelect">Bumper foam</label>
             <select id="bumperFoamSelect" class="form-select" bind:value={technical_details.bumper_foam}>
               <option value="">-- Select --</option>
@@ -1541,6 +1457,12 @@
               {/each}
             </select>
           </div>
+        </div>
+
+        <div class="dimension-grid">
+          <div class="form-group"><label class="form-label" for="drivetrainLengthInput">Drivetrain length (in)</label><input id="drivetrainLengthInput" class="form-input" type="number" min="0" step="0.01" bind:value={technical_details.drivetrain_length} /></div>
+          <div class="form-group"><label class="form-label" for="drivetrainWidthInput">Drivetrain width (in)</label><input id="drivetrainWidthInput" class="form-input" type="number" min="0" step="0.01" bind:value={technical_details.drivetrain_width} /></div>
+          <div class="form-group"><label class="form-label" for="drivetrainHeightInput">Drivetrain height (in)</label><input id="drivetrainHeightInput" class="form-input" type="number" min="0" step="0.01" bind:value={technical_details.drivetrain_height} /></div>
         </div>
 
         <div class="dimension-grid">
@@ -1578,22 +1500,6 @@
               step="0.01"
               bind:value={technical_details.bumper_height}
             />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Hardware standards used</label>
-          <div class="option-grid compact">
-            {#each HARDWARE_STANDARD_OPTIONS as option}
-              <label class="form-checkbox option-tile">
-                <input
-                  type="checkbox"
-                  checked={hasTechnicalMulti('hardware_standards', option)}
-                  on:change={(event) => setTechnicalMulti('hardware_standards', option, event.currentTarget.checked)}
-                />
-                <span>{option}</span>
-              </label>
-            {/each}
           </div>
         </div>
 
