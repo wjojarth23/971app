@@ -159,7 +159,7 @@
   let entriesByTeam = {};
   let selectedTeam = '';
   let teamSearch = '';
-  let scoutNames = [];
+  let pitContacts = [];
   let scout_name = '';
 
   let drivebase_type = '';
@@ -525,12 +525,12 @@
     return next;
   }
 
-  async function loadScoutNames() {
-    const res = await authFetch('/pitscout?resource=scout-names');
+  async function loadPitContacts() {
+    const res = await authFetch('/pitscout?resource=pit-contacts');
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.success) return [];
-    scoutNames = data.data || [];
-    return scoutNames;
+    pitContacts = data.data || [];
+    return pitContacts;
   }
 
   async function loadProblems() {
@@ -623,7 +623,7 @@
         return;
       }
 
-      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries(), loadProblems(), loadScoutNames()]);
+      const [loadedTeams, loadedEntries] = await Promise.all([loadTeams(), loadEntries(), loadProblems(), loadPitContacts()]);
       teams = [...new Set([...loadedTeams, ...Object.keys(loadedEntries)])].sort(teamSort);
       syncSelectedTeam();
     } catch (e) {
@@ -1113,21 +1113,21 @@
 {#if activeTopic === 'basics'}
     {#if pitSchema.scout_name}
       <div class="form-group">
-        <label class="form-label" for="scoutNameInput">Scout / contact name</label>
+        <label class="form-label" for="scoutNameInput">Pit contact name</label>
         <input
           id="scoutNameInput"
           class="form-input"
           type="text"
           maxlength="120"
-          list="pitScoutNames"
+          list="pitContacts"
           autocomplete="off"
-          placeholder="Start typing a team member's name"
+          placeholder="Start typing the person you spoke with"
           bind:value={scout_name}
         />
-        <datalist id="pitScoutNames">
-          {#each scoutNames as name}<option value={name}></option>{/each}
+        <datalist id="pitContacts">
+          {#each pitContacts as contact}<option value={contact}></option>{/each}
         </datalist>
-        <small class="form-help">Use the person who can answer follow-up questions about this entry.</small>
+        <small class="form-help">Suggestions appear as you type from previous pit contacts. You can always enter someone new for follow-up questions.</small>
       </div>
     {/if}
 

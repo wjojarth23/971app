@@ -291,18 +291,18 @@ export async function GET({ url, request }) {
 
     if (!isLocal && !actor?.id && !canReadPublic) return json({ error: 'Unauthorized' }, { status: 401 });
 
-    if (url.searchParams.get('resource') === 'scout-names') {
+    if (url.searchParams.get('resource') === 'pit-contacts') {
       if (!isLocal && !actor?.id) return json({ error: 'Unauthorized' }, { status: 401 });
       const { data, error } = await db
-        .from('user_profiles')
-        .select('full_name')
-        .eq('banned', false)
-        .not('full_name', 'is', null)
-        .order('full_name', { ascending: true });
+        .from('pit_scout_entries')
+        .select('scout_name')
+        .not('scout_name', 'is', null)
+        .order('updated_at', { ascending: false })
+        .limit(250);
       if (error) return json({ error: error.message }, { status: 500 });
       return json({
         success: true,
-        data: [...new Set((data || []).map((row) => String(row.full_name || '').trim()).filter(Boolean))]
+        data: [...new Set((data || []).map((row) => String(row.scout_name || '').trim()).filter(Boolean))]
       });
     }
 
