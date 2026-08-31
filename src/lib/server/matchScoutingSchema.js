@@ -149,6 +149,7 @@ export function normalizeMatchScoutEntry(body, actorId = null) {
       ball_sources: normalizeStringList(body?.ball_sources, BALL_SOURCES),
       auto_collision: body?.auto_collision === true,
       auto_collision_notes: trimmed(body?.auto_collision_notes, 500),
+      auto_path_name: trimmed(body?.auto_path_name, 120),
       auto_path: normalizeAutoPath(body?.auto_path),
       ratings: normalizeRatings(body?.ratings),
       teleop_roles: normalizeStringList(body?.teleop_roles, TELEOP_ROLES),
