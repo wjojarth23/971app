@@ -136,7 +136,9 @@ than an omission.
 
 ## Phases
 
-Each is independently mergeable and leaves the app working.
+Each is independently mergeable and leaves the app working. Running state and
+the tickable checklist live in
+[`toolpath-simulation-todo.md`](toolpath-simulation-todo.md).
 
 ### Phase 0 — Shared parser: keep Z, tessellate arcs
 `autocam/toolpathPreview.js`
