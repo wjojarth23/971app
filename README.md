@@ -43,6 +43,10 @@ browser confirmation or prompt popups.
   robot footprint, centerline-conflict marking, and hub/trench collision
   prevention,
   data scouting, free-form notes,
+  an Event Analysis view in Data Scouting that consolidates submitted data
+  observations (including released vision observations), match reports, pit
+  profiles, notes, and ACE Team problem reports into coverage graphs and a
+  shareable Google Docs report for the signed-in scout,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
   editing) - integrates with The Blue Alliance API for competition data.
