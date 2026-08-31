@@ -7,15 +7,17 @@
   // of the SSR bundle and off the critical path for anyone who never opens a
   // toolpath.
   import { onMount, onDestroy } from 'svelte';
-  import { parseToolpath3D, toolpathBounds3D } from '../toolpathPreview.js';
+  import { FastForward, Pause, Play, RotateCcw, SkipForward } from 'lucide-svelte';
+  import { parseToolpath3D, toolpathBounds3D, toolpathPositionAtDistance } from '../toolpathPreview.js';
 
   export let gcode = '';
-  /** Cutter diameter in program units. Used from Phase 3; accepted now so the
-   *  mount points do not need changing again later. */
+  /** Cutter diameter in program units for single-tool jobs. */
   export let toolDiameter = null;
+  /** Ordered routing tool sequence, when a job uses more than one cutter. */
+  export let toolSequence = [];
 
   let container;
-  let renderer, scene, camera, controls, frameId, resizeObserver, grid, axes;
+  let renderer, scene, camera, controls, frameId, resizeObserver, grid, axes, toolMesh;
   let disposed = false;
   let loading = true;
   let error = '';
@@ -33,23 +35,46 @@
   const KINDS = ['rapid', 'cut', 'ramp'];
 
   let visible = { rapid: true, cut: true, ramp: true };
+  let toolpathVisible = true;
+  let toolVisible = true;
   const lineObjects = {};
+  let cutterDiameterInput = '';
+  let initializedProgram = null;
+  let playbackDistance = 0;
+  let isPlaying = false;
+  let playbackSpeed = 1;
+  let lastPlaybackFrame = null;
 
   $: parsed = parseToolpath3D(gcode || '');
   $: moves = parsed.moves;
   $: bounds = toolpathBounds3D(moves);
+  $: toolPosition = toolpathPositionAtDistance(moves, playbackDistance);
+  $: activeToolIndex = toolPosition?.moveIndex === undefined ? 0 : (moves[toolPosition.moveIndex]?.toolIndex || 0);
+  $: activeSequenceDiameter = Number(toolSequence?.[activeToolIndex]?.toolDiameter) || null;
+  $: singleToolDiameter = Number(toolDiameter) || null;
+  $: cutterDiameter = activeSequenceDiameter || singleToolDiameter || Number(cutterDiameterInput) || null;
   $: moveCounts = KINDS.reduce((counts, kind) => {
     counts[kind] = moves.filter((move) => move.kind === kind).length;
     return counts;
   }, {});
 
+  // A job may be edited while this modal stays open. Adopt its saved diameter
+  // once, but preserve a deliberate manual value for old jobs that lack one.
+  $: if (gcode !== initializedProgram) {
+    initializedProgram = gcode;
+    playbackDistance = 0;
+    isPlaying = false;
+    cutterDiameterInput = singleToolDiameter ? String(singleToolDiameter) : '';
+  }
+
   // Rebuild whenever the program changes, but only once the scene exists.
   $: if (scene && moves) rebuildToolpath();
-  $: if (scene) applyVisibility(visible);
+  $: if (scene && toolpathVisible !== undefined) applyVisibility(visible);
+  $: if (scene && toolPosition && cutterDiameter !== undefined && toolVisible !== undefined) updateTool();
 
   function applyVisibility(state) {
     for (const kind of KINDS) {
-      if (lineObjects[kind]) lineObjects[kind].visible = !!state[kind];
+      if (lineObjects[kind]) lineObjects[kind].visible = toolpathVisible && !!state[kind];
     }
   }
 
@@ -98,6 +123,71 @@
     }
     sizeReferenceGeometry();
     frameCamera();
+  }
+
+  function disposeTool() {
+    if (!toolMesh || !scene) return;
+    scene.remove(toolMesh);
+    toolMesh.geometry?.dispose?.();
+    toolMesh.material?.dispose?.();
+    toolMesh = null;
+  }
+
+  function updateTool() {
+    if (!THREE_NS || !scene) return;
+    if (!cutterDiameter || !toolPosition) {
+      disposeTool();
+      return;
+    }
+
+    const THREE = THREE_NS;
+    const visualHeight = Math.max(cutterDiameter * 3, 0.5);
+    if (!toolMesh || toolMesh.userData.diameter !== cutterDiameter) {
+      disposeTool();
+      toolMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(cutterDiameter / 2, cutterDiameter / 2, visualHeight, 20),
+        new THREE.MeshBasicMaterial({ color: 0x202020 })
+      );
+      // Three cylinders are Y-up; the machine program and scene are Z-up.
+      toolMesh.rotation.x = Math.PI / 2;
+      toolMesh.userData.diameter = cutterDiameter;
+      scene.add(toolMesh);
+    }
+    toolMesh.position.set(toolPosition.position.x, toolPosition.position.y, toolPosition.position.z + visualHeight / 2);
+    toolMesh.visible = toolVisible;
+  }
+
+  function seek(distance) {
+    playbackDistance = Math.max(0, Math.min(Number(distance) || 0, parsed.totalDistance));
+    isPlaying = false;
+  }
+
+  function togglePlayback() {
+    if (!moves.length || !cutterDiameter) return;
+    if (playbackDistance >= parsed.totalDistance) playbackDistance = 0;
+    isPlaying = !isPlaying;
+  }
+
+  function nextMove() {
+    if (!moves.length) return;
+    const current = toolPosition?.moveIndex ?? 0;
+    const currentEnd = moves[current].startDistance + moves[current].length;
+    const next = moves[Math.min(playbackDistance >= currentEnd - 1e-9 ? current + 1 : current, moves.length - 1)];
+    seek(next.startDistance + next.length);
+  }
+
+  function nextOperation() {
+    const nextIndex = parsed.toolChangeIndices.find((index) => index > (toolPosition?.moveIndex ?? -1));
+    if (nextIndex === undefined) {
+      seek(parsed.totalDistance);
+      return;
+    }
+    const operationStart = moves[nextIndex]?.startDistance;
+    seek(operationStart === undefined ? parsed.totalDistance : Math.min(operationStart + 1e-9, parsed.totalDistance));
+  }
+
+  function goToEnd() {
+    seek(parsed.totalDistance);
   }
 
   function frameCamera() {
@@ -164,9 +254,16 @@
 
         rebuildToolpath();
 
-        const animate = () => {
+        const animate = (timestamp) => {
           if (disposed) return;
           frameId = requestAnimationFrame(animate);
+          if (isPlaying && cutterDiameter && lastPlaybackFrame !== null) {
+            // This is deliberately distance, not an invented machining-time
+            // estimate. The multiplier only controls how quickly to inspect.
+            playbackDistance = Math.min(parsed.totalDistance, playbackDistance + ((timestamp - lastPlaybackFrame) / 1000) * playbackSpeed);
+            if (playbackDistance >= parsed.totalDistance) isPlaying = false;
+          }
+          lastPlaybackFrame = timestamp;
           controls.update();
           renderer.render(scene, camera);
         };
@@ -208,7 +305,10 @@
     disposed = true;
     if (frameId) cancelAnimationFrame(frameId);
     resizeObserver?.disconnect();
-    if (scene) disposeToolpath();
+    if (scene) {
+      disposeToolpath();
+      disposeTool();
+    }
     controls?.dispose?.();
     renderer?.dispose?.();
     if (renderer?.domElement?.parentNode) {
@@ -217,7 +317,7 @@
   });
 </script>
 
-<div class="simulator" data-tool-diameter={toolDiameter ?? undefined}>
+<div class="simulator">
   <div class="viewport" bind:this={container}>
     {#if loading}
       <div class="overlay"><div class="spinner"></div><span>Starting simulation...</span></div>
@@ -228,7 +328,48 @@
     {/if}
   </div>
 
+  <div class="playback-controls" aria-label="Toolpath playback controls">
+    <div class="transport-buttons">
+      <button class="btn btn-ghost btn-icon" type="button" title={isPlaying ? 'Pause simulation' : 'Play simulation'} aria-label={isPlaying ? 'Pause simulation' : 'Play simulation'} on:click={togglePlayback} disabled={loading || !!error || !moves.length || !cutterDiameter}>
+        {#if isPlaying}<Pause size={17} />{:else}<Play size={17} />{/if}
+      </button>
+      <button class="btn btn-ghost btn-icon" type="button" title="Next move" aria-label="Next move" on:click={nextMove} disabled={loading || !moves.length}><SkipForward size={17} /></button>
+      <button class="btn btn-ghost btn-icon" type="button" title="Next operation" aria-label="Next operation" on:click={nextOperation} disabled={loading || !moves.length}><span class="operation-icon">T</span><SkipForward size={13} /></button>
+      <button class="btn btn-ghost btn-icon" type="button" title="Go to end of toolpath" aria-label="Go to end of toolpath" on:click={goToEnd} disabled={loading || !moves.length}><FastForward size={17} /></button>
+    </div>
+    <label class="scrub-control">
+      <span>Route position</span>
+      <input type="range" min="0" max={parsed.totalDistance || 0} step="any" value={playbackDistance} on:input={(event) => seek(event.currentTarget.value)} disabled={!moves.length} />
+      <output>{playbackDistance.toFixed(2)} / {parsed.totalDistance.toFixed(2)} in</output>
+    </label>
+    <label class="speed-control">
+      <span>Inspection speed</span>
+      <select bind:value={playbackSpeed} disabled={!moves.length}>
+        <option value={0.25}>0.25x</option>
+        <option value={0.5}>0.5x</option>
+        <option value={1}>1x</option>
+        <option value={2}>2x</option>
+        <option value={4}>4x</option>
+      </select>
+    </label>
+  </div>
+
+  {#if !singleToolDiameter && !activeSequenceDiameter}
+    <label class="tool-diameter-input">
+      <span>End mill diameter (in)</span>
+      <input type="number" min="0.001" step="0.001" bind:value={cutterDiameterInput} placeholder="e.g. 0.25" />
+    </label>
+  {/if}
+
   <div class="legend">
+    <label class="legend-item">
+      <input type="checkbox" bind:checked={toolpathVisible} />
+      <span class="legend-label">Toolpath</span>
+    </label>
+    <label class="legend-item" class:empty={!cutterDiameter}>
+      <input type="checkbox" bind:checked={toolVisible} disabled={!cutterDiameter} />
+      <span class="legend-label">Tool</span>
+    </label>
     {#each KINDS as kind}
       <label class="legend-item" class:empty={!moveCounts[kind]}>
         <input type="checkbox" bind:checked={visible[kind]} disabled={!moveCounts[kind]} />
@@ -237,7 +378,7 @@
         <span class="legend-count">{moveCounts[kind]}</span>
       </label>
     {/each}
-    <button class="btn btn-sm" type="button" on:click={resetView} disabled={loading || !!error}>Reset view</button>
+    <button class="btn btn-ghost btn-icon" type="button" title="Reset camera view" aria-label="Reset camera view" on:click={resetView} disabled={loading || !!error}><RotateCcw size={17} /></button>
   </div>
 </div>
 
@@ -276,6 +417,16 @@
   }
   @keyframes sim-spin { to { transform: rotate(360deg); } }
 
+  .playback-controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--gap-3); }
+  .transport-buttons { display: flex; gap: 0.25rem; }
+  .btn-icon { display: inline-flex; align-items: center; justify-content: center; min-width: 2.25rem; min-height: 2.25rem; padding: 0.35rem; }
+  .operation-icon { font-size: 0.7rem; font-weight: 700; line-height: 1; }
+  .scrub-control { display: grid; grid-template-columns: auto minmax(9rem, 1fr) auto; align-items: center; flex: 1 1 24rem; gap: 0.55rem; font-size: 0.82rem; color: var(--text-muted); }
+  .scrub-control input { min-width: 0; width: 100%; }
+  .scrub-control output { min-width: 7.7rem; color: var(--text); font-variant-numeric: tabular-nums; }
+  .speed-control, .tool-diameter-input { display: grid; gap: 0.3rem; font-size: 0.82rem; color: var(--text-muted); }
+  .speed-control select, .tool-diameter-input input { min-height: 2.25rem; color: var(--text); background: var(--surface, #fff); border: 1px solid var(--border, #d1d5db); border-radius: var(--radius-sm, 4px); padding: 0.25rem 0.45rem; }
+  .tool-diameter-input input { width: 11rem; }
   .legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-3); }
   .legend-item { display: flex; align-items: center; gap: var(--gap-2); font-size: 0.82rem; cursor: pointer; }
   .legend-item.empty { opacity: 0.45; cursor: default; }
@@ -285,6 +436,8 @@
   .legend button { margin-left: auto; }
   @media (max-width: 560px) {
     .viewport { height: 45vh; }
+    .scrub-control { grid-template-columns: 1fr auto; }
+    .scrub-control span { grid-column: 1 / -1; }
     .legend button { margin-left: 0; }
   }
 </style>

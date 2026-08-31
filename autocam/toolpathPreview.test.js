@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseGcodeToolpath,
   parseToolpath3D,
+  toolpathPositionAtDistance,
   toolpathBounds,
   toolpathBounds3D
 } from './toolpathPreview.js';
@@ -31,6 +32,25 @@ describe('parseToolpath3D - linear moves', () => {
     const { moves } = parseToolpath3D(gcode('G00 X0 Y0 Z0', 'G01 X1 Y0', 'G01 X1 Y2'));
     expect(moves.map((m) => m.startDistance)).toEqual([0, 1]);
     expect(moves[1].length).toBeCloseTo(2, 10);
+  });
+
+  it('interpolates a cutter position from cumulative distance', () => {
+    const { moves } = parseToolpath3D(gcode('G00 X0 Y0 Z0', 'G01 X2 Y0 Z0', 'G01 X2 Y2 Z-2'));
+    expect(toolpathPositionAtDistance(moves, 1)).toMatchObject({
+      moveIndex: 0,
+      position: { x: 1, y: 0, z: 0 }
+    });
+    const halfwayDown = toolpathPositionAtDistance(moves, 3);
+    expect(halfwayDown?.moveIndex).toBe(1);
+    expect(halfwayDown?.position.x).toBe(2);
+    expect(halfwayDown?.position.y).toBeCloseTo(Math.SQRT1_2, 12);
+    expect(halfwayDown?.position.z).toBeCloseTo(-Math.SQRT1_2, 12);
+  });
+
+  it('clamps a cutter position to the first and final toolpath points', () => {
+    const { moves } = parseToolpath3D(gcode('G00 X0 Y0 Z0', 'G01 X1 Y0 Z0'));
+    expect(toolpathPositionAtDistance(moves, -5)?.position).toEqual({ x: 0, y: 0, z: 0 });
+    expect(toolpathPositionAtDistance(moves, 99)?.position).toEqual({ x: 1, y: 0, z: 0 });
   });
 
   it('honours modal motion on a bare coordinate line', () => {

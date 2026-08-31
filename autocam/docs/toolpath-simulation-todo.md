@@ -8,7 +8,8 @@ running state of the work.
 and a Z-up heightmap cannot represent it.
 
 **Status:** Phases 0–1 complete. Phase 2 has move-class rendering; the
-per-tool and Fusion visibility controls remain open. Phases 3–7 are open.
+per-tool and remaining Fusion visibility controls remain open. Phase 3 is
+complete. Phases 4–7 are open.
 
 ---
 
@@ -62,14 +63,14 @@ New: `autocam/components/ToolpathSimulator.svelte`
 
 ## Phase 3 — The end mill, and moving it
 
-- [ ] Flat end mill as a cylinder — **diameter from the job's `toolDiameter`,
+- [x] Flat end mill as a cylinder — **diameter from the job's `toolDiameter`,
       or the active entry in `toolSequence`.** Never a hardcoded default; falls
       back to a user input when a job has no saved tool
-- [ ] Scrub bar over **cumulative distance**, not move index
-- [ ] Fusion's four transport controls: play, next move, **next operation**
+- [x] Scrub bar over **cumulative distance**, not move index
+- [x] Fusion's four transport controls: play, next move, **next operation**
       (mapped to `(TOOL CHANGE:)` markers), end of toolpath
-- [ ] Speed slider
-- [ ] Tool position interpolated within the current move
+- [x] Speed selector
+- [x] Tool position interpolated within the current move
 
 ---
 

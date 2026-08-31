@@ -34,7 +34,9 @@ browser confirmation or prompt popups.
   an actual Fusion 360 Runner rather than in-process math. See the
   **AutoCAM** section below for the code-level detail on all three.
   Completed routing jobs also have a switchable 2D preview and a routing-only
-  3D toolpath view with rapid, cutting, and ramp/plunge paths distinguished.
+  3D toolpath simulator with rapid, cutting, and ramp/plunge paths
+  distinguished, a moving flat end mill, distance scrubbing, and tool-change
+  stepping for multi-tool jobs.
 - **Scouting**: pit scouting (a topic-at-a-time form with per-topic
   completion counts, scout/contact attribution, and up to three robot photos,
   built for filling in a noisy pit on a phone while a team answers out of
@@ -261,7 +263,9 @@ own docs are all together in one place instead of scattered across
   polygonal exteriors, tubes, and formed parts are rejected rather than
   approximated as a round turning envelope.
 - **`autocam/toolpathPreview.js`** - parses generated G-code back into a
-  toolpath for preview (`autocam/components/ToolpathViewer.svelte`).
+  toolpath for the 2D preview and 3D simulator, including a cumulative-distance
+  interpolation helper for playback (`autocam/components/ToolpathViewer.svelte`,
+  `autocam/components/ToolpathSimulator.svelte`).
 - **`autocam/drive_watcher.js`** - Google Drive input-sweep (`cad` →
   auto-queue) and output-delivery (finished G-code → dated `cammed`
   subfolder) - see `autocam/docs/drive-watcher-folder-layout.md` for the real folder
