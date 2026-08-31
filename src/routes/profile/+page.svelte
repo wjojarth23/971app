@@ -4,6 +4,7 @@
   import { userStore, fetchUserProfile, signOut } from '$lib/stores/auth.js';
   import { supabase } from '$lib/supabase.js';
   import { toastActions } from '$lib/toast.js';
+  import { requestConfirmation } from '$lib/confirmation.js';
   import navigation from '$lib/navigation.json';
   import { theme, setTheme } from '$lib/stores/theme.js';
   import { setLoginScreenStyle } from '$lib/stores/loginScreenPref.js';
@@ -132,19 +133,19 @@
     autosave();
   }
 
-  function removeEntry(idx) {
+  async function removeEntry(idx) {
     ensureHeaderTabs();
-    if (!confirm('Remove this tab/folder?')) return;
+    if (!await requestConfirmation({ message: 'Remove this tab or folder?', confirmLabel: 'Remove', danger: true })) return;
     header_tabs.splice(idx, 1);
     header_tabs = header_tabs.slice();
     toastActions.show('Removed');
     autosave();
   }
 
-  function removeChild(folderIdx, childIdx) {
+  async function removeChild(folderIdx, childIdx) {
     ensureHeaderTabs();
     const f = header_tabs[folderIdx];
-    if (!confirm('Remove this tab from the folder?')) return;
+    if (!await requestConfirmation({ message: 'Remove this tab from the folder?', confirmLabel: 'Remove', danger: true })) return;
     if (f && Array.isArray(f.children)) f.children.splice(childIdx, 1);
     header_tabs = header_tabs.slice();
     toastActions.show('Removed');
@@ -306,7 +307,7 @@
 
   async function resetNavigation() {
     if (!user?.id) return toastActions.show('Not signed in');
-    if (!confirm('Reset navigation to defaults? This will remove all custom folders/tabs you have added.')) return;
+    if (!await requestConfirmation({ title: 'Reset navigation', message: 'Reset navigation to defaults? This removes all custom folders and tabs you have added.', confirmLabel: 'Reset navigation', danger: true })) return;
     resettingNav = true;
     try {
       const { error } = await supabase
