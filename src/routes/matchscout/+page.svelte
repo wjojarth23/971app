@@ -9,6 +9,12 @@
   const START_POSITIONS = ['left trench', 'left mound', 'center', 'right mound', 'right trench'];
   const RATING_FIELDS = MATCH_RATING_FIELDS;
   const TELEOP_RATING_FIELDS = RATING_FIELDS.filter((field) => field !== 'Driver awareness');
+  const TELEOP_ROLE_LABELS = {
+    Scoring: 'Scoring',
+    Shuttling: 'Shuttling fuel',
+    'Fuel collection': 'Intaking fuel',
+    Defense: 'Defense'
+  };
   const BALL_SOURCE_OPTIONS = [
     ['source', 'Source'],
     ['wing', 'Alliance wing'],
@@ -507,7 +513,7 @@
           <small class="field-help">Select every role this robot meaningfully performed.</small>
           <div class="choice-grid role-grid">
             {#each TELEOP_ROLES as role}
-              <button class:chosen={teleopRoles.includes(role)} on:click={() => toggleTeleopRole(role)}>{role}</button>
+              <button class:chosen={teleopRoles.includes(role)} on:click={() => toggleTeleopRole(role)}>{TELEOP_ROLE_LABELS[role] || role}</button>
             {/each}
           </div>
         </fieldset>
@@ -536,17 +542,17 @@
         <label class="incident-toggle"><input type="checkbox" bind:checked={crashOrBreak} /><span><AlertTriangle size={17} /> Crash or mechanical break</span></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('auto')}>Back</button><button class="btn btn-primary" on:click={() => selectPhase('postmatch')}>Continue to post-match <ChevronRight size={16} /></button></div>
       {:else}
-        <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2><p>Close out the report and flag anything the pit crew needs to inspect.</p></div><Trophy size={20} /></div>
+        <div class="section-heading"><div><span class="eyebrow">Post-match</span><h2>Match outcome</h2><p>Close out the report and flag anything the ACE Team needs to inspect.</p></div><Trophy size={20} /></div>
         <div class="post-grid"><fieldset><legend>Cards</legend><div class="choice-grid"><button class:chosen={card === 'none'} on:click={() => card = 'none'}>None</button><button class:chosen={card === 'yellow'} on:click={() => card = 'yellow'}>Yellow</button><button class:chosen={card === 'red'} on:click={() => card = 'red'}>Red</button></div></fieldset></div>
         <div class="control-group"><span class="field-label">Driver skill</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={driverSkill === value} on:click={() => driverSkill = value}>{value}</button>{/each}</div></div>
-        <div class="control-group"><span class="field-label">Driver awareness</span><small class="field-help">Rate decisions, field awareness, and reaction to traffic after seeing the full match.</small><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings['Driver awareness'] === value} on:click={() => ratings = { ...ratings, 'Driver awareness': value }}>{value}</button>{/each}</div></div>
+        <div class="control-group"><span class="field-label">Driver awareness</span><div class="rating-buttons large">{#each [1, 2, 3, 4, 5] as value}<button class:chosen={ratings['Driver awareness'] === value} on:click={() => ratings = { ...ratings, 'Driver awareness': value }}>{value}</button>{/each}</div></div>
         {#if requiresPitReport}
-          <div class="required-handoff"><AlertTriangle size={17} /><span>A pit report is required because this robot was {robotDisabled}. It will appear in <strong>Pit Scouting → Problems</strong>.</span></div>
+          <div class="required-handoff"><AlertTriangle size={17} /><span>An ACE Team report is required because this robot was {robotDisabled}.</span></div>
         {:else}
-          <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Send a problem to Pit Scouting → Problems</span></label>
+          <label class="incident-toggle"><input type="checkbox" bind:checked={pitProblem} /><span><AlertTriangle size={17} /> Send a problem to the ACE Team</span></label>
         {/if}
         {#if shouldReportPitProblem}
-          <label class="notes-label pit-report-field">Problem for pit crew (required)<textarea class="form-input" required rows="3" placeholder="What failed, and what should the pit crew inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
+          <label class="notes-label pit-report-field">Problem for ACE Team (required)<textarea class="form-input" required rows="3" placeholder="What failed, and what should the ACE Team inspect before the next match?" bind:value={pitProblemDetails}></textarea></label>
         {/if}
         <label class="notes-label scouter-notes">Post-match scout notes (optional)<textarea class="form-input" rows="8" placeholder="Anything strategy should know that the structured fields missed? Leave blank if not." bind:value={postNotes}></textarea></label>
         <div class="section-footer"><button class="btn" on:click={() => selectPhase('teleop')}>Back</button><button class="btn btn-primary" on:click={finishScout} disabled={!canFinish}>{saving ? 'Saving...' : 'Finish match scouting'} <Check size={16} /></button></div>
