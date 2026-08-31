@@ -1404,7 +1404,7 @@
           </div>
         {/if}
         {#if toolpathView === '3d' && editingJob.operation_type === 'routing'}
-          <ToolpathSimulator gcode={editingJob.gcode} toolDiameter={Number(editingJob.params?.toolDiameter) || null} />
+          <ToolpathSimulator gcode={editingJob.gcode} toolDiameter={Number(editingJob.params?.toolDiameter) || null} toolSequence={editingJob.params?.toolSequence || []} />
         {:else}
           <ToolpathViewer gcode={editingJob.gcode} operationType={editingJob.operation_type} />
         {/if}

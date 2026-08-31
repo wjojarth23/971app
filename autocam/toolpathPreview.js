@@ -140,6 +140,43 @@ export function parseToolpath3D(gcode, { chordTolerance = DEFAULT_CHORD_TOLERANC
   return { moves, toolChangeIndices, totalDistance };
 }
 
+/**
+ * Locate the cutter at a cumulative program distance. Keeping this independent
+ * of three.js makes distance-based playback testable and avoids turning the
+ * renderer into a second G-code interpreter.
+ *
+ * @param {Array} moves output from parseToolpath3D
+ * @param {number} distance distance from the beginning of the program
+ * @returns {{position:{x:number,y:number,z:number}, moveIndex:number, progress:number}|null}
+ */
+export function toolpathPositionAtDistance(moves, distance) {
+  if (!moves?.length) return null;
+
+  const first = moves[0];
+  const last = moves[moves.length - 1];
+  const boundedDistance = Math.max(0, Math.min(Number(distance) || 0, last.startDistance + last.length));
+
+  let low = 0;
+  let high = moves.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (moves[middle].startDistance + moves[middle].length < boundedDistance) low = middle + 1;
+    else high = middle;
+  }
+
+  const move = moves[low] || first;
+  const progress = move.length ? Math.max(0, Math.min(1, (boundedDistance - move.startDistance) / move.length)) : 0;
+  return {
+    position: {
+      x: move.from.x + (move.to.x - move.from.x) * progress,
+      y: move.from.y + (move.to.y - move.from.y) * progress,
+      z: move.from.z + (move.to.z - move.from.z) * progress
+    },
+    moveIndex: low,
+    progress
+  };
+}
+
 // Fusion colours a move by what it is: rapid, a plunge/ramp, or cutting. A
 // ramp is Z descending while XY is also moving - which is exactly the helical
 // entry routing.js emits. A pure vertical plunge counts too; it is the same
