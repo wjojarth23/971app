@@ -1,4 +1,5 @@
 <script>
+  import { requestConfirmation } from '$lib/confirmation.js';
   import { onMount } from 'svelte';
   import { Camera, ChevronRight, Eye, RefreshCw, Upload, Video, LayoutDashboard, UploadCloud } from 'lucide-svelte';
   import { getAuthHeader, supabase } from '$lib/supabase.js';
@@ -242,7 +243,7 @@
   }
 
   async function cancelRun(run) {
-    if (!confirm(`Cancel ${run.model_name} ${run.model_version}? A runner already working on it will fail the job when it finishes.`)) return;
+    if (!await requestConfirmation({ title: 'Cancel vision run', message: `Cancel ${run.model_name} ${run.model_version}? A runner already working on it will fail the job when it finishes.`, confirmLabel: 'Cancel run', danger: true })) return;
     busy = true;
     error = '';
     try {
@@ -266,7 +267,7 @@
 
   let releasingRunId = '';
   async function releaseRun(run) {
-    if (!confirm(`Release ${run.model_name} ${run.model_version}'s results into real scouting data? This cannot be undone.`)) return;
+    if (!await requestConfirmation({ title: 'Release scouting results', message: `Release ${run.model_name} ${run.model_version}'s results into real scouting data? This cannot be undone.`, confirmLabel: 'Release', danger: true })) return;
     releasingRunId = run.id;
     error = '';
     try {
@@ -364,7 +365,7 @@
 
   async function reviewVisible(status) {
     if (!bulkReviewable.length) return;
-    if (!confirm(`Mark ${bulkReviewable.length} shown observation(s) as ${status}?`)) return;
+    if (!await requestConfirmation({ title: 'Review observations', message: `Mark ${bulkReviewable.length} shown observation(s) as ${status}?`, confirmLabel: 'Confirm' })) return;
     busy = true;
     error = '';
     try {

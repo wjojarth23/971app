@@ -11,6 +11,10 @@ file, **keep this current when a feature is added, removed, or changes
 scope** - it's the one place meant to answer "does this app do X?" without
 reading code.
 
+All destructive and state-changing confirmations use a shared in-app dialog,
+including typed confirmation for irreversible bulk actions, rather than native
+browser confirmation or prompt popups.
+
 - **Manufacturing/CAM**: part tracking through the manufacturing pipeline
   (queued → in-progress → completed), STEP file 3D viewing, BOM and build
   tracking, kitting, bins, post-processing, router-specific workflows,

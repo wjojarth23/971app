@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { requestConfirmation } from '$lib/confirmation.js';
   import { userStore, getUserUUID } from '$lib/stores/user.js';
   import { fetchUserProfile } from '$lib/stores/auth.js';
   import { PERMISSIONS, hasPermission, GENERAL_ROLES, PURCHASING_ROLES, TEAM_ROLES, FRC_TEAMS } from '$lib/permissions.js';
@@ -1012,7 +1013,7 @@
   }
 
   async function deleteVendor(vendor) {
-    if (!confirm(`Delete vendor "${vendor.name}"? This cannot be undone.`)) return;
+    if (!await requestConfirmation({ message: `Delete vendor "${vendor.name}"? This cannot be undone.`, confirmLabel: 'Delete vendor', danger: true })) return;
 
     try {
       const { error: err } = await supabase
@@ -1310,7 +1311,7 @@
 
   async function removeLocation(loc) {
     if (!loc?.id) return;
-    if (!confirm(`Remove ${loc.name}? Existing schedules will need to be updated.`)) return;
+    if (!await requestConfirmation({ message: `Remove ${loc.name}? Existing schedules will need to be updated.`, confirmLabel: 'Remove location', danger: true })) return;
     try {
       const success = await deleteAttendanceLocation(loc.id);
       if (success) {
@@ -1403,7 +1404,7 @@
 
   async function removeSchedule(schedule) {
     if (!schedule?.id) return;
-    if (!confirm(`Delete "${schedule.label}"?`)) return;
+    if (!await requestConfirmation({ message: `Delete "${schedule.label}"?`, confirmLabel: 'Delete schedule', danger: true })) return;
     try {
       const success = await deleteAttendanceSchedule(schedule.id);
       if (success) {

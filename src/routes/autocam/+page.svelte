@@ -1,4 +1,5 @@
 <script>
+  import { requestConfirmation } from '$lib/confirmation.js';
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import { userStore, loadUserFromUUID } from '$lib/stores/user.js';
@@ -599,7 +600,7 @@
 
   async function deleteEditingJob() {
     if (!editingJob) return;
-    if (!confirm(`Delete job "${jobDisplayName(editingJob)}"? This cannot be undone.`)) return;
+    if (!await requestConfirmation({ title: 'Delete AutoCAM job', message: `Delete job "${jobDisplayName(editingJob)}"? This cannot be undone.`, confirmLabel: 'Delete', danger: true })) return;
     editDeleting = true;
     try {
       const result = await deleteCamJob(editingJob.id);

@@ -1,4 +1,5 @@
 <script>
+  import { requestConfirmation } from '$lib/confirmation.js';
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { Gantt, Willow } from 'wx-svelte-gantt';
@@ -968,7 +969,7 @@
 
   async function deleteP0Bug() {
     if (!editingP0BugId || typeof window === 'undefined') return;
-    const confirmed = window.confirm('Delete this P0 bug? This will also remove any fixing task that only exists for this bug.');
+    const confirmed = await requestConfirmation({ title: 'Delete P0 bug', message: 'Delete this P0 bug? This will also remove any fixing task that only exists for this bug.', confirmLabel: 'Delete', danger: true });
     if (!confirmed) return;
 
     saving = true;
@@ -1143,7 +1144,7 @@
   }
 
   async function deleteItem() {
-    if (!editingItemId || !confirm('Delete this planner item?')) return;
+    if (!editingItemId || !await requestConfirmation({ title: 'Delete planner item', message: 'Delete this planner item?', confirmLabel: 'Delete', danger: true })) return;
     await submitPlannerAction({
       action: 'delete-item',
       item_id: editingItemId
@@ -1189,7 +1190,7 @@
   }
 
   async function deleteRule(ruleId) {
-    if (!confirm('Delete this calendar rule?')) return;
+    if (!await requestConfirmation({ title: 'Delete calendar rule', message: 'Delete this calendar rule?', confirmLabel: 'Delete', danger: true })) return;
     await submitPlannerAction({
       action: 'delete-calendar-rule',
       rule_id: ruleId
