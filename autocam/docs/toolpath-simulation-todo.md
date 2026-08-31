@@ -7,7 +7,8 @@ running state of the work.
 **Scope:** routing only. Turning is out — its stock is a solid of revolution
 and a Z-up heightmap cannot represent it.
 
-**Status:** Phase 0 complete. Phases 1–7 outstanding.
+**Status:** Phases 0–1 complete. Phase 2 has move-class rendering; the
+per-tool and Fusion visibility controls remain open. Phases 3–7 are open.
 
 ---
 
@@ -38,24 +39,24 @@ be untestable speculation. Revisit only if a generator starts emitting them.
 
 New: `autocam/components/ToolpathSimulator.svelte`
 
-- [ ] three.js scene, camera, `OrbitControls` — dynamic imports, mirroring
+- [x] three.js scene, camera, `OrbitControls` — dynamic imports, mirroring
       `CadViewer.svelte` so it stays out of the SSR bundle
-- [ ] Resize observer; dispose geometries/materials/renderer on destroy
-- [ ] Machine axes indicator and ground grid
-- [ ] Frame the camera from `toolpathBounds3D()`
-- [ ] Renders empty space — proves setup *and* teardown before anything else
+- [x] Resize observer; dispose geometries/materials/renderer on destroy
+- [x] Machine axes indicator and ground grid
+- [x] Frame the camera from `toolpathBounds3D()`
+- [x] Routing-only 3D view is available beside the 2D preview in AutoCAM
       is layered on
 
 ---
 
 ## Phase 2 — Toolpath in 3D
 
-- [ ] `LineSegments` per move class, coloured on Fusion's scheme
+- [x] `LineSegments` per move class, coloured on Fusion's scheme
       (rapid / cut / ramp)
 - [ ] Second colour mode: per-tool, via the existing `toolIndex`
 - [ ] Independent **Toolpath** / **Tool** / **Stock** / **Model** visibility
       toggles, matching Fusion's Simulate dialog
-- [ ] Build geometry once into typed arrays, not per-frame
+- [x] Build geometry once into typed arrays, not per-frame
 
 ---
 
