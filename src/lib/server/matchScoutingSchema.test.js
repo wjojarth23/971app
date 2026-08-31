@@ -88,6 +88,7 @@ describe('normalizeMatchScoutEntry', () => {
       ball_sources: ['wing', 'wing', 'floor'],
       auto_collision: true,
       auto_collision_notes: 'Bumped 254 near center',
+      auto_path_name: 'Center four-piece',
       auto_path: [[10, 10], [20, 20]],
       ratings: { Defense: 4 },
       teleop_roles: ['Scoring', 'Defense', 'Defense', 'made-up role'],
@@ -106,6 +107,7 @@ describe('normalizeMatchScoutEntry', () => {
     expect(value.auto_points_average).toBe(90);
     expect(value.auto_collision).toBe(true);
     expect(value.auto_collision_notes).toBe('Bumped 254 near center');
+    expect(value.auto_path_name).toBe('Center four-piece');
     expect(value.teleop_roles).toEqual(['Scoring', 'Defense']);
     expect(value.intake_speed).toBe(2);
     expect(value.intake_jammed).toBe(true);
@@ -162,6 +164,7 @@ describe('normalizeMatchScoutEntry', () => {
   it('caps long free text instead of rejecting the whole report', () => {
     const { value } = normalizeMatchScoutEntry({ ...base, post_notes: 'x'.repeat(10_000) });
     expect(value.post_notes.length).toBe(4000);
+    expect(normalizeMatchScoutEntry({ ...base, auto_path_name: 'x'.repeat(300) }).value.auto_path_name.length).toBe(120);
   });
 });
 

@@ -27,6 +27,9 @@
   let autoPoints = '';
   let autoMoved = '';
   let autoPath = [];
+  let autoPathName = '';
+  let savedAutoPaths = [];
+  let savedPathLoading = false;
   let ballSources = [];
   let autoCollision = false;
   let autoCollisionNotes = '';
@@ -136,6 +139,45 @@
 
   function normalizeRobotNumber(event) {
     robotNumber = String(event.currentTarget?.value || '').replace(/\D/g, '').slice(0, 6);
+    savedAutoPaths = [];
+  }
+
+  async function loadSavedAutoPaths() {
+    if (!eventKey || !robotNumber.trim()) {
+      savedAutoPaths = [];
+      return;
+    }
+    savedPathLoading = true;
+    try {
+      const response = await fetch(
+        `/api/matchscout?event_key=${encodeURIComponent(eventKey)}&team_key=${encodeURIComponent(robotNumber.trim())}`,
+        { headers: await getAuthHeader() }
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Could not load saved auto paths.');
+      savedAutoPaths = (payload.data || [])
+        .filter((entry) => entry.auto_path_name && Array.isArray(entry.auto_path) && entry.auto_path.length)
+        .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    } catch (exception) {
+      error = exception.message;
+      savedAutoPaths = [];
+    } finally {
+      savedPathLoading = false;
+    }
+  }
+
+  async function openAutoPhase() {
+    selectPhase('auto');
+    await loadSavedAutoPaths();
+  }
+
+  function openSavedAutoPath(event) {
+    const id = String(event.currentTarget?.value || '');
+    if (!id) return;
+    const saved = savedAutoPaths.find((entry) => String(entry.id) === id);
+    if (!saved) return;
+    autoPath = saved.auto_path.map((point) => [...point]);
+    autoPathName = saved.auto_path_name;
   }
 
   async function finishScout() {
@@ -150,6 +192,11 @@
     if (shouldReportPitProblem && !pitProblemDetails.trim()) {
       phase = 'postmatch';
       error = 'Describe what the pit crew needs to inspect before submitting.';
+      return;
+    }
+    if (autoPath.length && !autoPathName.trim()) {
+      phase = 'auto';
+      error = 'Name the drawn autonomous path before submitting.';
       return;
     }
     saving = true;
@@ -167,6 +214,7 @@
         ball_sources: ballSources,
         auto_collision: autoCollision,
         auto_collision_notes: autoCollision ? autoCollisionNotes : '',
+        auto_path_name: autoPathName,
         auto_path: autoPath,
         ratings,
         teleop_roles: teleopRoles,
@@ -219,7 +267,7 @@
   <div class="scouting-shell">
     <aside class="stage-nav" aria-label="Match scouting stages">
       <button class:active={phase === 'prematch'} on:click={() => selectPhase('prematch')}><MapPinned size={18} /><span>Pre-match</span><small>01</small></button>
-      <button class:active={phase === 'auto'} on:click={() => selectPhase('auto')}><Route size={18} /><span>Auto</span><small>02</small></button>
+      <button class:active={phase === 'auto'} on:click={openAutoPhase}><Route size={18} /><span>Auto</span><small>02</small></button>
       <button class:active={phase === 'teleop'} on:click={() => selectPhase('teleop')}><Timer size={18} /><span>Teleop</span><small>03</small></button>
       <button class:active={phase === 'postmatch'} on:click={() => selectPhase('postmatch')}><Trophy size={18} /><span>Post-match</span><small>04</small></button>
     </aside>
@@ -315,7 +363,7 @@
             {/each}
           </div>
         </div>
-        <div class="section-footer"><span>{assignmentReady ? `Robot ${robotNumber} is ready to scout.` : 'Match, robot, and starting position are required.'}</span><button class="btn btn-primary" disabled={!assignmentReady} on:click={() => selectPhase('auto')}>Begin auto <ChevronRight size={16} /></button></div>
+        <div class="section-footer"><span>{assignmentReady ? `Robot ${robotNumber} is ready to scout.` : 'Match, robot, and starting position are required.'}</span><button class="btn btn-primary" disabled={!assignmentReady} on:click={openAutoPhase}>Begin auto <ChevronRight size={16} /></button></div>
       {:else if phase === 'auto'}
         <div class="section-heading"><div><span class="eyebrow">Autonomous</span><h2>Auto report</h2><p>Record whether auto ran, roughly how much fuel scored, and optionally draw the path.</p></div><Route size={20} /></div>
         <div class="auto-layout">
@@ -381,7 +429,29 @@
               <div><span class="field-label">Robot path (optional)</span><small>AdvantageScope-style 2026 field; your alliance wall is always on the left.</small></div>
               <button class="btn btn-sm" on:click={() => autoPath = []} disabled={!autoPath.length}><RotateCcw size={14} /> Clear</button>
             </div>
+            <div class="saved-path-controls">
+              <label for="auto-path-name">
+                Path name
+                <input
+                  id="auto-path-name"
+                  class="form-input"
+                  maxlength="120"
+                  placeholder="e.g. Center four-piece"
+                  bind:value={autoPathName}
+                />
+              </label>
+              <label for="saved-auto-path">
+                Open saved path
+                <select id="saved-auto-path" class="form-input" on:change={openSavedAutoPath} disabled={savedPathLoading || !savedAutoPaths.length}>
+                  <option value="">{savedPathLoading ? 'Loading...' : savedAutoPaths.length ? 'Choose a saved path' : 'No saved paths yet'}</option>
+                  {#each savedAutoPaths as saved}
+                    <option value={saved.id}>{saved.auto_path_name} · Match {saved.match_key}</option>
+                  {/each}
+                </select>
+              </label>
+            </div>
             <RebuiltFieldMap {alliance} bind:path={autoPath} />
+            {#if autoPath.length && !autoPathName.trim()}<small class="estimate-error">Name this path so it can be reopened later.</small>{/if}
             <small class="field-source">Simplified from the official WPILib/AdvantageScope 2026 REBUILT 2D field view for legibility on scouting devices.</small>
           </div>
         </div>
@@ -477,6 +547,7 @@
   .auto-source-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
   .collision-notes { margin-top:var(--space-2); resize:vertical; }
   .path-panel { display:grid; gap:var(--space-2); } .path-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--gap-3); } .path-heading > div { display:grid; gap:2px; }
+  .saved-path-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap-3); margin:var(--space-2) 0; }
   .field-source { color:var(--text-muted); font-size:.68rem; line-height:1.35; }
   .teleop-roles { margin-bottom:var(--space-4); padding:var(--space-4); border:1px solid var(--border); background:var(--surface-2); }
   .role-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
@@ -524,7 +595,7 @@
   }
   .submitted-state { min-height:32rem; display:grid; place-content:center; justify-items:center; gap:var(--space-3); text-align:center; } .submitted-state p { margin:0; color:var(--text-muted); } .submitted-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; background:var(--green-soft); color:var(--green-strong); border-radius:50%; }
   @media (max-width:850px) { .scouting-shell { grid-template-columns:1fr; } .stage-nav { position:static; grid-template-columns:repeat(4,1fr); } .stage-nav button { flex-direction:column; justify-content:center; text-align:center; padding:var(--space-2); } .assignment-grid,.post-grid,.auto-layout,.intake-observations { grid-template-columns:1fr; } .position-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row,.ratings-heading { align-items:flex-start; flex-direction:column; } .point-examples,.role-grid { grid-template-columns:repeat(2,1fr); } .persistent-status { align-items:stretch; flex-direction:column; } }
+  @media (max-width:560px) { .match-scouting-page { padding:var(--space-3); } .page-header { align-items:flex-start; } .assignment-chip { width:100%; justify-content:space-between; } .stage-nav { grid-template-columns:repeat(2,1fr); } .rating-row,.ratings-heading { align-items:flex-start; flex-direction:column; } .point-examples,.role-grid,.saved-path-controls { grid-template-columns:repeat(1,1fr); } .persistent-status { align-items:stretch; flex-direction:column; } }
 
   /* Match Scouting intentionally shares Pit Scouting's focused field-workspace language. */
   .match-scouting-page { max-width:1160px; }
