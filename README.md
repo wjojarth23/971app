@@ -35,7 +35,9 @@ reading code.
   order), alliance-tinted match scouting with event-team type-ahead and
   structured auto collision/fuel-source plus intake-speed/jam observations,
   and an explicit named autonomous-path file library with “Save as new file”
-  and “Load file” actions independent of report submission,
+  and “Load file” actions independent of report submission, a 29-by-29-inch
+  robot footprint, centerline-conflict marking, and hub/trench collision
+  prevention,
   data scouting, free-form notes,
   cross-team data discovery and analysis (`discover/`), a consolidated
   team-view, and scouting-admin tooling (assignment management, form/config
@@ -355,7 +357,8 @@ AutoCAM's own code (engine, Drive watcher, `camJobs.js`, its components) is
 - **`matchScouting.js`** - shared match-scout vocabularies and the parser that
   turns exact/range/open-ended auto point estimates into explicit numeric
   bounds and a conservative aggregation value; `RebuiltFieldMap.svelte` owns
-  the reusable 2026 field-relative drawing surface.
+  the reusable 2026 field-relative drawing surface, including the 29-inch
+  footprint, protected-geometry validation, and centerline-overlap analysis.
 - **`config/`** - feature flags (e.g. `DISABLE_AUTOCAM` - see **Known
   gaps**, the legacy autocam system this flag referred to has since been
   removed entirely).
